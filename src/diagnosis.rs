@@ -520,7 +520,7 @@ pub enum State {
     EditsDriftLeftInPlace,
     EditsMovedAndEdited,
     EditsUnresolved,
-    EditsMergeInterrupted,
+    EditsSetBack,
     EditsMidOperation,
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
@@ -627,7 +627,7 @@ impl State {
         Self::EditsDriftLeftInPlace,
         Self::EditsMovedAndEdited,
         Self::EditsUnresolved,
-        Self::EditsMergeInterrupted,
+        Self::EditsSetBack,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
@@ -763,11 +763,13 @@ impl State {
                 name: "moved and edited",
                 means: "the checkout's branch moved under it from another checkout, and each \
                         listed file was changed both by that move and by an uncommitted edit \
-                        here. Nothing in the checkout is refreshed or recorded while such a file \
+                        here, or stands where the move puts a file or directory of its own. \
+                        Nothing in the checkout is refreshed or recorded while such a file \
                         stands, so the move's other files still hold the old tip's content and a \
                         commit there would record the move's reverse; the checkout's other edits \
-                        get no choice of their own. Setting the edits aside sets aside the old \
-                        tip's content with them, and taking them back brings it back",
+                        get no choice of their own. The merge and the set-aside each hand the \
+                        edits to the VCS against the tip the files hold, so what is merged or \
+                        set aside is the edits alone",
                 refused_by: "every verb that judges a checkout's edits, `rwv doctor` with or \
                              without `--fix` included, for a checkout in either workspace; \
                              conflicted files are judged `unresolved` first",
@@ -777,6 +779,7 @@ impl State {
                     Form::ReplaceThenMerge,
                     Form::TrackIgnored,
                     Form::CompareMarked,
+                    Form::CompareSkipped,
                 ],
                 verb_offers: &[],
             },
@@ -791,18 +794,25 @@ impl State {
                 offers: &[Form::ResolveConflicts],
                 verb_offers: &[],
             },
-            Self::EditsMergeInterrupted => &StateRow {
+            Self::EditsSetBack => &StateRow {
                 axis: Axis::Edits,
-                name: "merge interrupted",
-                means: "a merge of edits onto a branch's moved tip stopped part way through its \
-                        writes, so each listed file may hold the merge, the edit, or the moved \
-                        tip's content; the backup named was taken before the first write and \
-                        holds every edit. Running the merge again first puts each listed file \
-                        and its index entry back as they stood before the interrupted run, then \
-                        merges afresh",
+                name: "set back",
+                means: "the merge or set-aside of edits onto a branch's moved tip pointed the \
+                        checkout at the tip its files hold, named in the subject with the branch \
+                        it left, and did not finish: the VCS refused the next step, its reason \
+                        quoted, or the run was stopped. HEAD names what the files hold, so the \
+                        listed edits are the only difference from it and a commit or stash \
+                        made here records them and nothing of the move. Running the merge or \
+                        the set-aside again carries them onto wherever the branch is then",
                 refused_by: "every verb that judges a checkout's edits, `rwv doctor --fix` \
                              included",
-                offers: &[Form::MergeEditedDrift],
+                offers: &[
+                    Form::MergeEditedDrift,
+                    Form::SetEditsAside,
+                    Form::UnstageThenMerge,
+                    Form::ReplaceThenMerge,
+                    Form::RemoveLockThenMerge,
+                ],
                 verb_offers: &[],
             },
             Self::EditsMidOperation => &StateRow {
@@ -1991,6 +2001,9 @@ pub enum ChoiceId {
     ReplaceThenMerge,
     TrackIgnored,
     CompareMarked,
+    CompareSkipped,
+    UnstageThenMerge,
+    RemoveLockThenMerge,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2253,16 +2266,16 @@ impl ChoiceId {
                 phrase: "merge each listed file's edit onto the moved tip, refreshing the \
                          move's other files",
                 keeps_work: "the working copy and index are kept as a backup before anything \
-                             is written; a file the merge does not resolve is left conflicted, \
-                             holding both versions",
+                             is written; the VCS merges the edits as it merges local changes on \
+                             a checkout, leaving a file it does not resolve conflicted",
             },
             Self::SetEditsAside => &ChoiceRow {
                 id: None,
-                phrase: "set the edits aside in a backup, each listed file taking the moved \
+                phrase: "set the listed files' edits aside with the VCS, each taking the moved \
                          tip's content, refreshing the move's other files",
-                keeps_work: "the working copy and index are kept as a backup before anything \
-                             is written, the only place the edits are then held; the report \
-                             prints the command that shows each file's version there",
+                keeps_work: "the VCS keeps the edits, staged versions included, against the tip \
+                             the files held; the report prints the command that merges them \
+                             back onto the moved tip",
             },
             Self::ResolveConflicts => &ChoiceRow {
                 id: None,
@@ -2277,16 +2290,40 @@ impl ChoiceId {
             },
             Self::CompareMarked => &ChoiceRow {
                 id: None,
-                phrase: "have the VCS compare each listed file it was told to treat as \
-                         unchanged, so a backup keeps it, then merge or set aside again",
-                keeps_work: "nothing is written but the index entry's marks",
+                phrase: "clear the assume-unchanged mark on each file listed in the command, so \
+                         the VCS compares it and a backup keeps it, then merge or set aside \
+                         again; the mark stays cleared",
+                keeps_work: "nothing is written but the index entry's mark",
+            },
+            Self::CompareSkipped => &ChoiceRow {
+                id: None,
+                phrase: "clear the skip-worktree mark on each file listed in the command, so \
+                         the VCS compares it and a backup keeps it, then merge or set aside \
+                         again; the mark stays cleared",
+                keeps_work: "nothing is written but the index entry's mark",
             },
             Self::ReplaceThenMerge => &ChoiceRow {
                 id: None,
-                phrase: "put a directory holding each listed file in place of what stands \
-                         above it, then merge each edit onto the moved tip",
+                phrase: "move out of the way what stands where the moved tip puts each listed \
+                         path: a link or file where its directory goes, a directory or an \
+                         untracked file where its file goes; then merge each edit onto the \
+                         moved tip",
                 keeps_work: "the working copy and index are kept as a backup before the \
                              merge writes anything",
+            },
+            Self::UnstageThenMerge => &ChoiceRow {
+                id: None,
+                phrase: "unstage the listed staged changes, each staying in the working copy, \
+                         then merge again",
+                keeps_work: "the backup taken before the merge holds each staged version; \
+                             unstaging writes only the index",
+            },
+            Self::RemoveLockThenMerge => &ChoiceRow {
+                id: None,
+                phrase: "once no VCS process is running in the checkout, remove the index lock \
+                         a killed one left, named in the subject, then merge again",
+                keeps_work: "the lock holds no work; the backup taken before the merge holds \
+                             every edit",
             },
             Self::LandAgain => &ChoiceRow {
                 id: None,
@@ -2510,6 +2547,9 @@ pub enum Form {
     ReplaceThenMerge,
     TrackIgnored,
     CompareMarked,
+    CompareSkipped,
+    UnstageThenMerge,
+    RemoveLockThenMerge,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2537,7 +2577,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 106] = [
+    pub const ALL: [Form; 109] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2644,6 +2684,9 @@ impl Form {
         Self::ReplaceThenMerge,
         Self::TrackIgnored,
         Self::CompareMarked,
+        Self::CompareSkipped,
+        Self::UnstageThenMerge,
+        Self::RemoveLockThenMerge,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3213,8 +3256,29 @@ impl Form {
             },
             Self::CompareMarked => &FormRow {
                 choice: C::CompareMarked,
-                steps: &[Vcs(A::CompareMarked), Vcs(A::CompareOutside)],
+                steps: &[Vcs(A::CompareMarked)],
                 at: W::Checkout,
+                shipped: true,
+            },
+            Self::CompareSkipped => &FormRow {
+                choice: C::CompareSkipped,
+                steps: &[Vcs(A::CompareOutside)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::UnstageThenMerge => &FormRow {
+                choice: C::UnstageThenMerge,
+                steps: &[
+                    Vcs(A::Unstage),
+                    Rwv("rwv doctor --fix --merge-edited-drift"),
+                ],
+                at: W::CheckoutsWorkspace,
+                shipped: true,
+            },
+            Self::RemoveLockThenMerge => &FormRow {
+                choice: C::RemoveLockThenMerge,
+                steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
+                at: W::CheckoutsWorkspace,
                 shipped: true,
             },
             Self::ReplaceThenMerge => &FormRow {
@@ -4160,8 +4224,8 @@ fn judge_edits_settling(
 ) -> Option<Judged> {
     let mut judging = match vcs.mid_operation(dir) {
         Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
-        None => match vcs.interrupted_merge(dir) {
-            Ok(Some(merge)) => interrupted_merge(repo, &merge),
+        None => match vcs.set_back_from(dir) {
+            Ok(Some(back)) => set_back(vcs, repo, dir, &back, None, None),
             _ if dirty.is_empty() => return None,
             _ if settle => dirty_beside_drift(vcs, repo, dir, dirty)?,
             _ => self::dirty(vcs, repo, dir, dirty),
@@ -4175,11 +4239,11 @@ fn judge_edits_settling(
 
 /// `dir`'s uncommitted `files`, judged by what else the checkout holds,
 /// since no commit clears any of these: a merge of edits onto a moved tip
-/// interrupted part way, conflicted files, or files both a move of its branch
+/// left set back, conflicted files, or files both a move of its branch
 /// under it and an edit here changed. Otherwise `dirty`, listing `files`.
 pub fn dirty(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path, files: Vec<String>) -> Judging {
-    if let Ok(Some(merge)) = vcs.interrupted_merge(dir) {
-        return interrupted_merge(repo, &merge);
+    if let Ok(Some(back)) = vcs.set_back_from(dir) {
+        return set_back(vcs, repo, dir, &back, None, None);
     }
     if let Ok(conflicted) = vcs.unmerged_paths(dir) {
         if !conflicted.is_empty() {
@@ -4206,10 +4270,11 @@ pub fn dirty_beside_drift(
     files: Vec<String>,
 ) -> Option<Judging> {
     let repo = repo.to_string();
-    let held = matches!(vcs.interrupted_merge(dir), Ok(Some(_)))
+    let held = matches!(vcs.set_back_from(dir), Ok(Some(_)))
         || vcs.unmerged_paths(dir).is_ok_and(|u| !u.is_empty());
     let reading = match crate::check::read_drift(vcs, dir) {
         Ok(reading) if !held && reading.moved_and_edited().is_empty() => reading,
+        Err(e) if !held => return Some(drift_unread(repo, &e)),
         _ => return Some(dirty(vcs, repo, dir, files)),
     };
     if !reading.is_refreshable() {
@@ -4259,6 +4324,33 @@ pub fn dirty_beside_drift(
     (!left.is_empty()).then(|| dirty(vcs, repo, dir, left))
 }
 
+/// A checkout whose drift could not be read: nothing it holds is judged an
+/// edit, since any of it may be the move's reverse, and no choice is offered.
+pub fn drift_unread(repo: impl fmt::Display, e: &crate::vcs::VcsError) -> Judging {
+    State::EditsDriftLeftInPlace
+        .of(repo)
+        .subject(format!("its drift could not be read: {e:#}"))
+        .only_forms(&[])
+}
+
+/// Edits beside drift a verb refuses before refreshing: each listed, with
+/// the refresh as the one choice, after which they are judged as edits.
+pub fn edits_beside_unrefreshed_drift(
+    repo: impl fmt::Display,
+    reading: &crate::check::DriftReading,
+    edits: &[String],
+) -> Judging {
+    State::EditsDriftLeftInPlace
+        .of(repo)
+        .subject(format!(
+            "{}; it is not refreshed before this refusal, so these edits beside it get no \
+             choice of their own until it is",
+            reading.moved()
+        ))
+        .listing(edits)
+        .only_forms(&[Form::DriftRefreshAgain])
+}
+
 fn unresolved(repo: impl fmt::Display, conflicted: Vec<String>) -> Judging {
     State::EditsUnresolved
         .of(repo)
@@ -4287,6 +4379,7 @@ pub fn moved_and_edited(repo: impl fmt::Display) -> Judging {
         ChoiceId::ReplaceThenMerge,
         ChoiceId::TrackIgnored,
         ChoiceId::CompareMarked,
+        ChoiceId::CompareSkipped,
     ])
 }
 
@@ -4300,37 +4393,106 @@ pub fn held(
     reading: &crate::check::DriftReading,
 ) -> Judging {
     let held = reading.moved_and_edited();
-    let uncompared = vcs.uncompared_paths(dir, &held).unwrap_or_default();
     let judging = State::EditsMovedAndEdited
         .of(repo)
         .subject(reading.moved())
         .listing(&held);
+    if !reading.in_the_way(dir).is_empty() {
+        return judging.only_forms(&[Form::ReplaceThenMerge]);
+    }
+    let uncompared = vcs.uncompared_paths(dir, &held).unwrap_or_default();
     if uncompared.is_empty() {
         return judging.without(&[
             ChoiceId::ReplaceThenMerge,
             ChoiceId::TrackIgnored,
             ChoiceId::CompareMarked,
+            ChoiceId::CompareSkipped,
         ]);
     }
     let mut forms = Vec::new();
     if !uncompared.ignored.is_empty() {
         forms.push(Form::TrackIgnored);
     }
-    if !uncompared.marked.is_empty() {
+    if !uncompared.assumed.is_empty() {
         forms.push(Form::CompareMarked);
+    }
+    if !uncompared.skipped.is_empty() {
+        forms.push(Form::CompareSkipped);
     }
     judging
         .bind_list("<ignored>", &uncompared.ignored)
-        .bind_list("<marked>", &uncompared.marked)
+        .bind_list("<assumed>", &uncompared.assumed)
+        .bind_list("<skipped>", &uncompared.skipped)
         .only_forms(&forms)
 }
 
-/// A checkout whose merge of edits onto a moved tip was interrupted, judged.
-pub fn interrupted_merge(repo: impl fmt::Display, merge: &crate::vcs::InterruptedMerge) -> Judging {
-    State::EditsMergeInterrupted
+/// A backup kept before a merge of edits, and its tip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptBackup {
+    pub name: String,
+    pub tip: String,
+}
+
+/// A checkout the merge or set-aside of edits left set back, judged: its
+/// edits listed, and the choices that carry them on from what stands there.
+/// `refused` is the VCS's own account of the step it refused.
+pub fn set_back(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    back: &crate::vcs::SetBack,
+    refused: Option<&str>,
+    backup: Option<&KeptBackup>,
+) -> Judging {
+    let mut subject = format!(
+        "pointed at {}, the tip its files hold, off branch {}",
+        back.at.short(),
+        back.branch
+    );
+    if let Some(backup) = backup {
+        subject.push_str(&format!(
+            "; the edits are kept as {}",
+            crate::check::backup_named(Some(&backup.name))
+        ));
+    }
+    if let Some(said) = refused {
+        let said: Vec<&str> = said
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .collect();
+        subject.push_str(&format!("; the VCS refused: {}", said.join(" ")));
+    }
+    let lock = vcs.index_lock(dir).ok().flatten();
+    if let Some(lock) = &lock {
+        if refused.is_none() {
+            subject.push_str(&format!("; the index is locked by {}", lock.display()));
+        }
+    }
+    let mut edits: Vec<String> = vcs.staged_paths(dir).unwrap_or_default();
+    for path in vcs.unstaged_paths(dir).unwrap_or_default() {
+        if !edits.contains(&path) {
+            edits.push(path);
+        }
+    }
+    edits.sort();
+    let staged = vcs.staged_against_head(dir).unwrap_or_default();
+    let judging = State::EditsSetBack
         .of(repo)
-        .subject(crate::check::backup_named(merge.backup.as_deref()))
-        .listing(&merge.paths)
+        .subject(subject)
+        .listing(&edits);
+    if lock.is_some() {
+        return judging.only_forms(&[Form::RemoveLockThenMerge]);
+    }
+    if !staged.is_empty() {
+        return judging
+            .bind_list("<paths>", &staged)
+            .only_forms(&[Form::UnstageThenMerge]);
+    }
+    match refused {
+        Some(_) => judging.only_forms(&[Form::ReplaceThenMerge]),
+        None => judging.only_forms(&[Form::MergeEditedDrift, Form::SetEditsAside]),
+    }
 }
 
 /// The error a [`Report`] refuses with.

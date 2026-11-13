@@ -3437,6 +3437,9 @@ fn judge_source_relations(
             LockRelation::NoLock | LockRelation::Unknown => State::PinNone,
             LockRelation::Unreachable => State::PinUnreachable,
         };
+        if matches!(vcs.set_back_from(&dir), Ok(Some(_))) {
+            continue;
+        }
         report.add(
             state
                 .of(&r.repo_path)
@@ -3453,8 +3456,8 @@ fn judge_source_relations(
 
 /// The source's own refusals, which a landing owes whatever its target: edits
 /// in its checkouts and where each stands to the source's lock. The landing
-/// refuses before it holds any claim, so drift is not read: nothing here may
-/// write, and what drift leaves is judged as the dirt it looks like.
+/// refuses before it holds any claim, so drift is read and not refreshed:
+/// nothing here writes, and what drift explains is not judged an edit.
 pub(crate) fn judge_landing_source(
     ctx: &WorkspaceContext,
     report: &mut Report,
@@ -5234,9 +5237,16 @@ fn judge_edits_beside_drift(
     report: &mut Report,
     drifted: Option<&mut Vec<DriftedCheckout>>,
 ) {
-    let reading = match &drifted {
-        Some(_) => crate::check::read_drift(vcs.as_ref(), &at.dir).unwrap_or_default(),
-        None => crate::check::DriftReading::default(),
+    let reading = match crate::check::read_drift(vcs.as_ref(), &at.dir) {
+        Ok(reading) => reading,
+        Err(e) => {
+            let mut judging = crate::diagnosis::drift_unread(&at.repo, &e);
+            if let Some(workspace) = &at.elsewhere {
+                judging = judging.elsewhere(workspace);
+            }
+            report.add(judging.checkout(&at.dir).judge(vcs.as_ref()));
+            return;
+        }
     };
     let edits: Vec<String> = keep(tracked_or_unreadable(vcs.as_ref(), &at.dir))
         .into_iter()
@@ -5252,6 +5262,17 @@ fn judge_edits_beside_drift(
                 reading,
                 edits,
             })
+        }
+        None if !conflicted && !held && reading.is_refreshable() => {
+            if edits.is_empty() {
+                return;
+            }
+            let mut judging =
+                crate::diagnosis::edits_beside_unrefreshed_drift(&at.repo, &reading, &edits);
+            if let Some(workspace) = &at.elsewhere {
+                judging = judging.elsewhere(workspace);
+            }
+            report.add(judging.checkout(&at.dir).judge(vcs.as_ref()));
         }
         _ => judge_edits_in(
             vcs.as_ref(),

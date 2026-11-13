@@ -1246,24 +1246,36 @@ impl Vcs for FakeVcs {
         unsupported("refresh_paths_if_left")
     }
 
-    fn merge_into_working_copy(
-        &self,
-        _repo: &Path,
-        _request: &crate::vcs::WorkingCopyMergeRequest<'_>,
-        _before_write: &mut dyn FnMut() -> Result<crate::vcs::BeforeWrite, VcsError>,
-    ) -> Result<crate::vcs::WorkingCopyMerge, VcsError> {
-        unsupported("merge_into_working_copy")
+    fn set_back(&self, _repo: &Path, _at: &CommitId) -> Result<(), VcsError> {
+        unsupported("set_back")
     }
 
-    fn interrupted_merge(
-        &self,
-        _repo: &Path,
-    ) -> Result<Option<crate::vcs::InterruptedMerge>, VcsError> {
+    fn set_back_from(&self, _repo: &Path) -> Result<Option<crate::vcs::SetBack>, VcsError> {
         Ok(None)
     }
 
-    fn put_back_interrupted_merge(&self, _repo: &Path) -> Result<(), VcsError> {
-        Ok(())
+    fn carry_edits_onto(
+        &self,
+        _repo: &Path,
+        _branch: &str,
+    ) -> Result<crate::vcs::Refusable<()>, VcsError> {
+        unsupported("carry_edits_onto")
+    }
+
+    fn set_edits_aside(
+        &self,
+        _repo: &Path,
+        _paths: &[String],
+    ) -> Result<crate::vcs::Refusable<CommitId>, VcsError> {
+        unsupported("set_edits_aside")
+    }
+
+    fn staged_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("staged_against_head")
+    }
+
+    fn index_lock(&self, _repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError> {
+        Ok(None)
     }
 
     fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {

@@ -30,13 +30,13 @@ use std::process::Stdio;
 
 mod argv;
 mod backup;
+mod carry_edits;
 mod merge;
 mod pick;
 mod records;
 mod replay;
 #[cfg(test)]
 mod restore_plan_tests;
-mod working_copy_merge;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
 
@@ -1246,6 +1246,7 @@ fn refresh_paths_if_left(
     };
     refresh_stat_data(repo);
     if scope == RefreshScope::IndexAndFiles {
+        let outside = carry_edits::uncompared(repo, paths)?.skipped;
         let removed: BTreeSet<String> = paths
             .iter()
             .filter(|p| target.in_left.contains_key(*p) && !target.in_head.contains(*p))
@@ -1255,6 +1256,7 @@ fn refresh_paths_if_left(
             match (target.in_left.get(*path), target.in_head.contains(*path)) {
                 (Some(entry), true) => {
                     !entry.starts_with(GITLINK)
+                        && !outside.contains(*path)
                         && std::fs::symlink_metadata(repo.join(path)).is_err()
                 }
                 (None, true) => occupied(repo, path, &removed),
@@ -3109,12 +3111,14 @@ impl Vcs for GitVcs {
             VcsAction::Status => "git -C <checkout> status",
             VcsAction::ShowFromBackup => "git -C <checkout> show <tip>:<file>",
             VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
+            VcsAction::Unstage => "git -C <checkout> restore --staged -- <paths>",
+            VcsAction::TakeBackSetAside => "git -C <checkout> stash apply <stash>",
             VcsAction::TrackIgnored => "git -C <checkout> add -f -- <ignored>",
             VcsAction::CompareMarked => {
-                "git -C <checkout> update-index --no-assume-unchanged -- <marked>"
+                "git -C <checkout> update-index --no-assume-unchanged -- <assumed>"
             }
             VcsAction::CompareOutside => {
-                "git -C <checkout> update-index --no-skip-worktree -- <marked>"
+                "git -C <checkout> update-index --no-skip-worktree -- <skipped>"
             }
             VcsAction::RemoveWorktree => "git -C <checkout> worktree remove <worktree>",
             VcsAction::BranchAt => "git -C <checkout> branch <name> <sha>",
@@ -4006,24 +4010,36 @@ impl Vcs for GitVcs {
         refresh_paths_if_left(repo, left, head, paths, scope)
     }
 
-    fn merge_into_working_copy(
-        &self,
-        repo: &Path,
-        request: &crate::vcs::WorkingCopyMergeRequest<'_>,
-        before_write: &mut dyn FnMut() -> Result<crate::vcs::BeforeWrite, VcsError>,
-    ) -> Result<crate::vcs::WorkingCopyMerge, VcsError> {
-        working_copy_merge::merge_into_working_copy(repo, request, before_write)
+    fn set_back(&self, repo: &Path, at: &CommitId) -> Result<(), VcsError> {
+        carry_edits::set_back(repo, at)
     }
 
-    fn interrupted_merge(
-        &self,
-        repo: &Path,
-    ) -> Result<Option<crate::vcs::InterruptedMerge>, VcsError> {
-        working_copy_merge::interrupted(repo)
+    fn set_back_from(&self, repo: &Path) -> Result<Option<crate::vcs::SetBack>, VcsError> {
+        carry_edits::set_back_from(repo)
     }
 
-    fn put_back_interrupted_merge(&self, repo: &Path) -> Result<(), VcsError> {
-        working_copy_merge::put_back(repo)
+    fn carry_edits_onto(
+        &self,
+        repo: &Path,
+        branch: &str,
+    ) -> Result<crate::vcs::Refusable<()>, VcsError> {
+        carry_edits::carry_edits_onto(repo, branch)
+    }
+
+    fn set_edits_aside(
+        &self,
+        repo: &Path,
+        paths: &[String],
+    ) -> Result<crate::vcs::Refusable<CommitId>, VcsError> {
+        carry_edits::set_edits_aside(repo, paths)
+    }
+
+    fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        carry_edits::staged_against_head(repo)
+    }
+
+    fn index_lock(&self, repo: &Path) -> Result<Option<PathBuf>, VcsError> {
+        carry_edits::index_lock(repo)
     }
 
     fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError> {
@@ -5385,8 +5401,7 @@ impl Vcs for GitVcs {
         checkout: &Path,
         paths: &[String],
     ) -> Result<crate::vcs::UncomparedPaths, VcsError> {
-        let (ignored, marked) = working_copy_merge::uncompared(checkout, paths)?;
-        Ok(crate::vcs::UncomparedPaths { ignored, marked })
+        carry_edits::uncompared(checkout, paths)
     }
 
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {

@@ -2934,7 +2934,10 @@ pub fn judge_dirty_checkouts(
             judging = judging.subject("not a manifest member");
         }
         if let Some(name) = deleting {
-            judging = judging.by_verb("workweave delete").bind("<ww>", name);
+            judging = judging
+                .by_verb("workweave delete")
+                .bind("<ww>", name)
+                .elsewhere(workweave_dir);
         }
         report.add(judging.judge(vcs));
     }

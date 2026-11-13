@@ -1300,9 +1300,8 @@ every_scenario!(
     plain_drift_judged_by(scenarios::HeldVerb::Doctor),
     plain_drift_judged_by(scenarios::HeldVerb::WorkweaveDelete),
     plain_drift_changed_before_a_verb_refreshes,
-    moved_and_edited_interrupted(scenarios::MergeKilledAt::Journaled),
-    moved_and_edited_interrupted(scenarios::MergeKilledAt::Refreshed),
-    moved_and_edited_interrupted(scenarios::MergeKilledAt::Written),
+    moved_and_edited_interrupted(scenarios::MergeKilledAt::MergeSetBack),
+    moved_and_edited_interrupted(scenarios::MergeKilledAt::SetAsideSetBack),
     drift_staged_return_after_a_hand_refresh,
     drift_staged_return_with_an_edit_is_kept,
     cross_repo_pr,
@@ -5669,25 +5668,17 @@ fn a_branch_moved_again_before_the_merge_writes_leaves_everything_and_the_next_r
 }
 
 #[test]
-fn a_merge_killed_once_journaled_is_named_interrupted_and_merged_afresh() {
+fn a_merge_killed_once_set_back_is_named_set_back_and_the_flag_finishes_it() {
     runner::run(scenarios::moved_and_edited_interrupted(
-        scenarios::MergeKilledAt::Journaled,
+        scenarios::MergeKilledAt::MergeSetBack,
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn a_merge_killed_once_refreshed_is_named_interrupted_and_merged_afresh() {
+fn a_set_aside_killed_once_set_back_is_named_set_back_and_the_merge_finishes_it() {
     runner::run(scenarios::moved_and_edited_interrupted(
-        scenarios::MergeKilledAt::Refreshed,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn a_merge_killed_once_written_is_merged_afresh_never_on_marker_text() {
-    runner::run(scenarios::moved_and_edited_interrupted(
-        scenarios::MergeKilledAt::Written,
+        scenarios::MergeKilledAt::SetAsideSetBack,
     ))
     .assert_fully_decided_green();
 }

@@ -1542,6 +1542,9 @@ impl Aligner {
         lock: Option<&LockFile>,
         repo: &dyn std::fmt::Display,
     ) -> anyhow::Result<Vec<Judged>> {
+        if matches!(m.vcs.set_back_from(m.dir), Ok(Some(_))) {
+            return Ok(Vec::new());
+        }
         let plan = self.plan(m, lock)?;
         let facts: Vec<Fact> = match &plan.target {
             Target::Detached { why, .. } => why.fact().into_iter().collect(),
