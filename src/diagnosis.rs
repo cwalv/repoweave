@@ -2230,6 +2230,9 @@ pub enum Step {
     RerunWithout(&'static str),
     /// The continue of an operation of this verb.
     Resume(crate::op_state::OpVerb),
+    /// The continue of the operation the op record names, bound as
+    /// `<resume>`.
+    ResumeRecorded,
 }
 
 /// One spelling of a choice.
@@ -2352,7 +2355,8 @@ impl FormRow {
                 | Step::Vcs(_)
                 | Step::Rerun(_)
                 | Step::RerunWithout(_)
-                | Step::Resume(_) => true,
+                | Step::Resume(_)
+                | Step::ResumeRecorded => true,
             })
     }
 }
@@ -3019,7 +3023,7 @@ impl Form {
             },
             Self::ResumeOperation => &FormRow {
                 choice: C::ResumeOperation,
-                steps: &[Rwv("rwv <resume> --continue")],
+                steps: &[Step::ResumeRecorded],
                 at: W::Here,
                 shipped: true,
             },
@@ -3100,9 +3104,11 @@ impl Form {
             .flat_map(|step| match step {
                 Step::Rwv(command) => vec![*command],
                 Step::Then(next) => next.rwv_commands(),
-                Step::Vcs(_) | Step::Rerun(_) | Step::RerunWithout(_) | Step::Resume(_) => {
-                    Vec::new()
-                }
+                Step::Vcs(_)
+                | Step::Rerun(_)
+                | Step::RerunWithout(_)
+                | Step::Resume(_)
+                | Step::ResumeRecorded => Vec::new(),
             })
             .collect()
     }
@@ -3155,6 +3161,7 @@ impl Form {
                 Step::Rerun(flag) => vec![format!("rerun with {flag}")],
                 Step::RerunWithout(flag) => vec![format!("rerun without {flag}")],
                 Step::Resume(verb) => vec![crate::op_state::resume_command(*verb)],
+                Step::ResumeRecorded => vec!["<resume>".to_owned()],
             })
             .collect()
     }
@@ -4189,6 +4196,10 @@ fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
             Step::Resume(verb) => {
                 flush(&mut actions, &mut parts);
                 parts.push(format!("`{}`", crate::op_state::resume_command(*verb)));
+            }
+            Step::ResumeRecorded => {
+                flush(&mut actions, &mut parts);
+                parts.push("the stopped operation's `--continue`".to_owned());
             }
         }
     }
