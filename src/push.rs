@@ -1004,6 +1004,7 @@ fn report_pins_held_by_no_branch(
                     .ok()
             });
         let mut backups = None;
+        let mut unheld = Vec::new();
         for (pin, project_commits) in pinned_by {
             let at = ResolvedRevisionId::from(pin.clone());
             let unreached =
@@ -1016,7 +1017,7 @@ fn report_pins_held_by_no_branch(
                 None => backups
                     .insert(vcs.list_backups(&member.dir, crate::vcs::RemoteTracking::Counted)?),
             };
-            let mut listing: Vec<String> = project_commits
+            let listing: Vec<String> = project_commits
                 .iter()
                 .map(|commit| {
                     format!(
@@ -1031,26 +1032,38 @@ fn report_pins_held_by_no_branch(
                 .filter(|listed| listed.held.iter().any(|commit| commit.id == pin))
                 .map(|listed| listed.backup.name.to_string())
                 .collect();
-            if holding.is_empty() {
-                let history = match &mut history {
-                    Some(read) => read,
-                    None => history.insert(crate::lineage::PinHistory::of(
-                        pvcs,
-                        &pushed.project_dir,
-                        pushed.tip.id(),
-                    )?),
-                };
-                if !history
-                    .superseded(
-                        pvcs,
-                        &member.path,
-                        &std::collections::BTreeSet::from([pin.clone()]),
-                        &crate::lineage::MemberClone::probed(vcs, &member.dir),
-                    )?
-                    .is_empty()
-                {
-                    continue;
-                }
+            unheld.push((pin, listing, holding));
+        }
+        let lacking: BTreeSet<crate::vcs::CommitId> = unheld
+            .iter()
+            .filter(|(_, _, holding)| holding.is_empty())
+            .map(|(pin, ..)| pin.clone())
+            .collect();
+        let moved_off: BTreeSet<crate::vcs::CommitId> = if lacking.is_empty() {
+            BTreeSet::new()
+        } else {
+            let history = match &mut history {
+                Some(read) => read,
+                None => history.insert(crate::lineage::PinHistory::of(
+                    pvcs,
+                    &pushed.project_dir,
+                    pushed.tip.id(),
+                )?),
+            };
+            history
+                .superseded(
+                    pvcs,
+                    &member.path,
+                    &lacking,
+                    &crate::lineage::MemberClone::probed(vcs, &member.dir),
+                )?
+                .into_iter()
+                .map(|superseded| superseded.pin)
+                .collect()
+        };
+        for (pin, mut listing, holding) in unheld {
+            if holding.is_empty() && moved_off.contains(&pin) {
+                continue;
             }
             listing.push(match holding.as_slice() {
                 [] => "held by no backup".to_owned(),
