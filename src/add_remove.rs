@@ -185,7 +185,7 @@ pub(crate) fn settle_manifest(
     let manifest = edited.unwrap_or(&on_disk);
     let restore_point = RestorePoint::take(root, project, &[&on_disk, manifest])?;
     if let Some(edited) = edited {
-        edited.write(&manifest_path)?;
+        Manifest::edit_file(&manifest_path, |m| *m = edited.clone())?;
     }
 
     let missing = missing_active_members(root, manifest.iter_entries());

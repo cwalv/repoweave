@@ -57,16 +57,18 @@ pub(crate) fn committed_manifest(
     vcs: &dyn Vcs,
     project_dir: &Path,
 ) -> anyhow::Result<Option<Manifest>> {
-    let Ok(head) = vcs.head_revision(project_dir) else {
-        return Ok(None);
-    };
-    let Ok(text) = vcs.read_file_at_revision(project_dir, &head, Path::new(Manifest::FILE_NAME))
-    else {
+    let Some(text) = committed_text(vcs, project_dir) else {
         return Ok(None);
     };
     Manifest::from_toml_str(&text)
         .map(Some)
         .with_context(|| format!("the committed {} does not parse", Manifest::FILE_NAME))
+}
+
+fn committed_text(vcs: &dyn Vcs, project_dir: &Path) -> Option<String> {
+    let head = vcs.head_revision(project_dir).ok()?;
+    vcs.read_file_at_revision(project_dir, &head, Path::new(Manifest::FILE_NAME))
+        .ok()
 }
 
 fn committed_lock(vcs: &dyn Vcs, project_dir: &Path) -> Option<LockFile> {
@@ -96,12 +98,14 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         .with_context(|| format!("failed to load project '{}'", change.project))?
         .manifest;
 
-    let head_manifest = committed_manifest(vcs, dir)?;
-    let mut edited = head_manifest.clone().unwrap_or_else(|| working.clone());
-    (change.edit_manifest)(&mut edited);
-    let edited_text = toml::to_string(&edited).context("failed to serialize manifest")?;
-    let working_text = toml::to_string(&working).context("failed to serialize manifest")?;
-    let carries_only_this_change = edited_text == working_text;
+    let base_text = match committed_text(vcs, dir) {
+        Some(text) => text,
+        None => std::fs::read_to_string(dir.join(manifest_file))
+            .with_context(|| format!("failed to read {}", dir.join(manifest_file).display()))?,
+    };
+    let (edited_text, edited) = Manifest::edit_text(&base_text, |m| (change.edit_manifest)(m))
+        .with_context(|| format!("the committed {} does not parse", Manifest::FILE_NAME))?;
+    let carries_only_this_change = edited.declares_same(&working);
 
     let mut paths: Vec<String> = Vec::new();
     vcs.stage_content(dir, manifest_file, edited_text.as_bytes())

@@ -176,8 +176,7 @@ fn set_history_commits_only_its_own_change() {
 #[test]
 fn a_members_setting_overrides_the_top_level_one_and_unset_falls_back() {
     let w = two_members();
-    let as_read = |text: &str| toml::Value::try_from(parsed(text)).unwrap();
-    let original = as_read(&working(&w));
+    let original = committed(&project(&w));
     let start = commits(&project(&w));
 
     succeed(&["branch", "set-history", "linear"], &w.workspace);
@@ -224,11 +223,7 @@ fn a_members_setting_overrides_the_top_level_one_and_unset_falls_back() {
     );
     let head = committed(&project(&w));
     assert_eq!(effective(&head), (None, None, None), "{head}");
-    assert_eq!(
-        as_read(&head),
-        original,
-        "rwv.toml returns to its prior content"
-    );
+    assert_eq!(head, original, "rwv.toml returns to its prior bytes");
     assert_eq!(commits(&project(&w)), start + 4, "one commit per change");
 
     let out = succeed(&["branch", "set-history", "--unset"], &w.workspace);

@@ -43,6 +43,8 @@ enabled = true
 
 Repo paths contain `/`, so they are quoted table keys. A project with no repos yet is a bare `[repositories]`.
 
+A verb that changes `rwv.toml` (`rwv member add`, `rwv member remove`, the `rwv member set-*` verbs, `rwv branch set-history`) edits only the entries and keys it sets, adds or removes. Table order, comments, blank lines, key order inside the tables it does not touch, and line endings stay as you wrote them. A changed value keeps its trailing comment. A new member's table goes at its sorted place when the repository tables already stand in sorted order, and otherwise after the last of them; a new key in an existing table goes at its usual place when that table's keys stand in the usual order (`type`, `url`, `branch`, `role`, `recurse-submodules`, `history`), and otherwise at its end. An entry you wrote as an inline table or with dotted keys keeps that form.
+
 ### Moving from `rwv.yaml`
 
 Earlier versions read a YAML manifest at `projects/<name>/rwv.yaml`. A project directory still holding one is reported by `rwv doctor` as `legacy-manifest-format` and does not load; rewrite the file as `rwv.toml` in the shape above, then delete the old one.

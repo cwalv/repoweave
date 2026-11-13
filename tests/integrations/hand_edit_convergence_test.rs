@@ -362,11 +362,15 @@ fn re_running_add_new_with_the_same_address_repairs_the_surfacing() {
 }
 
 fn hand_remove(workspace: &Path, path: &str) {
-    let mut listed = repoweave::manifest::Manifest::from_path(&manifest(workspace)).unwrap();
-    listed
-        .remove_repo(&repoweave::manifest::RepoPath::new(path).unwrap())
-        .expect("fixture: the manifest lists the entry being hand-removed");
-    listed.write(&manifest(workspace)).unwrap();
+    let gone = repoweave::manifest::RepoPath::new(path).unwrap();
+    let listed = repoweave::manifest::Manifest::edit_file(&manifest(workspace), |m| {
+        m.remove_repo(&gone);
+    })
+    .unwrap();
+    assert!(
+        !listed.contains_repo(&gone),
+        "fixture: the manifest lists the entry being hand-removed"
+    );
 }
 
 #[test]

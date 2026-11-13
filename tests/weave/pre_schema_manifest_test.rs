@@ -10,7 +10,7 @@
 
 use assert_cmd::Command;
 use repoweave::manifest::{
-    rewrite_pre_schema_keys, Manifest, PreSchemaManifest, SubmoduleRecursion,
+    rewrite_pre_schema_keys, Manifest, PreSchemaManifest, RepoPath, SubmoduleRecursion,
 };
 use repoweave::refusal::kind_of;
 use std::path::{Path, PathBuf};
@@ -316,10 +316,7 @@ fn a_default_recursion_is_not_written_out() {
         .1;
     assert_eq!(server.recurse_submodules, SubmoduleRecursion::Skip);
 
-    let tmp = common::tempdir().unwrap();
-    let path = tmp.path().join("rwv.toml");
-    manifest.write(&path).unwrap();
-    let written = std::fs::read_to_string(&path).unwrap();
+    let (written, _) = Manifest::edit_text("[repositories]\n", |m| *m = manifest.clone()).unwrap();
     assert_eq!(
         written.matches("recurse-submodules").count(),
         1,
@@ -331,15 +328,17 @@ fn a_default_recursion_is_not_written_out() {
         "role = \"dependency\"\n",
         "role = \"dependency\"\nrecurse-submodules = true\n",
     );
-    let explicit = Manifest::from_toml_str(&spelled_default).unwrap();
-    explicit.write(&path).unwrap();
+    let server = RepoPath::new("github/acme/server").unwrap();
+    let (recursing, _) = Manifest::edit_text(&spelled_default, |m| {
+        let mut entry = m.get_entry(&server).unwrap().clone();
+        entry.recurse_submodules = SubmoduleRecursion::Recurse;
+        m.insert_repo(server.clone(), entry);
+    })
+    .unwrap();
     assert_eq!(
-        std::fs::read_to_string(&path)
-            .unwrap()
-            .matches("recurse-submodules")
-            .count(),
-        1,
-        "`recurse-submodules = true` reads back and is written out as the default: absent"
+        recursing,
+        spelled_default.replace("recurse-submodules = false\n", ""),
+        "a member set back to the default loses the key; one spelled out by hand keeps it"
     );
 
     let renamed = rewrite_pre_schema_keys(OLD_MANIFEST).unwrap().unwrap();

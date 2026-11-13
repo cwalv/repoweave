@@ -3604,7 +3604,7 @@ mod tests {
         let manifest_before = std::fs::read(dir.join(Manifest::FILE_NAME)).unwrap();
 
         let restore_point = RestorePoint::take(root, &project, &[&manifest, &edited]).unwrap();
-        edited.write(&dir.join(Manifest::FILE_NAME)).unwrap();
+        Manifest::edit_file(&dir.join(Manifest::FILE_NAME), |m| *m = edited.clone()).unwrap();
         std::fs::create_dir(dir.join("nested")).unwrap();
         std::fs::write(dir.join("nested/new.md"), "made by the failed run\n").unwrap();
         std::fs::write(dir.join(".claude"), "rewritten\n").unwrap();

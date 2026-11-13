@@ -23,8 +23,7 @@ pub(crate) struct WholeChanges {
 }
 
 fn other_tables(manifest: &Manifest) -> toml::Value {
-    let mut value =
-        toml::Value::try_from(manifest).unwrap_or(toml::Value::Table(Default::default()));
+    let mut value = toml::Value::Table(manifest.declared().unwrap_or_default());
     if let Some(table) = value.as_table_mut() {
         table.remove("repositories");
         table.remove("history");

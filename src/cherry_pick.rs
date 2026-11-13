@@ -1809,11 +1809,8 @@ fn commit_project(
     if ported.conflicted.is_empty() {
         conflicted.retain(|p| p != Manifest::FILE_NAME);
         let settled = with_tables(ours, &theirs, &ported.taken);
-        if toml::to_string(&settled).ok() == toml::to_string(ours).ok() {
-            crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
-        } else {
-            settled.write(&manifest_path)?;
-        }
+        let (settled_text, _) = Manifest::edit_text(&ours_text, |m| *m = settled)?;
+        crate::durable_file::replace(&manifest_path, settled_text.as_bytes())?;
     } else if conflicted.iter().any(|p| p == Manifest::FILE_NAME) {
         crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
     }
@@ -1879,10 +1876,13 @@ fn commit_project(
             .with_context(|| format!("{}: the resolved rwv.toml does not parse", label))?;
         resolved.history = ours.history;
         resolved.repositories = ours.repositories.clone();
-        if toml::to_string(&resolved).ok() == toml::to_string(ours).ok() {
+        if resolved.declares_same(ours) {
             crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
         } else {
-            resolved.write(&manifest_path)?;
+            Manifest::edit_file(&manifest_path, |m| {
+                m.history = ours.history;
+                m.repositories = ours.repositories.clone();
+            })?;
         }
         vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
     }

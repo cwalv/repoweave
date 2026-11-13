@@ -15,6 +15,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+mod edit;
+
 // ---------------------------------------------------------------------------
 // Newtypes — distinguish semantically different strings at the type level
 // ---------------------------------------------------------------------------
@@ -1659,7 +1661,7 @@ fn nearest_key<'a>(unknown: &str, candidates: &[&'a str]) -> Option<&'a str> {
 /// - [`Manifest::contains_repo`] — test whether a path is present.
 /// - [`Manifest::insert_repo`] / [`Manifest::remove_repo`] /
 ///   [`Manifest::retain_repos`] — mutate the repository set.
-/// - [`Manifest::write`] — serialize back to disk.
+/// - [`Manifest::edit_file`] — write a change back to disk.
 ///
 /// The `repositories` field is `pub(crate)`; external callers must use the
 /// accessor methods above.
@@ -1669,7 +1671,7 @@ fn nearest_key<'a>(unknown: &str, candidates: &[&'a str]) -> Option<&'a str> {
 /// operator believing a guarantee they do not have. The error names the
 /// offending key and its line; [`Manifest::from_toml_str`] appends the
 /// nearest accepted spelling so the operator can fix it immediately.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     /// The top-level `history`: the project branch's, and every member's
@@ -2092,15 +2094,53 @@ impl Manifest {
         }
     }
 
-    /// Serialize to TOML and write to `path`.
+    /// Makes `change` to the manifest `path` holds and writes it back as an
+    /// edit of only the entries and keys `change` set, added or removed;
+    /// returns the manifest the file now declares. The only way rwv writes
+    /// the file.
+    pub fn edit_file(path: &Path, change: impl FnOnce(&mut Manifest)) -> anyhow::Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let (edited, after) = Self::edit_text(&text, change).with_context(|| {
+            format!("failed to parse {} at {}", Self::FILE_NAME, path.display())
+        })?;
+        if edited != text {
+            crate::durable_file::replace(path, edited.as_bytes())
+                .with_context(|| format!("failed to write {}", path.display()))?;
+        }
+        Ok(after)
+    }
+
+    /// `text` with `change` made to the manifest it declares, as
+    /// [`Self::edit_file`] would write it, and that manifest.
     ///
-    /// The round-trip runs through serde, so any comment an operator wrote
-    /// in the file being overwritten is gone afterwards — including the
-    /// header [`Self::SKELETON`] starts a project with.
-    pub fn write(&self, path: &Path) -> anyhow::Result<()> {
-        let text = toml::to_string(self).context("failed to serialize manifest")?;
-        crate::durable_file::replace(path, text.as_bytes())
-            .with_context(|| format!("failed to write {}", path.display()))
+    /// A new table goes at its serializer place among its siblings when they
+    /// stand in serializer order, else after the last of them; a new key in
+    /// an existing table likewise. A changed value keeps its key and its
+    /// trailing comment.
+    pub fn edit_text(
+        text: &str,
+        change: impl FnOnce(&mut Manifest),
+    ) -> anyhow::Result<(String, Self)> {
+        let before = Self::from_toml_str(text)?;
+        let mut after = before.clone();
+        change(&mut after);
+        let edited = edit::edit(text, &before, &after)?;
+        Ok((edited, after))
+    }
+
+    /// What the manifest declares, as a TOML value.
+    pub(crate) fn declared(&self) -> anyhow::Result<toml::Table> {
+        edit::declared(self)
+    }
+
+    /// Whether `self` and `other` declare the same members, settings and
+    /// integrations.
+    pub fn declares_same(&self, other: &Manifest) -> bool {
+        matches!(
+            (edit::declared(self), edit::declared(other)),
+            (Ok(a), Ok(b)) if a == b
+        )
     }
 }
 
@@ -3068,7 +3108,7 @@ role = "owned"
     #[test]
     fn manifest_serde_round_trip() {
         let original: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
-        let text = toml::to_string(&original).unwrap();
+        let (text, _) = Manifest::edit_text("[repositories]\n", |m| *m = original.clone()).unwrap();
         let restored: Manifest = toml::from_str(&text).unwrap();
 
         assert_eq!(original.repositories.len(), restored.repositories.len());
@@ -3841,12 +3881,11 @@ role = "owned"
         let dir = crate::tempdir().unwrap();
         let path = dir.path().join(Manifest::FILE_NAME);
 
-        let first: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
-        first.write(&path).unwrap();
+        std::fs::write(&path, MINIMAL_MANIFEST).unwrap();
         let first_inode = std::fs::metadata(&path).unwrap().ino();
 
         let second: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
-        second.write(&path).unwrap();
+        Manifest::edit_file(&path, |m| *m = second).unwrap();
         assert_ne!(
             std::fs::metadata(&path).unwrap().ino(),
             first_inode,
@@ -3893,15 +3932,14 @@ role = "owned"
         let dir = crate::tempdir().unwrap();
         let path = dir.path().join(Manifest::FILE_NAME);
 
-        let original: Manifest = toml::from_str(MINIMAL_MANIFEST).unwrap();
-        original.write(&path).unwrap();
+        std::fs::write(&path, MINIMAL_MANIFEST).unwrap();
         let original_text = std::fs::read_to_string(&path).unwrap();
 
         let writable_perms = std::fs::metadata(dir.path()).unwrap().permissions();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
 
         let next: Manifest = toml::from_str(VALID_MANIFEST).unwrap();
-        let result = next.write(&path);
+        let result = Manifest::edit_file(&path, |m| *m = next);
 
         std::fs::set_permissions(dir.path(), writable_perms).unwrap();
 

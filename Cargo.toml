@@ -57,18 +57,16 @@ schemars = "0.8"
 regex = "1.12.3"
 globset = "0.4.18"
 dirs = "6.0.0"
-# Format-preserving TOML parser for the shared merge helper: preserves
-# comments, key order, and decorations, which is required for the
-# hybrid-merge contract on cargo/uv (Cargo.toml, pyproject.toml). serde + toml
-# round-trips would clobber user-authored profile blocks, lint policy, etc.
+# Format-preserving TOML parser: preserves comments, key order, and
+# decorations, which is required for the hybrid-merge contract on cargo/uv
+# (Cargo.toml, pyproject.toml) and for rwv's own edits of `rwv.toml`, which
+# change only the entries a verb sets. serde + toml round-trips would clobber
+# user-authored profile blocks, lint policy, comments and table order.
 toml_edit = "0.22"
-# Serde front-end for rwv's own manifest. Distinct from `toml_edit` above by
-# intent: that one preserves comments and key order because rwv merges into
-# files a user also edits; the manifest round-trip is destructive by design
-# (`Manifest::write` replaces the file), so the manifest wants a plain serde
-# codec and none of the decoration machinery. `toml` is a facade over the same
-# `toml_edit` version already resolved here, so this adds an API, not a second
-# TOML parser.
+# Serde front-end that reads rwv's own manifest into its typed form, and
+# renders the text of a new entry before `toml_edit` places it. `toml` is a
+# facade over the same `toml_edit` version already resolved here, so this adds
+# an API, not a second TOML parser.
 toml = "0.8"
 # For gita hardening: `csv` provides RFC-4180-compliant quoting so repo
 # paths containing commas, quotes, or newlines are emitted as valid CSV

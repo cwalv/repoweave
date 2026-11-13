@@ -249,7 +249,8 @@ fn lock_repo_paths_sorted() {
 #[test]
 fn manifest_round_trip() {
     let original: Manifest = toml::from_str(FULL_MANIFEST).unwrap();
-    let serialized = toml::to_string(&original).unwrap();
+    let (serialized, _) =
+        Manifest::edit_text("[repositories]\n", |m| *m = original.clone()).unwrap();
     let deserialized: Manifest = toml::from_str(&serialized).unwrap();
 
     assert_eq!(original.len(), deserialized.len());
