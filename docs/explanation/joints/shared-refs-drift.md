@@ -133,7 +133,10 @@ refreshes only what both answer:
   entry at every path the move changed and it did not edit; one whose index
   already holds HEAD's entry at such a path has taken the move, or part of
   it, in a way its reflog does not record (a hand repair, a lost entry), and
-  every difference there is an edit too.
+  every difference there is an edit too, except a path whose index entry is
+  the moved-from tip's and whose file is exactly HEAD's: that is what a
+  refresh stopped between its two writes leaves, and the next verb finishes
+  it.
 - **Does this path still hold what the moved-from tip held?** The
   classifier runs per path. A path the move changed whose index entry and
   file both still hold the moved-from tip's content is stale: both take
@@ -286,6 +289,15 @@ refresh names each file it replaced. What it replaces is the moved-from tip's
 content, which that tip holds, so nothing is lost that history does not hold.
 To keep such a return, commit it before rwv next reads the checkout. A path holding
 content other than the old tip's is an edit and is never replaced.
+
+The same refresh reads two staging-only changes after a hand refresh as drift
+too, since each leaves a path's index entry at the old tip beside HEAD's file:
+`git reset <old> -- <file>` of one file the move changed, and `git rm --cached`
+of one file the move added. rwv resets the entry, so the staged return is gone
+and the file the move added is tracked again; no file's bytes change, and the
+content the staging held is in history. To redo it, stage it again after the
+verb has run (`git reset <old> -- <file>`, `git rm --cached <file>`), or
+commit it first.
 
 A file the move changed that you edited too is neither. rwv does not
 refresh that checkout at all, because a partial refresh would erase what

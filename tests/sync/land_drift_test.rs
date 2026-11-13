@@ -3666,3 +3666,101 @@ fn an_edit_in_a_checkout_with_no_reflog_entry_is_held_with_the_stash_alone() {
     run_every_choice(&stderr, &f.ww);
     assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
 }
+
+// ---------------------------------------------------------------------------
+// A refresh stopped between its writes, and index-only returns after a hand
+// refresh
+// ---------------------------------------------------------------------------
+
+fn move_changing_two_and_adding_one(f: &Fixture) {
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("spare.txt"), "spare moved\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+}
+
+fn index_entry(repo: &Path, path: &str) -> String {
+    common::git_in(repo, &["ls-files", "-s", "--", path])
+}
+
+/// A landing killed between the refresh's two writes, then one moved file
+/// staged by hand: the files that are still unstaged are the refresh's to
+/// finish, with no commit offered that would record the move's reverse.
+#[test]
+fn a_hand_add_of_one_file_after_a_refresh_killed_between_its_writes_is_finished_by_the_next_verb() {
+    let f = fixture();
+    move_changing_two_and_adding_one(&f);
+    drop(held_landing(&f, "drift-write-index"));
+    common::git_in(&f.ww_lib, &["add", "notes.txt"]);
+    assert_eq!(
+        read(&f.ww_lib.join("spare.txt")).as_deref(),
+        Some("spare moved\n")
+    );
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("refreshed drift"), "{said}");
+    assert!(said.contains("spare.txt"), "{said}");
+    assert!(!said.contains("commit"), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+    assert_eq!(
+        read(&f.ww_lib.join("spare.txt")).as_deref(),
+        Some("spare moved\n")
+    );
+}
+
+/// After a refresh by hand, a staged-only return of one moved file
+/// (`git reset <old> -- <file>`) leaves its index entry at the old tip beside
+/// HEAD's file, the shape a stopped refresh leaves, so the next verb resets
+/// the entry. The file's bytes are untouched and the content the staging held
+/// is in history.
+#[test]
+fn a_staged_only_return_of_one_file_after_a_hand_refresh_has_its_entry_reset() {
+    let f = fixture();
+    move_changing_two_and_adding_one(&f);
+    common::git_in(&f.ww_lib, &["checkout", "HEAD", "--", "."]);
+    common::git_in(&f.ww_lib, &["reset", "-q", "HEAD~1", "--", "spare.txt"]);
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "MM spare.txt"
+    );
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("these index entries were reset"), "{said}");
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+    assert_eq!(
+        read(&f.ww_lib.join("spare.txt")).as_deref(),
+        Some("spare moved\n")
+    );
+}
+
+/// After a refresh by hand, `git rm --cached` of a file the move added
+/// leaves no index entry beside HEAD's file, which reads as a stopped refresh
+/// too: the next verb tracks the file again and leaves its bytes.
+#[test]
+fn an_untracked_added_file_after_a_hand_refresh_is_tracked_again() {
+    let f = fixture();
+    move_changing_two_and_adding_one(&f);
+    common::git_in(&f.ww_lib, &["checkout", "HEAD", "--", "."]);
+    common::git_in(&f.ww_lib, &["rm", "-q", "--cached", "new.txt"]);
+    assert_eq!(index_entry(&f.ww_lib, "new.txt"), "");
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("new.txt"), "{said}");
+    assert_ne!(index_entry(&f.ww_lib, "new.txt"), "", "{said}");
+    assert_eq!(read(&f.ww_lib.join("new.txt")).as_deref(), Some("new\n"));
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}

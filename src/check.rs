@@ -7371,11 +7371,13 @@ impl DriftReading {
 /// A path is drift only where both are shown: the branch moved under the
 /// checkout, and the path still holds what the moved-from tip held. Without
 /// that every difference is an edit, as it is in a checkout stopped in an
-/// operation, and in one holding no record of where it stood, and in one
-/// whose index already holds HEAD's entry for a path the move changed: a
+/// operation, and in one holding no record of where it stood. In a checkout
+/// whose index already holds HEAD's entry for a path the move changed, a
 /// checkout left behind holds the old tip at every such path it has not
 /// edited, so one that took part of the move has had it taken by something
-/// its history does not show.
+/// its history does not show: there every difference is an edit except a
+/// path whose index entry is the old tip's and whose file is HEAD's, which is
+/// all a refresh stopped between its two writes leaves.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
     // Refreshing an index entry ends a merge, cherry-pick or revert in
     // progress, so a checkout stopped in one has no drift to refresh.
@@ -7395,11 +7397,9 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
             repo: repo.to_path_buf(),
         });
     }
-    let left = left.filter(|_| {
-        !standings
-            .iter()
-            .any(|standing| standing.moved && standing.index == Holds::Head)
-    });
+    let partial_take = standings
+        .iter()
+        .any(|standing| standing.moved && standing.index == Holds::Head);
     let head = match left {
         Some(_) => Some(vcs.head_revision(repo)?.id().clone()),
         None => None,
@@ -7414,8 +7414,9 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
                 standing.file,
             ) {
                 (false, _, _) => PathDrift::Edited,
-                (true, Holds::LeftTip, Holds::LeftTip) => PathDrift::Stale,
                 (true, Holds::LeftTip, Holds::Head) => PathDrift::StaleIndexEntry,
+                (true, _, _) if partial_take => PathDrift::Edited,
+                (true, Holds::LeftTip, Holds::LeftTip) => PathDrift::Stale,
                 (true, _, _) => PathDrift::MovedAndEdited,
             };
             (standing, drift)
