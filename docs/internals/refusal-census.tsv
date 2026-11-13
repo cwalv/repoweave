@@ -103,7 +103,7 @@ src/cli/dispatch.rs	wrong-address-flag	-	4
 src/clone.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/clone.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/clone.rs	project-dir-occupied	-	1
-src/commit_guard.rs	edits commit mid-operation	-	1
+src/commit_guard.rs	edits commit mid-operation	tests/sync/land_drift_test.rs	1
 src/deletion.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/deletion.rs	name no-such-branch	-	1
 src/deletion.rs	protected declared	tests/sync/protection_test.rs	1
@@ -111,11 +111,11 @@ src/deletion.rs	protected declared mode	-	1
 src/deletion.rs	target dependents	-	1
 src/deletion.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/diagnosis.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
-src/diagnosis.rs	edits drift left in place	tests/sync/land_drift_test.rs	3
+src/diagnosis.rs	edits drift left in place	tests/sync/land_drift_test.rs	4
 src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	edits moved and edited	tests/sync/land_drift_test.rs	3
-src/diagnosis.rs	edits set back	tests/sync/land_drift_test.rs	1
-src/diagnosis.rs	edits unresolved	-	1
+src/diagnosis.rs	edits set back	tests/sync/land_drift_test.rs	2
+src/diagnosis.rs	edits unresolved	tests/sync/land_drift_test.rs	2
 src/diagnosis.rs	unparseable-project here	-	1
 src/durable_file.rs	filesystem-without-exclusive-publish	tests/weave/workweave_test.rs	1
 src/explain.rs	ambiguous-explain-token	-	1

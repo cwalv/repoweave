@@ -780,6 +780,7 @@ impl State {
                     Form::ReplaceThenMerge,
                     Form::CompareMarked,
                     Form::CompareSkipped,
+                    Form::ClearRefusalThenMerge,
                 ],
                 verb_offers: &[],
             },
@@ -4486,6 +4487,7 @@ pub fn moved_and_edited(repo: impl fmt::Display) -> Judging {
         ChoiceId::ReplaceThenMerge,
         ChoiceId::CompareMarked,
         ChoiceId::CompareSkipped,
+        ChoiceId::ClearRefusalThenMerge,
     ])
 }
 
@@ -4511,10 +4513,11 @@ pub fn held(
         Err(e) => {
             return judging
                 .subject(format!(
-                    "{}; the files the VCS does not compare could not be listed, so no                      backup is known to keep them: {e:#}",
+                    "{}; the files the VCS does not compare could not be listed, so no \
+                     backup is known to keep them: {e:#}",
                     reading.moved()
                 ))
-                .only_forms(&[])
+                .only_forms(&[Form::ClearRefusalThenMerge])
         }
     };
     if uncompared.is_empty() {
@@ -4522,6 +4525,7 @@ pub fn held(
             ChoiceId::ReplaceThenMerge,
             ChoiceId::CompareMarked,
             ChoiceId::CompareSkipped,
+            ChoiceId::ClearRefusalThenMerge,
         ]);
     }
     let mut forms = Vec::new();
@@ -4673,7 +4677,7 @@ pub fn set_back(
             .only_forms(&forms(&[Form::UnstageThenMerge]));
     }
     match carried {
-        Err(_) => return judging.only_forms(&forms(&[])),
+        Err(_) => return judging.only_forms(&forms(&[Form::ClearRefusalThenMerge])),
         Ok(uncompared) if !uncompared.is_empty() => {
             let mut held = Vec::new();
             if !uncompared.ignored.is_empty() {

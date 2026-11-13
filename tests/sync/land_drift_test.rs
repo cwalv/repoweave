@@ -3373,7 +3373,11 @@ fn a_failed_listing_of_uncompared_files_holds_the_merge_first_and_on_a_rerun() {
     let said = run_with_ignored_listing_failing(&f, &MERGE, &f.ww);
 
     assert!(said.contains("edits moved and edited"), "{said}");
-    assert!(said.contains("could not be listed"), "{said}");
+    assert!(said.contains("could not be listed, so no backup"), "{said}");
+    assert!(
+        said.contains("clear what the VCS says stopped it"),
+        "{said}"
+    );
     assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), head);
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
 
@@ -3384,7 +3388,11 @@ fn a_failed_listing_of_uncompared_files_holds_the_merge_first_and_on_a_rerun() {
     let said = run_with_ignored_listing_failing(&f, &MERGE, &f.ww);
 
     assert!(said.contains("edits set back"), "{said}");
-    assert!(said.contains("could not be listed"), "{said}");
+    assert!(said.contains("could not be listed, so no backup"), "{said}");
+    assert!(
+        said.contains("clear what the VCS says stopped it"),
+        "{said}"
+    );
     assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), back);
     assert!(!on_branch(&f.ww_lib), "{said}");
     let out = common::cli::run(&MERGE, &f.ww);
