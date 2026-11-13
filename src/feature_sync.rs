@@ -1671,6 +1671,9 @@ fn act(
     for landed in &carries.landed {
         say(output, &landed.line());
     }
+    for line in &carries.held {
+        say(output, line);
+    }
     for carried in carries.carried {
         say(
             output,

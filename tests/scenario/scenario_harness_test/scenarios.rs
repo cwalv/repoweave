@@ -20600,6 +20600,66 @@ fn main_moves_app(mark: &'static str) -> Vec<Step> {
     ]
 }
 
+/// `w2`, a dependent of `w1` checked out nowhere, sets `app`'s
+/// `recurse-submodules`; `main` sets `app`'s role and adds `docs`. `w1`'s
+/// sync replays `w2` onto it with no conflict, the setting under `docs`:
+/// `w2` is not moved, a line says so and how to carry it by hand, and those
+/// printed commands stop at `w2`'s own replayed tip.
+pub fn a_carried_dependent_whose_rwv_toml_differs_is_not_moved() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::rwv(
+            &ww("w1"),
+            &["member", "set-recurse-submodules", APP, "false"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("'w2' is not carried along"))
+            .claim(Claim::OutputContains(
+                "local/remotes/app recurse-submodules: absent in the text merge",
+            ))
+            .claim(Claim::OutputLacks("carried 'w2' along")),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Code(1)),
+        Step::rwv_printed_exactly(&ww("w1"), "rwv workweave create w2 --branch w2")
+            .expect(Exit::Succeeds),
+        Step::rwv(&ww("w2"), &["sync"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains(
+                "local/remotes/app recurse-submodules: absent in the text merge",
+            )),
+        Step::rwv(&ww("w2"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&ww("w2"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "role = \"fork\"\nrecurse-submodules = false",
+            )),
+    ];
+    scenario(
+        "a carried dependent whose replayed rwv.toml differs is not moved",
+        steps,
+    )
+}
+
 /// `stack-carried`: `w1`'s `sync` under a moved `linear` `main` rebases
 /// `w1` and carries `w2`, checked out nowhere, along: its branches hold
 /// `main`'s new work and its own, a `rebased` backup keeps its old tips

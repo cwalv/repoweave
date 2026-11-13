@@ -452,6 +452,9 @@ pub(crate) struct Carried {
 pub(crate) struct Carries {
     pub(crate) carried: Vec<Carried>,
     pub(crate) landed: Vec<Landed>,
+    /// A line for each dependent left where it was because its replayed
+    /// `rwv.toml` differs from the merge of the values.
+    pub(crate) held: Vec<String>,
 }
 
 /// The op a carry runs under.
@@ -712,9 +715,11 @@ impl Carrier<'_> {
                 self.workspace,
             )?;
         }
+        let mut held = Vec::new();
         for carry in &stack.carried {
             let mut tips = carry.tips.clone();
             tips.sort_by_key(|(repo, _)| *repo == RepoKey::Project);
+            let mut differs = None;
             for (repo, from) in &tips {
                 let moved = record.carries.iter().find_map(|c| {
                     let to = c.composed.as_ref()?;
@@ -781,16 +786,81 @@ impl Carrier<'_> {
                         tip
                     }
                 };
+                if *repo == RepoKey::Project {
+                    differs = self.replayed_tip_differs((&base, from, &onto), &tip)?;
+                }
                 new_tips.insert(
                     (carry.dependent.as_str().to_owned(), repo.clone()),
                     (from.clone(), tip),
                 );
             }
+            if let Some(entry) = differs {
+                held.push(self.hold(carry, &entry)?);
+                new_tips.retain(|(dependent, _), _| dependent != carry.dependent.as_str());
+            }
         }
         Ok(Carries {
             carried: self.move_carried(verb, &stack.carried)?,
             landed: stack.landed,
+            held,
         })
+    }
+
+    /// The first entry where the carried project tip `tip`, `from` replayed
+    /// above `base` onto `onto`, holds an `rwv.toml` that differs from the
+    /// merge of the values; `None` where it does not.
+    fn replayed_tip_differs(
+        &self,
+        (base, from, onto): (&CommitId, &CommitId, &CommitId),
+        tip: &CommitId,
+    ) -> anyhow::Result<Option<String>> {
+        let dir = self.repos.dir(&RepoKey::Project);
+        let vcs = self.repos.vcs(&RepoKey::Project);
+        let base = match base == onto {
+            true => vcs.merge_bases(&dir, from, onto)?.into_iter().next(),
+            false => Some(base.clone()),
+        };
+        let sides =
+            crate::manifest_conflict::sides_at(vcs.as_ref(), &dir, base.as_ref(), onto, from);
+        let Ok(text) = vcs.read_file_at_revision(
+            &dir,
+            &rev(tip),
+            Path::new(crate::manifest::Manifest::FILE_NAME),
+        ) else {
+            return Ok(None);
+        };
+        Ok(crate::manifest_conflict::check_tip(&sides, &text)?
+            .and_then(|differs| differs.lines.get(1).map(|line| line.trim().to_owned())))
+    }
+
+    /// Leave `carry`'s dependent where it is: none of its branches moves.
+    /// The line says why and how to carry it by hand.
+    fn hold(&self, carry: &Carry, entry: &str) -> anyhow::Result<String> {
+        for carrying in take_in(self.workspace)?
+            .carries
+            .into_iter()
+            .filter(|c| c.branch == carry.dependent.as_str())
+        {
+            crate::op_state::journal_carrying(
+                self.workspace,
+                Carrying {
+                    composed: None,
+                    ..carrying
+                },
+            )?;
+        }
+        let dependent = carry.dependent.as_str();
+        let name = dependent
+            .strip_prefix(&format!("{}--", self.repos.project))
+            .unwrap_or(dependent);
+        Ok(format!(
+            "{}: '{dependent}' is not carried along: replayed onto '{}', its rwv.toml differs \
+             from the merge of the values ({entry}); to carry it yourself, open it in a \
+             workweave and run `rwv sync` there:\n  rwv workweave create {name} --branch \
+             {dependent}",
+            self.repos.label(&RepoKey::Project),
+            carry.parent
+        ))
     }
 
     /// Where a dependent's project branch is replayed when its target's is

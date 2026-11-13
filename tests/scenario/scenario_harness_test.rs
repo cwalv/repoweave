@@ -1031,6 +1031,7 @@ every_scenario!(
         scenarios::TipVerb::Land,
         scenarios::TipSettle::ThenMemberConflict
     ),
+    a_carried_dependent_whose_rwv_toml_differs_is_not_moved,
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -7399,6 +7400,12 @@ fn text_merge_setting_moved_keeps_a_comment() {
         scenarios::TextMerge::SettingMovedKeepsAComment,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn a_carried_dependent_whose_rwv_toml_differs_is_not_moved() {
+    runner::run(scenarios::a_carried_dependent_whose_rwv_toml_differs_is_not_moved())
+        .assert_fully_decided_green();
 }
 
 #[test]

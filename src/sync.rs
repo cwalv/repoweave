@@ -6543,6 +6543,9 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         for landed in &carries.landed {
             outln!("  {}", landed.line());
         }
+        for line in &carries.held {
+            outln!("  {line}");
+        }
     }
     for carried in carries.carried {
         report_landing(
