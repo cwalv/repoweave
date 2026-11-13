@@ -18714,7 +18714,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputLacks("--repo")),
                 Step::rwv(&ww("w"), &["branch", "set-history", target])
                     .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("no entry left in conflict")),
+                    .claim(Claim::OutputContains("no entry left in conflict"))
+                    .claim(Claim::OutputLine("then run `rwv sync --continue`")),
                 continues_after(history),
                 head_manifest().claim(Claim::OutputContains(match history {
                     H::Merge => "history = \"merge\"",
@@ -18764,7 +18765,11 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 stop(H::Merge)
                     .claim(Claim::OutputContains("NOTES.txt, rwv.toml"))
                     .claim(Claim::OutputContains("--repo local/remotes/lib")),
-                settles(&["branch", "set-history", "merge", "--repo", LIB], None),
+                settles(&["branch", "set-history", "merge", "--repo", LIB], None).claim(
+                    Claim::OutputContains(
+                        "then run `rwv sync --continue` once NOTES.txt is staged",
+                    ),
+                ),
                 in_flight(H::Merge),
                 parked()
                     .claim(Claim::OutputContains("NOTES.txt"))
@@ -18822,7 +18827,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]).expect(Exit::Succeeds),
                 parked()
                     .claim(Claim::OutputContains("does not read as a manifest"))
-                    .claim(Claim::OutputContains("add -- rwv.toml")),
+                    .claim(Claim::OutputContains("add -- rwv.toml"))
+                    .claim(Claim::OutputLacks("(yours:")),
                 in_flight(H::Merge),
                 Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
                 head_manifest().claim(Claim::OutputLacks("history = \"merge\"")),
@@ -18860,7 +18866,9 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 set_history(&ww("w"), "linear", LIB),
                 Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "main"])
                     .expect(Exit::Code(1)),
-                settles(&["branch", "set-history", "merge", "--repo", LIB], None),
+                settles(&["branch", "set-history", "merge", "--repo", LIB], None)
+                    .claim(Claim::OutputContains("no rwv operation is stopped in"))
+                    .claim(Claim::OutputLacks("--continue")),
                 Step::git(&ww("w"), Repo::Proj, &["commit", "--no-edit"]).expect(Exit::Succeeds),
                 head_manifest().claim(Claim::OutputContains("history = \"merge\"")),
                 Step::git(
@@ -19460,12 +19468,6 @@ pub fn a_project_stop_refuses_every_commit(at: AtAProjectStop) -> Scenario {
     scenario(name, steps)
 }
 
-/// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
-/// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
-/// conflict, printing each field's setter with each side's value. Each
-/// setter settles its field on both sides and commits nothing; `--continue`
-/// refuses while a field is left, naming it, and completes with no hand edit
-/// once none is.
 fn project_merge_in_flight() -> Step {
     Step::git(
         &ww("w"),
@@ -19475,6 +19477,12 @@ fn project_merge_in_flight() -> Step {
     .expect(Exit::Succeeds)
 }
 
+/// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
+/// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
+/// conflict, printing each field's setter with each side's value. Each
+/// setter settles its field on both sides and commits nothing; `--continue`
+/// refuses while a field is left, naming it, and completes with no hand edit
+/// once none is.
 pub fn dc04_conflict_setter() -> Scenario {
     scenario(
         "dc04 a conflicted entry is settled by its setters",

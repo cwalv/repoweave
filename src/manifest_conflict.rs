@@ -36,8 +36,6 @@ pub(crate) enum Reading {
     Unparsed(String),
 }
 
-/// What a setter writes: one field of one member, the removal of a member,
-/// or a `history`, a member's or the top-level one.
 #[derive(Debug, Clone)]
 pub(crate) enum Setting {
     Branch(RepoPath, TrackingRef),
@@ -139,22 +137,27 @@ fn read(sides: &ConflictSides) -> Result<Sides, (&'static str, String)> {
     })
 }
 
-fn table(manifest: &Manifest) -> toml::Table {
-    toml::Table::try_from(manifest).unwrap_or_default()
+fn table(manifest: &Manifest) -> anyhow::Result<toml::Table> {
+    toml::Table::try_from(manifest).context("failed to read a side of rwv.toml as a table")
 }
 
 impl Sides {
-    fn tables(&self) -> [toml::Table; 3] {
-        [
-            self.base.as_ref().map(table).unwrap_or_default(),
-            table(&self.ours),
-            table(&self.theirs),
-        ]
+    /// A side with no file reads as no table.
+    fn tables(&self) -> anyhow::Result<[toml::Table; 3]> {
+        Ok([
+            self.base
+                .as_ref()
+                .map(table)
+                .transpose()?
+                .unwrap_or_default(),
+            table(&self.ours)?,
+            table(&self.theirs)?,
+        ])
     }
 
-    fn conflicts(&self) -> Vec<EntryConflict> {
-        let [base, ours, theirs] = self.tables();
-        entries(&base, &ours, &theirs)
+    fn conflicts(&self) -> anyhow::Result<Vec<EntryConflict>> {
+        let [base, ours, theirs] = self.tables()?;
+        Ok(entries(&base, &ours, &theirs)
             .into_iter()
             .filter_map(|path| {
                 let (b, o, t) = (at(&base, &path), at(&ours, &path), at(&theirs, &path));
@@ -164,12 +167,12 @@ impl Sides {
                     theirs: t.cloned(),
                 })
             })
-            .collect()
+            .collect())
     }
 
     /// Ours, with each entry only theirs changed taken from theirs.
     fn merged(&self) -> anyhow::Result<Manifest> {
-        let [base, ours, theirs] = self.tables();
+        let [base, ours, theirs] = self.tables()?;
         let mut merged = ours.clone();
         for path in entries(&base, &ours, &theirs) {
             if at(&ours, &path) == at(&base, &path) {
@@ -270,7 +273,7 @@ pub(crate) fn reading(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<Readin
         return Ok(None);
     };
     Ok(Some(match read(&sides) {
-        Ok(sides) => Reading::Entries(sides.conflicts()),
+        Ok(sides) => Reading::Entries(sides.conflicts()?),
         Err((side, why)) => Reading::Unreadable { side, why },
     }))
 }
@@ -279,8 +282,9 @@ pub(crate) fn reading(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<Readin
 /// sides. With no entry left in conflict, the merged manifest is written
 /// and staged; otherwise the rewritten sides are recorded and the VCS
 /// rewrites the working file from them. `None`, with nothing written, where
-/// `rwv.toml` is not conflicted there, a side does not read as a manifest,
-/// or the entry is not among those in conflict.
+/// `rwv.toml` is not conflicted there, or the entry is not among those in
+/// conflict, or a side does not read as a manifest: no entry of such a file
+/// can be judged, so the setter goes on as it would anywhere else.
 pub(crate) fn settle(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -289,15 +293,16 @@ pub(crate) fn settle(
     let Some(recorded) = vcs.conflict_sides(dir, Manifest::FILE_NAME)? else {
         return Ok(None);
     };
-    let Ok(mut sides) = read(&recorded) else {
-        return Ok(None);
+    let mut sides = match read(&recorded) {
+        Ok(sides) => sides,
+        Err(_unreadable) => return Ok(None),
     };
-    if !sides.conflicts().iter().any(|c| setting.touches(c)) {
+    if !sides.conflicts()?.iter().any(|c| setting.touches(c)) {
         return Ok(None);
     }
     setting.apply(&mut sides.ours);
     setting.apply(&mut sides.theirs);
-    let left = sides.conflicts();
+    let left = sides.conflicts()?;
     let kept = if left.is_empty() {
         write_merged(vcs, dir, &sides)?
     } else {
@@ -370,10 +375,7 @@ pub(crate) fn settle_at_stop(
     if !vcs.is_repo(&dir) {
         return Ok(false);
     }
-    let recorded = crate::op_state::read_owner_header(ctx.active_path())
-        .ok()
-        .flatten()
-        .map(|header| header.verb);
+    let recorded = crate::op_state::read_owner_header(ctx.active_path())?.map(|header| header.verb);
     if recorded == Some(crate::op_state::OpVerb::CherryPick) {
         return Ok(false);
     }
@@ -392,7 +394,8 @@ pub(crate) fn settle_at_stop(
     {
         eprintln!("{line}");
     }
-    if settled.left.is_empty() {
+    let all_settled = settled.left.is_empty();
+    if all_settled {
         eprintln!("rwv.toml has no entry left in conflict, and is staged");
     } else {
         eprintln!("rwv.toml still has entries in conflict:");
@@ -406,8 +409,21 @@ pub(crate) fn settle_at_stop(
             eprintln!("{line}");
         }
     }
-    if let Some(resume) = resume {
-        eprintln!("then run `{resume}` once nothing is left in conflict");
+    let unmerged = vcs.unmerged_paths(&dir)?;
+    match (resume, all_settled, unmerged.is_empty()) {
+        (Some(resume), true, true) => eprintln!("then run `{resume}`"),
+        (Some(resume), true, false) => {
+            eprintln!("then run `{resume}` once {} is staged", unmerged.join(", "))
+        }
+        (Some(resume), false, _) => {
+            eprintln!("then run `{resume}` once nothing is left in conflict")
+        }
+        (None, true, _) => eprintln!(
+            "no rwv operation is stopped in {}: conclude the one in progress there as you \
+             started it",
+            dir.display()
+        ),
+        (None, false, _) => {}
     }
     Ok(true)
 }
@@ -438,19 +454,22 @@ pub(crate) fn continue_at_stop(
     let resume = crate::op_state::resume_command_at(header.verb, ctx.active_path());
     let reading = match vcs.conflict_sides(&dir, Manifest::FILE_NAME)? {
         Some(recorded) => match read(&recorded) {
-            Ok(sides) if header.verb == typed && sides.conflicts().is_empty() => {
-                let kept = write_merged(vcs, &dir, &sides)?;
-                eprintln!(
-                    "{}: no rwv.toml entry was in conflict, only lines were; wrote and \
-                     staged the merge of both sides",
-                    crate::op_state::resume_command(typed)
-                );
-                for line in kept.iter().flat_map(|kept| kept_lines(vcs, &dir, kept)) {
-                    eprintln!("{line}");
+            Ok(sides) => {
+                let conflicts = sides.conflicts()?;
+                if header.verb == typed && conflicts.is_empty() {
+                    let kept = write_merged(vcs, &dir, &sides)?;
+                    eprintln!(
+                        "{}: no rwv.toml entry was in conflict, only lines were; wrote and \
+                         staged the merge of both sides",
+                        crate::op_state::resume_command(typed)
+                    );
+                    for line in kept.iter().flat_map(|kept| kept_lines(vcs, &dir, kept)) {
+                        eprintln!("{line}");
+                    }
+                    return Ok(());
                 }
-                return Ok(());
+                Reading::Entries(conflicts)
             }
-            Ok(sides) => Reading::Entries(sides.conflicts()),
             Err((side, why)) => Reading::Unreadable { side, why },
         },
         None => match std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) {
@@ -546,7 +565,12 @@ pub(crate) fn reading_lines(
             lines
         }
     };
-    if lines.iter().any(|line| line.contains(" yours")) {
+    let names_a_side = match reading {
+        Reading::Entries(conflicts) => !conflicts.is_empty(),
+        Reading::Unreadable { side, .. } => *side != "base",
+        Reading::Unparsed(_) => false,
+    };
+    if names_a_side {
         lines.push(format!(
             "(yours: the side of the branch checked out in {}; incoming: the side it takes in)",
             dir.display()
@@ -730,6 +754,7 @@ mod tests {
     fn paths(sides: &Sides) -> Vec<String> {
         sides
             .conflicts()
+            .unwrap()
             .iter()
             .map(|c| entry_name(&c.path))
             .collect()
