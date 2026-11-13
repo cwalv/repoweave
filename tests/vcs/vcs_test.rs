@@ -2183,3 +2183,68 @@ fn a_replayed_commit_copied_under_commit_gpgsign_is_signed() {
     let raw = common::git_in(p, &["cat-file", "commit", copy.as_str()]);
     assert!(raw.contains("\ngpgsig "), "{raw}");
 }
+
+#[test]
+fn a_replayed_commit_copied_under_a_non_utf8_commit_encoding_keeps_its_message_and_encoding() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    common::git_in(p, &["config", "i18n.commitEncoding", "ISO-8859-1"]);
+    fs::write(p.join("more.txt"), "more").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "caf\u{e9}"]);
+    let replayed = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+
+    let copy = git_vcs()
+        .copy_replayed(
+            p,
+            &repoweave::vcs::CommitId::parse(&replayed).unwrap(),
+            &repoweave::vcs::CommitId::parse(&base).unwrap(),
+            &[repoweave::vcs::FileChange {
+                path: "rwv.lock".to_owned(),
+                content: Some(b"{}".to_vec()),
+            }],
+        )
+        .unwrap();
+
+    let raw_of = |commit: &str| {
+        let out = common::git()
+            .args(["cat-file", "commit", commit])
+            .current_dir(p)
+            .output()
+            .unwrap();
+        out.stdout
+    };
+    let (was, now) = (raw_of(&replayed), raw_of(copy.as_str()));
+    let message = |raw: &[u8]| raw.rsplit(|b| *b == b'\n').nth(1).map(<[u8]>::to_vec);
+    assert_eq!(message(&was), message(&now));
+    assert!(String::from_utf8_lossy(&now).contains("\nencoding ISO-8859-1\n"));
+}
+
+#[test]
+fn a_utf8_replayed_commit_copied_under_a_non_utf8_commit_encoding_stays_utf8() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    fs::write(p.join("more.txt"), "more").unwrap();
+    common::git_in(p, &["add", "."]);
+    common::git_in(p, &["commit", "-m", "caf\u{e9}"]);
+    let replayed = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    common::git_in(p, &["config", "i18n.commitEncoding", "ISO-8859-1"]);
+
+    let copy = git_vcs()
+        .copy_replayed(
+            p,
+            &repoweave::vcs::CommitId::parse(&replayed).unwrap(),
+            &repoweave::vcs::CommitId::parse(&base).unwrap(),
+            &[repoweave::vcs::FileChange {
+                path: "rwv.lock".to_owned(),
+                content: Some(b"{}".to_vec()),
+            }],
+        )
+        .unwrap();
+
+    let raw = common::git_in(p, &["cat-file", "commit", copy.as_str()]);
+    assert!(!raw.contains("encoding "), "{raw}");
+    assert!(raw.ends_with("caf\u{e9}"), "{raw}");
+}

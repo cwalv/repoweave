@@ -305,8 +305,18 @@ impl GitVcs {
         parent: &CommitId,
         changes: &[FileChange],
     ) -> Result<CommitId, VcsError> {
-        let raw = Self::run(["cat-file", "commit", commit.as_str()], repo)?;
-        let (headers, message) = raw.split_once("\n\n").unwrap_or((raw.as_str(), ""));
+        let raw = Self::run_bytes_in(&["cat-file", "commit", commit.as_str()], repo, &[], &[])?;
+        let split = raw
+            .windows(2)
+            .position(|pair| pair == b"\n\n")
+            .map_or((raw.len(), raw.len()), |at| (at, at + 2));
+        let headers = String::from_utf8_lossy(&raw[..split.0]).into_owned();
+        let message = &raw[split.1..];
+        let encoding = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("encoding "))
+            .unwrap_or("UTF-8")
+            .to_owned();
         let author = headers
             .lines()
             .find_map(|line| line.strip_prefix("author "))
@@ -347,6 +357,7 @@ impl GitVcs {
             parent,
             changes,
             message,
+            &encoding,
             &[
                 ("GIT_AUTHOR_NAME", name.as_str()),
                 ("GIT_AUTHOR_EMAIL", email.as_str()),
@@ -364,7 +375,8 @@ impl GitVcs {
         commit: &CommitId,
         parent: &CommitId,
         changes: &[FileChange],
-        message: &str,
+        message: &[u8],
+        encoding: &str,
         author: &[(&str, &str)],
     ) -> Result<CommitId, VcsError> {
         let in_index = |args: &[&str], input: &[u8], extra: &[(&str, &str)]| {
@@ -395,7 +407,10 @@ impl GitVcs {
             in_index(&["update-index", "-z", "--index-info"], &info, &[])?;
         }
         let tree = in_index(&["write-tree"], &[], &[])?;
+        let setting = format!("i18n.commitEncoding={encoding}");
         let mut args = vec![
+            "-c",
+            setting.as_str(),
             "commit-tree",
             tree.as_str(),
             "-p",
@@ -410,7 +425,7 @@ impl GitVcs {
         if !Self::has_identity(repo)? {
             env.extend_from_slice(&super::records::FALLBACK_IDENTITY);
         }
-        let written = Self::run_bytes_in(&args, repo, message.as_bytes(), &env)?;
+        let written = Self::run_bytes_in(&args, repo, message, &env)?;
         commit_id(&String::from_utf8_lossy(&written), &args, repo)
     }
 
