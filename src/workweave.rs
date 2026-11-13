@@ -2934,10 +2934,15 @@ pub fn judge_dirty_checkouts(
             judging = judging.subject("not a manifest member");
         }
         if let Some(name) = deleting {
-            judging = judging
-                .by_verb("workweave delete")
-                .bind("<ww>", name)
-                .elsewhere(workweave_dir);
+            judging = judging.by_verb("workweave delete").bind("<ww>", name);
+            if matches!(
+                judging.judged_state(),
+                crate::diagnosis::State::EditsMovedAndEdited
+                    | crate::diagnosis::State::EditsSetBack
+                    | crate::diagnosis::State::EditsDriftLeftInPlace
+            ) {
+                judging = judging.elsewhere(workweave_dir);
+            }
         }
         report.add(judging.judge(vcs));
     }

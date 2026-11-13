@@ -3531,6 +3531,11 @@ pub struct Judging {
 }
 
 impl Judging {
+    /// The state being judged.
+    pub fn judged_state(&self) -> State {
+        self.state
+    }
+
     /// What the state names: the operation in progress, the name taken.
     pub fn subject(mut self, subject: impl fmt::Display) -> Self {
         self.subject = Some(subject.to_string());
