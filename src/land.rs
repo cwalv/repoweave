@@ -1295,20 +1295,24 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         .into_iter()
         .next();
     let ours = match vcs.staged_file(&dir, Manifest::FILE_NAME)? {
-        Some(staged) => Manifest::from_toml_str(&staged).map_err(|error| {
-            let produced = if vcs.merge_in_flight(&dir).ok().flatten().is_some() {
-                crate::project_merge::Produced::Merge
-            } else {
-                crate::project_merge::Produced::Replay
-            };
-            crate::project_merge::unparseable_result(
-                vcs,
-                &label,
-                &dir,
-                (&crate::op_state::resume_command(resumed.verb), produced),
-                &error,
-            )
-        })?,
+        Some(staged) => match Manifest::from_toml_str(&staged) {
+            Ok(ours) => ours,
+            Err(_) if vcs.rebase_in_flight(&dir)?.is_some() => return Ok(Rejudged::Replaying),
+            Err(error) => {
+                let produced = if vcs.merge_in_flight(&dir)?.is_some() {
+                    crate::project_merge::Produced::Merge
+                } else {
+                    crate::project_merge::Produced::Replay
+                };
+                return Err(crate::project_merge::unparseable_result(
+                    vcs,
+                    &label,
+                    &dir,
+                    (&crate::op_state::resume_command(resumed.verb), produced),
+                    &error,
+                ));
+            }
+        },
         None => Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
     };
     let sides = Sides {
@@ -1354,6 +1358,9 @@ pub enum Rejudged {
     /// The project repo still holds an unresolved conflict, which the resume
     /// itself stops on.
     Unresolved,
+    /// The replay is still in flight and the `rwv.toml` it has replayed so
+    /// far does not parse: its result is judged once it finishes.
+    Replaying,
     /// Every change is consented to: those that land.
     Lands(Vec<crate::op_state::LandingReport>),
     /// A change no consent covers, judged.

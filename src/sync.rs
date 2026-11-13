@@ -4887,7 +4887,7 @@ fn rejudge_entries(
         verb: record.verb,
     };
     match crate::land::rejudge_resolved(&resumed, owner_workspace_dir)? {
-        crate::land::Rejudged::Unresolved => return Ok(()),
+        crate::land::Rejudged::Unresolved | crate::land::Rejudged::Replaying => return Ok(()),
         crate::land::Rejudged::Refused(mut report) => {
             report.note(parked_note(record.verb));
             report.into_result()?;

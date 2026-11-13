@@ -21514,3 +21514,116 @@ pub fn an_unparseable_intermediate_manifest_is_replayed() -> Scenario {
     ]);
     scenario("an unparseable intermediate rwv.toml is replayed", steps)
 }
+
+/// What a replay stopped on a conflict holds in `rwv.toml` when the
+/// operator resolves the conflict and continues.
+#[derive(Clone, Copy)]
+pub enum ReplayedManifest {
+    /// The branch's own commits break `rwv.toml` and fix it two commits
+    /// later, and the replay stopped on another file's conflict between
+    /// them.
+    BrokenByTheBranch,
+    /// `rwv.toml` itself conflicted, resolved to a file that does not parse.
+    BadlyResolved,
+}
+
+/// A replay stopped on a conflict, resolved and continued while the
+/// replayed `rwv.toml` does not parse: the replay goes on and only its
+/// result is read. A branch that fixes the file itself lands; a bad
+/// resolution of the file stops once the replay has finished, and a staged
+/// fix then finishes the operation.
+pub fn a_replay_in_flight_is_not_judged_on_its_rwv_toml(
+    taking_in: TakingIn,
+    replayed: ReplayedManifest,
+) -> Scenario {
+    let broken = "enabled = false\n[[[\n";
+    let mut steps = vec![Step::commit(&a(), Repo::Proj, "notes"), create("w")];
+    let conflicted = match replayed {
+        ReplayedManifest::BrokenByTheBranch => {
+            steps.extend([
+                Step::hand_edit(&a(), Repo::Proj, "notes.txt", "notes\n", "notes on a\n"),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "a notes"]),
+                Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", UNDER_INTEGRATIONS, broken),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "break rwv.toml"]),
+                Step::hand_edit(&ww("w"), Repo::Proj, "notes.txt", "notes\n", "notes in w\n"),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "w notes"]),
+                Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", broken, UNDER_INTEGRATIONS),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "fix rwv.toml"]),
+            ]);
+            "notes.txt"
+        }
+        ReplayedManifest::BadlyResolved => {
+            steps.extend(adds_a_copies(&a()));
+            steps.extend([
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    UNDER_INTEGRATIONS,
+                    "enabled = false\n\n[workweave]\ncopy = [\"w.txt\"]\n",
+                ),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "copy w.txt"]),
+            ]);
+            "rwv.toml"
+        }
+    };
+    steps.extend([
+        Step::rwv(&ww("w"), &taking_in.args())
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("conflict"))
+            .claim(Claim::OutputContains(taking_in.resume())),
+        Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", conflicted]),
+    ]);
+    if let ReplayedManifest::BadlyResolved = replayed {
+        steps.push(Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            "enabled = false\n",
+            broken,
+        ));
+    }
+    steps.push(Step::git(&ww("w"), Repo::Proj, &["add", conflicted]));
+    let resume = Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"]);
+    match replayed {
+        ReplayedManifest::BrokenByTheBranch => {
+            steps.push(resume.expect(Exit::Succeeds).may_strand(&[Repo::Proj]))
+        }
+        ReplayedManifest::BadlyResolved => steps.extend([
+            resume
+                .expect(Exit::refuses(
+                    Repo::Proj,
+                    State::UnparseableProjectMidOperation,
+                ))
+                .claim(Claim::OutputContains("the replay finished")),
+            Step::git(&ww("w"), Repo::Proj, &["status"])
+                .claim(Claim::OutputLacks("rebase in progress")),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                broken,
+                "enabled = false\n",
+            ),
+            Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj]),
+        ]),
+    }
+    steps.push(
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputLacks("[[["))
+            .claim(Claim::OutputContains(match replayed {
+                ReplayedManifest::BrokenByTheBranch => "enabled = false",
+                ReplayedManifest::BadlyResolved => "w.txt",
+            })),
+    );
+    if taking_in.lands() {
+        steps.push(
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputLacks("[[[")),
+        );
+    }
+    scenario("a replay in flight is not judged on its rwv.toml", steps)
+}

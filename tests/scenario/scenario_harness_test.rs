@@ -813,6 +813,10 @@ every_scenario!(
     abort_restores_members_past_an_unparseable_manifest(scenarios::TargetMembers::Removes),
     abort_ignores_a_half_finished_manifest_fix,
     an_unparseable_intermediate_manifest_is_replayed,
+    a_replay_in_flight_is_not_judged_on_its_rwv_toml(
+        scenarios::TakingIn::LandLinear,
+        scenarios::ReplayedManifest::BrokenByTheBranch
+    ),
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
@@ -6488,6 +6492,22 @@ fn abort_restores_members_past_an_unparseable_manifest() {
 fn abort_ignores_a_half_finished_manifest_fix() {
     runner::run(scenarios::abort_ignores_a_half_finished_manifest_fix())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn a_replay_in_flight_is_not_judged_on_its_rwv_toml() {
+    use scenarios::{ReplayedManifest, TakingIn};
+    for taking_in in [TakingIn::SyncLinear, TakingIn::LandLinear] {
+        for replayed in [
+            ReplayedManifest::BrokenByTheBranch,
+            ReplayedManifest::BadlyResolved,
+        ] {
+            runner::run(scenarios::a_replay_in_flight_is_not_judged_on_its_rwv_toml(
+                taking_in, replayed,
+            ))
+            .assert_fully_decided_green();
+        }
+    }
 }
 
 #[test]
