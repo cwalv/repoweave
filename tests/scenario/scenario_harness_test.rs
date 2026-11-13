@@ -1285,6 +1285,7 @@ every_scenario!(
     moved_and_edited_moved_again_before_the_write,
     moved_and_edited_unresolved_then_moved_again,
     moved_and_edited_in_the_target,
+    moved_and_edited_flag_in_another_workspace,
     moved_and_edited_judged_by(scenarios::HeldVerb::Lock),
     moved_and_edited_judged_by(scenarios::HeldVerb::LockCommit),
     moved_and_edited_judged_by(scenarios::HeldVerb::UpdateRemote),
@@ -5664,6 +5665,12 @@ fn a_conflict_left_by_a_merge_is_judged_unresolved_first_even_once_the_branch_mo
 #[test]
 fn a_branch_moved_again_before_the_merge_writes_leaves_everything_and_the_next_run_merges() {
     runner::run(scenarios::moved_and_edited_moved_again_before_the_write())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn the_edited_drift_flags_leave_another_workspaces_checkout_and_print_its_line() {
+    runner::run(scenarios::moved_and_edited_flag_in_another_workspace())
         .assert_fully_decided_green();
 }
 

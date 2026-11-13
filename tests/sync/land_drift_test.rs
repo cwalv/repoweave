@@ -1820,3 +1820,357 @@ fn doctor_fix_names_a_declined_write_and_running_it_again_holds_the_checkout() {
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
     assert_eq!(read(&f.ww_lib.join("new.txt")), None, "{said}");
 }
+
+/// `rwv <args>` in `dir`, held at `point`.
+fn held_at(f: &Fixture, dir: &Path, args: &[&str], point: &str) -> common::pause::Paused {
+    let mut cmd = common::rwv_std();
+    cmd.args(args).current_dir(dir);
+    common::pause::Paused::spawn(cmd, point, &f.scratch.join(format!("pause-{point}")))
+        .unwrap_or_else(|e| panic!("rwv {args:?} reaches {point}: {e}"))
+}
+
+/// Runs the printed choice line holding `holding`, as printed: a `git -C`
+/// line through git, an `rwv` line through the binary under test.
+fn run_printed(said: &str, holding: &str, dir: &Path) -> std::process::Output {
+    let line = said
+        .lines()
+        .map(str::trim)
+        .find(|l| (l.starts_with("git -C ") || l.starts_with("rwv ")) && l.contains(holding))
+        .unwrap_or_else(|| panic!("no printed line holds `{holding}`:\n{said}"));
+    let words: Vec<&str> = line.split_whitespace().collect();
+    match words[0] {
+        "rwv" => common::cli::run(&words[1..], dir),
+        _ => std::process::Command::new(words[0])
+            .args(&words[1..])
+            .output()
+            .unwrap(),
+    }
+}
+
+const MERGE: [&str; 3] = ["doctor", "--fix", "--merge-edited-drift"];
+
+/// The seat's `notes.txt` edited while the move changed it and turned
+/// `spare.txt` into a directory, the merge then killed once the checkout is
+/// set back.
+fn set_back_by_a_killed_merge(f: &Fixture) {
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::remove_file(elsewhere.join("spare.txt")).unwrap();
+        std::fs::create_dir_all(elsewhere.join("spare.txt")).unwrap();
+        std::fs::write(elsewhere.join("spare.txt/x"), "x\n").unwrap();
+    });
+    drop(held_at(f, &f.ww, &MERGE, "drift-merge-set-back"));
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "M notes.txt",
+        "set back, only the edit differs from HEAD"
+    );
+}
+
+/// A merge killed once set back, where the move swapped a file for a
+/// directory: every verb names it `set back` with no commit, and the printed
+/// merge finishes it, the directory in place and the edit kept.
+#[test]
+fn a_merge_killed_where_the_move_swaps_a_file_for_a_directory_is_finished_by_the_flag() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    for verb in [&["land"][..], &["lock"], &["doctor", "--fix"]] {
+        let out = common::cli::run(verb, &f.ww);
+        let stderr = common::cli::refused(&out, State::EditsSetBack);
+        assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(
+            stderr.contains("rwv doctor --fix --merge-edited-drift"),
+            "{verb:?}:\n{stderr}"
+        );
+    }
+    let out = common::cli::run(&["land"], &f.ww);
+    let out = run_printed(
+        &String::from_utf8_lossy(&out.stderr),
+        "merge-edited-drift",
+        &f.ww,
+    );
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert!(f.ww_lib.join("spare.txt/x").is_file(), "{said}");
+    let notes = read(&f.ww_lib.join("notes.txt")).unwrap();
+    assert!(notes.contains("mine") && notes.contains("three"), "{notes}");
+}
+
+/// Work saved in a set-back checkout before the merge is run again is in
+/// the backup that run takes and in the result: nothing is put back over it.
+#[test]
+fn work_saved_after_a_killed_merge_is_kept_by_the_next_run() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    std::fs::write(
+        f.ww_lib.join("notes.txt"),
+        "mine, and an hour of new work\n",
+    )
+    .unwrap();
+    std::fs::write(f.ww_lib.join("README.md"), "new work beside it\n").unwrap();
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("kept as backup"), "{said}");
+    assert!(
+        read(&f.ww_lib.join("notes.txt"))
+            .unwrap()
+            .contains("an hour of new work"),
+        "{said}"
+    );
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("new work beside it\n"),
+        "{said}"
+    );
+    let backup = common::git_in(
+        &f.ww_lib,
+        &[
+            "for-each-ref",
+            "--sort=-creatordate",
+            "--count=1",
+            "--format=%(objectname)",
+            "refs/rwv/",
+        ],
+    );
+    assert!(
+        common::git_in(&f.ww_lib, &["show", &format!("{backup}:notes.txt")])
+            .contains("an hour of new work"),
+        "the run's backup holds the work: {backup}\n{said}"
+    );
+}
+
+/// With the reflog entry that marks the checkout set back gone, the checkout
+/// reads as detached with edits: the printed stash keeps the edits alone
+/// against the tip the files hold, and `rwv update` returns the checkout to
+/// its branch, after which the stash merges onto the moved tip.
+#[test]
+fn a_set_back_checkout_whose_reflog_is_gone_is_exited_by_its_printed_choices() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    common::git_in(&f.ww_lib, &["reflog", "expire", "--expire=now", "--all"]);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(stderr.contains("alignment detached"), "{stderr}");
+    let out = run_printed(&stderr, "stash push", &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        !common::git_in(&f.ww_lib, &["stash", "show", "-p"]).contains("three"),
+        "the stash holds the edit and not the move's reverse"
+    );
+    let out = run_printed(&stderr, "rwv update", &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["symbolic-ref", "--short", "HEAD"]),
+        "ww/project"
+    );
+    assert!(f.ww_lib.join("spare.txt/x").is_file());
+    assert!(common::git_in(&f.ww_lib, &["stash", "show", "-p"]).contains("+mine"));
+}
+
+/// A set-back checkout whose index a killed git left locked: every verb
+/// names the lock and offers only its removal then the merge; the flag run
+/// over the lock prints git's own text, and once it is removed finishes.
+#[test]
+fn a_set_back_checkout_with_a_left_index_lock_names_it_and_offers_no_choice_that_fails_on_it() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    let lock = PathBuf::from(common::git_in(
+        &f.ww_lib,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index.lock",
+        ],
+    ));
+    std::fs::write(&lock, "").unwrap();
+
+    let out = common::cli::run(&["land"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsSetBack);
+    assert!(stderr.contains(&lock.display().to_string()), "{stderr}");
+    assert!(stderr.contains("remove the index lock"), "{stderr}");
+    assert!(!stderr.contains("set-aside-edited-drift"), "{stderr}");
+    let out = common::cli::run(&MERGE, &f.ww);
+    let stderr = common::cli::refused(&out, State::EditsSetBack);
+    assert!(stderr.contains("index.lock': File exists"), "{stderr}");
+    std::fs::remove_file(&lock).unwrap();
+    let out = common::cli::run(&MERGE, &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert!(f.ww_lib.join("spare.txt/x").is_file(), "{said}");
+}
+
+/// Something untracked where the move adds a file or a directory holds the
+/// checkout with the move-aside choice alone, and no verb records around it;
+/// once moved aside, the merge brings the move's files in.
+#[test]
+fn untracked_content_where_the_move_adds_a_path_holds_the_checkout_until_moved_aside() {
+    let f = fixture();
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("todo"), "theirs\n").unwrap();
+        std::fs::create_dir_all(elsewhere.join("cfg")).unwrap();
+        std::fs::write(elsewhere.join("cfg/a.txt"), "theirs\n").unwrap();
+    });
+    std::fs::create_dir_all(f.ww_lib.join("todo")).unwrap();
+    std::fs::write(f.ww_lib.join("todo/mine.txt"), "my notes\n").unwrap();
+    std::fs::write(f.ww_lib.join("cfg"), "my cfg\n").unwrap();
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert!(!stderr.contains("commit"), "{stderr}");
+    assert!(stderr.contains("move out of the way"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+    std::fs::rename(f.ww_lib.join("todo"), f.scratch.join("todo")).unwrap();
+    std::fs::rename(f.ww_lib.join("cfg"), f.scratch.join("cfg")).unwrap();
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(said.contains("refreshed drift"), "{said}");
+    assert_eq!(read(&f.ww_lib.join("todo")).as_deref(), Some("theirs\n"));
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+}
+
+/// A both-file below a link: the first refusal offers the move-aside alone,
+/// and nothing is written through the link.
+#[cfg(unix)]
+#[test]
+fn a_file_moved_and_edited_below_a_link_is_offered_the_move_aside_first() {
+    let f = fixture();
+    let outside = f.scratch.join("outside");
+    std::fs::create_dir_all(f.ww_lib.join("d")).unwrap();
+    commit_file(&f.ww_lib, "d/f.txt", "one\ntwo\nthree\n", "d");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("d/f.txt"), "one\ntwo\nTHREE\n").unwrap();
+    });
+    std::fs::rename(f.ww_lib.join("d"), &outside).unwrap();
+    std::os::unix::fs::symlink(&outside, f.ww_lib.join("d")).unwrap();
+    std::fs::write(outside.join("f.txt"), "mine\ntwo\nthree\n").unwrap();
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+    let choices = choice_lines(&stderr);
+    assert!(choices.iter().all(|l| !l.contains("set-aside")), "{stderr}");
+    assert!(stderr.contains("move out of the way"), "{stderr}");
+    let out = common::cli::run(&MERGE, &f.ww);
+    common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert_eq!(
+        read(&outside.join("f.txt")).as_deref(),
+        Some("mine\ntwo\nthree\n")
+    );
+}
+
+/// A link both moved and edited stays a link under the set-aside: the
+/// moved tip's link stands, and the stash merges the operator's back.
+#[cfg(unix)]
+#[test]
+fn a_link_moved_and_edited_stays_a_link_when_set_aside() {
+    let f = fixture();
+    std::os::unix::fs::symlink("a", f.ww_lib.join("link")).unwrap();
+    common::git_in(&f.ww_lib, &["add", "link"]);
+    common::git_in(&f.ww_lib, &["commit", "-q", "-m", "link"]);
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::remove_file(elsewhere.join("link")).unwrap();
+        std::os::unix::fs::symlink("b", elsewhere.join("link")).unwrap();
+    });
+    std::fs::remove_file(f.ww_lib.join("link")).unwrap();
+    std::os::unix::fs::symlink("c", f.ww_lib.join("link")).unwrap();
+
+    let out = common::cli::run(&["doctor", "--fix", "--set-aside-edited-drift"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("set aside as"), "{said}");
+    assert_eq!(
+        std::fs::read_link(f.ww_lib.join("link")).unwrap(),
+        PathBuf::from("b"),
+        "{said}"
+    );
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+    assert!(
+        common::git_in(&f.ww_lib, &["stash", "show", "-p"]).contains("+c"),
+        "{said}"
+    );
+}
+
+/// A sparse checkout whose move changes a path outside the sparse set:
+/// the refresh updates that entry and writes no file, and no verb is left
+/// with drift it cannot refresh.
+#[test]
+fn a_move_outside_the_sparse_set_is_refreshed() {
+    let f = fixture();
+    std::fs::create_dir_all(f.ww_lib.join("out")).unwrap();
+    commit_file(&f.ww_lib, "out/b.txt", "o\n", "out");
+    common::git_in(
+        &f.ww_lib,
+        &["sparse-checkout", "set", "--no-cone", "/*", "!/out/"],
+    );
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("out/b.txt"), "o2\n").unwrap();
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+    });
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+    assert!(!f.ww_lib.join("out/b.txt").exists(), "{said}");
+    assert_eq!(common::git_in(&f.ww_lib, &["show", ":out/b.txt"]), "o2");
+}
+
+/// A landing refused before it knows its target reads drift without
+/// refreshing it: pure drift gets no `edits` line, and an edit beside it is
+/// listed with the refresh as its one choice, never a commit.
+#[test]
+fn a_landing_refused_before_its_target_lists_no_drift_as_edits() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+
+    let out = common::cli::run(&["land", "--target", "nosuch"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(!out.status.success(), "{said}");
+    assert!(!said.contains(": edits "), "{said}");
+    assert!(!said.contains("commit your edits"), "{said}");
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
+
+    std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
+    let out = common::cli::run(&["land", "--target", "nosuch"], &f.ww);
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert_eq!(
+        listing_under(&stderr, "edits drift left in place"),
+        vec!["README.md".to_owned()],
+        "{stderr}"
+    );
+    assert!(!stderr.contains("commit your edits"), "{stderr}");
+    let out = run_printed(&stderr, "rwv doctor --fix", &f.ww);
+    assert!(
+        common::cli::describe(&out).contains("refreshed drift"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    let out = common::cli::run(&["land", "--target", "nosuch"], &f.ww);
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert_eq!(
+        listing_under(&stderr, "edits dirty"),
+        vec!["README.md".to_owned()],
+        "{stderr}"
+    );
+}

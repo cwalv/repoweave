@@ -8780,6 +8780,70 @@ pub fn moved_and_edited_second_reading() -> Scenario {
     )
 }
 
+/// The two flags act only on checkouts of the workspace the command runs
+/// in: run in the primary, a seat's held checkout is refused with its `rwv
+/// -C <seat>` line and nothing of it is written; that line, run as printed,
+/// merges it.
+pub fn moved_and_edited_flag_in_another_workspace() -> Scenario {
+    let me = ww("me");
+    let mut steps = vec![
+        create("me"),
+        Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "proj--me",
+            &[
+                ("edited.txt", "one\ntwo\nthree\nfour\nfive\n"),
+                ("stale.txt", "s\n"),
+            ],
+        ),
+        Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+        Step::hand_commit(
+            &a(),
+            Repo::Lib,
+            "proj--me",
+            &[
+                ("edited.txt", "one\ntwo\nthree\nfour\nFIVE\n"),
+                ("stale.txt", "s2\n"),
+            ],
+        ),
+        Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&me, Repo::Lib, "edited.txt", "one", "work in progress"),
+    ];
+    for flag in ["--merge-edited-drift", "--set-aside-edited-drift"] {
+        steps.push(
+            Step::rwv(&a(), &["doctor", "--fix", flag])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains("rwv -C "))
+                .claim(Claim::OutputLacks("kept as backup")),
+        );
+        steps.push(Step::git(
+            &me,
+            Repo::Lib,
+            &["grep", "-q", "work in progress", "--", "edited.txt"],
+        ));
+    }
+    steps.push(
+        Step::rwv_printed_holding(&a(), "rwv -C ", "doctor --fix --merge-edited-drift")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("were merged onto")),
+    );
+    steps.push(Step::git(
+        &me,
+        Repo::Lib,
+        &["grep", "-q", "FIVE", "--", "edited.txt"],
+    ));
+    steps.push(Step::git(
+        &me,
+        Repo::Lib,
+        &["grep", "-q", "work in progress", "--", "edited.txt"],
+    ));
+    scenario(
+        "moved and edited, the flags run in another workspace",
+        steps,
+    )
+}
+
 const LIB: &str = "local/remotes/lib";
 const APP: &str = "local/remotes/app";
 const DOCS: &str = "local/remotes/docs";
