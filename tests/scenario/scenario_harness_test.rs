@@ -2416,37 +2416,56 @@ fn first_parent_check_catches_a_merge_with_an_upstream_that_brought_nothing() {
 }
 
 /// `w`, a target of `x`, moved onto a merge of itself into `main`, the branch
-/// it lands into, `main`'s tip as first parent: a landing of `w` composed and
-/// not yet advanced.
+/// it lands into, `main`'s tip as first parent, with no landing standing: the
+/// merge a sync writes the wrong way round, taking the target's tip first.
 #[test]
-fn first_parent_check_spares_a_target_composed_onto_the_branch_it_lands_into() {
+fn first_parent_check_catches_a_target_merged_into_the_branch_it_lands_into_with_no_landing() {
     let git = |args: &[&str]| Step::git(&a(), Repo::Proj, args);
-    let report = bad_steps(
-        "w, a target, moved onto its merge into main",
-        vec![
-            Step::hand_commit(
-                &a(),
-                Repo::Proj,
-                sandbox::RECORDS_BRANCH,
-                &[
-                    ("w", FEATURE_ONTO_MAIN),
-                    (
-                        "x",
-                        "mode = \"feature\"\ntarget = \"w\"\nas = \"declared\"\n",
-                    ),
-                ],
-            ),
-            git(&["switch", "-c", "w"]),
-            Step::commit(&a(), Repo::Proj, "w-1"),
-            git(&["switch", "main"]),
-            Step::commit(&a(), Repo::Proj, "main-1"),
-            git(&["switch", "--detach", "main"]),
-            git(&["merge", "--no-ff", "--no-edit", "w"]),
-            git(&["branch", "-f", "w", "HEAD"]),
-            git(&["switch", "main"]),
-        ],
+    let sandbox = Sandbox::new(Seed::default());
+    let report = runner::run_in(
+        &sandbox,
+        Scenario {
+            name: "w, a target, moved onto its merge into main",
+            seed: Seed::default(),
+            steps: vec![
+                Step::hand_commit(
+                    &a(),
+                    Repo::Proj,
+                    sandbox::RECORDS_BRANCH,
+                    &[
+                        ("w", FEATURE_ONTO_MAIN),
+                        (
+                            "x",
+                            "mode = \"feature\"\ntarget = \"w\"\nas = \"declared\"\n",
+                        ),
+                    ],
+                ),
+                git(&["switch", "-c", "w"]),
+                Step::commit(&a(), Repo::Proj, "w-1"),
+                git(&["switch", "main"]),
+                Step::commit(&a(), Repo::Proj, "main-1"),
+                git(&["switch", "--detach", "main"]),
+                git(&["merge", "--no-ff", "--no-edit", "w"]),
+                git(&["branch", "-f", "w", "HEAD"]),
+                git(&["switch", "main"]),
+            ],
+        },
     );
-    report.assert_green();
+    let merge = tip(&sandbox, &sandbox.canonical(Machine::A, Repo::Proj), "w");
+    assert_eq!(
+        report.violations,
+        vec![(
+            "git -C proj branch -f w HEAD".to_owned(),
+            Violation::FirstParentsBroken {
+                repo: Repo::Proj,
+                store: Store::Clone(Machine::A),
+                branch: "w".to_owned(),
+                from: report.marks["w-1"].clone(),
+                to: merge,
+            }
+        )],
+        "{report}"
+    );
 }
 
 #[test]

@@ -42,9 +42,10 @@
 //!   contain (a merge that brought nothing in is no merge of the upstream).
 //!   A target that is itself a feature and lands, then follows the branch it
 //!   landed into, takes that branch's chain: its new tip is the tip, in the
-//!   same store, of a branch it lands into. While that landing is stopped,
+//!   same store, of a branch it lands into. While a landing's record stands,
 //!   its new tip is the landing's merge onto such a branch: that branch's tip
-//!   is its first parent.
+//!   is its first parent. With no landing standing, a merge of a branch into
+//!   its target that way round breaks the chain.
 //! - **replay record left**: a record of what a replay made, kept in a
 //!   checkout's git dir, in a place that holds no operation's record or
 //!   lease, so nothing will read it again.
@@ -363,6 +364,7 @@ pub struct Snapshot {
     pub default_branch: BTreeMap<Repo, String>,
     /// Each replay record kept in a checkout of a place no operation holds.
     replay_records_left: BTreeSet<(Place, Repo, String)>,
+    landing_stands: bool,
 }
 
 impl Snapshot {
@@ -504,6 +506,7 @@ pub fn snapshot(sandbox: &Sandbox) -> Snapshot {
     }
 
     snap.replay_records_left = replay_records_left(sandbox);
+    snap.landing_stands = a_landing_stands(sandbox);
     for place in sandbox.live_places() {
         for project in [Repo::Proj, Repo::Proj2] {
             let checkout = sandbox.checkout(&place, project);
@@ -758,6 +761,15 @@ fn git_dir_of(checkout: &Path) -> Option<PathBuf> {
         named
     } else {
         checkout.join(named)
+    })
+}
+
+fn a_landing_stands(sandbox: &Sandbox) -> bool {
+    sandbox.live_places().iter().any(|place| {
+        std::fs::read_to_string(sandbox.place_root(place).join(".rwv-op"))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .is_some_and(|record| record["verb"] == "land")
     })
 }
 
@@ -1063,7 +1075,8 @@ pub fn first_parents_broken(
             })
             .collect();
         let followed_its_landing = receiving_tips.contains(&to);
-        let composed_onto_its_landing = receiving_tips.contains(&first_parent.trim());
+        let composed_onto_its_landing = (before.landing_stands || after.landing_stands)
+            && receiving_tips.contains(&first_parent.trim());
         if !on_first_parents
             && !merged_with_its_upstream
             && !followed_its_landing
