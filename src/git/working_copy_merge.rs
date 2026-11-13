@@ -772,19 +772,23 @@ fn write_file(
     ));
     let written = (|| {
         std::fs::write(&beside, bytes)?;
-        let mut permissions = match &standing {
+        let permissions = match &standing {
             Some(meta) => meta.permissions(),
             None => std::fs::metadata(&beside)?.permissions(),
         };
         #[cfg(unix)]
-        if let Some(executable) = executable {
+        let permissions = {
             use std::os::unix::fs::PermissionsExt;
-            let mode = permissions.mode();
-            permissions.set_mode(match executable {
-                true => mode | ((mode & 0o444) >> 2),
-                false => mode & !0o111,
-            });
-        }
+            let mut permissions = permissions;
+            if let Some(executable) = executable {
+                let mode = permissions.mode();
+                permissions.set_mode(match executable {
+                    true => mode | ((mode & 0o444) >> 2),
+                    false => mode & !0o111,
+                });
+            }
+            permissions
+        };
         #[cfg(not(unix))]
         let _ = executable;
         std::fs::set_permissions(&beside, permissions)?;
@@ -1342,6 +1346,7 @@ mod tests {
 
     struct Moved {
         _tmp: tempfile::TempDir,
+        #[cfg(unix)]
         outside: PathBuf,
         repo: PathBuf,
         base: CommitId,
@@ -1409,6 +1414,7 @@ mod tests {
             run(&repo, &["update-ref", "refs/heads/main", moved.as_str()]);
             Self {
                 _tmp: tmp,
+                #[cfg(unix)]
                 outside,
                 repo,
                 base,
