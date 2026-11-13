@@ -1800,20 +1800,20 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
     let dir = &ctx.cwd_project_dir;
     let repo = crate::workspace::project_rel_path(&ctx.cwd_project_name);
     if vcs.merge_in_flight(dir)?.is_some() {
-        if let Some(Err(error)) = vcs
-            .staged_file(dir, Manifest::FILE_NAME)?
-            .map(|text| Manifest::from_toml_str(&text))
-        {
-            return Err(crate::project_merge::unparseable_result(
-                vcs,
-                &repo,
-                dir,
-                (
-                    &op_state::resume_command(ctx.verb),
-                    crate::project_merge::Produced::Merge,
-                ),
-                &error,
-            ));
+        if let Some(staged) = vcs.staged_file(dir, Manifest::FILE_NAME)? {
+            let resume = op_state::resume_command(ctx.verb);
+            if let Err(error) = Manifest::from_toml_str(&staged) {
+                return Err(crate::project_merge::unparseable_result(
+                    vcs,
+                    &repo,
+                    dir,
+                    (&resume, crate::project_merge::Produced::Merge),
+                    &error,
+                ));
+            }
+            crate::project_merge::refuse_unparseable_working_manifest(
+                vcs, &repo, dir, &resume, &staged,
+            )?;
         }
     } else {
         crate::project_merge::settle_replayed_manifest(

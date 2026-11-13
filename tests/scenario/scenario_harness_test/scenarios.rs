@@ -21226,6 +21226,10 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
                 taking_in.says(),
             ));
             steps.push(Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds));
+            steps.extend(working_file_breaks_a_staged_fix(
+                &ww("w"),
+                taking_in.args()[0],
+            ));
             let finished = Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
                 .expect(Exit::Succeeds)
                 .may_strand(if taking_in.linear() {
@@ -21288,6 +21292,29 @@ pub fn unparseable_merged_manifest(taking_in: TakingIn, left_by: LeftBy) -> Scen
         "an unparseable merged rwv.toml is left by its printed choices",
         steps,
     )
+}
+
+/// At a stop on an unparseable `rwv.toml` with a fix that parses staged, the
+/// working file edited again so that it does not parse: `verb`'s
+/// `--continue` refuses in
+/// the same state, saying the working file differs from what is staged,
+/// before anything is committed; with the edit undone the stop is as it was.
+fn working_file_breaks_a_staged_fix(at: &Place, verb: &'static str) -> Vec<Step> {
+    let broken = "enabled = false\n[[[\n";
+    vec![
+        Step::hand_edit(at, Repo::Proj, "rwv.toml", UNDER_INTEGRATIONS, broken),
+        Step::rwv(at, &[verb, "--continue"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains(
+                "the working rwv.toml differs from the staged one",
+            ))
+            .claim(Claim::OutputContains("[[["))
+            .claim(Claim::LocalStateUnchanged(at.clone())),
+        Step::hand_edit(at, Repo::Proj, "rwv.toml", broken, UNDER_INTEGRATIONS),
+    ]
 }
 
 /// The printed `rwv abort`, run at `at`, putting back the members in `moved`
@@ -21355,29 +21382,34 @@ pub fn unparseable_merged_manifest_pulled(left_by: LeftBy) -> Scenario {
         says,
     ));
     match left_by {
-        LeftBy::StagedFix => steps.extend([
-            stops_unparseable(Step::rwv_printed(&b(), "rwv pull --continue"), says),
-            Step::hand_edit(&b(), Repo::Proj, "rwv.toml", W_COPIES, ""),
-            stops_unparseable(Step::rwv_printed(&b(), "rwv pull --continue"), says),
-            Step::rwv_printed(&b(), "git -C ").expect(Exit::Succeeds),
-            Step::rwv(&b(), &["pull", "--continue"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::Contains {
-                    at: b(),
-                    repo: Repo::Proj,
-                    rev: "HEAD",
-                    mark: "a-proj",
-                })
-                .claim(Claim::Contains {
-                    at: b(),
-                    repo: Repo::Proj,
-                    rev: "HEAD",
-                    mark: "w-proj",
-                }),
-            Step::git(&b(), Repo::Proj, &["show", "HEAD:rwv.toml"])
-                .claim(Claim::OutputContains(A_COPIES))
-                .claim(Claim::OutputLacks("w.txt")),
-        ]),
+        LeftBy::StagedFix => {
+            steps.extend([
+                stops_unparseable(Step::rwv_printed(&b(), "rwv pull --continue"), says),
+                Step::hand_edit(&b(), Repo::Proj, "rwv.toml", W_COPIES, ""),
+                stops_unparseable(Step::rwv_printed(&b(), "rwv pull --continue"), says),
+                Step::rwv_printed(&b(), "git -C ").expect(Exit::Succeeds),
+            ]);
+            steps.extend(working_file_breaks_a_staged_fix(&b(), "pull"));
+            steps.extend([
+                Step::rwv(&b(), &["pull", "--continue"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::Contains {
+                        at: b(),
+                        repo: Repo::Proj,
+                        rev: "HEAD",
+                        mark: "a-proj",
+                    })
+                    .claim(Claim::Contains {
+                        at: b(),
+                        repo: Repo::Proj,
+                        rev: "HEAD",
+                        mark: "w-proj",
+                    }),
+                Step::git(&b(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .claim(Claim::OutputContains(A_COPIES))
+                    .claim(Claim::OutputLacks("w.txt")),
+            ]);
+        }
         LeftBy::Abort | LeftBy::AbortInTheTarget => {
             steps.extend(aborted_to_the_workweaves_own(&b(), &[]))
         }

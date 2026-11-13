@@ -1168,7 +1168,9 @@ impl State {
                         staged in the working tree; continuing commits the staged file in the \
                         merge. Under linear history the replay finished and the replayed tip \
                         holds the file; continuing makes the staged file part of that \
-                        commit, which the replay wrote and nothing has published",
+                        commit, which the replay wrote and nothing has published. A staged \
+                        file that parses under a working file that differs and does not parse \
+                        stops here too, before anything is committed",
                 refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
                              first read what the merge or replay produced, and their \
                              `--continue` while the staged `rwv.toml` does not parse; `rwv \

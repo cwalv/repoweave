@@ -595,6 +595,9 @@ impl ProjectMerge<'_> {
                 ));
             }
         };
+        if let Merged::Index = merged {
+            refuse_unparseable_working_manifest(vcs, &repo, &dir, &self.resume, &text)?;
+        }
 
         let reach = MemberReach {
             root: self.ctx.active_path(),
@@ -944,6 +947,8 @@ fn read_manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Mani
 pub(crate) enum Produced {
     Merge,
     Replay,
+    /// An edit of the working file over a staged one that parses.
+    WorkingEdit,
 }
 
 impl Produced {
@@ -956,6 +961,10 @@ impl Produced {
             Self::Replay => {
                 "the replay finished and the replayed tip's rwv.toml does not parse; a staged \
                  rwv.toml that parses becomes part of that commit"
+            }
+            Self::WorkingEdit => {
+                "the staged rwv.toml parses, but the working rwv.toml differs from the staged \
+                 one and does not parse; nothing is committed while it does not"
             }
         }
     }
@@ -983,6 +992,34 @@ pub(crate) fn unparseable_result(
         .checkout(dir)
         .judge(vcs)
         .refused()
+}
+
+/// The stop where the working `rwv.toml` in the project repo at `dir`
+/// differs from `staged`, which parses, and does not parse itself: the
+/// operation would commit the staged file and then read the working one.
+pub(crate) fn refuse_unparseable_working_manifest(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    resume: &str,
+    staged: &str,
+) -> anyhow::Result<()> {
+    let Ok(working) = std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) else {
+        return Ok(());
+    };
+    if working == staged {
+        return Ok(());
+    }
+    match Manifest::from_toml_str(&working) {
+        Ok(_) => Ok(()),
+        Err(error) => Err(unparseable_result(
+            vcs,
+            repo,
+            dir,
+            (resume, Produced::WorkingEdit),
+            &error,
+        )),
+    }
 }
 
 /// Settle the `rwv.toml` the replay of the project repo at `dir` left at its
@@ -1022,6 +1059,7 @@ pub(crate) fn settle_replayed_manifest(
             Err(error) => return Err(stop(&error)),
         },
     };
+    refuse_unparseable_working_manifest(vcs, &repo, dir, &op_state::resume_command(verb), &fix)?;
     amend_replayed_tip(vcs, dir, workspace, head.id(), fix)
 }
 
