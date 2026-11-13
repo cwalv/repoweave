@@ -43,7 +43,7 @@ Commands:
   lock         Record where each member's checkout is as its pin, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused, `--repo` included; `rwv member pin` moves a pin backward by name. No integration hooks fire; run `rwv materialize` after lock changes the workspace membership to refresh node_modules / .venv / etc
   status       Show per-repo state of the CWD workspace
   log          Show the VCS's log in every repo of the workspace, or with `--against` the commits beyond what a weave branch pins
-  abort        Roll an in-flight sync or landing back to its savepoints in every workspace it touched, run from any of them
+  abort        Roll the operation in progress (a sync, landing, pull or update --remote that merges or resets, or cherry-pick) back to its savepoints in every workspace it touched, run from any of them
   backup       List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
   sync         Take the target's new work into this feature, or merge another weave branch in
   land         Land this feature into the branch its record lands into

@@ -518,7 +518,7 @@ fn verbs() -> Vec<Verb> {
         },
         Verb {
             name: "abort",
-            summary: "roll an in-flight sync or landing back to its savepoints, from either workspace it touched",
+            summary: "roll the operation in progress (sync, land, pull, update --remote, cherry-pick) back to its savepoints, from any workspace it touched",
             schema: None,
         },
         Verb {

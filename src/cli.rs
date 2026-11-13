@@ -323,7 +323,7 @@ pub enum Commands {
     },
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
-    /// Roll an in-flight sync or landing back to its savepoints in every workspace it touched, run from any of them
+    /// Roll the operation in progress (a sync, landing, pull or update --remote that merges or resets, or cherry-pick) back to its savepoints in every workspace it touched, run from any of them
     Abort {
         /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `projects/<name>` for the project repo); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits are first kept as an `abandoned` backup, which `rwv backup list` shows and `rwv backup drop` drops.
         #[arg(long = "abandon-foreign-tip", value_name = "REPO")]

@@ -2,9 +2,12 @@
 
 ## Purpose
 
-Roll an in-flight `rwv sync` or `rwv land` back to the savepoint refs it
-wrote at the start of the operation, in every workspace it touched. Call `abort` when a
-sync or land has left the workspace in an unresolvable state and you want to
+Roll the operation in progress back to the savepoint refs it wrote at its
+start, in every workspace it touched: `rwv sync`, `rwv land`, `rwv pull` or
+`rwv update --remote` with `--merge-upstream` or `--reset-to-upstream`, and
+`rwv cherry-pick`, each of which leaves an operation record when it stops.
+Call `abort` when one has left the workspace in a state you would rather
+undo than continue, and you want to
 get back to the last known-good position rather than continue forward.
 
 `abort` reads op-state to find the in-flight operation. The **owner record**
