@@ -21787,3 +21787,37 @@ pub fn an_amend_killed_part_way(
     }
     scenario("an amend killed part way", steps)
 }
+
+/// [`unparseable_merged_manifest`] under merge history, with `a` adding a
+/// file the workweave's project repo holds untracked: the merge that would
+/// stop on the unparseable `rwv.toml` is not started over it. The sync
+/// refuses naming the file and leaves the workweave as it was; with the file
+/// moved aside, the printed `--continue` stops on the unparseable merge and
+/// abort ends it.
+pub fn an_untracked_file_in_the_way_of_the_merge_is_named() -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::Proj, "new"),
+        Step::git(&a(), Repo::Proj, &["checkout", "proj--w", "--", "new.txt"]),
+        Step::git(&a(), Repo::Proj, &["commit", "-qm", "a adds new.txt"]),
+        Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "HEAD~1"]).may_strand(&[Repo::Proj]),
+    ];
+    steps.extend(adds_a_copies(&a()));
+    steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
+    steps.extend(adds_w_copies(&ww("w")));
+    steps.push(Step::commit(&ww("w"), Repo::Proj, "w-proj"));
+    steps.extend([
+        Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+            .expect(Exit::refuses_kind(RefusalKind::UntrackedCollision))
+            .claim(Claim::OutputContains("new.txt"))
+            .claim(Claim::OutputContains("rwv sync --continue"))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::git(&ww("w"), Repo::Proj, &["clean", "-fq", "--", "new.txt"]),
+        stops_unparseable(
+            Step::rwv(&ww("w"), &["sync", "--continue"]),
+            "the merge is in progress",
+        ),
+    ]);
+    steps.extend(aborted_to_the_workweaves_own(&ww("w"), &[]));
+    scenario("an untracked file in the way of the merge is named", steps)
+}

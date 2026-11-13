@@ -575,6 +575,13 @@ impl ProjectMerge<'_> {
             Ok(manifest) => manifest,
             Err(error) => {
                 if matches!(merged, Merged::Tree(_)) {
+                    refuse_untracked_in_the_way(
+                        vcs,
+                        &repo,
+                        &dir,
+                        (base.as_ref(), sides.incoming(self.head)),
+                        &self.resume,
+                    )?;
                     op_state::journal_merging(
                         self.ctx.active_path(),
                         crate::manifest::RepoKey::Project,
@@ -992,6 +999,42 @@ pub(crate) fn unparseable_result(
         .checkout(dir)
         .judge(vcs)
         .refused()
+}
+
+/// Refuse to start, in the checkout at `dir`, the merge of `incoming`
+/// whose base is `base`, where a path it writes stands there untracked: the
+/// merge would refuse to overwrite it.
+fn refuse_untracked_in_the_way(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    (base, incoming): (Option<&CommitId>, &CommitId),
+    resume: &str,
+) -> anyhow::Result<()> {
+    let Some(base) = base else {
+        return Ok(());
+    };
+    let mut in_the_way = Vec::new();
+    for path in vcs.changed_paths_between(
+        dir,
+        &ResolvedRevisionId::from(base.clone()),
+        &ResolvedRevisionId::from(incoming.clone()),
+    )? {
+        if dir.join(&path).exists() && !vcs.is_tracked(dir, Path::new(&path))? {
+            in_the_way.push(path);
+        }
+    }
+    if in_the_way.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::UntrackedCollision,
+        "{repo}: the merge of {} would overwrite {}, untracked here; move {} aside, then run \
+         `{resume}`",
+        incoming.short(),
+        in_the_way.join(", "),
+        if in_the_way.len() == 1 { "it" } else { "them" },
+    );
 }
 
 /// The stop where the working `rwv.toml` in the project repo at `dir`

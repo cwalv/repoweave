@@ -813,6 +813,7 @@ every_scenario!(
     abort_restores_members_past_an_unparseable_manifest(scenarios::TargetMembers::Removes),
     abort_ignores_a_half_finished_manifest_fix,
     an_unparseable_intermediate_manifest_is_replayed,
+    an_untracked_file_in_the_way_of_the_merge_is_named,
     a_replay_in_flight_is_not_judged_on_its_rwv_toml(
         scenarios::TakingIn::LandLinear,
         scenarios::ReplayedManifest::BrokenByTheBranch
@@ -6536,6 +6537,12 @@ holding_rwv! {
             }
         }
     }
+}
+
+#[test]
+fn an_untracked_file_in_the_way_of_the_merge_is_named() {
+    runner::run(scenarios::an_untracked_file_in_the_way_of_the_merge_is_named())
+        .assert_fully_decided_green();
 }
 
 #[test]
