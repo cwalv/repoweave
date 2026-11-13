@@ -8240,7 +8240,10 @@ fn apply_finding_repairs(
                 }
             }
 
-            CheckViolation::ClaimUnreadable { file, seen } => match release_unreadable_claims {
+            CheckViolation::ClaimUnreadable { file, seen } => match release_unreadable_claims
+                .as_ref()
+                .filter(|consent| consent.admits(file, ctx.active_project()))
+            {
                 None => false,
                 Some(_) => match crate::landing_claim::release_unreadable(
                     &crate::landing_claim::UnreadableClaim {

@@ -1583,11 +1583,15 @@ and changes nothing.
 
 **What to do:** if a landing of another rwv release holds it, end that landing
 with the release that started it, by its `--continue` or `rwv abort`. If none
-does, `rwv doctor --fix --release-unreadable-claims` releases every claim and
-guard this run reports here, and the next landing into the target runs. It
-gives up the claim a live landing of another release would hold, which is the
-consent the flag stands for. A file that holds something else by the time the
-release reaches it, readable again or not, is left for the next report.
+does, the refusal a landing prints names the one command that releases the
+claim on its target and no other:
+`rwv doctor --fix --project <project> --release-unreadable-claims-on <target>`.
+`rwv doctor --fix --release-unreadable-claims` releases every claim and guard
+this run reports here, in every project the run covers. Either gives up the
+claim a live landing of another release would hold, which is the consent the
+flag stands for, and the next landing into the target runs. A file that holds
+something else by the time the release reaches it, readable again or not, is
+left for the next report. Both flags are refused without `--fix`.
 
 ### `claim-unopenable`
 

@@ -1179,6 +1179,7 @@ pub fn run() -> anyhow::Result<()> {
             all,
             abandon_lost_pins,
             release_unreadable_claims,
+            release_unreadable_claims_on,
             kind,
             project,
         }) => {
@@ -1188,8 +1189,10 @@ pub fn run() -> anyhow::Result<()> {
                 binding.workweave_flag,
             );
             let abandon_lost_pins = consent::AbandonLostPinsConsent::from_flag(abandon_lost_pins);
-            let release_unreadable_claims =
-                consent::ReleaseUnreadableClaimsConsent::from_flag(release_unreadable_claims);
+            let release_unreadable_claims = consent::ReleaseUnreadableClaimsConsent::from_flags(
+                release_unreadable_claims,
+                release_unreadable_claims_on,
+            );
             // Validated at the boundary: an unknown kind refuses here,
             // before any scan runs, naming the valid set.
             let kind_filter = if kind.is_empty() {

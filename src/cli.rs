@@ -239,8 +239,20 @@ pub enum Commands {
         /// run reports as `claim-unreadable` and that still holds what it
         /// held when reported: a landing of another rwv release that holds
         /// one loses its claim. Without this flag, `--fix` reports them.
-        #[arg(long, requires = "fix")]
+        #[arg(
+            long,
+            requires = "fix",
+            conflicts_with = "release_unreadable_claims_on"
+        )]
         release_unreadable_claims: bool,
+        /// With `--fix`, release the landing claim and takeover guards on
+        /// this target branch of the project that this run reports as
+        /// `claim-unreadable` and that still hold what they held when
+        /// reported, and no other claim: a landing of another rwv release
+        /// that holds one loses its claim. The project is the one `--project`
+        /// or the active project names.
+        #[arg(long, requires = "fix", value_name = "TARGET", conflicts_with = "all")]
+        release_unreadable_claims_on: Option<String>,
         /// Filter the report to the named finding kind (repeatable). Kind names are the wire spellings `--json` emits for violations and integration issues (e.g. `alignment`, `orphaned-savepoint`, `tool-missing`); an unknown name refuses, listing the valid set. Kinds whose classes normally collapse to a per-class count line render itemized under the filter — this is the drill-down. The exit code reflects the filtered view; with `--json`, any finding in it exits non-zero, warnings included.
         #[arg(long = "kind", value_name = "KIND", conflicts_with_all = ["locked", "fix"])]
         kind: Vec<String>,

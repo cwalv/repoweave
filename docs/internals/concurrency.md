@@ -254,8 +254,9 @@ claim whose op is recorded is never taken from it. A claim whose bytes this
 rwv does not read, or a takeover guard beside it that this rwv does not read,
 is never judged dead either: a landing waits on it and refuses
 `claim-unreadable`, and `rwv doctor` reports it and releases it only under
-`--fix --release-unreadable-claims` (`unreadable_claims`,
-`release_unreadable`), which removes a file only while it holds the bytes the
+`--fix --release-unreadable-claims`, or on one target only under
+`--fix --release-unreadable-claims-on <target>`, which the refusal prints
+(`unreadable_claims`, `release_unreadable`, `is_on_target`), which removes a file only while it holds the bytes the
 same run reported. The removal is a compare and then an unlink, not one step:
 a landing of another release that releases its claim, and a taker that claims
 the target, both inside that instant, would lose the new claim. The flag is

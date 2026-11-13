@@ -2526,7 +2526,11 @@ fn a_consent_flag_is_refused_without_fix() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("projects")).unwrap();
-    for flag in ["--release-unreadable-claims", "--abandon-lost-pins"] {
+    for flag in [
+        "--release-unreadable-claims",
+        "--release-unreadable-claims-on=main",
+        "--abandon-lost-pins",
+    ] {
         let out = rwv_cmd()
             .args(["doctor", flag])
             .current_dir(&root)
@@ -2535,10 +2539,69 @@ fn a_consent_flag_is_refused_without_fix() {
         let err = String::from_utf8_lossy(&out.stderr);
         assert!(!out.status.success(), "{flag} alone is refused: {err}");
         assert!(
-            err.contains("--fix") && err.contains(flag),
+            err.contains("--fix") && err.contains(flag.split('=').next().unwrap()),
             "the refusal names the missing flag: {err}"
         );
     }
+}
+
+/// `--release-unreadable-claims-on` releases the claims of the one target it
+/// names, in the project it names, and leaves every other unreadable claim
+/// reported.
+#[test]
+fn a_release_on_one_target_leaves_every_other_unreadable_claim() {
+    use repoweave::manifest::ProjectName;
+
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("github")).unwrap();
+    let project_dir = root.join("projects").join("my-app");
+    write_manifest(&project_dir, &[]);
+    common::git_in(&project_dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join(".rwv-active"), "my-app\n").unwrap();
+
+    let project = ProjectName::new("my-app").unwrap();
+    let claim_on = |project: &ProjectName, target: &str| {
+        let dir = project_dir
+            .join(".git")
+            .join("rwv-landings")
+            .join(repoweave::landing_claim::claim_dir_name(project, target));
+        std::fs::create_dir_all(&dir).unwrap();
+        let claim = dir.join(".rwv-landing.lock");
+        std::fs::write(&claim, "garbage").unwrap();
+        claim
+    };
+    let main = claim_on(&project, "main");
+    let release = claim_on(&project, "release");
+    let elsewhere = claim_on(&ProjectName::new("other").unwrap(), "main");
+
+    let out = rwv_cmd()
+        .args([
+            "doctor",
+            "--fix",
+            "--project",
+            "my-app",
+            "--release-unreadable-claims-on",
+            "main",
+        ])
+        .current_dir(&root)
+        .output()
+        .expect("failed to spawn rwv doctor");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !main.exists(),
+        "the named target's claim is released: {text}"
+    );
+    assert!(release.exists(), "another target's claim stands: {text}");
+    assert!(elsewhere.exists(), "another project's claim stands: {text}");
+    assert!(
+        text.contains(&release.display().to_string()),
+        "the claim left is still reported: {text}"
+    );
 }
 
 /// A landing claim rwv cannot read at all is reported as such, and no flag

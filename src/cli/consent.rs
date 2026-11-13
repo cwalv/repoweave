@@ -155,21 +155,39 @@ impl AbandonLostPinsConsent {
     }
 }
 
-/// Proof that the operator consented to releasing every landing claim and
-/// takeover guard `rwv doctor` reports as unreadable, giving up the claim a
-/// live landing of another rwv release may hold. Minted from
-/// `--release-unreadable-claims`.
-///
-/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
-#[derive(Debug, Clone, Copy)]
-pub struct ReleaseUnreadableClaimsConsent(());
+/// Proof that the operator consented to releasing the landing claims and
+/// takeover guards `rwv doctor` reports as unreadable, giving up the claim a
+/// live landing of another rwv release may hold: every one, or only those on
+/// one target. Minted from `--release-unreadable-claims` or
+/// `--release-unreadable-claims-on`.
+#[derive(Debug, Clone)]
+pub struct ReleaseUnreadableClaimsConsent(ClaimScope);
+
+#[derive(Debug, Clone)]
+enum ClaimScope {
+    Every,
+    Target(String),
+}
 
 impl ReleaseUnreadableClaimsConsent {
-    /// Mint from the parsed `--release-unreadable-claims` value: `Some` iff
-    /// the operator passed it. `pub(in crate::cli)`: see
-    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
-    pub(in crate::cli) fn from_flag(release_unreadable_claims: bool) -> Option<Self> {
-        release_unreadable_claims.then_some(Self(()))
+    /// Mint from the parsed flags: `Some` iff the operator passed either.
+    /// `pub(in crate::cli)`: see [`DiscardUnlandedConsent::from_flag`]'s doc
+    /// comment.
+    pub(in crate::cli) fn from_flags(every: bool, on_target: Option<String>) -> Option<Self> {
+        match on_target {
+            Some(target) => Some(Self(ClaimScope::Target(target))),
+            None => every.then_some(Self(ClaimScope::Every)),
+        }
+    }
+
+    /// Whether `file`, a claim or takeover guard of `project`'s store, is
+    /// within what the operator consented to release.
+    pub fn admits(&self, file: &std::path::Path, project: Option<&ProjectName>) -> bool {
+        match &self.0 {
+            ClaimScope::Every => true,
+            ClaimScope::Target(target) => project
+                .is_some_and(|project| crate::landing_claim::is_on_target(file, project, target)),
+        }
     }
 }
 

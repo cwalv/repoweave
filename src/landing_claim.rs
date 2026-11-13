@@ -80,8 +80,28 @@ fn claim_path(
     project: &ProjectName,
     target: &str,
 ) -> anyhow::Result<StatePath> {
-    let spelled = digest(format!("{}\n{target}", project.as_str()).as_bytes());
-    Ok(StateFile::LandingClaim.in_dir(&claims_dir(vcs, project_dir)?.join(spelled)))
+    Ok(StateFile::LandingClaim
+        .in_dir(&claims_dir(vcs, project_dir)?.join(claim_dir_name(project, target))))
+}
+
+pub fn claim_dir_name(project: &ProjectName, target: &str) -> String {
+    digest(format!("{}\n{target}", project.as_str()).as_bytes())
+}
+
+/// Whether `file`, a claim or a takeover guard, is on `target` of `project`.
+pub fn is_on_target(file: &Path, project: &ProjectName, target: &str) -> bool {
+    file.parent()
+        .and_then(Path::file_name)
+        .is_some_and(|dir| dir.to_string_lossy() == claim_dir_name(project, target))
+}
+
+/// The command that releases the unreadable claim on `target` of `project`
+/// and no other.
+fn release_command(project: &ProjectName, target: &str) -> String {
+    format!(
+        "rwv doctor --fix --project {project} --release-unreadable-claims-on {target}",
+        project = project.as_str()
+    )
 }
 
 /// FNV-1a, 128 bits, in hex. Two targets that spelled one digest would share
@@ -145,6 +165,7 @@ impl LandingClaim {
     ) -> anyhow::Result<Self> {
         take_within(
             claim_path(vcs, project_dir, project, target)?,
+            project,
             target,
             op,
             owner,
@@ -211,10 +232,7 @@ fn refuse_claimed_in(
             .map(|name| name.to_string_lossy().into_owned());
         let on_target = branches.iter().find(|(repo, branch)| {
             *repo == RepoKey::Project
-                && spelled.as_deref()
-                    == Some(&digest(
-                        format!("{}\n{branch}", project.as_str()).as_bytes(),
-                    ))
+                && spelled.as_deref() == Some(&claim_dir_name(project, branch))
         });
         let judged = match read {
             Ok(seen) => standing(&seen),
@@ -238,9 +256,10 @@ fn refuse_claimed_in(
                     "a landing into '{branch}' holds it, and {path} names it in a form this rwv \
                      does not read ({text}): an rwv of another release took it, or the file is \
                      corrupt. End that landing with the release that started it, resuming or \
-                     aborting it, then rerun. If no such landing stands, `rwv doctor --fix \
-                     --release-unreadable-claims` run here releases the claim; a live landing \
-                     of another release would lose it."
+                     aborting it, then rerun. If no such landing stands, `{release}` run here \
+                     releases this claim and no other; a live landing of another release \
+                     would lose it.",
+                    release = release_command(project, branch)
                 ),
             },
             Standing::Unopenable { file, why } => match on_target {
@@ -465,6 +484,7 @@ pub fn release_unreadable(claim: &UnreadableClaim) -> anyhow::Result<bool> {
 
 fn take_within(
     path: StatePath,
+    project: &ProjectName,
     target: &str,
     op: &OpId,
     owner: &Path,
@@ -603,8 +623,9 @@ fn take_within(
                      beside it names it in a form this rwv does not read ({text}): an rwv of \
                      another release took it, or the file is corrupt. End that landing with the \
                      release that started it, resuming or aborting it, then rerun. If no such \
-                     landing stands, `rwv doctor --fix --release-unreadable-claims` run here \
-                     releases the claim; a live landing of another release would lose it."
+                     landing stands, `{release}` run here releases this claim and no other; a \
+                     live landing of another release would lose it.",
+                    release = release_command(project, target)
                 ),
                 Standing::Unopenable { file, why } => {
                     return Err(unopenable_refusal(&format!("'{target}'"), &file, &why))
@@ -865,6 +886,10 @@ mod tests {
         StateFile::LandingClaim.in_dir(&dir.join("claims").join("t"))
     }
 
+    fn p() -> ProjectName {
+        ProjectName::new("p").unwrap()
+    }
+
     fn op(n: u32) -> OpId {
         format!("{n}").parse().unwrap()
     }
@@ -888,8 +913,8 @@ mod tests {
         std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
-        let first = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
-        let second = take_within(path.clone(), "t", &op(2), tmp.path(), Duration::ZERO);
+        let first = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let second = take_within(path.clone(), &p(), "t", &op(2), tmp.path(), Duration::ZERO);
         assert!(crate::refusal::kind_of(&second.unwrap_err()) == Some(RefusalKind::StateClaimHeld));
         assert_eq!(
             Holder::parse(&path.read().unwrap()).unwrap().op,
@@ -953,7 +978,7 @@ mod tests {
         let owner = tmp.path().join("one");
         landing_into(&owner, &op(1), "main", "trunk");
         let (dir, path) = claims_on(tmp.path(), "main");
-        take_within(path, "main", &op(1), &owner, Duration::ZERO).unwrap();
+        take_within(path, &p(), "main", &op(1), &owner, Duration::ZERO).unwrap();
         let p = ProjectName::new("p").unwrap();
         let app = RepoKey::Member(crate::manifest::RepoPath::new("app").unwrap());
         let check = |repo: &RepoKey, branch: &str, own: Option<&OpId>| {
@@ -983,7 +1008,8 @@ mod tests {
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(2));
 
-        let refused = take_within(path.clone(), "main", &op(2), &next, Duration::ZERO).unwrap_err();
+        let refused =
+            take_within(path.clone(), &p(), "main", &op(2), &next, Duration::ZERO).unwrap_err();
         assert_eq!(
             crate::refusal::kind_of(&refused),
             Some(RefusalKind::ClaimUnopenable)
@@ -1008,7 +1034,7 @@ mod tests {
         let next = tmp.path().join("next");
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(2));
-        let refused = take_within(path, "main", &op(2), &next, Duration::ZERO).unwrap_err();
+        let refused = take_within(path, &p(), "main", &op(2), &next, Duration::ZERO).unwrap_err();
         assert_eq!(
             crate::refusal::kind_of(&refused),
             Some(RefusalKind::ClaimUnopenable)
@@ -1027,7 +1053,8 @@ mod tests {
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
 
-        let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
+        let refused =
+            take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
         assert_eq!(
             crate::refusal::kind_of(&refused),
             Some(RefusalKind::ClaimUnopenable)
@@ -1054,7 +1081,8 @@ mod tests {
             crate::refusal::kind_of(&refused),
             Some(RefusalKind::ClaimUnreadable)
         );
-        assert!(format!("{refused:#}").contains("--release-unreadable-claims"));
+        assert!(format!("{refused:#}")
+            .contains("`rwv doctor --fix --project p --release-unreadable-claims-on main`"));
         std::fs::remove_file(path.reported()).unwrap();
 
         std::fs::create_dir_all(path.reported()).unwrap();
@@ -1074,7 +1102,7 @@ mod tests {
         let owner = tmp.path().join("one");
         landing_into(&owner, &op(1), "main", "trunk");
         let (dir, path) = claims_on(tmp.path(), "main");
-        take_within(path, "main", &op(1), &owner, Duration::ZERO).unwrap();
+        take_within(path, &p(), "main", &op(1), &owner, Duration::ZERO).unwrap();
         crate::op_state::clear_all_at(&owner);
         let p = ProjectName::new("p").unwrap();
         assert!(!refused(refuse_claimed_in(
@@ -1091,7 +1119,7 @@ mod tests {
         let owner = tmp.path().join("one");
         landing_into(&owner, &op(1), "main", "trunk");
         let (dir, path) = claims_on(tmp.path(), "main");
-        take_within(path.clone(), "main", &op(1), &owner, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "main", &op(1), &owner, Duration::ZERO).unwrap();
         std::fs::write(dir.join("stray"), b"x").unwrap();
         assert_eq!(claim_dirs(&dir).unwrap(), vec![path.dir().to_path_buf()]);
         assert!(refused(refuse_claimed_in(
@@ -1109,7 +1137,7 @@ mod tests {
         std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
-        let held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let held = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
         let budget = Duration::from_millis(1000);
         let holder = {
             let owner = owner.clone();
@@ -1134,7 +1162,7 @@ mod tests {
             })
         };
         let started = Instant::now();
-        let taken = take_within(path, "t", &op(2), tmp.path(), budget);
+        let taken = take_within(path, &p(), "t", &op(2), tmp.path(), budget);
         holder.join().unwrap();
         assert!(taken.is_ok(), "{:#}", taken.unwrap_err());
         assert!(
@@ -1150,10 +1178,10 @@ mod tests {
         std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
-        let _held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let _held = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
         let budget = Duration::from_millis(200);
         let started = Instant::now();
-        let taken = take_within(path, "t", &op(2), tmp.path(), budget);
+        let taken = take_within(path, &p(), "t", &op(2), tmp.path(), budget);
         assert!(refused(taken.map(|_| ())));
         assert!(started.elapsed() >= budget);
     }
@@ -1164,16 +1192,17 @@ mod tests {
         let gone = tmp.path().join("gone");
         std::fs::create_dir_all(gone.join("projects")).unwrap();
         let path = claim_in(tmp.path());
-        let _orphan = take_within(path.clone(), "t", &op(1), &gone, Duration::ZERO).unwrap();
-        take_within(path.clone(), "t", &op(2), tmp.path(), Duration::ZERO).unwrap();
+        let _orphan = take_within(path.clone(), &p(), "t", &op(1), &gone, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(2), tmp.path(), Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
 
         let moved_on = tmp.path().join("moved-on");
         std::fs::create_dir_all(moved_on.join("projects")).unwrap();
         record(&moved_on, &op(4));
         let path = claim_in(&tmp.path().join("other"));
-        let _stale = take_within(path.clone(), "t", &op(3), &moved_on, Duration::ZERO).unwrap();
-        take_within(path.clone(), "t", &op(5), tmp.path(), Duration::ZERO).unwrap();
+        let _stale =
+            take_within(path.clone(), &p(), "t", &op(3), &moved_on, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(5), tmp.path(), Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(5));
     }
 
@@ -1189,7 +1218,7 @@ mod tests {
             op: op(1),
             held_before: false,
         };
-        let held = take_within(path.clone(), "t", &op(2), &owner, Duration::ZERO).unwrap();
+        let held = take_within(path.clone(), &p(), "t", &op(2), &owner, Duration::ZERO).unwrap();
         stale.release().unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
         held.release().unwrap();
@@ -1207,7 +1236,7 @@ mod tests {
         let gone = tmp.join("gone");
         std::fs::create_dir_all(gone.join("projects")).unwrap();
         let path = claim_in(tmp);
-        let _dead = take_within(path.clone(), "t", &op(1), &gone, Duration::ZERO).unwrap();
+        let _dead = take_within(path.clone(), &p(), "t", &op(1), &gone, Duration::ZERO).unwrap();
         (path.clone(), path.read().unwrap(), holder(op(1), &gone))
     }
 
@@ -1226,7 +1255,7 @@ mod tests {
         )
         .unwrap()
         .is_none());
-        let _held = take_within(path.clone(), "t", &op(2), &live, Duration::ZERO).unwrap();
+        let _held = take_within(path.clone(), &p(), "t", &op(2), &live, Duration::ZERO).unwrap();
         let late = tmp.path().join("late");
         std::fs::create_dir_all(late.join("projects")).unwrap();
         record(&late, &op(3));
@@ -1255,7 +1284,7 @@ mod tests {
         let second = tmp.path().join("second");
         std::fs::create_dir_all(second.join("projects")).unwrap();
         record(&second, &op(3));
-        let refused = take_within(path.clone(), "t", &op(3), &second, Duration::ZERO);
+        let refused = take_within(path.clone(), &p(), "t", &op(3), &second, Duration::ZERO);
         assert!(refused.is_err());
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
     }
@@ -1273,7 +1302,7 @@ mod tests {
         let next = tmp.path().join("next");
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
-        take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(3));
     }
 
@@ -1291,7 +1320,7 @@ mod tests {
         let next = tmp.path().join("next");
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
-        take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap();
         assert!(!guard.exists(), "the dead taker's guard is gone");
         assert!(!nested.exists(), "a dead guard on a guard is gone");
         assert_eq!(
@@ -1312,7 +1341,8 @@ mod tests {
         let next = tmp.path().join("next");
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
-        let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
+        let refused =
+            take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::StateClaimHeld));
         assert!(
             format!("{refused:#}").contains(&format!("op {}", op(2))),
@@ -1339,12 +1369,14 @@ mod tests {
         let elsewhere = tmp.path().join("elsewhere");
         std::fs::create_dir_all(elsewhere.join("projects")).unwrap();
         let path = claim_in(tmp.path());
-        let _held = take_within(path.clone(), "t", &op(1), &elsewhere, Duration::ZERO).unwrap();
+        let _held =
+            take_within(path.clone(), &p(), "t", &op(1), &elsewhere, Duration::ZERO).unwrap();
         std::fs::remove_dir_all(&elsewhere).unwrap();
         let next = tmp.path().join("next");
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(2));
-        let refused = take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        let refused =
+            take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimOwnerUnreachable));
         assert!(format!("{refused:#}").contains("rwv doctor --fix"));
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
@@ -1365,7 +1397,7 @@ mod tests {
         assert!(path.exists(), "a fix for another op releases nothing");
         assert!(release_unreachable(&unreachable, &next).unwrap());
         assert!(!path.exists());
-        take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap();
     }
 
     #[test]
@@ -1378,9 +1410,11 @@ mod tests {
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(2));
 
-        let refused = take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        let refused =
+            take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimUnreadable));
-        assert!(format!("{refused:#}").contains("rwv doctor --fix --release-unreadable-claims"));
+        assert!(format!("{refused:#}")
+            .contains("`rwv doctor --fix --project p --release-unreadable-claims-on t`"));
         assert_eq!(path.read().unwrap(), b"{\"format\": 2}");
 
         let reported = unreadable_in(&tmp.path().join("claims"));
@@ -1393,7 +1427,7 @@ mod tests {
         );
         assert!(release_unreadable(&reported[0]).unwrap());
         assert!(!path.exists());
-        take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap();
     }
 
     #[test]
@@ -1410,7 +1444,7 @@ mod tests {
         std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(1));
         std::fs::remove_file(path.reported()).unwrap();
-        let live = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let live = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
 
         assert!(!release_unreadable(&reported).unwrap());
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
@@ -1429,7 +1463,8 @@ mod tests {
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(3));
 
-        let refused = take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
+        let refused =
+            take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimUnreadable));
         let reported = unreadable_in(&tmp.path().join("claims"));
         assert_eq!(
@@ -1440,7 +1475,7 @@ mod tests {
             }]
         );
         assert!(release_unreadable(&reported[0]).unwrap());
-        take_within(path.clone(), "t", &op(3), &next, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(3));
     }
 
@@ -1458,23 +1493,25 @@ mod tests {
         );
         crate::op_state::write_owner(&carrying, &sync).unwrap();
         let path = claim_in(tmp.path());
-        let _held = take_within(path.clone(), "t", &op(1), &carrying, Duration::ZERO).unwrap();
+        let _held =
+            take_within(path.clone(), &p(), "t", &op(1), &carrying, Duration::ZERO).unwrap();
         let next = tmp.path().join("next");
         std::fs::create_dir_all(next.join("projects")).unwrap();
         record(&next, &op(2));
-        let waited = take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+        let waited =
+            take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&waited) == Some(RefusalKind::StateClaimHeld));
 
         let moved = tmp.path().join("moved");
         std::fs::rename(&carrying, &moved).unwrap();
         let unreachable =
-            take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
+            take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&unreachable) == Some(RefusalKind::ClaimOwnerUnreachable));
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
 
         std::fs::rename(&moved, &carrying).unwrap();
         crate::op_state::clear_owner(&carrying);
-        take_within(path.clone(), "t", &op(2), &next, Duration::ZERO).unwrap();
+        take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap();
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(2));
     }
 
@@ -1485,7 +1522,7 @@ mod tests {
         std::fs::create_dir_all(owner.join("projects")).unwrap();
         record(&owner, &op(1));
         let path = claim_in(tmp.path());
-        let _held = take_within(path.clone(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let _held = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
         let stale_finding = UnreachableClaim {
             dir: path.dir().to_path_buf(),
             op: op(1),

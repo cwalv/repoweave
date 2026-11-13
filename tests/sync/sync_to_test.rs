@@ -203,6 +203,75 @@ fn sync_to_ff_clean_advances_target() {
 }
 
 // ---------------------------------------------------------------------------
+// A claim this rwv cannot read refuses the landing it names; the command the
+// refusal prints, run as printed from the workweave, releases that target's
+// claim and no other, and the landing then runs.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_release_a_refused_landing_prints_frees_its_target_alone_and_the_landing_runs() {
+    use repoweave::landing_claim::claim_dir_name;
+    use repoweave::manifest::ProjectName;
+    use repoweave::refusal::RefusalKind;
+
+    let tmp = common::tempdir().unwrap();
+    let (primary, ww, _) = make_shared_workspaces(tmp.path());
+    let c2 = make_commit(&ww.server_dir, "ww.txt", "workweave\n", "ww: advance");
+    common::fixture_lock(&ww.project_dir, &[(SERVER_PATH, SERVER_URL, &c2)]);
+    common::git_in(&ww.project_dir, &["add", "rwv.lock"]);
+    common::git_in(&ww.project_dir, &["commit", "-m", "lock: ww advance"]);
+
+    let project = ProjectName::new("web-app").unwrap();
+    let claim_on = |target: &str| {
+        let dir = primary
+            .project_dir
+            .join(".git")
+            .join("rwv-landings")
+            .join(claim_dir_name(&project, target));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(".rwv-landing.lock")
+    };
+    let main_claim = claim_on("main");
+    let other_claim = claim_on("release");
+    std::fs::write(&main_claim, "garbage").unwrap();
+    std::fs::write(&other_claim, "garbage").unwrap();
+
+    let land = || {
+        rwv()
+            .args(["land", "--history=ff-only"])
+            .current_dir(&ww.root)
+            .output()
+            .unwrap()
+    };
+    let refused = land();
+    let stderr = common::cli::refused(&refused, RefusalKind::ClaimUnreadable);
+    let printed = common::advised_command(&stderr, "rwv doctor");
+
+    let released = common::run_advised(&printed, &ww.root);
+    let report = String::from_utf8_lossy(&released.stdout);
+    assert!(
+        !main_claim.exists(),
+        "`{printed}` released the target's claim:\n{report}"
+    );
+    assert!(
+        other_claim.exists(),
+        "`{printed}` left the other target's claim:\n{report}"
+    );
+
+    let landed = land();
+    assert!(
+        landed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&landed.stderr)
+    );
+    assert_eq!(
+        common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]),
+        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
+    );
+    assert!(other_claim.exists());
+}
+
+// ---------------------------------------------------------------------------
 // Test 2: rebase path — end-state ordering (Option-B critical assertion)
 //
 // Scenario: primary and workweave diverge. Primary has a commit in its project
