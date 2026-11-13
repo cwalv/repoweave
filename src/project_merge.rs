@@ -524,6 +524,9 @@ pub(crate) struct ProjectMerge<'a> {
     /// Which side the checkout holds: the other is merged in.
     pub(crate) head: Parent,
     pub(crate) members: MemberMerging,
+    /// The member rebases this operation made: the merge records each one's
+    /// move of the pin the checkout's side held, by name.
+    pub(crate) rebases: Vec<op_state::Rebasing>,
 }
 
 /// How a project merge settles its members.
@@ -681,13 +684,26 @@ impl ProjectMerge<'_> {
 
         self.settle(vcs, &dir, &manifest)?;
 
-        let commit = crate::repin::commit_merge(
+        let ours = match self.head {
+            Parent::First => &first_held,
+            Parent::Second => &second_held,
+        };
+        let jumps = crate::remap::rebase_jumps(
+            self.ctx.active_path(),
+            &manifest,
+            &self.rebases,
+            &ours.pins,
+            &pins.pins,
+            self.ctx.active_path(),
+        )?;
+        let commit = crate::repin::commit_merge_annotated(
             vcs,
             &dir,
             (&sides.first, &sides.second),
             &self.message,
             Some(&lock),
             &crate::repin::Naming::Unnamed,
+            jumps.iter().map(crate::repin::Repin::annotation).collect(),
         )?;
         op_state::journal_tip(
             self.ctx.active_path(),

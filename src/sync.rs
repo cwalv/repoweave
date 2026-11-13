@@ -6361,7 +6361,7 @@ fn read_member_tips(
 // record (consumed by abort hardening, sibling .4).
 //
 // **Re-entry rule:** regenerating a lock that is already current is a no-op
-// (write_lock + commit_lock_file_with_message both short-circuit when the
+// (write_lock + commit_lock_file_annotated both short-circuit when the
 // content hasn't changed). The per-repo HEAD reads that populate
 // `converged_tips` are pure reads.
 //
@@ -6719,60 +6719,26 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     Ok(())
 }
 
-/// Each member the landing rebased whose pin in the project commit the
-/// relock is written on, `on`, the replay record maps to the pin the relock
-/// records, or to a commit on that pin's first-parent chain: the landing's
-/// re-pin of it by name, from `on`'s pin to the relock's.
+/// The landing's re-pin by name of each member it rebased, from the pin
+/// `on` holds to the one the relock records.
 fn rebased_jumps(
     ctx: &OpContext<'_>,
     manifest: &Manifest,
     on: &crate::lock_merge::Held,
     pins: &std::collections::BTreeMap<RepoPath, CommitId>,
 ) -> anyhow::Result<Vec<crate::repin::Repin>> {
-    let rebases: Vec<op_state::Rebasing> = op_state::read_owner(&ctx.owner_workspace_dir)?
+    let rebases = op_state::read_owner(&ctx.owner_workspace_dir)?
         .and_then(|owner| owner.take_in)
         .map(|take_in| take_in.rebases)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|rebase| matches!(rebase.repo, RepoKey::Member(_)))
-        .collect();
-    if rebases.is_empty() {
-        return Ok(Vec::new());
-    }
-    let replays = crate::remap::member_replays(
+        .unwrap_or_default();
+    crate::remap::rebase_jumps(
         &ctx.cwd_workspace_dir,
         manifest,
         &rebases,
-        &[],
+        &on.pins,
+        pins,
         &ctx.owner_workspace_dir,
-    )?;
-    let mut jumps = Vec::new();
-    for (member, replays) in &replays {
-        let (Some(from), Some(to)) = (on.pins.get(member), pins.get(member)) else {
-            continue;
-        };
-        if from == to {
-            continue;
-        }
-        let Some(entry) = manifest.get_entry(member) else {
-            continue;
-        };
-        let mvcs = vcs_for(entry.vcs_type);
-        let checkout = ctx.cwd_workspace_dir.join(member.as_path());
-        let Some(image) = replays.iter().find_map(|replay| replay.image_of(from)) else {
-            continue;
-        };
-        let on_chain = image == *to || mvcs.on_first_parents(&checkout, to, &image)?;
-        if on_chain {
-            jumps.push(crate::repin::Repin {
-                member: member.clone(),
-                from: Some(from.clone()),
-                to: to.clone(),
-                verb: "land".to_owned(),
-            });
-        }
-    }
-    Ok(jumps)
+    )
 }
 
 /// Read post-replay HEADs of each manifest repo + project repo and write

@@ -1595,6 +1595,7 @@ fn act(
                 message: format!("Merge {} into {}", sync.source_name(), sync.branch),
                 head: Parent::First,
                 members: MemberMerging::Done(moved.clone()),
+                rebases: journaled_rebases(sync)?,
             }
             .run(&Sides {
                 first: head.clone(),
@@ -2205,6 +2206,13 @@ fn set_aside_authored(sync: &Sync<'_>, manifest: &Manifest) -> anyhow::Result<()
 
 /// The members `--reset-to-target` names: the lock commit re-pins them by
 /// name.
+fn journaled_rebases(sync: &Sync<'_>) -> anyhow::Result<Vec<crate::op_state::Rebasing>> {
+    Ok(crate::op_state::read_owner(sync.ctx.active_path())?
+        .and_then(|owner| owner.take_in)
+        .map(|take_in| take_in.rebases)
+        .unwrap_or_default())
+}
+
 fn by_name_resets(resets: &[RepoOperand]) -> crate::repin::Naming {
     crate::repin::Naming::by_name(
         "sync",
@@ -2271,11 +2279,29 @@ fn relock(
         pins.iter().map(|(p, c)| (p.clone(), rev(c))).collect();
     let lock = crate::lock::with_pins(&manifest, None, resolved.iter().map(|(p, c)| (p, c)));
     crate::lock::write_lock_in(&lock, dir)?;
-    let committed = crate::lock::commit_lock_file_with_message(
+    let named = by_name_resets(resets);
+    let jumps = crate::remap::rebase_jumps(
+        sync.ctx.active_path(),
+        &manifest,
+        &journaled_rebases(sync)?,
+        &held(vcs.head_revision(dir)?.id()).pins,
+        &pins,
+        sync.ctx.active_path(),
+    )?;
+    let jumps = jumps
+        .into_iter()
+        .filter(|jump| match &named {
+            crate::repin::Naming::ByName { members, .. } => !members.contains(&jump.member),
+            crate::repin::Naming::Unnamed => true,
+        })
+        .map(|jump| jump.annotation())
+        .collect();
+    let committed = crate::lock::commit_lock_file_annotated(
         vcs,
         dir,
         &format!("lock: relock after sync from {}", sync.source_name()),
-        &by_name_resets(resets),
+        &named,
+        jumps,
     )?;
     if committed {
         crate::test_pause::point("sync-relock-committed");

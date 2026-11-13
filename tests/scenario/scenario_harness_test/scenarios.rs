@@ -6932,7 +6932,7 @@ pub fn merged_project_with_rebased_members_on_a_second_machine() -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), "main")
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("local/remotes/app: pin waived"))
-                .claim(Claim::OutputContains("the landing rebased it:"))
+                .claim(Claim::OutputContains("a rebase replaced it:"))
                 .claim(Claim::OutputLacks("held by no branch")),
             Step::new_machine(Machine::B),
             Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
@@ -6948,6 +6948,65 @@ pub fn merged_project_with_rebased_members_on_a_second_machine() -> Scenario {
                 .pushes(Remote::origin(Repo::Proj), "main")
                 .expect(Exit::Succeeds),
         ],
+    )
+}
+
+/// A project that lands by merge, its `app` by `history` (`linear` or
+/// `ff-only`): `rwv sync` rebases `app` and merges `main` into the seat's
+/// project branch, the merge recording the rebase's move of `app` by name.
+/// Under `ff-only` the landing first refuses, naming `rwv sync`. The landing
+/// and push on A pass with the pre-rebase pins waived, and machine B lands
+/// and pushes.
+pub fn sync_rebased_members_in_a_merged_project_on_a_second_machine(
+    history: &'static str,
+) -> Scenario {
+    let app = Repo::App.rel_path();
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "set-history", history, "--repo", &app]).expect(Exit::Succeeds),
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app-2"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    if history == "ff-only" {
+        steps.push(
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::HistoryNotFastForward))
+                .claim(Claim::OutputContains("rwv sync")),
+        );
+    }
+    steps.extend([
+        Step::rwv(&ww("w"), &["sync"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App]),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App])
+            .claim(Claim::WorkweaveGone(ww("w"))),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("a rebase replaced it:"))
+            .claim(Claim::OutputLacks("held by no branch")),
+        Step::new_machine(Machine::B),
+        Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"]).expect(Exit::Succeeds),
+        Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&b_ww("w2"), &["land"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App]),
+        publishes_records(Step::rwv(&b(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "sync-rebased members in a merged project on a second machine",
+        steps,
     )
 }
 

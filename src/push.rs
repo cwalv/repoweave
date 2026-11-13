@@ -1802,8 +1802,8 @@ fn judge_range(
                         [
                             pins,
                             match from {
-                                Some(from) if verb == "land" => format!(
-                                    "the landing rebased it: {} became {}, recorded in {}",
+                                Some(from) if verb == crate::remap::REBASE_VERB => format!(
+                                    "a rebase replaced it: {} became {}, recorded in {}",
                                     from.short(),
                                     to.short(),
                                     by.short()

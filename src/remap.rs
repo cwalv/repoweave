@@ -191,6 +191,53 @@ pub(crate) fn member_replays(
     Ok(replays)
 }
 
+/// The verb a re-pin records where a rebase of the member moved its pin.
+pub(crate) const REBASE_VERB: &str = "rebase";
+
+/// Each member of `rebases` whose pin in `from` its replay maps to its pin in
+/// `to`, or to a commit on that pin's first-parent chain: the rebase's re-pin
+/// of it by name, from the one pin to the other. A member the replay did not
+/// hold, or whose pins it does not map so, is left out.
+pub(crate) fn rebase_jumps(
+    root: &Path,
+    manifest: &Manifest,
+    rebases: &[Rebasing],
+    from: &BTreeMap<RepoPath, CommitId>,
+    to: &BTreeMap<RepoPath, CommitId>,
+    workspace: &Path,
+) -> anyhow::Result<Vec<crate::repin::Repin>> {
+    let rebases: Vec<Rebasing> = rebases
+        .iter()
+        .filter(|rebase| matches!(rebase.repo, RepoKey::Member(_)) && rebase.base != rebase.from)
+        .cloned()
+        .collect();
+    if rebases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut jumps = Vec::new();
+    for (member, replays) in &member_replays(root, manifest, &rebases, &[], workspace)? {
+        let (Some(was), Some(now)) = (from.get(member), to.get(member)) else {
+            continue;
+        };
+        let Some(entry) = manifest.get_entry(member).filter(|_| was != now) else {
+            continue;
+        };
+        let Some(image) = replays.iter().find_map(|replay| replay.image_of(was)) else {
+            continue;
+        };
+        let checkout = root.join(member.as_path());
+        if image == *now || vcs_for(entry.vcs_type).on_first_parents(&checkout, now, &image)? {
+            jumps.push(crate::repin::Repin {
+                member: member.clone(),
+                from: Some(was.clone()),
+                to: now.clone(),
+                verb: REBASE_VERB.to_owned(),
+            });
+        }
+    }
+    Ok(jumps)
+}
+
 /// A pin a dropped commit's re-map moved, by the project commit that pinned
 /// it.
 #[derive(Debug, Clone, PartialEq, Eq)]

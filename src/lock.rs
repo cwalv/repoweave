@@ -217,32 +217,9 @@ pub fn write_lock_in<L: serde::Serialize>(lock: &L, project_dir: &Path) -> anyho
 
 /// Stage `rwv.lock` and commit from `project_dir`.
 ///
-/// Generic helper: caller supplies the message. Returns `Ok(false)` when
-/// the staged change is empty (lock unchanged), `Ok(true)` when a commit
-/// was made.
-///
-/// Runs git from `project_dir` so the operation works for both the
-/// project-as-its-own-git-repo model (where `project_dir` is itself a
-/// git repo or worktree) and the workspace-root-as-single-repo model
-/// (where `project_dir` is a sub-directory inside a larger git repo).
-pub(crate) fn commit_lock_file_with_message(
-    vcs: &dyn Vcs,
-    project_dir: &Path,
-    message: &str,
-    naming: &Naming,
-) -> anyhow::Result<bool> {
-    stage_and_commit(
-        vcs,
-        project_dir,
-        &[LockFile::FILE_NAME],
-        message,
-        naming,
-        Vec::new(),
-    )
-}
-
-/// [`commit_lock_file_with_message`], recording `extra` too, after the
-/// re-pins.
+/// Stage and commit `rwv.lock` in `project_dir` with `message`, recording
+/// each re-pin `naming` names, then `extra`. `Ok(false)` where the lock is
+/// unchanged.
 pub(crate) fn commit_lock_file_annotated(
     vcs: &dyn Vcs,
     project_dir: &Path,

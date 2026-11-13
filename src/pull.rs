@@ -658,6 +658,7 @@ fn merge_project(
             message: format!("Merge the upstream of {attached} into {attached}"),
             head: crate::lock_merge::Parent::Second,
             members: crate::project_merge::MemberMerging::BothChanged(lineage),
+            rebases: Vec::new(),
         }
         .run(&sides)
         .and_then(|(commit, pruning)| {
