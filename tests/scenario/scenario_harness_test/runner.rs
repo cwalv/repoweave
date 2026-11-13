@@ -156,13 +156,13 @@ pub enum Action {
     /// The choice line the last rwv step printed that begins `prefix` and
     /// holds `holding`, run at `at` word for word as the terminal shows it:
     /// by rwv, or by git for a VCS action; each placeholder it leaves for
-    /// the operator to choose filled from `fill`. With `labelled`, `prefix`
+    /// the operator to choose filled from `fill`. With `labeled`, `prefix`
     /// is the label the command follows on its line, and a command quoted
     /// in backticks there is the quoted text.
     RwvPrinted {
         at: Place,
         exact: bool,
-        labelled: bool,
+        labeled: bool,
         prefix: &'static str,
         holding: &'static str,
         fill: &'static [(&'static str, &'static str)],
@@ -812,7 +812,7 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: false,
-                labelled: false,
+                labeled: false,
                 prefix,
                 holding,
                 fill: &[],
@@ -834,7 +834,7 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: false,
-                labelled: false,
+                labeled: false,
                 prefix,
                 holding,
                 fill,
@@ -851,7 +851,7 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: true,
-                labelled: false,
+                labeled: false,
                 prefix: line,
                 holding: "",
                 fill: &[],
@@ -868,7 +868,7 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 exact: false,
-                labelled: true,
+                labeled: true,
                 prefix: label,
                 holding,
                 fill: &[],
@@ -1359,7 +1359,7 @@ impl Run<'_> {
             Action::RwvPrinted {
                 at,
                 exact,
-                labelled,
+                labeled,
                 prefix,
                 holding,
                 fill,
@@ -1379,7 +1379,7 @@ impl Run<'_> {
                         ),
                     );
                 };
-                let line = match (labelled, line.strip_prefix(*prefix)) {
+                let line = match (labeled, line.strip_prefix(*prefix)) {
                     (true, Some(rest)) => match rest.strip_prefix('`') {
                         Some(quoted) => quoted.split('`').next().unwrap_or_default(),
                         None => rest,
