@@ -148,6 +148,23 @@ impl GitVcs {
         )?))
     }
 
+    /// `(mode, blob, stage)` of each index entry `path` holds at a stage
+    /// above zero.
+    pub(super) fn stage_entries(
+        checkout: &Path,
+        path: &str,
+    ) -> Result<Vec<(String, String, String)>, VcsError> {
+        let listed = Self::run(["ls-files", "-u", "-z", "--", path], checkout)?;
+        Ok(nul_terminated_fields(&listed)
+            .iter()
+            .filter_map(|record| {
+                let (meta, _) = record.split_once('\t')?;
+                let mut fields = meta.split_whitespace().map(str::to_owned);
+                Some((fields.next()?, fields.next()?, fields.next()?))
+            })
+            .collect())
+    }
+
     pub(super) fn merge_head(checkout: &Path) -> Result<Option<CommitId>, VcsError> {
         let args = ["rev-parse", "-q", "--verify", "MERGE_HEAD"];
         let output = git_command()

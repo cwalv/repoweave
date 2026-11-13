@@ -165,6 +165,7 @@ pub mod lock_merge;
 pub mod log;
 pub mod manifest;
 pub mod manifest_commit;
+pub(crate) mod manifest_conflict;
 pub mod member_branch;
 pub mod member_pin;
 pub mod member_selection;

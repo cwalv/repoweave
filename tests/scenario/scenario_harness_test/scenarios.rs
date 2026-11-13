@@ -1,6 +1,6 @@
 use super::invariants::{LockSite, Mode, Record};
 use super::runner::{
-    Claim, Defect, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
+    Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
 };
 use super::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, Store, RECORDS_BRANCH,
@@ -18477,14 +18477,6 @@ pub fn a_project_stop_refuses_every_commit(at: AtAProjectStop) -> Scenario {
         step.expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
             .claim(Claim::OutputContains("merge"))
     };
-    let merge_in_flight = || {
-        Step::git(
-            &ww("w"),
-            Repo::Proj,
-            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-        )
-        .expect(Exit::Succeeds)
-    };
     let mut steps = vec![
         create("w"),
         Step::hand_commit(&a(), Repo::Proj, "main", &[("NOTES.txt", "main note\n")]),
@@ -18506,12 +18498,12 @@ pub fn a_project_stop_refuses_every_commit(at: AtAProjectStop) -> Scenario {
                 .claim(Claim::OutputContains("NOTES.txt"))
                 .claim(Claim::OutputContains("rwv sync --continue"))
                 .claim(Claim::OutputContains("rwv abort")),
-            merge_in_flight(),
+            project_merge_in_flight(),
             Step::rwv(&ww("w"), &["sync", "--continue"])
                 .expect(Exit::refuses_kind(RefusalKind::OpParked)),
             refused(Step::rwv(&ww("w"), &["lock", "--commit"]))
                 .claim(Claim::OutputContains("NOTES.txt")),
-            merge_in_flight(),
+            project_merge_in_flight(),
             Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "NOTES.txt"])
                 .expect(Exit::Succeeds),
             Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
@@ -18533,7 +18525,7 @@ pub fn a_project_stop_refuses_every_commit(at: AtAProjectStop) -> Scenario {
             refused(Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]))
                 .claim(Claim::OutputContains("rwv sync --continue"))
                 .claim(Claim::OutputLacks("NOTES.txt")),
-            merge_in_flight(),
+            project_merge_in_flight(),
             Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
             Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:NOTES.txt"])
                 .expect(Exit::Succeeds)
@@ -18573,10 +18565,19 @@ pub fn a_project_stop_refuses_every_commit(at: AtAProjectStop) -> Scenario {
 
 /// `dc04-conflict-setter`: both sides change `lib`'s declared branch and its
 /// `history`; a `sync` that merges `main` in stops on the `rwv.toml`
-/// conflict, printing each field's setter with each side's value. The
-/// setters then settle the entry and stage the file, so `--continue`
-/// completes with no hand edit: a known defect, since no setter yet reads an
-/// `rwv.toml` a merge left conflicted.
+/// conflict, printing each field's setter with each side's value. Each
+/// setter settles its field on both sides and commits nothing; `--continue`
+/// refuses while a field is left, naming it, and completes with no hand edit
+/// once none is.
+fn project_merge_in_flight() -> Step {
+    Step::git(
+        &ww("w"),
+        Repo::Proj,
+        &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+    )
+    .expect(Exit::Succeeds)
+}
+
 pub fn dc04_conflict_setter() -> Scenario {
     scenario(
         "dc04 a conflicted entry is settled by its setters",
@@ -18605,11 +18606,34 @@ pub fn dc04_conflict_setter() -> Scenario {
                     "rwv branch set-history linear --repo local/remotes/lib",
                 )),
             Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w"])
-                .expect(Exit::Defect(Defect::SettersCannotReadAConflictedManifest)),
-            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
-                .expect(Exit::Defect(Defect::SettersCannotReadAConflictedManifest)),
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("still has entries in conflict"))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history linear --repo local/remotes/lib",
+                )),
+            project_merge_in_flight(),
             Step::rwv(&ww("w"), &["sync", "--continue"])
-                .expect(Exit::Defect(Defect::SettersCannotReadAConflictedManifest)),
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(
+                    "rwv branch set-history merge --repo local/remotes/lib",
+                ))
+                .claim(Claim::OutputLacks("set-branch")),
+            Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("no entry left in conflict")),
+            project_merge_in_flight(),
+            Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("branch = \"lib-w\""))
+                .claim(Claim::OutputContains("history = \"merge\""))
+                .claim(Claim::OutputLacks("lib-main")),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["rev-parse", "-q", "--verify", "HEAD^2"],
+            )
+            .expect(Exit::Succeeds),
         ],
     )
 }

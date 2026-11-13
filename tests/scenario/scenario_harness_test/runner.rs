@@ -282,31 +282,7 @@ pub enum Exit {
     /// The process ended with exactly this status. For rwv it is never 1:
     /// rwv's status 1 is a refusal, and names what refused.
     Code(i32),
-    /// The step meets a known product defect: its claims hold, its exit is
-    /// not checked, and a green run announces it as a skip.
-    Defect(Defect),
     Undecided,
-}
-
-/// A known product defect a step meets, until the change that fixes it
-/// gives the step the exit the design decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Defect {
-    /// A setter run during an `rwv.toml` conflict stop reads the working
-    /// `rwv.toml`, conflict markers and all, so it cannot settle the
-    /// conflicted entry and stage the file as the conflict stop says it does.
-    SettersCannotReadAConflictedManifest,
-}
-
-impl Defect {
-    fn describe(self) -> &'static str {
-        match self {
-            Defect::SettersCannotReadAConflictedManifest => {
-                "a setter cannot read an rwv.toml a merge left conflicted, so it cannot settle \
-                 the entry"
-            }
-        }
-    }
 }
 
 impl Exit {
@@ -1035,7 +1011,6 @@ pub struct StepRecord {
     pub label: String,
     pub succeeded: bool,
     pub decided: bool,
-    pub defect: Option<Defect>,
     pub output: String,
 }
 
@@ -1096,16 +1071,6 @@ impl Report {
                 "scenario {}: `{label}` ran with no decided outcome",
                 self.name
             ));
-        }
-        for record in &self.ran {
-            if let Some(defect) = record.defect {
-                crate::common::report_skip(&format!(
-                    "scenario {}: `{}` meets a known defect: {}",
-                    self.name,
-                    record.label,
-                    defect.describe()
-                ));
-            }
         }
     }
 
@@ -1222,10 +1187,6 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             label: step.label,
             succeeded,
             decided: step.expect.is_decided(),
-            defect: match step.expect.exit {
-                Exit::Defect(defect) => Some(defect),
-                _ => None,
-            },
             output,
         });
         before = after;

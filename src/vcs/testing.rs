@@ -968,6 +968,23 @@ impl Vcs for FakeVcs {
         unsupported("uncompared_paths")
     }
 
+    fn conflict_sides(
+        &self,
+        _checkout: &Path,
+        _path: &str,
+    ) -> Result<Option<crate::vcs::ConflictSides>, VcsError> {
+        unsupported("conflict_sides")
+    }
+
+    fn rewrite_conflict(
+        &self,
+        _checkout: &Path,
+        _path: &str,
+        _sides: &crate::vcs::ConflictSides,
+    ) -> Result<(), VcsError> {
+        unsupported("rewrite_conflict")
+    }
+
     fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {
         unsupported("staged_file")
     }

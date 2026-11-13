@@ -491,6 +491,16 @@ pub enum InTheWay {
     Unresolved,
 }
 
+/// The three sides a merge recorded for a file it left conflicted: the
+/// common ancestor's, the checked-out side's ("ours") and the incoming
+/// side's ("theirs"), each `None` where that side has no such file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictSides {
+    pub base: Option<String>,
+    pub ours: Option<String>,
+    pub theirs: Option<String>,
+}
+
 /// In-flight VCS operation whose conflict needs human resolution.
 ///
 /// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
@@ -5395,6 +5405,30 @@ pub trait Vcs: Send + Sync {
         checkout: &Path,
         paths: &[String],
     ) -> Result<UncomparedPaths, VcsError>;
+
+    /// The three sides a merge recorded for `path`, left conflicted in
+    /// `checkout`; `None` when `path` is not conflicted there.
+    ///
+    /// For git: the index's stages 1, 2 and 3.
+    fn conflict_sides(
+        &self,
+        checkout: &Path,
+        path: &str,
+    ) -> Result<Option<ConflictSides>, VcsError>;
+
+    /// Record `sides` as the sides of `path`, conflicted in `checkout`, and
+    /// rewrite its working file as the VCS's own merge of them, markers and
+    /// all; the path stays conflicted.
+    ///
+    /// For git: `hash-object -w --path=<path>` for each side,
+    /// `update-index --index-info` at stages 1, 2 and 3, then
+    /// `checkout --merge -- <path>`.
+    fn rewrite_conflict(
+        &self,
+        checkout: &Path,
+        path: &str,
+        sides: &ConflictSides,
+    ) -> Result<(), VcsError>;
 
     /// The staged content of `path` in `checkout`, `None` where nothing is
     /// staged there.

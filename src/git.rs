@@ -5663,6 +5663,56 @@ impl Vcs for GitVcs {
         carry_edits::uncompared(checkout, paths)
     }
 
+    fn conflict_sides(
+        &self,
+        checkout: &Path,
+        path: &str,
+    ) -> Result<Option<crate::vcs::ConflictSides>, VcsError> {
+        let mut sides = crate::vcs::ConflictSides {
+            base: None,
+            ours: None,
+            theirs: None,
+        };
+        let mut any = false;
+        for (_, blob, stage) in Self::stage_entries(checkout, path)? {
+            let text = Self::run(["cat-file", "blob", blob.as_str()], checkout)?;
+            any = true;
+            match stage.as_str() {
+                "1" => sides.base = Some(text),
+                "2" => sides.ours = Some(text),
+                "3" => sides.theirs = Some(text),
+                _ => {}
+            }
+        }
+        Ok(any.then_some(sides))
+    }
+
+    fn rewrite_conflict(
+        &self,
+        checkout: &Path,
+        path: &str,
+        sides: &crate::vcs::ConflictSides,
+    ) -> Result<(), VcsError> {
+        let mode = Self::stage_entries(checkout, path)?
+            .into_iter()
+            .next()
+            .map_or_else(|| "100644".to_owned(), |(mode, _, _)| mode);
+        let path_arg = format!("--path={path}");
+        let mut info = format!("0 {}\t{path}\n", "0".repeat(40));
+        for (stage, text) in [("1", &sides.base), ("2", &sides.ours), ("3", &sides.theirs)] {
+            let Some(text) = text else { continue };
+            let blob = Self::run_with_stdin(
+                ["hash-object", "-w", path_arg.as_str(), "--stdin"],
+                checkout,
+                text.as_bytes(),
+            )?;
+            info.push_str(&format!("{mode} {} {stage}\t{path}\n", blob.trim()));
+        }
+        Self::run_with_stdin(["update-index", "--index-info"], checkout, info.as_bytes())?;
+        Self::run(["checkout", "--merge", "--", path], checkout)?;
+        Ok(())
+    }
+
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {
         Self::staged(checkout, path)
     }

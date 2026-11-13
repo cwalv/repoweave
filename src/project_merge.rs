@@ -374,88 +374,6 @@ pub(crate) fn merge_branch_as_refs(
     }
 }
 
-/// What a conflicted `rwv.toml` entry needs: the setter of each field the two
-/// sides changed differently, spelled with each side's value.
-pub(crate) fn entry_setters(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    base: Option<&CommitId>,
-    sides: &Sides,
-) -> Vec<String> {
-    let read = |commit: &CommitId| -> Option<Manifest> {
-        let text = vcs
-            .read_file_at_revision(
-                dir,
-                &ResolvedRevisionId::from(commit.clone()),
-                Path::new(Manifest::FILE_NAME),
-            )
-            .ok()?;
-        Manifest::from_toml_str(&text).ok()
-    };
-    let (Some(base), Some(theirs), Some(ours)) =
-        (base.and_then(read), read(&sides.first), read(&sides.second))
-    else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-    if theirs.history != ours.history
-        && theirs.history != base.history
-        && ours.history != base.history
-    {
-        lines.push("rwv.toml top-level history differs".to_owned());
-        for (side, value) in [("ours", ours.history), ("theirs", theirs.history)] {
-            lines.push(format!("  keep {side}: {}", history_setter(value, None)));
-        }
-    }
-    for (path, was) in base.iter_entries() {
-        let (Some(theirs), Some(ours)) = (theirs.get_entry(path), ours.get_entry(path)) else {
-            continue;
-        };
-        let theirs_fields = crate::entry_report::fields_between(was, theirs);
-        for ours_field in crate::entry_report::fields_between(was, ours) {
-            let Some(theirs_field) = theirs_fields.iter().find(|f| f.name == ours_field.name)
-            else {
-                continue;
-            };
-            if theirs_field.now == ours_field.now {
-                continue;
-            }
-            lines.push(format!(
-                "rwv.toml entry {path}: {} differs",
-                ours_field.name
-            ));
-            for (side, value) in [("ours", &ours_field.now), ("theirs", &theirs_field.now)] {
-                if let Some(setter) = setter(ours_field.name, path, value) {
-                    lines.push(format!("  keep {side}: {setter}"));
-                }
-            }
-        }
-    }
-    lines
-}
-
-fn history_setter(value: Option<crate::manifest::History>, member: Option<&RepoPath>) -> String {
-    let repo = member.map_or(String::new(), |member| format!(" --repo {member}"));
-    match value {
-        Some(history) => format!("rwv branch set-history {history}{repo}"),
-        None => format!("rwv branch set-history --unset{repo}"),
-    }
-}
-
-fn setter(field: &str, member: &RepoPath, value: &str) -> Option<String> {
-    if field == "history" {
-        return Some(history_setter(value.parse().ok(), Some(member)));
-    }
-    let verb = match field {
-        "branch" => "set-branch",
-        "url" => "set-url",
-        "role" => "set-role",
-        "recurse-submodules" => "set-recurse-submodules",
-        _ => return None,
-    };
-    Some(format!("rwv member {verb} {member} {value}"))
-}
-
 /// The refusal that stops an operation on a conflict: what conflicted where,
 /// the backend's hint up to staging, each conflicted entry's setter, and the
 /// two ways out.
@@ -567,7 +485,7 @@ impl ProjectMerge<'_> {
             .merge_bases(&dir, &sides.first, &sides.second)?
             .into_iter()
             .next();
-        let merged = self.read_merged(vcs, &dir, sides, &repo, base.as_ref())?;
+        let merged = self.read_merged(vcs, &dir, sides, &repo)?;
         let Some(text) = merged.file(vcs, &dir, Manifest::FILE_NAME)? else {
             return Err(unparseable_result(
                 vcs,
@@ -647,7 +565,7 @@ impl ProjectMerge<'_> {
                     )?;
                     report.into_result()?;
                 }
-                self.merge_members(vcs, &dir, &merging, sides, base.as_ref())?
+                self.merge_members(vcs, &dir, &merging, sides)?
             }
             MemberMerging::Done(tips) => tips.clone(),
         };
@@ -757,10 +675,9 @@ impl ProjectMerge<'_> {
         dir: &Path,
         sides: &Sides,
         repo: &str,
-        base: Option<&CommitId>,
     ) -> anyhow::Result<Merged> {
         let stop = |paths: Vec<String>| {
-            let setters = entry_setters(vcs, dir, base, sides);
+            let setters = crate::manifest_conflict::stop_lines(vcs, dir);
             conflict_stop(
                 self.verb,
                 &self.resume,
@@ -828,7 +745,6 @@ impl ProjectMerge<'_> {
         dir: &Path,
         merging: &[MemberMerge],
         sides: &Sides,
-        base: Option<&CommitId>,
     ) -> anyhow::Result<BTreeMap<RepoPath, CommitId>> {
         let mut merged = BTreeMap::new();
         for MemberMerge {
@@ -863,7 +779,7 @@ impl ProjectMerge<'_> {
                         &self.resume,
                         &conflicted,
                         vcs_for(entry.vcs_type).as_ref(),
-                        &entry_setters(vcs, dir, base, sides),
+                        &crate::manifest_conflict::stop_lines(vcs, dir),
                     ));
                 }
                 Err(MemberStop::Refused(error)) => return Err(error),

@@ -485,10 +485,8 @@ to do, read only by the invariants:
   a repo state, its kind), and that axis's or kind's route among the
   `rwv explain` lines that end the output; `Exit::Code`, an exact status,
   for anything else whose status is the thing under test (rwv's status 1 is
-  never one: it is a refusal and names what refused); `Exit::Defect`, for
-  a step that meets a known product defect, named in `runner.rs`'s `Defect`:
-  its claims still hold, its exit is not checked, and every green run
-  through it announces it as a skip; and `Exit::Undecided`, a step whose
+  never one: it is a refusal and names what refused); and
+  `Exit::Undecided`, a step whose
   outcome the design has not decided yet. Only an exit expectation decides
   a step: claims alone do not. `assert_green` announces each undecided step
   it ran through as a skip; `assert_fully_decided_green` refuses one.
