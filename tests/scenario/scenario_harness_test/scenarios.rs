@@ -16684,6 +16684,56 @@ pub fn abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase
     )
 }
 
+/// `proj2` lists `lib` on `main` too. A linear landing of `proj` rebases
+/// `lib` and is killed in its retire, having fast-forwarded `main`; `proj2`
+/// then locks the rebased tip. Restoring `main` would leave `proj2`'s pin
+/// on a commit no ref reaches, so `rwv abort` refuses before anything moves,
+/// naming the pin, and the printed `--leave-target` ends the landing with
+/// `main` and the pin as they stand.
+pub fn abort_refuses_to_strand_another_projects_pin_on_the_target() -> Scenario {
+    let steps = vec![
+        Step::clone_project(Machine::A, Repo::Proj2).expect(Exit::Succeeds),
+        create("w"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::commit(&a(), Repo::Lib, "main-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--history", "linear", "--retire"],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::rwv(&a(), &["activate", "proj2"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains(
+                "[target] local/remotes/lib: restoring 'main' leaves ",
+            ))
+            .claim(Claim::OutputContains("which proj2 main pins"))
+            .claim(Claim::OutputContains("nothing of either side is restored"))
+            .claim(Claim::OutputLacks("abort stopped there"))
+            .claim(Claim::OutputContains("rwv abort --leave-target"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv_printed(&ww("w"), "rwv abort --leave-target")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::Lib, Repo::Proj]),
+        Step::git(&a(), Repo::Lib, &["log", "-1", "--format=%s", "main"])
+            .claim(Claim::OutputLine("w-lib")),
+    ];
+    Scenario {
+        name: "abort refuses to strand another project's pin on the target",
+        seed: Seed::default().second_project(SecondProject {
+            branch: "main",
+            also: &[],
+        }),
+        steps,
+    }
+}
+
 /// The stop of [`sync_stopped_then_lib_committed`] before anything is
 /// resolved, and `rwv abort`: `app`'s merge is canceled.
 pub fn abort_after_a_sync_merge_stops() -> Scenario {

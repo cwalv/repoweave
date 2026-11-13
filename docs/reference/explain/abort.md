@@ -137,6 +137,18 @@ moves, naming each and the commits on it since, and prints the choices:
   It is refused, before anything moves, where abort can restore the target,
   and for an operation that is not a landing.
 
+A lock other than the two abort puts back (the target's project branch and
+the source's) can pin a commit the landing wrote in the target: another
+project that lists the same member, or another branch of this one, locked it
+after the landing moved the member's branch. Where restoring the target, with
+the source put back, would leave such a pin on a commit no branch or backup
+reaches, abort refuses before anything moves, naming each pin and the lock
+that holds it (`restoring '<branch>' leaves <commit>, which <project>
+<branch> pins, reached by no branch or backup`). `--abandon-foreign-tip`
+does not clear it; `rwv land --continue` where the retire stopped, or
+`rwv abort --leave-target`, ends the landing with the target and the pin as
+they stand.
+
 ### Abandoning a foreign tip on purpose
 
 `--abandon-foreign-tip <repo>` is the operator's answer to "these foreign

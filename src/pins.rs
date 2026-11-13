@@ -490,36 +490,43 @@ pub(crate) fn stranded_by(
     change: &RefChange<'_>,
     exempt: impl Fn(&LivePin) -> bool,
 ) -> anyhow::Result<Vec<Stranded>> {
+    stranded_by_all(vcs, dir, live, std::slice::from_ref(change), exempt)
+}
+
+/// [`stranded_by`] for `changes` made together to the clone at `dir`.
+pub(crate) fn stranded_by_all(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    live: &[LivePin],
+    changes: &[RefChange<'_>],
+    exempt: impl Fn(&LivePin) -> bool,
+) -> anyhow::Result<Vec<Stranded>> {
     let mut remaining: Vec<(bool, ResolvedRevisionId)> = vcs
         .branch_tips(dir)?
         .into_iter()
-        .filter(|tip| &tip.branch != change.branch)
+        .filter(|tip| !changes.iter().any(|change| &tip.branch == change.branch))
         .map(|tip| (tip.branch.is_remote(), tip.tip))
         .collect();
-    if let Some(now) = change.now {
-        remaining.push((change.branch.is_remote(), now.clone()));
-    }
     let mut backups: Vec<ResolvedRevisionId> = vcs
         .list_backups(dir, crate::vcs::RemoteTracking::Counted)?
         .into_iter()
         .map(|listed| listed.backup.tip)
         .collect();
-    if change.was_backed_up {
-        backups.push(change.was.clone());
+    for change in changes {
+        if let Some(now) = change.now {
+            remaining.push((change.branch.is_remote(), now.clone()));
+        }
+        if change.was_backed_up {
+            backups.push(change.was.clone());
+        }
     }
+    let was: Vec<ResolvedRevisionId> = changes.iter().map(|change| change.was.clone()).collect();
     let left = Left {
         refs: remaining,
         backups,
-        remote_change: change.branch.is_remote(),
+        remote_change: changes.iter().any(|change| change.branch.is_remote()),
     };
-    stranded(
-        vcs,
-        dir,
-        live,
-        std::slice::from_ref(change.was),
-        &left,
-        exempt,
-    )
+    stranded(vcs, dir, live, &was, &left, exempt)
 }
 
 /// The pin rule for dropping the backups `dropping` from the clone at `dir`:

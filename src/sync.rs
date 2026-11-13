@@ -8499,7 +8499,7 @@ fn abort_op(
     };
     let judge = || match &reading {
         op_state::OwnerReading::Whole(record) if record.verb == OpVerb::Land => {
-            Some(judge_target(record, &stores))
+            Some(judge_target(record, &stores, ctx.primary_path()))
         }
         _ => None,
     };
@@ -9930,11 +9930,14 @@ struct TargetStanding {
     /// Where this landing left it, checked out outside both of its
     /// workspaces, so no restore may move it.
     held: Vec<TargetWrite>,
+    /// Each of `as_left`, by index, whose restore would leave a commit
+    /// another lock pins reached by no ref, with a line for each such pin.
+    pinned: Vec<(usize, Vec<String>)>,
 }
 
 impl TargetStanding {
     fn restorable(&self) -> bool {
-        self.moved.is_empty() && self.held.is_empty()
+        self.moved.is_empty() && self.held.is_empty() && self.pinned.is_empty()
     }
 
     fn abandoned_by(
@@ -9955,6 +9958,7 @@ impl TargetStanding {
     /// created moved on, which abort deletes rather than restores.
     fn abandonable(&self) -> bool {
         self.held.is_empty()
+            && self.pinned.is_empty()
             && self.moved.iter().all(|moved| {
                 moved.now.is_some()
                     && moved.repo != RepoKey::Project
@@ -9975,7 +9979,11 @@ impl TargetStanding {
 /// `T`'s checkout, in place in a third workspace, or as a ref; and each
 /// checkout of `T`'s workspace that aligning it moved off any branch the
 /// landing names.
-fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> TargetStanding {
+fn judge_target(
+    record: &op_state::OwnerRecord,
+    stores: &MemberStores,
+    primary: &Path,
+) -> TargetStanding {
     let mut standing = TargetStanding::default();
     let Some(take_in) = &record.take_in else {
         return standing;
@@ -10075,6 +10083,7 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
             standing.held.push(write);
         }
     }
+    standing.pinned = pins_a_restore_strands(record, take_in, &standing.as_left, primary);
     let Some(target) = &record.target else {
         return standing;
     };
@@ -10114,6 +10123,137 @@ fn judge_target(record: &op_state::OwnerRecord, stores: &MemberStores) -> Target
         }
     }
     standing
+}
+
+/// Each member branch of `as_left` whose restore, made with the source's
+/// checkouts and the op's ref moves put back, leaves a commit some live lock
+/// pins reached by no branch or backup, by index, with a line per pin. The
+/// locks abort itself puts back, the target's project branch and the
+/// source's, are exempt.
+fn pins_a_restore_strands(
+    record: &op_state::OwnerRecord,
+    take_in: &op_state::TakeInRecord,
+    as_left: &[TargetWrite],
+    primary: &Path,
+) -> Vec<(usize, Vec<String>)> {
+    use crate::branch_ref::BranchRef;
+    let vcs = crate::vcs::probe_vcs();
+    let restores = |write: &TargetWrite| {
+        write.branch.is_some()
+            && write.now.is_some()
+            && (write.created || write.now.as_ref() == Some(&write.wrote))
+    };
+    if !as_left.iter().any(restores) {
+        return Vec::new();
+    }
+    let live = match crate::pins::live_pins(primary) {
+        Ok(live) => live,
+        Err(e) => {
+            return as_left
+                .iter()
+                .enumerate()
+                .filter(|(_, write)| restores(write))
+                .map(|(i, _)| (i, vec![format!("could not read the live locks: {e:#}")]))
+                .collect();
+        }
+    };
+    let target_branch = take_in
+        .receiving
+        .get(&RepoKey::Project)
+        .map(|receiving| receiving.branch.clone());
+    let source_branch =
+        match vcs.observe_head(&project_dir(record.source.as_path(), &record.project)) {
+            Ok(crate::vcs::HeadObservation::Attached { name }) => Some(name.as_str().to_owned()),
+            _ => None,
+        };
+    let exempt = |pin: &crate::pins::LivePin| {
+        pin.project == record.project
+            && matches!(&pin.branch, BranchRef::Local(name)
+                if [&target_branch, &source_branch]
+                    .into_iter()
+                    .flatten()
+                    .any(|own| own == name.as_str()))
+    };
+    let tip = |dir: &Path, branch: &crate::vcs::RawRefName| {
+        vcs.resolve_local_branch_tip(dir, branch).ok().flatten()
+    };
+    let key = SavepointKey::Op(record.id.clone());
+    let mut pinned = Vec::new();
+    for (i, write) in as_left.iter().enumerate() {
+        let (RepoKey::Member(path), Some(branch)) = (&write.repo, &write.branch) else {
+            continue;
+        };
+        let Some(held) = live.get(path).filter(|_| restores(write)) else {
+            continue;
+        };
+        let restored_to = take_in
+            .receiving
+            .get(&write.repo)
+            .filter(|_| !write.created)
+            .map(|receiving| ResolvedRevisionId::from(receiving.tip.clone()));
+        let mut changes: Vec<(BranchRef, ResolvedRevisionId, Option<ResolvedRevisionId>)> = vec![(
+            BranchRef::Local(branch.clone()),
+            ResolvedRevisionId::from(write.wrote.clone()),
+            restored_to,
+        )];
+        let source_checkout = record.source.as_path().join(path.as_path());
+        if let (Ok(crate::vcs::HeadObservation::Attached { name }), Some(saved)) = (
+            vcs.observe_head(&source_checkout),
+            vcs.resolve_savepoint(&source_checkout, &key),
+        ) {
+            if let Some(now) = tip(&write.dir, &name) {
+                changes.push((BranchRef::Local(name), now, Some(saved)));
+            }
+        }
+        for moved in take_in
+            .ref_moves
+            .iter()
+            .filter(|moved| moved.repo == write.repo)
+        {
+            let name = crate::vcs::RawRefName::new(moved.branch.clone());
+            if let Some(now) = tip(&write.dir, &name) {
+                changes.push((
+                    BranchRef::Local(name),
+                    now,
+                    Some(ResolvedRevisionId::from(moved.from.clone())),
+                ));
+            }
+        }
+        let mut seen = Vec::new();
+        changes.retain(|(branch, _, _)| {
+            let fresh = !seen.contains(branch);
+            seen.push(branch.clone());
+            fresh
+        });
+        let refs: Vec<crate::pins::RefChange<'_>> = changes
+            .iter()
+            .map(|(branch, was, now)| crate::pins::RefChange {
+                branch,
+                was,
+                now: now.as_ref(),
+                was_backed_up: false,
+            })
+            .collect();
+        let lines =
+            match crate::pins::stranded_by_all(vcs.as_ref(), &write.dir, held, &refs, exempt) {
+                Ok(stranded) => stranded
+                    .iter()
+                    .map(|s| {
+                        format!(
+                        "restoring '{branch}' leaves {}, which {} pins, reached by no branch or \
+                         backup",
+                        s.commit.short(),
+                        s.held_by.join(", ")
+                    )
+                    })
+                    .collect(),
+                Err(e) => vec![format!("could not judge the pins it holds: {e:#}")],
+            };
+        if !lines.is_empty() {
+            pinned.push((i, lines));
+        }
+    }
+    pinned
 }
 
 /// A dependent's branch the op carried and moved, standing somewhere other
@@ -10397,6 +10537,12 @@ fn refuse_abort(
                 }
             );
         }
+        for (i, lines) in &standing.pinned {
+            let write = &standing.as_left[*i];
+            for line in lines {
+                eprintln!("  {}: {line}", write.label(target_label, project));
+            }
+        }
         for held in &standing.held {
             let at = held
                 .held_at
@@ -10458,7 +10604,7 @@ fn refuse_abort(
     } else {
         if unit_abandonable {
             lines.extend(closing("rwv abort", &[&source, &target], &unit_moved));
-        } else if unit.is_some_and(|u| u.moved.is_empty()) {
+        } else if unit.is_some_and(|u| u.moved.is_empty() && u.pinned.is_empty()) {
             let named: std::collections::BTreeSet<&RepoOperand> = [&source, &target]
                 .iter()
                 .flat_map(|t| t.abandonable.iter().chain(&t.named_after_fix))
@@ -10514,10 +10660,16 @@ fn refuse_abort(
         ));
     }
     eprintln!("\nrecovery options:\n{}", lines.join("\n"));
-    if unit.is_some() {
+    if unit.is_some_and(|u| !u.moved.is_empty() || !u.held.is_empty()) {
         crate::refuse!(
             RefusalKind::ForeignTip,
             "abort refused: something other than this landing has moved its target since"
+        )
+    }
+    if unit.is_some() {
+        crate::refuse!(
+            RefusalKind::ForeignTip,
+            "abort refused: another lock pins what this landing wrote in its target"
         )
     }
     crate::refuse!(

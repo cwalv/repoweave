@@ -871,6 +871,7 @@ every_scenario!(
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
     abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase,
+    abort_refuses_to_strand_another_projects_pin_on_the_target,
     landing_merge_continued_writes_one_project_merge,
     abort_after_a_sync_merge_stops,
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitWhileUnmerged),
@@ -6136,6 +6137,12 @@ fn abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase_sce
         scenarios::abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase(),
     )
     .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_refuses_to_strand_another_projects_pin_on_the_target_scenario() {
+    runner::run(scenarios::abort_refuses_to_strand_another_projects_pin_on_the_target())
+        .assert_fully_decided_green();
 }
 
 #[test]
