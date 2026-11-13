@@ -52,10 +52,9 @@ after the sync's fetch of every repo, so a pin published on a branch or tag of
 a member's remotes is judged like any other. A pin this clone still lacks then
 does not decide the base. Where a lock commit of the target's history that this
 branch does not reach holds it (a lock written since the two branches parted),
-or a re-pin record of the target's history names it as the pin a member was
-moved off by name, the sync reports it once, as `history pin absent` (under
-`--json`, `history-pin-absent` in `reports`), naming the pin and its lock
-commit.
+the sync reports it once, as `history pin absent` (under `--json`,
+`history-pin-absent` in `reports`), naming the pin and its lock commit; an
+older one is not reported.
 
 **`--from <branch>`** merges the branch's history in for one run, whatever the
 setting: each member that lacks the branch's pin merges it as a merge commit

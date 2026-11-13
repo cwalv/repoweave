@@ -133,15 +133,18 @@ chain that a lock in the target's history pins. Otherwise the landing refuses as
 this clone lacks does not decide the base, and the landing contacts no remote
 for it. Where a lock commit of the target's history that the source's project
 branch does not reach holds it (a lock written since the two branches parted),
-or a re-pin record of the target's history names it as the pin a member was
-moved off by name, the landing reports it once, as `history pin absent` (under
-`--json`, `history-pin-absent` in `reports`), naming the pin and its lock
-commit: this clone does not hold it, and `rwv sync`, which fetches every repo
-first, judges it, as do `rwv fetch` and a rerun. A landing made without a sync,
-on a clone that lacks such a pin, can pass with that note work that a clone
-holding the pin refuses as `pin` `off lineage`: work built on commits the
-target moved off, which it brings back, as merging them would in single-repo
-git.
+the landing reports it once, as `history pin absent` (under `--json`,
+`history-pin-absent` in `reports`), naming the pin and its lock commit: this
+clone does not hold it, and `rwv sync`, which fetches every repo first, judges
+it, as do `rwv fetch` and a rerun. A lacked pin from before the branches parted
+is not reported. So a landing made without a sync, on a clone that lacks a
+pin, can pass work that a clone holding the pin refuses as `pin` `off
+lineage`: with the note where the pin is from since the branches parted, and
+silently where it is older, as for work carried onto a published branch the
+target moved off before then. That work was built on commits the target
+dropped, and the landing brings them back, as merging them would in
+single-repo git. `rwv sync` first catches either case wherever a branch or tag
+of the member's remotes still holds the pin.
 
 **The source's lock.** A member whose checkout is beyond its pin is relocked
 forward at op start, after the savepoints, so `rwv abort` rolls the relock back

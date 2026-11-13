@@ -1043,11 +1043,17 @@ fn report_pins_held_by_no_branch(
         if !unbacked.is_empty() {
             let records = match &mut records {
                 Some(read) => read,
-                None => records.insert(crate::repin::recorded_in(
-                    pvcs,
-                    &pushed.project_dir,
-                    range.iter().map(|(commit, _)| commit),
-                )?),
+                None => records.insert(
+                    range
+                        .iter()
+                        .map(|(commit, _)| {
+                            crate::repin::recorded(pvcs, &pushed.project_dir, commit)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                        .into_iter()
+                        .flatten()
+                        .collect::<Vec<_>>(),
+                ),
             };
             moved_off = moved_off_by_name(vcs, &member.dir, &member.path, records, unbacked)?;
         }
@@ -1105,8 +1111,13 @@ fn moved_off_by_name(
     records: &[crate::repin::Repin],
     pins: BTreeSet<crate::vcs::CommitId>,
 ) -> Result<BTreeSet<crate::vcs::CommitId>, crate::vcs::VcsError> {
-    let exits: Vec<ResolvedRevisionId> = crate::repin::moved_off(records, member)
-        .filter_map(|from| vcs.resolve_revision(dir, from.as_str()).ok())
+    let exits: Vec<ResolvedRevisionId> = records
+        .iter()
+        .filter(|record| &record.member == member)
+        .filter_map(|record| {
+            vcs.resolve_revision(dir, record.from.as_ref()?.as_str())
+                .ok()
+        })
         .collect();
     let mut moved_off = BTreeSet::new();
     for pin in pins {

@@ -6,7 +6,6 @@ use crate::manifest::{LockFile, RepoPath};
 use crate::vcs::{CommitId, ResolvedRevisionId, Vcs, VcsError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 /// A pin of the target's history this clone lacks that the lineage rule
 /// considers, and the oldest lock commit that holds it among those it was
@@ -59,7 +58,6 @@ pub(crate) struct PinHistory {
     tip: Option<CommitId>,
     locks: Vec<(CommitId, BTreeMap<RepoPath, CommitId>)>,
     source: Option<CommitId>,
-    records: OnceLock<Vec<crate::repin::Repin>>,
 }
 
 fn pins_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<BTreeMap<RepoPath, CommitId>> {
@@ -106,8 +104,7 @@ impl PinHistory {
 
     /// The same history, landed or synced from `source`, the source's
     /// project branch: of the pins this clone lacks, the lineage rule
-    /// considers those the lock commits `source` does not reach hold, and
-    /// those a re-pin record of the history moved off by name.
+    /// considers those the lock commits `source` does not reach hold.
     pub(crate) fn since(mut self, source: &CommitId) -> Self {
         self.source = Some(source.clone());
         self
@@ -118,9 +115,7 @@ impl PinHistory {
     }
 
     /// Which of `absent`, pins of `member` this clone lacks, a lock commit
-    /// the source does not reach holds, each with the oldest such commit;
-    /// and which a re-pin record of the history moved the member off, each
-    /// with the oldest lock commit holding it.
+    /// the source does not reach holds, each with the oldest such commit.
     pub(crate) fn considered(
         &self,
         project_vcs: &dyn Vcs,
@@ -134,44 +129,25 @@ impl PinHistory {
             .commits_changing(&self.dir, tip, self.source.as_slice(), LockFile::FILE_NAME)?
             .into_iter()
             .collect();
-        let oldest_holding = |pin: &CommitId, in_range: Option<&BTreeSet<CommitId>>| {
-            self.locks
-                .iter()
-                .rev()
-                .find(|(lock, held)| {
-                    held.get(member) == Some(pin) && in_range.is_none_or(|r| r.contains(lock))
+        let mut held_by: BTreeMap<&CommitId, &CommitId> = BTreeMap::new();
+        for (lock, held) in self
+            .locks
+            .iter()
+            .filter(|(lock, _)| in_range.contains(lock))
+        {
+            if let Some(pin) = held.get(member).filter(|pin| absent.contains(pin)) {
+                held_by.insert(pin, lock);
+            }
+        }
+        Ok(absent
+            .iter()
+            .filter_map(|pin| {
+                Some(HistoryPin {
+                    lock: (*held_by.get(pin)?).clone(),
+                    pin: pin.clone(),
                 })
-                .map(|(lock, _)| lock.clone())
-        };
-        let mut considered = Vec::new();
-        for pin in absent {
-            let lock = match oldest_holding(pin, Some(&in_range)) {
-                Some(lock) => Some(lock),
-                None if crate::repin::moved_off(self.records(project_vcs)?, member)
-                    .any(|from| from == pin) =>
-                {
-                    oldest_holding(pin, None)
-                }
-                None => None,
-            };
-            considered.extend(lock.map(|lock| HistoryPin {
-                lock,
-                pin: pin.clone(),
-            }));
-        }
-        Ok(considered)
-    }
-
-    fn records(&self, project_vcs: &dyn Vcs) -> Result<&[crate::repin::Repin], VcsError> {
-        if let Some(records) = self.records.get() {
-            return Ok(records);
-        }
-        let read = crate::repin::recorded_in(
-            project_vcs,
-            &self.dir,
-            self.locks.iter().map(|(lock, _)| lock),
-        )?;
-        Ok(self.records.get_or_init(|| read))
+            })
+            .collect())
     }
 }
 
@@ -640,22 +616,15 @@ mod tests {
     }
 
     #[test]
-    fn a_lacked_pin_a_re_pin_record_moved_off_is_considered_however_old() {
+    fn a_lacked_pin_a_re_pin_record_moved_off_before_the_branches_parted_is_not_considered() {
         let (_tmp, dir) = repo();
-        let (moved_off, relocked_off, moved_to) = (fake('a'), fake('b'), fake('c'));
-        let pinned = lock_commit(&dir, &moved_off);
+        let (moved_off, moved_to) = (fake('a'), fake('c'));
+        lock_commit(&dir, &moved_off);
         repin_commit(&dir, &moved_off, &moved_to);
-        lock_commit(&dir, &relocked_off);
         lock_commit(&dir, &fake('d'));
         let source = head(&dir);
         let (history, m) = history_in(&dir, Some(&source));
-        assert_eq!(
-            considered(&history, &m, &[&moved_off, &relocked_off, &moved_to]),
-            vec![HistoryPin {
-                lock: pinned,
-                pin: moved_off
-            }]
-        );
+        assert_eq!(considered(&history, &m, &[&moved_off, &moved_to]), vec![]);
     }
 
     struct Pair {

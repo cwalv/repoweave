@@ -6828,12 +6828,13 @@ fn a_history_pin_no_clone_holds() -> Vec<Step> {
 /// remote. A seat cut before the lock commit that pins the dropped commit
 /// notes it once, on either machine; a sync after its own fetch notes it as
 /// still lacked. A seat cut after that lock commit, or one synced past it,
-/// notes it too, since `main`'s re-pin record moved `app` off it by name.
+/// notes nothing, on a landing or a sync, though `main`'s re-pin record names
+/// the dropped commit as the pin `app` was moved off.
 pub fn landed_history_pin_no_ref_keeps() -> Scenario {
     let mut steps = a_history_pin_no_clone_holds();
     let absent = || Claim::OutputOnce("local/remotes/app: history pin absent");
     let not_held = || Claim::OutputContains("which this clone does not hold");
-    let late = |step: Step| step.claim(absent()).claim(not_held());
+    let late = |step: Step| step.claim(Claim::OutputLacks("history pin absent"));
     steps.extend([
         Step::rwv(&b_ww("b-sync"), &["sync", "--history", "linear"])
             .expect(Exit::Succeeds)
@@ -6874,6 +6875,12 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
         )
         .expect(Exit::Succeeds),
         Step::commit(&b_ww("b-late"), Repo::App, "b-late-app"),
+        Step::rwv(
+            &b(),
+            &["workweave", "create", "--project", "proj", "b-later"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&b_ww("b-later"), Repo::App, "b-later-app"),
         late(
             Step::rwv(&b_ww("b-late"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
@@ -6881,6 +6888,12 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
                 .may_leave_unresolved(&[Repo::App]),
         ),
         Step::reachable(Remote::origin(Repo::App)),
+        late(
+            Step::rwv(&b_ww("b-later"), &["sync", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .may_leave_unresolved(&[Repo::App]),
+        ),
     ]);
     scenario("a landed history pin no ref keeps", steps)
 }
@@ -7569,33 +7582,32 @@ pub fn a_colleagues_history_pin_is_judged_by_sync(cut: Cut) -> Scenario {
 }
 
 /// [`a_colleagues_pin_b_lacks`] with `a-app` published and B's work carrying
-/// `shared`, landed without a sync: B lacks `a-app`, so the landing notes it
-/// and lands `shared` back onto `main`, where a clone holding `a-app` refuses
-/// the same work as off lineage. The note is printed whether `w2` was cut
-/// before the lock commit pinning `a-app`, or after `main` moved off it by
-/// name, where carrying `w2`'s `app` back onto `shared` takes the printed
-/// re-pin first.
-pub fn a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(
-    cut: Cut,
-) -> Scenario {
+/// `shared`, landed without a sync: B lacks `a-app`, so the landing lands
+/// `shared` back onto `main`, where a clone holding `a-app` refuses the same
+/// work as off lineage. From a seat cut before the lock commit pinning
+/// `a-app` the landing notes it; from one cut after `main` moved off it by
+/// name, which carries `w2`'s `app` back onto `shared` through the printed
+/// re-pin, it notes nothing.
+pub fn a_landing_without_a_sync_lands_what_a_clone_holding_the_pin_refuses(cut: Cut) -> Scenario {
     let mut steps = a_colleagues_pin_b_lacks(Colleague::Shared, true, cut);
-    if cut == Cut::After {
-        steps.extend([
-            b_lands(&[]).expect(Exit::refuses(Repo::App, State::PinBackwards)),
-            Step::rwv_printed_filling(&b_ww("w2"), "rwv member pin", "", &[("<rev>", "HEAD")])
-                .may_rewind(&[Repo::App])
-                .expect(Exit::Succeeds),
-        ]);
-    }
-    steps.push(
-        b_lands(&[
+    let landing = match cut {
+        Cut::Before => b_lands(&[
             Claim::OutputOnce("local/remotes/app: history pin absent"),
             Claim::OutputContains("which this clone does not hold"),
-        ])
-        .expect(Exit::Succeeds),
-    );
+        ]),
+        Cut::After => {
+            steps.extend([
+                b_lands(&[]).expect(Exit::refuses(Repo::App, State::PinBackwards)),
+                Step::rwv_printed_filling(&b_ww("w2"), "rwv member pin", "", &[("<rev>", "HEAD")])
+                    .may_rewind(&[Repo::App])
+                    .expect(Exit::Succeeds),
+            ]);
+            b_lands(&[Claim::OutputLacks("history pin absent")])
+        }
+    };
+    steps.push(landing.expect(Exit::Succeeds));
     scenario(
-        "a landing without a sync lands with a note what a clone holding the pin refuses",
+        "a landing without a sync lands what a clone holding the pin refuses",
         steps,
     )
 }

@@ -55,20 +55,23 @@ the base.
 
 `rwv land` contacts no remote: it judges on the pins this clone holds. Neither
 verb refuses for a lacked pin. Each reports one, once per run, as `history pin
-absent`, naming the pin and its lock commit, where it is the kind that can
-matter: a pin a lock commit the source's project branch does not reach holds
-(the target's history since the two branches parted), or one a re-pin record
-of the target's history names as the pin a member was moved off by name. The
-landing's note says this clone does not hold the pin and that `rwv sync`
-fetches and judges it.
+absent`, naming the pin and its lock commit, where a lock commit the source's
+project branch does not reach holds it: the target's history since the two
+branches parted. An older lacked pin is not reported, so no pin is reported
+for ever. The landing's note says this clone does not hold the pin and that
+`rwv sync` fetches and judges it.
 
-What stays outside the rule: a landing made without a sync, on a clone that
-lacks such a pin, passes with the note where a clone holding the pin refuses
-`pin` `off lineage`; and a pin the target moved off by a hand edit of its lock,
-before the branches parted, leaves no record to read, so a landing passes such
-work with no note at all. Both land work built on commits the target dropped,
-and bring those commits back, as merging them would in single-repo git, which
-checks nothing for a submodule commit that has gone.
+What stays outside the rule is a landing made without a sync, on a clone that
+lacks a pin that would have refused the work as `pin` `off lineage`. Where the
+pin is from since the branches parted, the landing passes with the note. Where
+it is older, the landing passes with nothing said: work built on a published
+branch the target pinned and moved off before the branches parted, a
+fast-forward onto a colleague's branch for instance. `rwv sync` first catches
+both wherever a branch or tag of the member's remotes still holds the pin,
+since its fetch brings the pin and the rule then refuses; nothing catches them
+where no remote does. Either way the landing brings back commits the target
+dropped, as merging them would in single-repo git, which checks nothing for a
+submodule commit that has gone.
 
 **`--from <branch>`** merges another weave branch's history in, whatever the
 setting, and always as a merge commit: work moving between published branches

@@ -1204,12 +1204,8 @@ every_scenario!(
     a_history_pin_this_clone_lacks_is_noted_and_lands(true),
     a_colleagues_history_pin_is_judged_by_sync(scenarios::Cut::Before),
     a_colleagues_history_pin_is_judged_by_sync(scenarios::Cut::After),
-    a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(
-        scenarios::Cut::Before
-    ),
-    a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(
-        scenarios::Cut::After
-    ),
+    a_landing_without_a_sync_lands_what_a_clone_holding_the_pin_refuses(scenarios::Cut::Before),
+    a_landing_without_a_sync_lands_what_a_clone_holding_the_pin_refuses(scenarios::Cut::After),
     a_landing_contacts_no_remote_for_a_history_pin_it_lacks,
     a_sync_reports_an_absent_history_pin_in_json,
     a_seat_pushes_after_landing_without_retire,
@@ -5272,7 +5268,7 @@ holding_rwv! {
 }
 
 #[test]
-fn a_history_pin_no_clone_holds_is_noted_by_every_seat_while_a_re_pin_record_names_it() {
+fn a_dead_history_pin_a_re_pin_record_names_is_noted_only_by_seats_cut_before_its_lock() {
     runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
 }
 
@@ -5395,10 +5391,10 @@ fn a_colleagues_history_pin_is_judged_by_the_fetch_sync_makes() {
 }
 
 #[test]
-fn a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses() {
+fn a_landing_without_a_sync_lands_what_a_clone_holding_the_pin_refuses_noted_only_in_range() {
     for cut in [scenarios::Cut::Before, scenarios::Cut::After] {
         runner::run(
-            scenarios::a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(cut),
+            scenarios::a_landing_without_a_sync_lands_what_a_clone_holding_the_pin_refuses(cut),
         )
         .assert_fully_decided_green();
     }
