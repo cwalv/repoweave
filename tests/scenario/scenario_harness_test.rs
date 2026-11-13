@@ -5272,7 +5272,7 @@ holding_rwv! {
 }
 
 #[test]
-fn a_history_pin_no_clone_holds_is_noted_by_seats_cut_before_it_contacting_no_remote() {
+fn a_history_pin_no_clone_holds_is_noted_by_every_seat_while_a_re_pin_record_names_it() {
     runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
 }
 
@@ -5396,7 +5396,7 @@ fn a_colleagues_history_pin_is_judged_by_the_fetch_sync_makes() {
 
 #[test]
 fn a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses() {
-    for cut in [scenarios::Cut::Before] {
+    for cut in [scenarios::Cut::Before, scenarios::Cut::After] {
         runner::run(
             scenarios::a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(cut),
         )

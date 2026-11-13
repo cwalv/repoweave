@@ -6828,12 +6828,12 @@ fn a_history_pin_no_clone_holds() -> Vec<Step> {
 /// remote. A seat cut before the lock commit that pins the dropped commit
 /// notes it once, on either machine; a sync after its own fetch notes it as
 /// still lacked. A seat cut after that lock commit, or one synced past it,
-/// does not.
+/// notes it too, since `main`'s re-pin record moved `app` off it by name.
 pub fn landed_history_pin_no_ref_keeps() -> Scenario {
     let mut steps = a_history_pin_no_clone_holds();
     let absent = || Claim::OutputOnce("local/remotes/app: history pin absent");
     let not_held = || Claim::OutputContains("which this clone does not hold");
-    let late = |step: Step| step.claim(Claim::OutputLacks("history pin absent"));
+    let late = |step: Step| step.claim(absent()).claim(not_held());
     steps.extend([
         Step::rwv(&b_ww("b-sync"), &["sync", "--history", "linear"])
             .expect(Exit::Succeeds)
@@ -7573,11 +7573,20 @@ pub fn a_colleagues_history_pin_is_judged_by_sync(cut: Cut) -> Scenario {
 /// and lands `shared` back onto `main`, where a clone holding `a-app` refuses
 /// the same work as off lineage. The note is printed whether `w2` was cut
 /// before the lock commit pinning `a-app`, or after `main` moved off it by
-/// name.
+/// name, where carrying `w2`'s `app` back onto `shared` takes the printed
+/// re-pin first.
 pub fn a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(
     cut: Cut,
 ) -> Scenario {
     let mut steps = a_colleagues_pin_b_lacks(Colleague::Shared, true, cut);
+    if cut == Cut::After {
+        steps.extend([
+            b_lands(&[]).expect(Exit::refuses(Repo::App, State::PinBackwards)),
+            Step::rwv_printed_filling(&b_ww("w2"), "rwv member pin", "", &[("<rev>", "HEAD")])
+                .may_rewind(&[Repo::App])
+                .expect(Exit::Succeeds),
+        ]);
+    }
     steps.push(
         b_lands(&[
             Claim::OutputOnce("local/remotes/app: history pin absent"),

@@ -250,6 +250,30 @@ pub(crate) fn recorded(
         .collect())
 }
 
+/// The re-pins each of `commits` records, in their order.
+pub(crate) fn recorded_in<'a>(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    commits: impl IntoIterator<Item = &'a CommitId>,
+) -> Result<Vec<Repin>, VcsError> {
+    let mut records = Vec::new();
+    for commit in commits {
+        records.extend(recorded(vcs, dir, commit)?);
+    }
+    Ok(records)
+}
+
+/// The pins of `member` that `records` re-pinned it off by name.
+pub(crate) fn moved_off<'a>(
+    records: &'a [Repin],
+    member: &'a RepoPath,
+) -> impl Iterator<Item = &'a CommitId> + 'a {
+    records
+        .iter()
+        .filter(move |record| &record.member == member)
+        .filter_map(|record| record.from.as_ref())
+}
+
 /// A copy of the replayed `commit` on `parent` whose `rwv.lock` is `lock`,
 /// its message kept, each re-pin it records taken through `map` as its
 /// lock's pins were; a re-pin `map` leaves moving nothing, or moving off a
