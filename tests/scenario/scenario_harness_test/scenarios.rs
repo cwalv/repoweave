@@ -17663,6 +17663,49 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry(ends: StoppedCarryE
     )
 }
 
+/// `stack-carried` as a landing of `w1` into `main` killed after the target
+/// moved, a dependent `w2` carried, and a hand commit on `main` after: abort
+/// refuses the foreign tip and prints `--leave-target`, which leaves `main`
+/// as it stands and puts `w1` and `w2` back where they were.
+pub fn abort_leaving_the_target_of_a_landing_that_carried_a_dependent() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "landed", "landing"),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputContains("w1-app")),
+        Step::hand_commit(&a(), Repo::Proj, "main", &[("late.txt", "late\n")]),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains("rwv abort --leave-target"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        Step::rwv_printed_exactly(&ww("w1"), "rwv abort --leave-target")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputContains("w1-app")),
+        Step::git(&a(), Repo::Proj, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputContains("hand commit")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app"))
+            .claim(Claim::OutputContains("w2-app")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "proj--w1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+        Step::rwv(&ww("w1"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    ]);
+    scenario(
+        "stack: abort --leave-target of a landing that carried a dependent",
+        steps,
+    )
+}
+
 /// How the refusal of a continued carry, met a dependent checked out
 /// elsewhere, is cleared.
 #[derive(Debug, Clone, Copy)]
