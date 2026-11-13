@@ -8000,7 +8000,14 @@ pub fn moved_and_edited(end: MovedAndEditedEnd) -> Scenario {
         MovedAndEditedEnd::Derived => steps.extend([
             merge()
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("kept as backup")),
+                .claim(Claim::OutputContains("kept as backup"))
+                .claim(Claim::OutputContains(
+                    "these files are declared derived, so each now holds",
+                ))
+                .claim(Claim::OutputContains("(`rwv backup list`): DERIVED")),
+            Step::rwv_printed_holding(&at, "git -C", ":DERIVED")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("mine-derived")),
             refreshed(),
             Step::git(
                 &at,
