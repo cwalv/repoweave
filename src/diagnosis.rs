@@ -920,10 +920,12 @@ impl State {
                 means: "the lock pins a commit that no ref in the clone reaches; the checkout \
                         is on the declared branch at the tip of the remote's branch. At a \
                         landing or `rwv sync`, a pin of the target's history this clone lacks \
-                        refuses unless a later lock of that history re-pinned the member by \
-                        name, the jump a waiver or a landing's rebase records included: that \
-                        pin does not decide the base, and the verb reports it (`history pin \
-                        skipped`) where the source had not taken that re-pin in",
+                        refuses unless that history moved off it by name: each later lock \
+                        that changed the member's pin from it records the move (a re-pin, a \
+                        waiver, or a rebase rwv made), or moves to a pin this clone also lacks \
+                        that was moved off the same way. That pin does not decide the base \
+                        here, and the verb reports it (`history pin skipped`) where the \
+                        source had not taken that record in",
                 refused_by: "`rwv push`; `rwv land`, for a pin of the target's lock as last \
                              fetched, naming `rwv fetch`; `rwv clone`, which does not refuse: it \
                              completes, lists the member and exits with status 3; `rwv \

@@ -48,7 +48,12 @@ on contains its base: the newest commit of its first-parent chain that a lock in
 the target's history pins. Otherwise the sync refuses as `pin` `off lineage`,
 listing the base and the branch, with the fact `patch-equivalent` where commits
 on that branch carry the same changes. A pin this clone lacks, where the rule
-must read it, is `pin` `unreachable`.
+must read it, is `pin` `unreachable`, unless the target's history moved off it
+by name: each later lock that changed the member's pin from it records that
+move (`rwv member pin`, a waiver, a rebase `rwv land` or `rwv sync` made), or
+moves to a pin this clone also lacks that was moved off the same way. Such a
+pin does not decide the base here, and the sync reports it as `history pin
+skipped` (under `--json`, `history-pin-skipped` in `reports`).
 
 **`--from <branch>`** merges the branch's history in for one run, whatever the
 setting: each member that lacks the branch's pin merges it as a merge commit
