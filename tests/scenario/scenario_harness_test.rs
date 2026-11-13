@@ -975,6 +975,12 @@ every_scenario!(
     abort_sets_aside_an_untracked_file_in_the_way_in_the_target,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
+    abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it(
+        scenarios::LandedStop::Landed
+    ),
+    abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it(
+        scenarios::LandedStop::Retire
+    ),
     abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Landed),
     abort_switch_back_blocked(scenarios::SwitchBackBlocked::Gone),
     abort_switch_back_blocked(scenarios::SwitchBackBlocked::Held),
@@ -3026,6 +3032,15 @@ holding_rwv! {
     fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it() {
         for stop in scenarios::LandedStop::ALL {
             runner::run(scenarios::abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(stop))
+                .assert_fully_decided_green();
+        }
+    }
+
+    /// The printed line that puts a deleted receiving branch back, run
+    /// verbatim, lets the plain abort restore everything.
+    fn abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it() {
+        for stop in scenarios::LandedStop::ALL {
+            runner::run(scenarios::abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it(stop))
                 .assert_fully_decided_green();
         }
     }

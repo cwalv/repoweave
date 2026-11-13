@@ -11886,7 +11886,72 @@ pub fn land_clones_a_member_its_target_took_in_by_fetch_alone() -> Scenario {
 pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(
     stop: LandedStop,
 ) -> Scenario {
-    let steps = vec![
+    let mut steps = receiving_branch_deleted_after_the_landing_moved_it(stop);
+    steps.extend([
+        Step::rwv_printed_holding(&ww("w"), "rwv abort ", "--leave-target")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .claim(Claim::OutputContains("is left as it stands, gone")),
+        Step::git(
+            &a(),
+            Repo::Lib,
+            &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
+        )
+        .claim(Claim::OutputLacks("pre-op")),
+        Step::git(&a(), Repo::Lib, &["log", "--all", "--format=%s"])
+            .claim(Claim::OutputContains("dev-own")),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    scenario(
+        "abort over a receiving branch deleted after the landing moved it",
+        steps,
+    )
+}
+
+/// The same state; the printed line that puts `lib-next` back where the
+/// landing left it, run verbatim, lets the plain abort restore everything,
+/// `lib-next` back at its own tip, and the landing then lands again.
+pub fn abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it(
+    stop: LandedStop,
+) -> Scenario {
+    let mut steps = receiving_branch_deleted_after_the_landing_moved_it(stop);
+    steps.extend([
+        Step::rwv_printed_holding(&ww("w"), "git -C ", " branch lib-next ").expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::Lib])
+            .may_restore(&[Repo::Proj, Repo::Lib]),
+        Step::git(&a(), Repo::Lib, &["log", "-1", "--format=%s", "lib-next"])
+            .claim(Claim::OutputLine("dev-own")),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "land",
+                "--history",
+                "linear",
+                "--retire",
+                "--allow-member-change",
+                LIB,
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w"))),
+    ]);
+    scenario(
+        "abort puts back a receiving branch deleted after the landing moved it",
+        steps,
+    )
+}
+
+/// A landing that moved `lib-next` as a ref, killed at `stop`, its target's
+/// `lib` switched back to `main` and `lib-next` deleted; the plain abort
+/// refuses, printing what puts the branch back.
+fn receiving_branch_deleted_after_the_landing_moved_it(stop: LandedStop) -> Vec<Step> {
+    vec![
         create("w"),
         Step::git(&a(), Repo::Lib, &["switch", "-q", "-c", "lib-next"]),
         Step::commit(&a(), Repo::Lib, "dev-own"),
@@ -11925,27 +11990,7 @@ pub fn abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(
             true,
             &[a(), ww("w")],
         ),
-        Step::rwv_printed_holding(&ww("w"), "rwv abort ", "--leave-target")
-            .expect(Exit::Succeeds)
-            .may_strand(&[Repo::Proj])
-            .may_rewind(&[Repo::Lib])
-            .may_restore(&[Repo::Proj, Repo::Lib])
-            .claim(Claim::OutputContains("is left as it stands, gone")),
-        Step::git(
-            &a(),
-            Repo::Lib,
-            &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op/"],
-        )
-        .claim(Claim::OutputLacks("pre-op")),
-        Step::git(&a(), Repo::Lib, &["log", "--all", "--format=%s"])
-            .claim(Claim::OutputContains("dev-own")),
-        Step::rwv(&ww("w"), &["land", "--continue"])
-            .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
-    ];
-    scenario(
-        "abort over a receiving branch deleted after the landing moved it",
-        steps,
-    )
+    ]
 }
 
 /// What keeps abort from switching the target's `lib` back onto `main`.
