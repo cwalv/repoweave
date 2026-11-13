@@ -276,9 +276,10 @@ fn take(
                     "the op was started for project `{recorded}`, not `{project}`"
                 ));
             }
-            let pre_manifest = vcs
+            let pre_head = vcs
                 .resolve_savepoint(&dir, &SavepointKey::Op(op.id.clone()))
-                .and_then(|at| manifest_at(vcs.as_ref(), &dir, at.id()))
+                .context("the op's savepoint of the project repo is gone")?;
+            let pre_manifest = manifest_at(vcs.as_ref(), &dir, pre_head.id())
                 .context("the project's rwv.toml did not parse when the sync began")?;
             crate::workweave::refuse_symlinked_members_named(
                 ctx.active_path(),

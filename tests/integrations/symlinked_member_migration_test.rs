@@ -697,6 +697,37 @@ fn doctor_fix_migrates_a_member_under_a_parked_op_and_abort_then_restores() {
 /// project's `rwv.toml` at the sync's savepoint, and refuses a parked sync
 /// whose `reference` member became a link, naming `doctor --fix`, before it
 /// resumes anything.
+/// A parked sync whose op savepoint of the project repo is gone, as a kill
+/// while the sync drops its savepoints at its end leaves it: `--continue`
+/// says the savepoint is gone, before it reads any member, and not that
+/// `rwv.toml` did not parse.
+#[test]
+fn sync_continue_says_a_project_savepoint_that_is_gone_is_gone() {
+    let tmp = common::tempdir().unwrap();
+    let parked = parked_with_a_link(tmp.path(), "sync");
+    let project = parked.seat.join("projects").join(PROJECT);
+    let savepoints = common::git_in(
+        &project,
+        &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op"],
+    );
+    assert!(!savepoints.is_empty(), "fixture: the sync filed savepoints");
+    for name in savepoints.lines() {
+        common::git_in(&project, &["update-ref", "-d", name]);
+    }
+    let out = rwv()
+        .args(["sync", "--continue"])
+        .current_dir(&parked.seat)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("savepoint of the project repo is gone")
+            && !stderr.contains("did not parse"),
+        "stderr:\n{stderr}"
+    );
+}
+
 #[test]
 fn sync_continue_refuses_a_member_that_became_a_link() {
     let tmp = common::tempdir().unwrap();
