@@ -124,57 +124,6 @@ fn head(repo: &Path) -> String {
     common::git_in(repo, &["rev-parse", "HEAD"])
 }
 
-fn savepoints(repo: &Path) -> String {
-    common::git_in(repo, &["for-each-ref", "refs/rwv/pre-op"])
-}
-
-/// The seat's member is ahead of its lock, so `land` relocks at op start,
-/// and that commit is refused.
-#[test]
-fn a_refused_op_start_relock_refuses_the_op_and_leaves_the_project_repo_as_it_was() {
-    let weave = weave();
-    let s1 = weave.seat("s1");
-    commit_file(&common::under(&s1, LIB), "work.txt");
-    let project = project_dir(&s1);
-    let project_head = head(&project);
-    let lock_before = std::fs::read(project.join("rwv.lock")).unwrap();
-    let target_head = head(&project_dir(&weave.root));
-    weave.refuse_commits();
-
-    let out = run(&s1, &["land"]);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "the op must refuse:\n{stderr}");
-    assert!(
-        stderr.contains(HOOK_TEXT),
-        "the refusal must carry the hook's own text:\n{stderr}"
-    );
-    assert!(
-        !stderr.contains("op-parked") && !stderr.contains("index contains uncommitted changes"),
-        "the op must not run on to a later failure:\n{stderr}"
-    );
-
-    assert_eq!(
-        common::git_in(&project, &["status", "--porcelain"]),
-        "",
-        "the project repo's index and work tree must be as the op found them"
-    );
-    assert_eq!(
-        std::fs::read(project.join("rwv.lock")).unwrap(),
-        lock_before
-    );
-    assert_eq!(head(&project), project_head);
-    assert_eq!(head(&project_dir(&weave.root)), target_head);
-    assert!(
-        !s1.join(".rwv-op").exists() && !weave.root.join(".rwv-op-lease").exists(),
-        "an op that did not start leaves no op record"
-    );
-    assert_eq!(savepoints(&project), "", "and no savepoint");
-    assert_eq!(savepoints(&common::under(&s1, LIB)), "", "and no savepoint");
-
-    weave.accept_commits();
-    succeed(&s1, &["land"]);
-}
-
 /// The seat declares the member on another branch and holds no work of its
 /// own there, so the landing moves the member to that branch's tip and
 /// Phase 3 must commit a lock pinning it.

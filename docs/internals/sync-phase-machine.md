@@ -166,8 +166,9 @@ The plan is written to the owner record's `take_in`: `sync_from` names `T`,
 each planned member's path its receiving branch `U`, that branch's tip and
 how it moves (in its checkout, as a ref and perhaps created, created for a
 member `T` lacks, or followed with nothing moving),
-and `source_tip` the source's project tip once the op-start relock
-committed. Replay composes each planned member onto its tip and nothing
+`source_tip` the source's project tip, and `relocked` the tip of each
+member the source's lock was behind, read once before anything moved;
+no relock commit of the source's own is written. Replay composes each planned member onto its tip and nothing
 else; relock merges pins three ways against the merge base of `source_tip`
 and `T`'s tip, each planned member at its composed tip, and records every
 composed tip as the op's converged tips; advance-target fast-forwards only
@@ -480,8 +481,8 @@ attributes a tip and what it prints.
 The destructive `reset --hard` to the savepoint is gated on the repo's
 current tip being **attributable to the op**. The attributable set is
 `{savepoint, advanced_tips[repo], converged_tips[repo]}`, and for the
-source's project repo `take_in.source_tip`, the op-start relock commit
-(`Attribution`).
+source's project repo `take_in.source_tip` (`Attribution`), which is
+its savepoint: a landing writes no commit there before composing.
 A repo with no savepoint for the op is `NoSavepoint` and skipped. The
 classification of the rest:
 
@@ -609,7 +610,7 @@ mechanism is:
 | Read manifest/lock at a revision | `git show <rev>:<path>` (`Vcs::read_file_at_revision`) |
 | ff-advance to converged tip | `git merge --ff-only <rev>` (never `reset --hard`) |
 | Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
-| Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip, op-start relock}; edits backed up first |
+| Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip}; edits backed up first |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
 | Lock held through a replay (rebase) | `rwv.lock merge=rwv-lock` in `.gitattributes`; `-c merge.rwv-lock.driver=true` per invocation, overriding the clone's `rwv lock --merge-driver` definition |
 

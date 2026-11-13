@@ -6929,6 +6929,90 @@ pub fn a_landing_records_no_rebase_jump_the_replay_did_not_record() -> Scenario 
     )
 }
 
+/// How a landing composes the project repo in [`landing_writes_no_relock_of_its_own`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectLands {
+    FastForward,
+    Rebase,
+    Merge,
+}
+
+/// A seat whose lock is behind its members' tips lands. The landing writes
+/// no relock commit of the source's own: the target's history gains the
+/// seat's commits and the landing's one project commit, which records the
+/// tips, and the seat ends on the target's tip with nothing to relock.
+pub fn landing_writes_no_relock_of_its_own(how: ProjectLands) -> Scenario {
+    let mut steps = Vec::new();
+    if how == ProjectLands::Merge {
+        steps.push(Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds));
+    }
+    steps.extend([
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app-2"),
+    ]);
+    if how != ProjectLands::FastForward {
+        steps.extend([
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        ]);
+    }
+    let land: &[&str] = match how {
+        ProjectLands::Rebase => &["land", "--history", "linear"],
+        _ => &["land"],
+    };
+    steps.extend([
+        Step::rwv(&ww("w"), land)
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "lock behind HEAD by 1 commits — the landing records",
+            ))
+            .claim(Claim::PinContains {
+                site: main_lock(),
+                member: Repo::App,
+                mark: "w-app-2",
+            }),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["rev-list", "--count", "--grep=auto-relock", "main"],
+        )
+        .claim(Claim::OutputLine(if how == ProjectLands::Merge {
+            "0"
+        } else {
+            "1"
+        })),
+        Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("lock behind")),
+        Step::git(&ww("w"), Repo::Proj, &["diff", "--quiet", "HEAD", "main"])
+            .expect(Exit::Succeeds),
+    ]);
+    scenario("a landing writes no relock of its own", steps)
+}
+
+/// A landing refused at its preconditions, with the seat's lock behind its
+/// members and an uncommitted `rwv.lock` beside it, leaves the seat exactly
+/// as it stood: no relock was written or committed.
+pub fn a_refused_landing_leaves_a_lock_behind_as_it_stood() -> Scenario {
+    scenario(
+        "a refused landing leaves a lock behind as it stood",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["lock"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::HistoryUnset))
+                .claim(Claim::OutputLacks("the landing records"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
 /// A lock commit of the target's history pins a member commit machine B
 /// lacks, and no later lock re-pinned it by name: B's landing in that member
 /// still refuses, and the printed fetch clears it once the commit is

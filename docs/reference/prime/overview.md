@@ -16,7 +16,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
 
 - **Lock & sync**: `rwv.lock` pins every member repo to a commit SHA (never a tag or branch name).
   - `rwv lock` records local HEAD SHAs over their pins in `rwv.lock`, moving a pin forward only: a member with no pin keeps none, and one behind or diverged from its pin is refused, `--repo` included, and `rwv member pin` moves it by name; `rwv member add`, `rwv member pin` and `rwv update --remote` give a member its first pin (`rwv lock --commit` commits `rwv.lock`, with `rwv.toml` when it has uncommitted changes; `rwv push` refuses while either is uncommitted); `rwv update --remote` fetches from remotes, fast-forwards checkouts, and records the advanced tips in `rwv.lock`; `rwv update` clones the members missing on disk and aligns the rest to `rwv.lock` without advancing pins or writing the lock; `rwv clone` brings up a project at the commits its `rwv.lock` pins; `rwv fetch` downloads and moves no branch, checkout or lock; `rwv pull` fetches, fast-forwards the project branch to its upstream, then runs `rwv update`.
-  - `rwv sync` takes the target's new work into a feature (`--from <branch>` merges another weave branch in instead), refusing before anything moves where a member's work is built on another lineage, then relocks and aligns the members; `rwv land` lands CWD's work into its target workspace (auto-relocking CWD at op start when repo tips have moved past `rwv.lock`, rebasing CWD onto target, and fast-forwarding target).
+  - `rwv sync` takes the target's new work into a feature (`--from <branch>` merges another weave branch in instead), refusing before anything moves where a member's work is built on another lineage, then relocks and aligns the members; `rwv land` lands CWD's work into its target workspace (its project commit records CWD's member tips when they have moved past `rwv.lock`, rebasing CWD onto target, and fast-forwarding target).
 
 ## Common pitfalls
 
@@ -37,7 +37,7 @@ git -C github/org/repo-a commit -am "feat: ..."
 git -C github/org/repo-b commit -am "feat: ..."
 
 # 3. Land work back into the parent weave and retire the workweave
-#    (land auto-relocks at op start; use `rwv lock --commit` for standalone checkpoints)
+#    (land records CWD's member tips in its own project commit; use `rwv lock --commit` for standalone checkpoints)
 rwv land --retire
 
 # 4. From the primary weave, publish to remotes
@@ -86,7 +86,7 @@ primary weave  <── rwv land [--retire] ──  workweave (.workweaves/<proje
 ```
 
 - `rwv sync` — take the new work of the branch this feature lands into (its target) into the feature: members first, then the project branch, then the relock. members holding new work are rebased or merged as the target's `history` setting says (`--history <h>` for one run where it records none); `--from <branch>` merges another weave branch's history in instead.
-- `rwv land [target]` — land CWD's state into `target` (rebases CWD onto `target`, auto-relocks, then fast-forwards `target`; `target` defaults to the recorded `parent` inside a workweave). Pass `--retire` to delete the workweave once the landing succeeds.
+- `rwv land [target]` — land CWD's state into `target` (composes CWD onto `target`, records the member tips in one project commit, then fast-forwards `target`; `target` defaults to the recorded `parent` inside a workweave). Pass `--retire` to delete the workweave once the landing succeeds.
 - `rwv abort` — roll every repo the op touched, in both workspaces, back to its pre-operation savepoint if a `sync` or `land` stops on a conflict or a refusal. Run it from either workspace.
 
 Run `rwv --help` or `rwv <command> --help` for full flag details.

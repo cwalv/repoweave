@@ -112,7 +112,7 @@ If you want to checkpoint the cross-repo state while working, `rwv lock`
 updates the workweave's `rwv.lock` (not primary's); each workspace owns its
 own lock (see [lock-as-derived](./lock-as-derived.md)). Before landing with
 `rwv land`, a manual `rwv lock` is optional because `rwv land`
-auto-relocks CWD at op-start.
+records CWD's member tips in the landing's own project commit.
 
 The workweave's project repo and its `owned` and `fork` members run on a flat
 ephemeral branch (`{project}--{name}`). This branch name is what allows `rwv land`
@@ -147,7 +147,7 @@ rwv land --retire
 
 Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`. `rwv land --retire` lands into the target the feature's record names, which a workweave created from another workspace records as that workspace's checked-out branch.
 
-`rwv land --retire` runs the `land` phase machine ([sync-semantics](./sync-semantics.md)) — auto-relocking CWD if its member repos moved ahead of `rwv.lock`, rebasing CWD onto the target (whose lock must be fresh per `rwv doctor --locked`), regenerating `rwv.lock`, and fast-forwarding the target — and then runs the **retire** phase to delete the workweave on success.
+`rwv land --retire` runs the `land` phase machine ([sync-semantics](./sync-semantics.md)) — composing CWD onto the target (whose lock must be fresh per `rwv doctor --locked`), recording in one project commit the lock with CWD's member tips, and fast-forwarding the target — and then runs the **retire** phase to delete the workweave on success.
 
 ### The retire contract
 

@@ -1153,6 +1153,10 @@ every_scenario!(
     a_history_pin_not_repinned_still_refuses,
     merged_project_with_rebased_members_on_a_second_machine,
     a_landing_records_no_rebase_jump_the_replay_did_not_record,
+    landing_writes_no_relock_of_its_own(scenarios::ProjectLands::FastForward),
+    landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Rebase),
+    landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Merge),
+    a_refused_landing_leaves_a_lock_behind_as_it_stood,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
     drift_staged_return_after_a_hand_refresh,
@@ -5166,6 +5170,24 @@ fn a_merged_project_with_rebased_members_lands_on_a_second_machine() {
 #[test]
 fn a_landing_records_no_rebase_jump_the_replay_did_not_record() {
     runner::run(scenarios::a_landing_records_no_rebase_jump_the_replay_did_not_record())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_writes_no_relock_of_its_own() {
+    for how in [
+        scenarios::ProjectLands::FastForward,
+        scenarios::ProjectLands::Rebase,
+        scenarios::ProjectLands::Merge,
+    ] {
+        runner::run(scenarios::landing_writes_no_relock_of_its_own(how))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn a_refused_landing_leaves_a_lock_behind_as_it_stood() {
+    runner::run(scenarios::a_refused_landing_leaves_a_lock_behind_as_it_stood())
         .assert_fully_decided_green();
 }
 

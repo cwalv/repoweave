@@ -213,16 +213,16 @@ fn relation_ok_sync_succeeds() {
 // ===========================================================================
 
 /// land: a workweave whose manifest repo advanced past its committed lock
-/// (relation `Ahead`) auto-relocks at op START, printing the LOUD per-repo line
-/// INCLUDING the commit count, and the op succeeds.
+/// (relation `Ahead`) lands, printing the per-repo line with the commit count
+/// and the tip the landing records; the source writes no relock commit of its
+/// own, and the target's lock pins that tip.
 #[test]
-fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
+fn relation_ahead_land_records_the_tips_without_a_relock_commit_of_its_own() {
     let f = fixture();
 
-    // Advance ww's manifest repo by TWO commits WITHOUT relocking. ww's committed
-    // lock is now a strict ancestor of the manifest HEAD → LockRelation::Ahead.
     commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
     commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
+    let ww_project_before = head(&f.ww.project_dir);
 
     let assert = rwv()
         .args(["land"])
@@ -231,16 +231,6 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
         .success();
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
 
-    // The LOUD op-start auto-relock line, naming the repo, the commit count (2),
-    // and the "auto-relocked" verb.
-    assert!(
-        stderr.contains(MANIFEST_REPO_PATH)
-            && stderr.contains("lock behind HEAD by 2 commits")
-            && stderr.contains("auto-relocked"),
-        "expected op-start auto-relock line with commit count 2; got stderr:\n{stderr}"
-    );
-
-    // The op landed ww's manifest tip on main, and main's lock pins it.
     let main_lib = common::git_in(&f.main.manifest_repo, &["rev-parse", "main"]);
     let ww_lib = head(&f.ww.manifest_repo);
     assert_eq!(main_lib, ww_lib, "main's manifest tip should match ww's");
@@ -249,127 +239,22 @@ fn relation_ahead_sync_to_auto_relocks_at_op_start_with_commit_count() {
         main_lock.contains(&ww_lib),
         "main's lock must pin the landed manifest tip; lock:\n{main_lock}"
     );
-
-    // The line names the revision the relock commit pinned, not one the
-    // announcement chose for itself.
     assert!(
-        stderr.contains(&format!("auto-relocked to {}", &ww_lib[..12])),
-        "the auto-relock line must name the tip the commit pinned ({ww_lib}); got \
+        stderr.contains(MANIFEST_REPO_PATH)
+            && stderr.contains(&format!(
+                "lock behind HEAD by 2 commits — the landing records {}",
+                &ww_lib[..12]
+            )),
+        "expected the lock-behind line naming the tip the landing records; got \
          stderr:\n{stderr}"
     );
-}
-
-/// Refuse every commit in `repo` from now on, by pointing it at a hooks
-/// directory whose `pre-commit` exits non-zero. Worktrees share one hooks
-/// path with the clone they were added from, which is what makes this reach
-/// the relock: it commits in a workweave's project repo.
-fn block_commits(repo: &Path, hooks_dir: &Path) {
-    std::fs::create_dir_all(hooks_dir).unwrap();
-    let hook = hooks_dir.join("pre-commit");
-    common::write_executable(&hook, "#!/bin/sh\nexit 1\n");
-
-    common::git_in(
-        repo,
-        &["config", "core.hooksPath", &hooks_dir.to_string_lossy()],
-    );
-}
-
-/// The op-start auto-relock announces the relock AFTER the commit returns, so a
-/// relock that could not commit leaves no past-tense claim standing.
-///
-/// The claim and the outcome used to derive from two different things: the
-/// LOUD "auto-relocked" line printed from the precondition classification
-/// before the commit was attempted, and the soft warning underneath it was the
-/// only correction. An operator reading the loud line has been told the lock
-/// pins its tips; the lock the op then lands still pins the older ones.
-#[test]
-fn a_relock_that_cannot_commit_leaves_no_auto_relocked_claim() {
-    let f = fixture();
-    let hooks = f.main.root.parent().unwrap().join("blocked-hooks");
-
-    commit_file(&f.ww.manifest_repo, "a.txt", "a\n", "ww: a");
-    commit_file(&f.ww.manifest_repo, "b.txt", "b\n", "ww: b");
-    let ww_lock_before = common::read_normalized(f.ww.project_dir.join("rwv.lock"));
-    let ww_project_before = head(&f.ww.project_dir);
-    block_commits(&f.ww.project_dir, &hooks);
-
-    // The op refuses at op start. That refusal is also this fixture's proof
-    // that the hook fired at all — without it, every check below holds against
-    // a run where the hook never ran and the relock succeeded.
-    let assert = rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
-
-    // The outcome the claim would have described: no relock commit landed, so
-    // the committed lock still pins the tips it pinned before the op.
+    let main_project = common::git_in(&f.main.project_dir, &["rev-parse", "main"]);
     assert_eq!(
-        head(&f.ww.project_dir),
+        common::git_in(&f.main.project_dir, &["rev-parse", "main^"]),
         ww_project_before,
-        "the blocked hook must leave the project repo without a relock commit; \
-         stderr:\n{stderr}"
+        "the landing's one project commit sits directly on the source's own tip"
     );
-    let ww_lock_committed = common::git_in(
-        &f.ww.project_dir,
-        &["show", &format!("{ww_project_before}:rwv.lock")],
-    );
-    assert_eq!(
-        ww_lock_committed.trim(),
-        ww_lock_before.trim(),
-        "the committed lock must be unchanged when no relock commit landed"
-    );
-
-    assert!(
-        !stderr.contains("auto-relocked"),
-        "a relock that never committed must not print a past-tense relock claim; got \
-         stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("could not commit, so the op did not start"),
-        "the operator must be told the op-start relock failed; got stderr:\n{stderr}"
-    );
-    assert!(
-        stderr.contains(MANIFEST_REPO_PATH) && stderr.contains("not relocked"),
-        "the per-repo line must name the repo whose lock is still behind HEAD; got \
-         stderr:\n{stderr}"
-    );
-
-    // The residue "Clear what refused the commit, then re-run." implies is
-    // clear is left before that line is reached: no owner record, no lease,
-    // no savepoint survives the refusal.
-    assert!(
-        !f.ww.root.join(".rwv-op").exists(),
-        "a refused op-start relock must release the owner's op-state; \
-         stderr:\n{stderr}"
-    );
-    assert!(
-        !f.main.root.join(".rwv-op-lease").exists(),
-        "a refused op-start relock must release the target's lease; \
-         stderr:\n{stderr}"
-    );
-    assert_eq!(
-        savepoint_refs(&f.ww.project_dir),
-        Vec::<String>::new(),
-        "a refused op-start relock must drop the project-repo savepoint it \
-         created; stderr:\n{stderr}"
-    );
-    assert_eq!(
-        savepoint_refs(&f.ww.manifest_repo),
-        Vec::<String>::new(),
-        "a refused op-start relock must drop the manifest-repo savepoint it \
-         created; stderr:\n{stderr}"
-    );
-
-    // "Clear what refused the commit, then re-run." — follow it, and the op
-    // that was blocked must now go through.
-    common::git_in(&f.ww.project_dir, &["config", "--unset", "core.hooksPath"]);
-    rwv()
-        .args(["land"])
-        .current_dir(&f.ww.root)
-        .assert()
-        .success();
+    assert_eq!(head(&f.ww.project_dir), main_project);
 }
 
 /// land: the TARGET's manifest repo advanced past the target's committed

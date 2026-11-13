@@ -7,7 +7,7 @@
 
 use crate::check::UnparseableProjectKind;
 use crate::diagnosis::{Report, State};
-use crate::lock::{commit_lock_file_with_message, generate_lock};
+use crate::lock::generate_lock;
 use crate::manifest::{
     LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath, ResolvedLockFile,
     WorkweaveName,
@@ -194,8 +194,7 @@ fn workspace_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
 /// The commit message for the auto-relock the sync engine writes into the CWD
 /// project repo when it regenerates `rwv.lock` from the converged manifest tips.
 ///
-/// This is the ONE home of the literal: both the op-start
-/// benign-staleness relock and the post-replay Phase-3 relock format their
+/// This is the ONE home of the literal: the landing's relock formats its
 /// commit message here, and the explain generator splices the
 /// same string into `rwv explain land` via a `{{MSG:auto_relock}}`
 /// placeholder so the docs cannot drift from the code. `<source>` is the
@@ -2682,7 +2681,7 @@ struct OpContext<'a> {
     cwd_project_name: ProjectName,
     /// The landing's plan, read back from the op record: each `owned` or
     /// `fork` member's receiving-branch tip it is composed onto, `T`'s tip,
-    /// and the source's tip once the op-start relock committed.
+    /// the source's tip, and the member tips its lock was behind.
     take_in: op_state::TakeInRecord,
     retire: bool,
     /// Set when retire removed the workweave and the deletion rule kept
@@ -3361,10 +3360,10 @@ struct PreconditionOutcome {
     snapshot: SourceSnapshot,
     /// CWD's parsed project (manifest + lock, if present).
     cwd_project: Project,
-    /// Human name of the CWD workspace, used in the auto-relock LOUD line.
+    /// Human name of the CWD workspace, used in the lock-behind lines.
     cwd_workspace_name_str: String,
-    /// CWD repos whose committed lock is behind HEAD — auto-relocked at op
-    /// start, forward.
+    /// CWD repos whose committed lock is behind HEAD: their tips are
+    /// journaled at op start and the landing's project commit records them.
     cwd_lock_behind: Vec<RepoRelation>,
     /// Each `owned` or `fork` member's receiving-branch tip.
     plan: crate::land::Plan,
@@ -4310,24 +4309,23 @@ fn guard_and_mark<'a>(
         );
     }
 
-    // The source relocks forward before composing, after the savepoints so
-    // `rwv abort` rolls the relock back with the rest. A relock that cannot
-    // commit refuses the op before any work, leaving nothing to abort.
+    // The pins of each member the source's lock is behind are read once,
+    // before anything moves, and journaled: the landing's project commit
+    // records them, and no relock commit of the source's own is written.
+    let mut relocked = std::collections::BTreeMap::new();
     if !cwd_lock_behind.is_empty() {
-        let lock_path = LockFile::path_in(&cwd_project_dir);
-        let lock_found = lock_path.read().ok();
-        let relocked = match regenerate_lock_phase3(
-            project_vcs.as_ref(),
-            cwd_ctx,
-            &cwd_project_dir,
-            &cwd_project,
-            &source_workspace_name,
+        let workweave_dir = match &cwd_ctx.checkout {
+            Checkout::Workweave { dir, .. } => Some(dir.as_path()),
+            Checkout::Primary { .. } => None,
+        };
+        let lock = match generate_lock(
+            &cwd_project.manifest,
+            cwd_ctx.primary_path(),
+            workweave_dir,
+            true,
         ) {
-            Ok(relocked) => relocked,
+            Ok(lock) => lock,
             Err(e) => {
-                let restored = lock_found
-                    .as_ref()
-                    .map_or(Ok(()), |bytes| lock_path.publish(bytes));
                 for (dir, id) in &project_anchors {
                     delete_savepoint(project_vcs.as_ref(), dir, id);
                 }
@@ -4335,34 +4333,23 @@ fn guard_and_mark<'a>(
                     delete_savepoint(vcs.as_ref(), dir, id);
                 }
                 release_start(&acquired);
-                let behind = op_start_relock_lines(
-                    &cwd_lock_behind,
-                    None,
-                    &cwd_workspace_dir,
-                    &cwd_project.manifest,
-                    &cwd_workspace_name_str,
-                )
-                .join("\n");
-                let restore_note = match restored {
-                    Ok(()) => String::new(),
-                    Err(r) => format!(
-                        "\n\nRestoring {lock_path} to the bytes the op found also failed ({r}); \
-                         check it before re-running."
-                    ),
-                };
                 return Err(crate::untokened!(
                     EnvironmentPassthrough,
-                    "the op-start relock in {} could not commit, so the op did not start and \
-                     nothing was changed: {e:#}\n\n{behind}\n\n\
-                     Clear what refused the commit, then re-run.{restore_note}",
-                    cwd_project_dir.display(),
+                    "the tips of {}'s members could not be read, so the op did not start and \
+                     nothing was changed: {e:#}",
+                    cwd_workspace_dir.display(),
                 ));
             }
         };
+        for behind in &cwd_lock_behind {
+            if let Some(entry) = lock.get_entry(&behind.repo_path) {
+                relocked.insert(behind.repo_path.clone(), entry.version.id().clone());
+            }
+        }
         if emit_text {
             for line in op_start_relock_lines(
                 &cwd_lock_behind,
-                relocked.as_ref(),
+                &lock,
                 &cwd_workspace_dir,
                 &cwd_project.manifest,
                 &cwd_workspace_name_str,
@@ -4377,10 +4364,11 @@ fn guard_and_mark<'a>(
         source_tip: Some(
             project_vcs
                 .head_revision(&cwd_project_dir)
-                .context("failed to read the source's project HEAD after the op-start relock")?
+                .context("failed to read the source's project HEAD")?
                 .id()
                 .clone(),
         ),
+        relocked,
         allow_member_change: landing
             .allow_member_change
             .iter()
@@ -5412,7 +5400,7 @@ fn judge_edits_source_preflight(
 // vantage points): the spec's "lock behind HEAD" (lock is a strict ancestor of
 // HEAD — new commits since the last lock, the normal shape of in-progress work)
 // is [`LockRelation::Ahead`] — the *tip* is ahead of the lock. That relation is
-// the BENIGN case: a landing auto-relocks, a pull takes the source's committed
+// the BENIGN case: a landing records the tips, a pull takes the source's committed
 // tips. The spec's "ahead" case (HEAD is a strict ancestor of the lock — a reset
 // or an `update` without FF) is [`LockRelation::Behind`] — the *tip* is behind
 // the lock; that is anomalous and refuses. Every non-`ok` relation other than
@@ -5427,21 +5415,15 @@ fn judge_edits_source_preflight(
 // these relations are only emitted by `rwv status` — the sync lock-freshness
 // gate never sees them.
 
-/// One manifest repo's lock↔HEAD relation, plus the commit count for the benign
-/// `Ahead` case (the tip is ahead of the lock — "lock behind HEAD" in the spec's
-/// phrasing). The count makes the surprising number visible at the moment it
-/// matters — the LOUD auto-relock line.
+/// One manifest repo's lock↔HEAD relation, with the tip and the lock's pin it
+/// was judged from.
 struct RepoRelation {
     repo_path: RepoPath,
     relation: LockRelation,
-    /// `Some(n)` only when `relation == Ahead`: how many commits HEAD is ahead
-    /// of the lock (`lock..HEAD`). `None` for every other relation.
-    ahead_count: Option<usize>,
     /// The checkout's HEAD at classification time; `None` when unreadable.
     tip: Option<ResolvedRevisionId>,
     /// The committed lock's revision for this repo, resolved against the
-    /// workspace — the baseline `relation` and `ahead_count` were computed
-    /// against. `None` when the project carries no lock entry for it.
+    /// workspace — the baseline `relation` was computed against. `None` when the project carries no lock entry for it.
     lock_pin: Option<ResolvedRevisionId>,
 }
 
@@ -5488,21 +5470,9 @@ fn classify_lock_relations(
             .and_then(|l| l.get_entry(repo_path))
             .map(|e| e.version.clone());
         let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
-        let ahead_count = if relation == LockRelation::Ahead {
-            // `Ahead` ⟺ lock is a strict ancestor of tip (both present, per
-            // compute_relation). Count lock..HEAD — the commits the landing
-            // replays / the auto-relock pins.
-            match (lock_sha.as_ref(), tip.as_ref()) {
-                (Some(lock), Some(tip)) => vcs.count_commits_in_range(&repo_abs, lock, tip).ok(),
-                _ => None,
-            }
-        } else {
-            None
-        };
         out.push(RepoRelation {
             repo_path: repo_path.clone(),
             relation,
-            ahead_count,
             tip,
             lock_pin: lock_sha,
         });
@@ -5523,38 +5493,20 @@ fn parked_note(verb: op_state::OpVerb) -> String {
     )
 }
 
-/// The op-start auto-relock's per-repo lines, derived from the commit's own
-/// result.
-///
-/// `committed` is the lock the relock commit landed, `None` when no commit
-/// happened — nothing was staged, or the commit failed. Without a commit there
-/// is no relock to announce and no fresh pin to name, so the line states what
-/// still holds: the committed lock is behind HEAD by what the classification
-/// measured. With a commit, the count spans the entry the classification read
-/// to the entry the commit wrote, so a repo that took another commit during the
-/// op-start window reports the tips the lock now pins rather than the ones it
-/// was behind by when the op began.
+/// The landing's per-repo lines for each member its source's lock is behind:
+/// the tip the landing's project commit records for it, and how many
+/// commits that is past the pin the lock held.
 fn op_start_relock_lines(
     behind: &[RepoRelation],
-    committed: Option<&ResolvedLockFile>,
+    relocked: &ResolvedLockFile,
     workspace_dir: &Path,
     manifest: &Manifest,
     workspace_name: &str,
 ) -> Vec<String> {
     behind
         .iter()
-        .map(|r| {
-            let pinned = committed
-                .and_then(|lock| lock.get_entry(&r.repo_path))
-                .map(|entry| &entry.version);
-            let Some(pinned) = pinned else {
-                let n = display_count(r.ahead_count);
-                return format!(
-                    "{workspace_name}/{}: lock behind HEAD by {n} commits — not relocked; the \
-                     committed lock still pins the older tips",
-                    r.repo_path,
-                );
-            };
+        .filter_map(|r| {
+            let pinned = &relocked.get_entry(&r.repo_path)?.version;
             let relocked_over = manifest
                 .get_entry(&r.repo_path)
                 .zip(r.lock_pin.as_ref())
@@ -5567,12 +5519,12 @@ fn op_start_relock_lines(
                         )
                         .ok()
                 });
-            format!(
-                "{workspace_name}/{}: lock behind HEAD by {n} commits — auto-relocked to {pin}",
+            Some(format!(
+                "{workspace_name}/{}: lock behind HEAD by {n} commits — the landing records {pin}",
                 r.repo_path,
                 n = display_count(relocked_over),
                 pin = pinned.id().short(),
-            )
+            ))
         })
         .collect()
 }
@@ -6575,7 +6527,10 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         .into_iter()
         .next()
         .map(|b| held(&b));
-    let first = held(source);
+    let mut first = held(source);
+    for (path, pin) in &ctx.take_in.relocked {
+        first.pins.insert(path.clone(), pin.clone());
+    }
     let second = held(target);
     let merged_declared: std::collections::BTreeMap<RepoPath, String> = manifest
         .iter_entries()
@@ -8220,51 +8175,6 @@ fn apply_project_strategy(
             "project repo rebase failed: {e:#}"
         )),
     }
-}
-
-/// Phase 3: regenerate `rwv.lock` from the current manifest tips. Commit it
-/// if it differs from what's currently in the project repo.
-///
-/// Returns the lock the commit landed, or `None` when the regenerated lock
-/// matched the committed one and nothing was staged. A caller that announces
-/// the relock derives both its tense and the revisions it names from that
-/// return, never from the classification that decided to call it.
-fn regenerate_lock_phase3(
-    vcs: &dyn Vcs,
-    ctx: &WorkspaceContext,
-    cwd_project_dir: &Path,
-    cwd_project: &Project,
-    source_workspace_name: &str,
-) -> anyhow::Result<Option<ResolvedLockFile>> {
-    let workweave_dir = match &ctx.checkout {
-        Checkout::Workweave { dir, .. } => Some(dir.as_path()),
-        Checkout::Primary { .. } => None,
-    };
-
-    let new_lock = generate_lock(
-        &cwd_project.manifest,
-        ctx.primary_path(),
-        workweave_dir,
-        true, // dirty: skip uncommitted-changes check; sync may have produced WT churn
-    )
-    .context("failed to generate lock")?;
-
-    crate::lock::write_lock_in(&new_lock, cwd_project_dir)?;
-
-    let message = auto_relock_commit_message(source_workspace_name);
-    if !commit_lock_file_with_message(
-        vcs,
-        cwd_project_dir,
-        &message,
-        &crate::repin::Naming::Unnamed,
-    )? {
-        return Ok(None);
-    }
-    eprintln!(
-        "  {}: re-locked after sync from {source_workspace_name}",
-        RepoKey::Project
-    );
-    Ok(Some(new_lock))
 }
 
 // ---------------------------------------------------------------------------

@@ -501,10 +501,14 @@ pub struct TakeInRecord {
     /// The repos `sync --reset-to-target` names, spelled as an operand.
     #[serde(default)]
     pub reset_to_target: Vec<String>,
-    /// The source's project tip a landing composes from, once its op-start
-    /// relock committed.
+    /// The source's project tip a landing composes from.
     #[serde(default)]
     pub source_tip: Option<CommitId>,
+    /// The tip of each member the source's lock was behind when a landing
+    /// began, which its project commit records: read once, before anything
+    /// moved.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub relocked: BTreeMap<crate::manifest::RepoPath, CommitId>,
     /// The repos `land --allow-member-change` names, spelled as an operand.
     #[serde(default)]
     pub allow_member_change: Vec<String>,

@@ -83,11 +83,11 @@ rwv workweave create agent-refactor
 cd ../.workweaves/web-app--agent-refactor
 # ... edits, tests, commits across member repos ...
 
-# Bring it home, with one verb (auto-relocks CWD at op-start, then lands and deletes):
+# Bring it home, with one verb (records CWD's member tips in the landing, then lands and deletes):
 rwv land --retire
 ```
 
-`rwv land --retire` is the landing verb (`rwv land` auto-relocks the initiating workweave at op-start, so an explicit `rwv lock --commit` beforehand is only needed if you want to inspect or checkpoint the lock commit before landing). `rwv land` lands into the target the feature's record names; `--retire` deletes the workweave after the landing succeeds. See [bring workweave work home](../../how-to/bring-workweave-work-home.md) for the full ceremony and conflict recovery.
+`rwv land --retire` is the landing verb (`rwv land` records the initiating workweave's member tips in the landing's own project commit, so an explicit `rwv lock --commit` beforehand is only needed if you want to inspect or checkpoint the lock before landing). `rwv land` lands into the target the feature's record names; `--retire` deletes the workweave after the landing succeeds. See [bring workweave work home](../../how-to/bring-workweave-work-home.md) for the full ceremony and conflict recovery.
 
 Three properties make this pattern work:
 
