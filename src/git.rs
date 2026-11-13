@@ -5425,6 +5425,33 @@ impl GitVcs {
         Ok(true)
     }
 
+    /// Before canceling an operation stopped in a workspace abort was not
+    /// typed in: keep its working copy as a backup, once per restore, the
+    /// ignored paths the cancel's move would discard included. What the
+    /// operator there changed since the stop cannot be told from the
+    /// operation's own conflict state, so the whole of it is kept.
+    fn keep_working_copy_before_cancel(
+        &self,
+        repo: &Path,
+        kept: &mut Vec<KeptWork>,
+    ) -> Result<(), VcsError> {
+        if kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
+            return Ok(());
+        }
+        let lands_at = match self.cancel_returns_to(repo)? {
+            Some(to) => to,
+            None => self.head_revision(repo)?,
+        };
+        let ignored = Self::hard_move_discards(repo, &lands_at)?.unwrap_or_default();
+        if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
+            let source = self.head_backup_source(repo)?;
+            kept.push(KeptWork::Edits(
+                self.create_backup(repo, &source, &snapshot, None)?,
+            ));
+        }
+        Ok(())
+    }
+
     /// End an operation whose own abort the VCS refused, under the
     /// operator's `--abandon-foreign-tip`: keep what the move discards as a
     /// backup, then move the checkout hard to `to`, where canceling returns.
@@ -6085,6 +6112,9 @@ impl GitVcs {
                     if !self.keep_before_discarding(repo, &to, edits_here, kept)? {
                         return edits_elsewhere(self);
                     }
+                }
+                if !edits_here {
+                    self.keep_working_copy_before_cancel(repo, kept)?;
                 }
                 if let Err(refused) = self.cancel_stopped(repo, *stopped) {
                     let why = match refused {

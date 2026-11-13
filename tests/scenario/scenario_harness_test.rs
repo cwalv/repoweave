@@ -870,6 +870,7 @@ every_scenario!(
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
+    abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase,
     landing_merge_continued_writes_one_project_merge,
     abort_after_a_sync_merge_stops,
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitWhileUnmerged),
@@ -6127,6 +6128,14 @@ fn sync_continue_merges_a_range_the_stop_gave_a_merge_scenario() {
 fn land_continue_composes_a_merge_the_stop_left_scenario() {
     runner::run(scenarios::land_continue_composes_a_merge_the_stop_left())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase_scenario() {
+    runner::run(
+        scenarios::abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase(),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]

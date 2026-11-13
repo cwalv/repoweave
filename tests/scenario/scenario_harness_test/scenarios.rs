@@ -16639,6 +16639,51 @@ pub fn abort_after_a_landing_merge_stops() -> Scenario {
     scenario("abort after a landing's merge stops", steps)
 }
 
+/// A linear landing stopped rebasing `app` in `w`; the operator there
+/// resolves the conflict by hand, and `rwv abort` is typed in the target's
+/// workspace. Canceling the rebase in `w` discards the resolution, so abort
+/// keeps `w`'s working copy as a backup first and names it.
+pub fn abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase() -> Scenario {
+    let steps = vec![
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_rewind(&[Repo::App]),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::App,
+            "README",
+            "app on main\n",
+            "resolved by hand\n",
+        ),
+        Step::rwv(&a(), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "[source] local/remotes/app: its uncommitted edits are kept as backup",
+            )),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["log", "--all", "--format=kept %s", "-Sresolved by hand"],
+        )
+        .claim(Claim::OutputContains("kept ")),
+        Step::git(&ww("w"), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("readme-w")),
+    ];
+    scenario(
+        "abort in the target keeps edits in the source before canceling its rebase",
+        steps,
+    )
+}
+
 /// The stop of [`sync_stopped_then_lib_committed`] before anything is
 /// resolved, and `rwv abort`: `app`'s merge is canceled.
 pub fn abort_after_a_sync_merge_stops() -> Scenario {

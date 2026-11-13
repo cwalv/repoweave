@@ -42,8 +42,10 @@ restore discards are the op's own output. Uncommitted edits are another
 matter: before any reset or cancel that would discard edits (a tracked
 change, or an untracked file at a path the savepoint tracks), abort keeps
 them as a backup and prints its name. Canceling the op's own stopped
-operation is the one step it takes as the VCS's own abort would, edits
-included.
+operation in the workspace abort runs in is the one step it takes as the
+VCS's own abort would, edits included. In the op's other workspace, abort
+first keeps that checkout's working copy whole as a backup, untracked files
+included and ignored ones the cancel would overwrite, and prints its name.
 
 Where the op record parses no further than its header, abort reads no tip
 it recorded: a repo is restored only where it sits at its savepoint, and one
