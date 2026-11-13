@@ -1235,6 +1235,11 @@ every_scenario!(
     records_raw_push_unrecorded,
     project_branch_elsewhere,
     create_diverged_at,
+    push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member,
+    push_dry_run_refuses_a_project_branch_ahead_and_behind,
+    pull_merge_upstream_brings_a_project_branch_ahead_and_behind_to_pushable,
+    pull_merge_upstream_joins_both_sides_moving_the_same_member,
+    pull_merge_upstream_takes_in_a_dropped_member_beside_local_lock_commits,
     workweave_create_dirty_parent,
     dc19_idempotent_create,
     dc08_set_mode_own_workspace,
@@ -1354,6 +1359,41 @@ fn a_raw_pushed_branch_opens_only_with_a_spelling_which_the_next_push_publishes(
 fn a_project_branch_checked_out_elsewhere_is_not_taken_by_switch_or_open_and_can_be_looked_at_detached(
 ) {
     runner::run(scenarios::project_branch_elsewhere()).assert_fully_decided_green();
+}
+
+#[test]
+fn push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member() {
+    runner::run(
+        scenarios::push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member(),
+    )
+    .assert_green();
+}
+
+#[test]
+fn push_dry_run_refuses_a_project_branch_ahead_and_behind() {
+    runner::run(scenarios::push_dry_run_refuses_a_project_branch_ahead_and_behind()).assert_green();
+}
+
+#[test]
+fn pull_merge_upstream_brings_a_project_branch_ahead_and_behind_to_pushable() {
+    runner::run(
+        scenarios::pull_merge_upstream_brings_a_project_branch_ahead_and_behind_to_pushable(),
+    )
+    .assert_green();
+}
+
+#[test]
+fn pull_merge_upstream_joins_both_sides_moving_the_same_member() {
+    runner::run(scenarios::pull_merge_upstream_joins_both_sides_moving_the_same_member())
+        .assert_green();
+}
+
+#[test]
+fn pull_merge_upstream_takes_in_a_dropped_member_beside_local_lock_commits() {
+    runner::run(
+        scenarios::pull_merge_upstream_takes_in_a_dropped_member_beside_local_lock_commits(),
+    )
+    .assert_green();
 }
 
 #[test]

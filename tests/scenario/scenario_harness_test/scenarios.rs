@@ -18278,3 +18278,188 @@ pub fn stack_remote_dependent_landed(published: RemoteDependentLanded) -> Scenar
         steps,
     )
 }
+
+enum MovedOnA {
+    App,
+    Lib,
+}
+
+/// `A` holds a locked commit in a member and has not fetched; `B` has since
+/// published the project branch with a manifest without `docs` and, where
+/// `b_moves_lib` is set, a locked commit in `lib`.
+fn project_ahead_and_behind(a_moves: MovedOnA, b_moves_lib: bool, drops_docs: bool) -> Vec<Step> {
+    let mut steps = vec![Step::new_machine(Machine::B)];
+    steps.push(match a_moves {
+        MovedOnA::App => Step::commit(&a(), Repo::App, "a-app"),
+        MovedOnA::Lib => Step::commit(&a(), Repo::Lib, "a-lib"),
+    });
+    steps.push(Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    let mut push =
+        publishes_records(Step::rwv(&b(), &["push"])).pushes(Remote::origin(Repo::Proj), "main");
+    if b_moves_lib {
+        steps.push(Step::commit(&b(), Repo::Lib, "b-lib"));
+        push = push.pushes(Remote::origin(Repo::Lib), "main");
+    }
+    if drops_docs {
+        steps.push(Step::rwv(&b(), &["member", "remove", DOCS]).expect(Exit::Succeeds));
+    }
+    steps.push(Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds));
+    steps.push(push.expect(Exit::Succeeds));
+    steps
+}
+
+pub fn push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member() -> Scenario {
+    let mut steps = project_ahead_and_behind(MovedOnA::App, false, true);
+    steps.extend([Step::rwv(&a(), &["push"])
+        .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+        .claim(Claim::OutputContains("rwv pull --merge-upstream"))
+        .claim(Claim::LocalStateUnchanged(a()))]);
+    scenario(
+        "push refuses a project branch ahead and behind before publishing a member",
+        steps,
+    )
+}
+
+pub fn push_dry_run_refuses_a_project_branch_ahead_and_behind() -> Scenario {
+    let mut steps = project_ahead_and_behind(MovedOnA::App, false, true);
+    steps.extend([
+        Step::rwv(&a(), &["push", "--dry-run"])
+            .expect(Exit::Defect(Defect::DryRunPushJudgesStaleRefs))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push", "--dry-run"])
+            .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+            .claim(Claim::OutputContains("rwv pull --merge-upstream")),
+    ]);
+    scenario(
+        "push --dry-run refuses a project branch ahead and behind",
+        steps,
+    )
+}
+
+pub fn pull_merge_upstream_brings_a_project_branch_ahead_and_behind_to_pushable() -> Scenario {
+    let mut steps = project_ahead_and_behind(MovedOnA::App, true, true);
+    steps.extend(settle_by_the_printed_merge_then_push(true));
+    scenario(
+        "pull --merge-upstream brings a project branch ahead and behind to pushable",
+        steps,
+    )
+}
+
+fn settle_by_the_printed_merge_then_push(b_moved_lib: bool) -> Vec<Step> {
+    let local = LockSite::Checkout(a(), Repo::Proj, "main".to_owned());
+    let mut merge = Step::rwv_printed(&a(), "rwv pull --merge-upstream")
+        .expect(Exit::Succeeds)
+        .claim(Claim::PinContains {
+            site: local.clone(),
+            member: Repo::App,
+            mark: "a-app",
+        })
+        .claim(Claim::DirGone(Machine::A, "weave/local/remotes/docs"));
+    let mut push = publishes_records(Step::rwv(&a(), &["push"]))
+        .pushes(Remote::origin(Repo::Proj), "main")
+        .pushes(Remote::origin(Repo::App), "main")
+        .expect(Exit::Succeeds)
+        .claim(Claim::RemoteContains {
+            remote: Remote::origin(Repo::App),
+            branch: "main",
+            mark: "a-app",
+        })
+        .claim(Claim::PinContains {
+            site: LockSite::remote_main(Repo::Proj),
+            member: Repo::App,
+            mark: "a-app",
+        });
+    if b_moved_lib {
+        merge = merge
+            .claim(Claim::PinContains {
+                site: local,
+                member: Repo::Lib,
+                mark: "b-lib",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "b-lib",
+            });
+        push = push.claim(Claim::PinContains {
+            site: LockSite::remote_main(Repo::Proj),
+            member: Repo::Lib,
+            mark: "b-lib",
+        });
+    }
+    vec![
+        Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged)),
+        merge,
+        push,
+    ]
+}
+
+pub fn pull_merge_upstream_joins_both_sides_moving_the_same_member() -> Scenario {
+    let mut steps = project_ahead_and_behind(MovedOnA::Lib, true, false);
+    steps.extend([
+        Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged)),
+        Step::rwv_printed(&a(), "rwv pull --merge-upstream")
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "a-lib",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "b-lib",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                member: Repo::Lib,
+                mark: "a-lib",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                member: Repo::Lib,
+                mark: "b-lib",
+            }),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::Lib),
+                branch: "main",
+                mark: "a-lib",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::remote_main(Repo::Proj),
+                member: Repo::Lib,
+                mark: "a-lib",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::remote_main(Repo::Proj),
+                member: Repo::Lib,
+                mark: "b-lib",
+            }),
+    ]);
+    scenario(
+        "pull --merge-upstream joins both sides moving the same member",
+        steps,
+    )
+}
+
+pub fn pull_merge_upstream_takes_in_a_dropped_member_beside_local_lock_commits() -> Scenario {
+    let mut steps = project_ahead_and_behind(MovedOnA::App, false, true);
+    steps.extend(settle_by_the_printed_merge_then_push(false));
+    steps.push(
+        Step::git(&a(), Repo::Proj, &["show", "origin/main:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks(DOCS)),
+    );
+    scenario(
+        "pull --merge-upstream takes in a dropped member beside local lock commits",
+        steps,
+    )
+}
