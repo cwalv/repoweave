@@ -18494,6 +18494,14 @@ pub enum ManifestSettle {
     /// `app`'s role changed only on `main`, merged by git outside the
     /// markers, beside `lib`'s `history` in conflict.
     CleanBeside,
+    /// `lib`'s branch moved to a new branch on one side and its url on the
+    /// other: one entry, settled by `member set-branch` and `member set-url`.
+    BranchAndUrl(ManifestStopHistory),
+    /// Every entry settled and `rwv.toml` staged, then `rwv abort`.
+    AbortSettled(ManifestStopHistory),
+    /// The setter killed once it recorded the settled sides and before the
+    /// working file is rewritten from them.
+    KilledMidRewrite,
 }
 
 pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
@@ -18927,6 +18935,102 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 .claim(Claim::OutputLacks("fork")),
             ]);
             "an entry git merged outside the markers comes out as git merged it"
+        }
+        S::BranchAndUrl(history) => {
+            steps.extend([
+                Step::rwv(&a(), &["member", "set-url", LIB, "url:fork:lib"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
+                    .expect(Exit::Succeeds),
+                stop(history)
+                    .claim(Claim::OutputContains(
+                        "rwv member set-branch local/remotes/lib lib-w",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "rwv member set-url local/remotes/lib",
+                    )),
+                Step::rwv(&ww("w"), &["member", "set-url", LIB, "url:fork:lib"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("still has entries in conflict"))
+                    .claim(Claim::OutputContains("set-branch")),
+                in_flight(history),
+                parked()
+                    .claim(Claim::OutputContains("set-branch"))
+                    .claim(Claim::OutputLacks("set-url")),
+                settles(&["member", "set-branch", LIB, "lib-w"], None),
+                continues_after(history),
+                head_manifest()
+                    .claim(Claim::OutputContains("branch = \"lib-w\""))
+                    .claim(Claim::OutputContains("fork/lib.git")),
+            ]);
+            match history {
+                H::Merge => {
+                    "a member's branch and url are settled by their setters at a merge stop"
+                }
+                H::Linear => {
+                    "a member's branch and url are settled by their setters at a linear stop"
+                }
+            }
+        }
+        S::AbortSettled(history) => {
+            let (target, own) = match history {
+                H::Merge => ("merge", "linear"),
+                H::Linear => ("linear", "merge"),
+            };
+            steps.extend([
+                set_history(&a(), target, LIB),
+                set_history(&ww("w"), own, LIB),
+                Step::git(&ww("w"), Repo::Proj, &["rev-parse", "HEAD"]).expect(Exit::Succeeds),
+                stop(history),
+                Step::rwv(&ww("w"), &["branch", "set-history", own, "--repo", LIB])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("no entry left in conflict")),
+                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+                in_flight(history).expect(Exit::Code(1)),
+                Step::git(&ww("w"), Repo::Proj, &["status", "--porcelain"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("rwv.toml")),
+                head_manifest().claim(Claim::OutputContains(match history {
+                    H::Merge => "history = \"linear\"",
+                    H::Linear => "history = \"merge\"",
+                })),
+            ]);
+            match history {
+                H::Merge => {
+                    "abort after every rwv.toml entry is settled at a merge stop puts it back"
+                }
+                H::Linear => {
+                    "abort after every rwv.toml entry is settled at a linear stop puts it back"
+                }
+            }
+        }
+        S::KilledMidRewrite => {
+            steps.extend([
+                set_history(&a(), "merge", APP),
+                set_history(&a(), "merge", LIB),
+                set_history(&ww("w"), "linear", APP),
+                set_history(&ww("w"), "linear", LIB),
+                stop(H::Merge),
+                Step::rwv_paused(
+                    &ww("w"),
+                    &["branch", "set-history", "merge", "--repo", APP],
+                    "conflict-sides-recorded",
+                    "settling",
+                ),
+                Step::kill("settling"),
+                in_flight(H::Merge),
+                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("<<<<<<<")),
+                parked()
+                    .claim(Claim::OutputContains("--repo local/remotes/lib"))
+                    .claim(Claim::OutputLacks("--repo local/remotes/app")),
+                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
+                continues(),
+                head_manifest()
+                    .claim(Claim::OutputContains("history = \"merge\""))
+                    .claim(Claim::OutputContains("history = \"linear\"")),
+            ]);
+            "a setter killed after recording the settled sides leaves the next entry's setter to finish"
         }
     };
     scenario(name, steps)

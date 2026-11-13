@@ -5710,6 +5710,7 @@ impl Vcs for GitVcs {
             info.push_str(&format!("{mode} {} {stage}\t{path}\n", blob.trim()));
         }
         Self::run_with_stdin(["update-index", "--index-info"], checkout, info.as_bytes())?;
+        crate::test_pause::point("conflict-sides-recorded");
         Self::run(["checkout", "--merge", "--", path], checkout)?;
         Ok(())
     }

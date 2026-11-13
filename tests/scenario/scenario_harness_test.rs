@@ -956,6 +956,19 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::OrdinarySetterLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::SettledLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
+    settle_a_manifest_stop(scenarios::ManifestSettle::BranchAndUrl(
+        scenarios::ManifestStopHistory::Merge
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::BranchAndUrl(
+        scenarios::ManifestStopHistory::Linear
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::AbortSettled(
+        scenarios::ManifestStopHistory::Merge
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::AbortSettled(
+        scenarios::ManifestStopHistory::Linear
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::KilledMidRewrite),
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -6787,6 +6800,46 @@ fn manifest_stop_settled_drops_a_comment_as_a_setter_does() {
 fn manifest_stop_settled_beside_a_clean_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::CleanBeside,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_settled_branch_and_url_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::BranchAndUrl(scenarios::ManifestStopHistory::Merge),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_settled_branch_and_url_linear() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::BranchAndUrl(scenarios::ManifestStopHistory::Linear),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_abort_after_every_entry_settled_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::AbortSettled(scenarios::ManifestStopHistory::Merge),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_abort_after_every_entry_settled_linear() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::AbortSettled(scenarios::ManifestStopHistory::Linear),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_setter_killed_mid_rewrite() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::KilledMidRewrite,
     ))
     .assert_fully_decided_green();
 }
