@@ -45,9 +45,7 @@ fn ci_local_sh() -> PathBuf {
 
 const STUB_CARGO: &str = "#!/bin/sh\n\
 printf 'STUB_CARGO: %s\\n' \"$*\"\n\
-if [ \"$1 $2 $3\" = \"run --quiet --example\" ] && [ -n \"${CI_LOCAL_TEST_DRIFT_FILE:-}\" ]; then\n\
-    printf 'drift\\n' >> \"$CI_LOCAL_TEST_DRIFT_FILE\"\n\
-fi\n\
+case \" $* \" in *\" --example generate-explain \"*) [ -n \"${CI_LOCAL_TEST_DRIFT_FILE:-}\" ] && printf 'drift\\n' >> \"$CI_LOCAL_TEST_DRIFT_FILE\";; esac\n\
 exit 0\n";
 
 // `rustup target list --installed` is queried live at runtime rather than
@@ -331,7 +329,9 @@ fn stages_flag_drift_only_skips_every_other_stage() {
         assert!(!stdout.contains(h), "unexpected header {h:?} in:\n{stdout}");
     }
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
-    assert!(stdout.contains("STUB_CARGO: run --release --features test-pause --quiet --example generate-explain"));
+    assert!(stdout.contains(
+        "STUB_CARGO: run --release --features test-pause --quiet --example generate-explain"
+    ));
     assert!(
         stdout
             .trim_end()
