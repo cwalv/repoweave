@@ -466,6 +466,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn work_the_receiving_branch_already_holds_passes_whatever_pin_this_clone_lacks() {
+        let (_tmp, dir) = repo();
+        let vcs = crate::git::git_vcs();
+        let pin = commit(&dir, "a");
+        let work = commit(&dir, "f");
+        let u = commit(&dir, "b");
+        let absent = CommitId::parse(&"ab".repeat(20)).unwrap();
+        assert_eq!(
+            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin, &absent]), &u).unwrap(),
+            Lineage::Passes { base: Some(pin) }
+        );
+    }
+
     fn lock_commit(dir: &Path, pin: &CommitId) -> CommitId {
         std::fs::write(
             dir.join(LockFile::FILE_NAME),
