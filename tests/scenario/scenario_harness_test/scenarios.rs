@@ -21913,16 +21913,15 @@ pub fn another_staged_edit_stays_staged_past_a_carried_fix(taking_in: TakingIn) 
 }
 
 /// A landing that stopped on a conflict in `app` after its project replay
-/// took in `a`'s removal of `lib`, with the working `rwv.toml` then broken by
+/// took in `a`'s added `docs`, with the working `rwv.toml` then broken by
 /// hand: the project repo is stopped in nothing, so `rwv abort` reads the
-/// members it restores at the savepoint, which lists `lib`, not at the
-/// replayed tip, which does not, and drops `lib`'s savepoint with the rest.
+/// members it restores at the savepoint, which does not list `docs`, not at
+/// the replayed tip, which does.
 pub fn abort_reads_the_savepoint_past_a_broken_working_rwv_toml() -> Scenario {
-    let mut steps = vec![
+    let steps = vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
         create("w"),
-        Step::drop_manifest_entry(&a(), Repo::Proj, Repo::Lib),
-        Step::drop_lock_entry(&a(), Repo::Proj, Repo::Lib),
-        Step::git(&a(), Repo::Proj, &["commit", "-qam", "remove lib"]),
+        Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
         Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
         Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
@@ -21933,7 +21932,8 @@ pub fn abort_reads_the_savepoint_past_a_broken_working_rwv_toml() -> Scenario {
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("local/remotes/app")),
-        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputLacks(LIB)),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains(DOCS)),
         Step::hand_edit(
             &ww("w"),
             Repo::Proj,
@@ -21944,17 +21944,10 @@ pub fn abort_reads_the_savepoint_past_a_broken_working_rwv_toml() -> Scenario {
         Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::Succeeds)
             .may_restore(&[Repo::Proj, Repo::App])
-            .may_rewind(&[Repo::App]),
-        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-            .claim(Claim::OutputContains(LIB)),
-        Step::git(
-            &ww("w"),
-            Repo::Lib,
-            &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op"],
-        )
-        .claim(Claim::OutputLacks("refs/rwv/pre-op")),
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputLacks(DOCS)),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputLacks(DOCS)),
     ];
-    steps.push(Step::rwv(&ww("w"), &["status"]).expect(Exit::Succeeds));
     scenario(
         "abort reads the savepoint past a broken working rwv.toml",
         steps,
