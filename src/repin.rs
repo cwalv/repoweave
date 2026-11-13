@@ -323,4 +323,59 @@ mod tests {
             assert_eq!(Repin::parse(&value), None, "{value}");
         }
     }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    fn copied_records(map_to: impl Fn(&CommitId) -> CommitId) -> Vec<Repin> {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let parent = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
+        let (from, to) = (id('a'), id('b'));
+        let message = format!(
+            "lock\n\n{KEY}: \"m\" {} {} member pin",
+            from.as_str(),
+            to.as_str()
+        );
+        git(dir, &["commit", "-q", "--allow-empty", "-m", &message]);
+        let commit = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
+        let vcs = crate::git::git_vcs();
+        let copy = copy_with_lock(
+            vcs.as_ref(),
+            dir,
+            &commit,
+            &parent,
+            b"{}".to_vec(),
+            &mut |_, pin| map_to(pin),
+        )
+        .unwrap();
+        recorded(vcs.as_ref(), dir, &copy).unwrap()
+    }
+
+    #[test]
+    fn a_copied_record_takes_both_its_pins_through_the_lock_s_re_map() {
+        let records = copied_records(|pin| if *pin == id('a') { id('c') } else { id('d') });
+        assert_eq!(
+            records
+                .iter()
+                .map(|r| (r.from.clone(), r.to.clone()))
+                .collect::<Vec<_>>(),
+            vec![(Some(id('c')), id('d'))]
+        );
+    }
+
+    #[test]
+    fn a_copied_record_the_re_map_leaves_moving_nothing_is_dropped() {
+        assert!(copied_records(|_| id('e')).is_empty());
+    }
 }
