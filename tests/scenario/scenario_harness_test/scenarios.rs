@@ -19300,7 +19300,7 @@ pub enum TextMerge {
     /// [`TextMerge::SettingMoved`] settled by a staged hand edit.
     SettingMovedByHand,
     /// [`TextMerge::SettingMoved`] settled by the printed `--keep text-merge`.
-    SettingMovedKeepTextMerge,
+    SettingMovedKeptAsText,
     /// [`TextMerge::SettingMoved`] with a comment `main` added: the
     /// continue's merge of the values keeps it.
     SettingMovedKeepsAComment,
@@ -19439,7 +19439,7 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                 steps,
             )
         }
-        T::SettingMovedKeepTextMerge => {
+        T::SettingMovedKeptAsText => {
             let mut steps = moved();
             steps.extend([
                 Step::rwv(&ww("w"), &["sync", "--history", "merge"])

@@ -988,7 +988,7 @@ every_scenario!(
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
     check_a_text_merge(scenarios::TextMerge::SettingMovedByHand),
-    check_a_text_merge(scenarios::TextMerge::SettingMovedKeepTextMerge),
+    check_a_text_merge(scenarios::TextMerge::SettingMovedKeptAsText),
     check_a_text_merge(scenarios::TextMerge::SettingMovedKeepsAComment),
     check_a_text_merge(scenarios::TextMerge::KeepTextMergeAtAConflict),
     check_a_text_merge(scenarios::TextMerge::KeepTextMergeNothingChecked),
@@ -7371,9 +7371,9 @@ fn replayed_tip_killed_then_aborted() {
 }
 
 #[test]
-fn text_merge_setting_moved_keep_text_merge() {
+fn text_merge_setting_moved_kept_as_text() {
     runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::SettingMovedKeepTextMerge,
+        scenarios::TextMerge::SettingMovedKeptAsText,
     ))
     .assert_fully_decided_green();
 }
