@@ -21780,7 +21780,8 @@ fn the_fix_is_in_the_tip(taking_in: TakingIn) -> Vec<Step> {
 
 /// [`a_fix_staged_at_the_replayed_tip`], its `--continue` killed at `point`:
 /// at the re-map's record, before the branch moves to the copy of the
-/// replayed tip that holds the fix, or after it moved. Run again, the
+/// replayed tip that holds the fix, or after it moved, the tip then holding
+/// the fix. Run again, the
 /// `--continue` finishes with the fix in the tip; `rwv abort` puts the
 /// workweave back with no `--abandon-foreign-tip`, keeping the fix, still
 /// uncommitted before the move, as a backup.
@@ -21799,6 +21800,13 @@ pub fn a_carried_fix_killed_part_way(
         ),
         Step::kill("carrying"),
     ]);
+    if point != "remap-recorded" {
+        steps.push(
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .claim(Claim::OutputContains(A_COPIES))
+                .claim(Claim::OutputLacks("w.txt")),
+        );
+    }
     match then {
         ThenRun::Continue => {
             steps.push(
