@@ -953,6 +953,9 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::Abort),
     settle_a_manifest_stop(scenarios::ManifestSettle::RawGitMerge),
     settle_a_manifest_stop(scenarios::ManifestSettle::UnstagedEditKept),
+    settle_a_manifest_stop(scenarios::ManifestSettle::OrdinarySetterLayout),
+    settle_a_manifest_stop(scenarios::ManifestSettle::SettledLayout),
+    settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -6760,6 +6763,30 @@ fn manifest_stop_settled_abort() {
 fn manifest_stop_settled_keeps_an_unstaged_edit() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::UnstagedEditKept,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_ordinary_setter_drops_a_comment() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::OrdinarySetterLayout,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_settled_drops_a_comment_as_a_setter_does() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::SettledLayout,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_settled_beside_a_clean_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::CleanBeside,
     ))
     .assert_fully_decided_green();
 }

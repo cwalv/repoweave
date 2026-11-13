@@ -18485,6 +18485,15 @@ pub enum ManifestSettle {
     /// An edit of the conflicted `rwv.toml` the operator has not staged,
     /// kept where the setter that rewrites the file names it.
     UnstagedEditKept,
+    /// A comment kept by hand in `rwv.toml`, which an ordinary setter drops
+    /// as it writes the whole file.
+    OrdinarySetterLayout,
+    /// A comment the workweave's side kept by hand, which settling the last
+    /// entry drops as an ordinary setter would.
+    SettledLayout,
+    /// `app`'s role changed only on `main`, merged by git outside the
+    /// markers, beside `lib`'s `history` in conflict.
+    CleanBeside,
 }
 
 pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
@@ -18549,6 +18558,15 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 "[integrations.vscode-workspace]\nenabled = false\n\n[workweave]\ncopy = \
                  [\"{file}\"]\n"
             ),
+        )
+    };
+    let comment = |at: &Place| {
+        Step::hand_edit(
+            at,
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]\nenabled = false\n",
+            "# laid out by hand\n[integrations.vscode-workspace]\nenabled = false\n",
         )
     };
     let mut steps = vec![create("w")];
@@ -18844,6 +18862,63 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 head_manifest().claim(Claim::OutputLacks("half-way through")),
             ]);
             "an unstaged edit of the conflicted rwv.toml is kept when a setter rewrites it"
+        }
+        S::OrdinarySetterLayout => {
+            steps.extend([
+                comment(&ww("w")),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                head_manifest().claim(Claim::OutputContains("# laid out by hand")),
+                Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+                head_manifest()
+                    .claim(Claim::OutputContains("role = \"fork\""))
+                    .claim(Claim::OutputLacks("# laid out by hand")),
+            ]);
+            "an ordinary setter writes rwv.toml whole, dropping a comment"
+        }
+        S::SettledLayout => {
+            steps.extend([
+                comment(&ww("w")),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[repositories.\"local/remotes/lib\"]\n",
+                    "[repositories.\"local/remotes/lib\"]\nhistory = \"linear\"\n",
+                ),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                set_history(&a(), "merge", LIB),
+                stop(H::Merge),
+                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("# laid out by hand")),
+                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
+                continues(),
+                head_manifest()
+                    .claim(Claim::OutputContains("history = \"linear\""))
+                    .claim(Claim::OutputLacks("# laid out by hand")),
+            ]);
+            "settling the last rwv.toml entry writes the file whole, as an ordinary setter does"
+        }
+        S::CleanBeside => {
+            steps.extend([
+                Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+                set_history(&a(), "merge", LIB),
+                set_history(&ww("w"), "linear", LIB),
+                stop(H::Merge).claim(Claim::OutputLacks("local/remotes/app")),
+                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("role = \"fork\"")),
+                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
+                continues(),
+                Step::git(
+                    &ww("w"),
+                    Repo::Proj,
+                    &["diff", "HEAD^2", "HEAD", "--", "rwv.toml"],
+                )
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("fork")),
+            ]);
+            "an entry git merged outside the markers comes out as git merged it"
         }
     };
     scenario(name, steps)
