@@ -7,8 +7,9 @@ use crate::vcs::{CommitId, ResolvedRevisionId, Vcs, VcsError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-/// A pin of the target's history, and the oldest lock commit of the range
-/// the lineage rule asks about that holds it.
+/// A pin of the target's history this clone lacks that the lineage rule
+/// considers, and the oldest lock commit that holds it among those it was
+/// considered for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HistoryPin {
     pub(crate) lock: CommitId,
@@ -16,18 +17,36 @@ pub(crate) struct HistoryPin {
 }
 
 impl HistoryPin {
-    pub(crate) fn absent_line(&self, member: &RepoPath) -> String {
-        absent_line(member, &self.lock, &self.pin)
+    pub(crate) fn absent_line(&self, member: &RepoPath, fetch: Fetch) -> String {
+        absent_line(member, &self.lock, &self.pin, fetch)
     }
 }
 
-pub(crate) fn absent_line(member: &RepoPath, lock: &CommitId, pin: &CommitId) -> String {
-    format!(
-        "{member}: history pin absent: {} pinned {}, which this clone lacks and no remote of \
-         the member holds (asked just now), so it does not decide the base",
-        lock.short(),
-        pin.short()
-    )
+/// Whether the verb judging a member fetched its remotes first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Fetch {
+    Made,
+    NotMade,
+}
+
+pub(crate) fn absent_line(
+    member: &RepoPath,
+    lock: &CommitId,
+    pin: &CommitId,
+    fetch: Fetch,
+) -> String {
+    let (lock, pin) = (lock.short(), pin.short());
+    match fetch {
+        Fetch::Made => format!(
+            "{member}: history pin absent: {lock} pinned {pin}, which this clone still lacks \
+             after this sync's fetch, so it does not decide the base"
+        ),
+        Fetch::NotMade => format!(
+            "{member}: history pin absent: {lock} pinned {pin}, which this clone does not \
+             hold, so it does not decide the base here; `rwv sync` fetches and judges it, as \
+             do `rwv fetch` and a rerun"
+        ),
+    }
 }
 
 /// Every pin each member had in the locks of a project branch's history,
@@ -84,8 +103,8 @@ impl PinHistory {
     }
 
     /// The same history, landed or synced from `source`, the source's
-    /// project branch: of the pins this clone lacks, the lineage rule asks
-    /// only about those the lock commits `source` does not reach hold.
+    /// project branch: of the pins this clone lacks, the lineage rule
+    /// considers those the lock commits `source` does not reach hold.
     pub(crate) fn since(mut self, source: &CommitId) -> Self {
         self.source = Some(source.clone());
         self
@@ -97,7 +116,7 @@ impl PinHistory {
 
     /// Which of `absent`, pins of `member` this clone lacks, a lock commit
     /// the source does not reach holds, each with the oldest such commit.
-    pub(crate) fn asked_about(
+    pub(crate) fn considered(
         &self,
         project_vcs: &dyn Vcs,
         member: &RepoPath,
@@ -234,19 +253,11 @@ pub(crate) fn judge(
     Ok(Lineage::Lacks { base, absent })
 }
 
-/// What asking a member's remotes found.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Asked {
-    /// Every remote of the member was fetched; none, where it has none.
-    Fetched,
-    /// A remote could not be fetched, for `cause`.
-    Unreachable { cause: String },
-}
-
-/// The lineage rule's verdict once the pins it asks about are looked for.
+/// The lineage rule's verdict on the pins this clone holds, with the pins
+/// it considers that this clone lacks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Verdict {
-    /// `absent` are the pins asked about that no remote holds, which do not
+    /// `absent` are the considered pins this clone lacks, which do not
     /// decide the base.
     Passes {
         base: Option<CommitId>,
@@ -255,47 +266,13 @@ pub(crate) enum Verdict {
     Off {
         base: CommitId,
     },
-    /// The pins asked about could not be looked for: a remote could not be
-    /// reached, for `cause`.
-    Unasked {
-        pins: Vec<HistoryPin>,
-        cause: String,
-    },
-}
-
-/// The judging of `member`'s work as [`Verdict::Unasked`] leaves it, against
-/// `target`.
-pub(crate) fn unasked(
-    target: impl std::fmt::Display,
-    member: &RepoPath,
-    pins: &[HistoryPin],
-    cause: String,
-) -> crate::diagnosis::Judging {
-    crate::diagnosis::State::PinUnasked
-        .of(member)
-        .member()
-        .bind("<m>", member)
-        .subject(format!(
-            "'{target}' pinned {} for it, which this clone lacks, and the member's remotes \
-             could not be asked whether they hold it",
-            pins.iter()
-                .map(|p| p.pin.short().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-        .listing(
-            pins.iter()
-                .map(|p| format!("{} pinned by {}", p.pin.short(), p.lock.short()))
-                .chain([cause]),
-        )
 }
 
 /// The lineage rule for `member`'s `work` against `receiving`, by every pin
-/// of `history`. A pin this clone lacks decides nothing unless it is asked
-/// about ([`PinHistory::asked_about`]); then `ask` fetches the member's
-/// remotes once and the rule judges again on what that brought.
+/// of `history` this clone holds, naming the pins it lacks that
+/// [`PinHistory::considered`] keeps.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn judge_asking(
+pub(crate) fn judge_by_history(
     project_vcs: &dyn Vcs,
     history: &PinHistory,
     member: &RepoPath,
@@ -303,31 +280,8 @@ pub(crate) fn judge_asking(
     dir: &Path,
     work: &CommitId,
     receiving: &CommitId,
-    ask: impl FnOnce() -> anyhow::Result<Asked>,
-) -> anyhow::Result<Verdict> {
+) -> Result<Verdict, VcsError> {
     let pins = history.of_member(member);
-    let asked = match judge(vcs, dir, work, &pins, receiving)? {
-        Lineage::Passes { base } => {
-            return Ok(Verdict::Passes {
-                base,
-                absent: Vec::new(),
-            })
-        }
-        Lineage::Off { base } => return Ok(Verdict::Off { base }),
-        Lineage::Lacks { base, absent } => {
-            let asked = history.asked_about(project_vcs, member, &absent)?;
-            if asked.is_empty() {
-                return Ok(Verdict::Passes {
-                    base,
-                    absent: Vec::new(),
-                });
-            }
-            asked
-        }
-    };
-    if let Asked::Unreachable { cause } = ask()? {
-        return Ok(Verdict::Unasked { pins: asked, cause });
-    }
     Ok(match judge(vcs, dir, work, &pins, receiving)? {
         Lineage::Passes { base } => Verdict::Passes {
             base,
@@ -336,10 +290,7 @@ pub(crate) fn judge_asking(
         Lineage::Off { base } => Verdict::Off { base },
         Lineage::Lacks { base, absent } => Verdict::Passes {
             base,
-            absent: asked
-                .into_iter()
-                .filter(|asked| absent.contains(&asked.pin))
-                .collect(),
+            absent: history.considered(project_vcs, member, &absent)?,
         },
     })
 }
@@ -523,14 +474,18 @@ mod tests {
         (history, RepoPath::new("m").unwrap())
     }
 
-    fn asked(history: &PinHistory, member: &RepoPath, absent: &[&CommitId]) -> Vec<HistoryPin> {
+    fn considered(
+        history: &PinHistory,
+        member: &RepoPath,
+        absent: &[&CommitId],
+    ) -> Vec<HistoryPin> {
         let vcs = crate::git::git_vcs();
         let absent: Vec<CommitId> = absent.iter().map(|c| (*c).clone()).collect();
-        history.asked_about(vcs.as_ref(), member, &absent).unwrap()
+        history.considered(vcs.as_ref(), member, &absent).unwrap()
     }
 
     #[test]
-    fn only_lock_commits_the_source_does_not_reach_are_asked_about() {
+    fn only_lock_commits_the_source_does_not_reach_are_considered() {
         let (_tmp, dir) = repo();
         let (old, new) = (fake('a'), fake('b'));
         lock_commit(&dir, &fake('0'));
@@ -542,7 +497,7 @@ mod tests {
         lock_commit(&dir, &fake('2'));
         let (history, m) = history_in(&dir, Some(&source));
         assert_eq!(
-            asked(&history, &m, &[&old, &new]),
+            considered(&history, &m, &[&old, &new]),
             vec![HistoryPin {
                 lock: since.clone(),
                 pin: new.clone()
@@ -550,7 +505,7 @@ mod tests {
         );
         let (whole, m) = history_in(&dir, None);
         assert_eq!(
-            asked(&whole, &m, &[&old, &new]),
+            considered(&whole, &m, &[&old, &new]),
             vec![
                 HistoryPin {
                     lock: common,
@@ -565,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_only_the_sources_side_of_a_criss_cross_held_is_not_asked_about() {
+    fn a_pin_only_the_sources_side_of_a_criss_cross_held_is_not_considered() {
         let (_tmp, dir) = repo();
         let (left, right, after) = (fake('a'), fake('b'), fake('c'));
         lock_commit(&dir, &fake('0'));
@@ -602,7 +557,7 @@ mod tests {
         );
         let (history, m) = history_in(&dir, Some(&source));
         assert_eq!(
-            asked(&history, &m, &[&left, &right, &after]),
+            considered(&history, &m, &[&left, &right, &after]),
             vec![
                 HistoryPin {
                     lock: merge,
@@ -617,7 +572,7 @@ mod tests {
     }
 
     #[test]
-    fn every_lock_commit_of_a_history_unrelated_to_the_source_is_asked_about() {
+    fn every_lock_commit_of_a_history_unrelated_to_the_source_is_considered() {
         let (_tmp, dir) = repo();
         let old = fake('a');
         let lock = lock_commit(&dir, &old);
@@ -628,7 +583,7 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let (history, m) = history_in(&dir, Some(&source));
         assert_eq!(
-            asked(&history, &m, &[&old]),
+            considered(&history, &m, &[&old]),
             vec![HistoryPin { lock, pin: old }]
         );
     }
@@ -637,7 +592,6 @@ mod tests {
         _tmp: tempfile::TempDir,
         project: PathBuf,
         member: PathBuf,
-        remote: PathBuf,
     }
 
     /// A member whose `main` pinned `b`, then `d` (on `c`), then `e`, which
@@ -675,7 +629,6 @@ mod tests {
                 _tmp: tmp,
                 project,
                 member,
-                remote,
             },
             c,
             d,
@@ -684,16 +637,11 @@ mod tests {
         )
     }
 
-    fn judged(
-        pair: &Pair,
-        work: &CommitId,
-        e: &CommitId,
-        ask: impl FnOnce() -> anyhow::Result<Asked>,
-    ) -> Verdict {
+    fn judged(pair: &Pair, work: &CommitId, e: &CommitId) -> Verdict {
         let vcs = crate::git::git_vcs();
         let source = CommitId::parse(&git(&pair.project, &["rev-parse", "seat"])).unwrap();
         let (history, m) = history_in(&pair.project, Some(&source));
-        judge_asking(
+        judge_by_history(
             vcs.as_ref(),
             &history,
             &m,
@@ -701,32 +649,22 @@ mod tests {
             &pair.member,
             work,
             e,
-            ask,
         )
         .unwrap()
     }
 
     #[test]
-    fn a_pin_asked_about_that_a_fetch_brings_is_judged_and_can_refuse() {
+    fn a_considered_pin_this_clone_holds_once_fetched_decides_and_can_refuse() {
         let (pair, c, d, e, work) = dropped_lineage(false);
-        let member = pair.member.clone();
-        let judged = judged(&pair, &work, &e, || {
-            git(&member, &["fetch", "-q", "origin"]);
-            Ok(Asked::Fetched)
-        });
-        assert_eq!(judged, Verdict::Off { base: c });
+        git(&pair.member, &["fetch", "-q", "origin"]);
+        assert_eq!(judged(&pair, &work, &e), Verdict::Off { base: c });
         assert!(git(&pair.member, &["cat-file", "-t", d.as_str()]) == "commit");
     }
 
     #[test]
-    fn a_pin_asked_about_that_no_remote_holds_is_named_and_decides_nothing() {
+    fn a_considered_pin_this_clone_lacks_is_named_and_decides_nothing_though_a_remote_holds_it() {
         let (pair, _, d, e, work) = dropped_lineage(false);
-        git(&pair.remote, &["branch", "-q", "-D", "x"]);
-        let member = pair.member.clone();
-        let judged = judged(&pair, &work, &e, || {
-            git(&member, &["fetch", "-q", "--prune", "origin"]);
-            Ok(Asked::Fetched)
-        });
+        let judged = judged(&pair, &work, &e);
         let Verdict::Passes { absent, .. } = judged else {
             panic!("{judged:?}");
         };
@@ -734,24 +672,10 @@ mod tests {
     }
 
     #[test]
-    fn a_pin_asked_about_whose_remote_cannot_be_reached_is_unasked() {
-        let (pair, _, d, e, work) = dropped_lineage(false);
-        let judged = judged(&pair, &work, &e, || {
-            Ok(Asked::Unreachable {
-                cause: "gone".to_owned(),
-            })
-        });
-        let Verdict::Unasked { pins, cause } = judged else {
-            panic!("{judged:?}");
-        };
-        assert_eq!((pins[0].pin.clone(), cause.as_str()), (d, "gone"));
-    }
-
-    #[test]
-    fn a_lacked_pin_the_source_already_reached_is_not_asked_about_even_where_a_remote_holds_it_and_would_refuse(
+    fn a_lacked_pin_the_source_already_reached_is_not_considered_even_where_a_remote_holds_it_and_would_refuse(
     ) {
         let (pair, _, _, e, work) = dropped_lineage(true);
-        let judged = judged(&pair, &work, &e, || panic!("no remote is asked"));
+        let judged = judged(&pair, &work, &e);
         assert!(
             matches!(&judged, Verdict::Passes { absent, .. } if absent.is_empty()),
             "{judged:?}"

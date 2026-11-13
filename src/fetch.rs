@@ -188,52 +188,6 @@ pub(crate) fn pruning_fetch_of(
     })
 }
 
-/// Fetch every remote of the member `repo` at `dir` as `rwv fetch` does,
-/// its url remote added first where the clone lacks it, to look for pins of
-/// the target's history this clone lacks; say what was asked.
-pub(crate) fn ask_remotes(
-    vcs: &dyn Vcs,
-    repo: &crate::manifest::RepoPath,
-    verb: &'static str,
-    dir: &Path,
-    url: &crate::manifest::RepoUrl,
-) -> anyhow::Result<crate::lineage::Asked> {
-    let add = match crate::registry::resolve_to_clone_info(url) {
-        Ok(info) => match crate::url_remote::find(vcs, repo, verb, dir, &info.url)?.plan() {
-            Ok(planned) => planned.add,
-            Err(judged) => {
-                let mut report = crate::diagnosis::Report::default();
-                report.add(*judged);
-                report.into_result()?;
-                None
-            }
-        },
-        Err(_) => None,
-    };
-    let fetched = pruning_fetch(vcs, dir, add.as_ref())?;
-    if let Some(cause) = unreached_remotes(&fetched.unconfirmed) {
-        return Ok(crate::lineage::Asked::Unreachable { cause });
-    }
-    let asked = if fetched.fetched.is_empty() {
-        "it has no remote to ask".to_owned()
-    } else {
-        format!(
-            "fetched {} for it",
-            fetched
-                .fetched
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
-    eprintln!(
-        "rwv {verb}: {repo}: a pin of the target's history this clone lacks could decide its \
-         base; {asked}, and it is judged on refs as just fetched"
-    );
-    Ok(crate::lineage::Asked::Fetched)
-}
-
 struct Target {
     path: String,
     member: Option<crate::manifest::RepoPath>,

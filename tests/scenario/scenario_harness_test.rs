@@ -1200,11 +1200,17 @@ every_scenario!(
     landed_history_waived_pin_on_a_second_machine,
     a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::Landing),
     a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::SyncFirst),
-    a_history_pin_no_remote_holds_is_named_and_lands,
-    a_colleagues_history_pin_is_fetched_and_judged(scenarios::Colleague::Unshared),
-    a_colleagues_history_pin_is_fetched_and_judged(scenarios::Colleague::Shared),
-    a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched,
-    a_member_with_no_remote_is_given_its_url_remote_and_asked,
+    a_history_pin_this_clone_lacks_is_noted_and_lands(false),
+    a_history_pin_this_clone_lacks_is_noted_and_lands(true),
+    a_colleagues_history_pin_is_judged_by_sync(scenarios::Cut::Before),
+    a_colleagues_history_pin_is_judged_by_sync(scenarios::Cut::After),
+    a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(
+        scenarios::Cut::Before
+    ),
+    a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(
+        scenarios::Cut::After
+    ),
+    a_landing_contacts_no_remote_for_a_history_pin_it_lacks,
     a_sync_reports_an_absent_history_pin_in_json,
     a_seat_pushes_after_landing_without_retire,
     a_fast_forward_landing_records_a_member_it_rebased,
@@ -5266,7 +5272,7 @@ holding_rwv! {
 }
 
 #[test]
-fn a_history_pin_no_clone_holds_is_asked_about_only_by_seats_cut_before_it() {
+fn a_history_pin_no_clone_holds_is_noted_by_seats_cut_before_it_contacting_no_remote() {
     runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
 }
 
@@ -5373,30 +5379,34 @@ fn a_refused_landing_leaves_a_lock_behind_as_it_stood() {
 }
 
 #[test]
-fn a_history_pin_no_remote_holds_is_named_and_lands() {
-    runner::run(scenarios::a_history_pin_no_remote_holds_is_named_and_lands())
-        .assert_fully_decided_green();
+fn a_history_pin_this_clone_lacks_is_noted_and_lands_whether_or_not_a_remote_holds_it() {
+    for publish in [false, true] {
+        runner::run(scenarios::a_history_pin_this_clone_lacks_is_noted_and_lands(publish))
+            .assert_fully_decided_green();
+    }
 }
 
 #[test]
-fn a_colleagues_history_pin_is_fetched_and_judged() {
-    for how in [scenarios::Colleague::Unshared, scenarios::Colleague::Shared] {
-        runner::run(scenarios::a_colleagues_history_pin_is_fetched_and_judged(
-            how,
-        ))
+fn a_colleagues_history_pin_is_judged_by_the_fetch_sync_makes() {
+    for cut in [scenarios::Cut::Before, scenarios::Cut::After] {
+        runner::run(scenarios::a_colleagues_history_pin_is_judged_by_sync(cut))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses() {
+    for cut in [scenarios::Cut::Before] {
+        runner::run(
+            scenarios::a_landing_without_a_sync_lands_with_a_note_what_a_clone_holding_the_pin_refuses(cut),
+        )
         .assert_fully_decided_green();
     }
 }
 
 #[test]
-fn a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched() {
-    runner::run(scenarios::a_history_pin_whose_remote_cannot_be_reached_refuses_until_fetched())
-        .assert_fully_decided_green();
-}
-
-#[test]
-fn a_member_with_no_remote_is_given_its_url_remote_and_asked() {
-    runner::run(scenarios::a_member_with_no_remote_is_given_its_url_remote_and_asked())
+fn a_landing_contacts_no_remote_for_a_history_pin_it_lacks() {
+    runner::run(scenarios::a_landing_contacts_no_remote_for_a_history_pin_it_lacks())
         .assert_fully_decided_green();
 }
 

@@ -994,7 +994,7 @@
           }
         },
         {
-          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacks and no remote of the member held when asked, so it did not decide the base.",
+          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacked, so it did not decide the base.",
           "type": "object",
           "required": [
             "kind",

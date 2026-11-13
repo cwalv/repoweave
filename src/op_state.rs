@@ -737,8 +737,7 @@ pub enum LandingReport {
         commits: Vec<crate::vcs::CommitSummary>,
     },
     /// A pin of `repo` that lock commit `lock` of the target's history held,
-    /// which this clone lacks and no remote of `repo` held when asked, so it
-    /// did not decide the base.
+    /// which this clone lacked, so it did not decide the base.
     HistoryPinAbsent {
         repo: RepoKey,
         lock: CommitId,

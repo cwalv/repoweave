@@ -88,8 +88,8 @@ pub struct Plan {
     /// The commits each moved member's receiving branch holds beyond `T`'s
     /// pin, which the landing pins into `T` with the member's work.
     pub beyond_pin: BTreeMap<RepoPath, Vec<CommitSummary>>,
-    /// Each pin of `T`'s history the lineage rule asked about that this
-    /// clone lacks and no remote of the member holds.
+    /// Each pin of `T`'s history the lineage rule considered that this
+    /// clone lacks.
     pub absent_pins: Vec<crate::op_state::LandingReport>,
     /// Each change to `T`'s entries `--allow-member-change` named.
     pub landed_changes: Vec<crate::op_state::LandingReport>,
@@ -1956,13 +1956,8 @@ fn judge_moved(
     plan: &mut Plan,
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let Member {
-        path,
-        entry,
-        dir,
-        vcs,
-    } = *member;
-    let judged = crate::lineage::judge_asking(
+    let Member { path, dir, vcs, .. } = *member;
+    let judged = crate::lineage::judge_by_history(
         crate::vcs::project_vcs().as_ref(),
         &sides.history,
         path,
@@ -1970,7 +1965,6 @@ fn judge_moved(
         dir,
         head,
         tip,
-        || crate::fetch::ask_remotes(vcs, path, "land", dir, &entry.url),
     )?;
     match judged {
         Verdict::Passes { absent, .. } => {
@@ -2001,12 +1995,6 @@ fn judge_moved(
             }
             report.add(judging.judge(vcs));
         }
-        Verdict::Unasked { pins, cause } => report.add(
-            crate::lineage::unasked(&landing.target, path, &pins, cause)
-                .checkout(dir)
-                .by_verb("land")
-                .judge(vcs),
-        ),
     }
     Ok(())
 }

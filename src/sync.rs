@@ -792,8 +792,7 @@ pub enum LandingReportOutput {
         commits: Vec<LeftCommitOutput>,
     },
     /// A pin of `path` that `lock` in the target's history held, which this
-    /// clone lacks and no remote of the member held when asked, so it did
-    /// not decide the base.
+    /// clone lacked, so it did not decide the base.
     HistoryPinAbsent {
         path: String,
         lock: CommitId,
@@ -1109,7 +1108,15 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
             }
             op_state::LandingReport::HistoryPinAbsent { repo, lock, pin } => {
                 if let RepoKey::Member(path) = repo {
-                    eprintln!("land: {}", crate::lineage::absent_line(path, lock, pin));
+                    eprintln!(
+                        "land: {}",
+                        crate::lineage::absent_line(
+                            path,
+                            lock,
+                            pin,
+                            crate::lineage::Fetch::NotMade
+                        )
+                    );
                 }
             }
             op_state::LandingReport::BeyondPin {

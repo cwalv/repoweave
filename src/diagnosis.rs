@@ -532,7 +532,6 @@ pub enum State {
     PushBranchUnconfirmed,
     PinNone,
     PinUnreachable,
-    PinUnasked,
     NameTaken,
     NameExists,
     NameARevision,
@@ -617,7 +616,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 85] = [
+    pub const ALL: [State; 84] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
@@ -641,7 +640,6 @@ impl State {
         Self::PinOffLineage,
         Self::PinNotOnDeclaredBranch,
         Self::PinUnreachable,
-        Self::PinUnasked,
         Self::PinOffRemote,
         Self::PinBackwards,
         Self::PinUnmerged,
@@ -952,18 +950,6 @@ impl State {
                              status` reports it",
                 offers: &[Form::C17, Form::C25, Form::C19],
                 verb_offers: &[("land", Form::C33)],
-            },
-            Self::PinUnasked => &StateRow {
-                axis: Axis::Pin,
-                name: "unasked",
-                means: "a pin of the target's history this clone lacks, held by a lock commit \
-                        the source's project branch does not reach, could make the work's base \
-                        newer, and a remote of the member could not be fetched to look for it, \
-                        the cause listed: whether a remote holds it cannot be told. Once the \
-                        remote can be reached, a fetch lets the next run judge it",
-                refused_by: "`rwv land` and `rwv sync`",
-                offers: &[Form::C33],
-                verb_offers: &[],
             },
             Self::NameTaken => &StateRow {
                 axis: Axis::Name,
