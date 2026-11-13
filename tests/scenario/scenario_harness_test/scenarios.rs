@@ -18712,6 +18712,11 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         H::Linear => "keep incoming: rwv branch set-history linear",
                     }))
                     .claim(Claim::OutputLacks("--repo")),
+                Step::rwv(
+                    &ww("w"),
+                    &["branch", "set-history", target, "--repo", "projects/other"],
+                )
+                .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
                 Step::rwv(&ww("w"), &["branch", "set-history", target])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("no entry left in conflict"))
@@ -18736,6 +18741,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         "rwv member remove local/remotes/docs",
                     ))
                     .claim(Claim::OutputContains("no verb settles it")),
+                Step::rwv(&ww("w"), &["member", "remove", DOCS, "--delete"])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
                 settles(&["member", "remove", DOCS], None),
                 continues_after(history),
                 head_manifest().claim(Claim::OutputLacks("local/remotes/docs")),
@@ -19284,6 +19291,20 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         "keep incoming: rwv member set-branch local/remotes/lib lib-main",
                     ))
                     .claim(Claim::OutputLacks("set-url")),
+                Step::rwv(&ww("w"), &["member", "set-branch", LIB, "lib-w", "--new"])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
+                Step::rwv(
+                    &ww("w"),
+                    &[
+                        "member",
+                        "set-branch",
+                        LIB,
+                        "lib-w",
+                        "--url",
+                        "url:fork:lib",
+                    ],
+                )
+                .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
                 settles(&["member", "set-branch", LIB, "lib-w"], None),
                 continues_after(history),
                 head_manifest()
