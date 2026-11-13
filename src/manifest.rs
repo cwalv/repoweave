@@ -1678,6 +1678,7 @@ pub struct Manifest {
     /// that has none of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<History>,
+    #[serde(default)]
     pub(crate) repositories: BTreeMap<RepoPath, RepoEntry>,
     #[serde(default, deserialize_with = "deserialize_integrations")]
     pub integrations: BTreeMap<String, IntegrationConfig>,
@@ -2963,16 +2964,12 @@ role = "owned"
     }
 
     #[test]
-    fn manifest_from_path_missing_repositories_field() {
+    fn manifest_from_path_without_repositories_key_has_no_members() {
         let dir = crate::tempdir().unwrap();
         let path = dir.path().join("missing.toml");
         std::fs::write(&path, "[integrations]\n").unwrap();
 
-        let result = Manifest::from_path(&path);
-        assert!(
-            result.is_err(),
-            "should fail when 'repositories' is missing"
-        );
+        assert!(Manifest::from_path(&path).unwrap().is_empty());
     }
 
     #[test]
@@ -4019,6 +4016,14 @@ copy = [".env"]
     // ========================================================================
 
     // -- iter_repo_paths ------------------------------------------------------
+
+    #[test]
+    fn a_manifest_with_no_repositories_key_declares_no_members() {
+        for text in ["", "history = \"merge\"\n", "[integrations]\n"] {
+            let m = Manifest::from_toml_str(text).unwrap();
+            assert!(m.is_empty(), "{text:?}");
+        }
+    }
 
     #[test]
     fn iter_repo_paths_empty_manifest() {

@@ -20723,3 +20723,51 @@ pub fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter(history: &'static
         steps,
     )
 }
+
+/// On a hand-ordered `rwv.toml` with no `[repositories]` header and an
+/// integration table between its two member tables, the primary and the
+/// workweave each remove one of the members. The sync takes both removals in,
+/// and the manifest it produces has no members.
+pub fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest(
+    history: &'static str,
+) -> Scenario {
+    let integration = "[integrations.vscode-workspace]\nenabled = false\n";
+    let app_header = format!("[repositories.\"{}\"]", Repo::App.rel_path());
+    let mut steps = hand_ordered_manifest();
+    steps.extend([
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &format!("\n{integration}"),
+            "",
+        ),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &app_header,
+            &format!("{integration}\n{app_header}"),
+        ),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["commit", "-qam", "hand: split the members"],
+        ),
+        create("w"),
+        Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["member", "remove", APP]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--history", history])
+            .expect(Exit::Succeeds)
+            .claim(Claim::ManifestLists {
+                at: ww("w"),
+                rev: "HEAD",
+                members: &[],
+            }),
+    ]);
+    scenario(
+        "removals from both sides that leave no member sync into an empty manifest",
+        steps,
+    )
+}

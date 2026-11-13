@@ -366,3 +366,30 @@ fn member_remove_on_a_hand_laid_out_manifest_removes_only_that_table() {
         ]
     );
 }
+
+#[test]
+fn member_remove_of_the_last_member_works_when_members_are_root_dotted_keys() {
+    let w = two_members();
+    let mut text = String::new();
+    for member in [APP, LIB] {
+        for (key, value) in [
+            ("type", "git".to_owned()),
+            ("url", url_of(&w, member)),
+            ("branch", "main".to_owned()),
+            ("role", "owned".to_owned()),
+        ] {
+            text.push_str(&format!("repositories.\"{member}\".{key} = \"{value}\"\n"));
+        }
+    }
+    std::fs::write(project(&w).join("rwv.toml"), &text).unwrap();
+    git_in(
+        project(&w),
+        &["commit", "-qam", "hand: root-dotted members"],
+    );
+
+    succeeded(&run(&w, &["member", "remove", APP]));
+    succeeded(&run(&w, &["member", "remove", LIB]));
+    let now = committed_manifest(&w);
+    assert!(!now.contains(APP) && !now.contains(LIB), "{now}");
+    assert_eq!(manifest(&w).trim_end(), now);
+}

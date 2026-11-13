@@ -832,6 +832,8 @@ every_scenario!(
     a_hand_ordered_manifest_takes_in_a_setter_from_each_side("merge"),
     a_hand_ordered_manifest_keeps_a_removal_across_a_setter("linear"),
     a_hand_ordered_manifest_keeps_a_removal_across_a_setter("merge"),
+    removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest("linear"),
+    removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest("merge"),
     a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_branch,
     a_dependent_opened_elsewhere_as_its_carry_moves_it_is_not_moved,
     a_landing_killed_after_its_carry_continues,
@@ -5854,6 +5856,26 @@ fn a_hand_ordered_manifest_takes_in_a_setter_from_each_side_in_a_merge_sync() {
 fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter_in_a_linear_sync() {
     runner::run(scenarios::a_hand_ordered_manifest_keeps_a_removal_across_a_setter("linear"))
         .assert_fully_decided_green();
+}
+
+#[test]
+fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest_in_a_linear_sync() {
+    runner::run(
+        scenarios::removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest(
+            "linear",
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest_in_a_merge_sync() {
+    runner::run(
+        scenarios::removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest(
+            "merge",
+        ),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]

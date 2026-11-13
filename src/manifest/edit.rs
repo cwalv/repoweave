@@ -908,8 +908,24 @@ branch = "main"
 role = "owned"
 "#;
 
+    const ROOT_DOTTED: &str = r#"repositories."github/a/app".type = "git"
+repositories."github/a/app".url = "https://example.com/app.git"
+repositories."github/a/app".branch = "main"
+repositories."github/a/app".role = "owned"
+repositories."github/a/docs".type = "git"
+repositories."github/a/docs".url = "https://example.com/docs.git"
+repositories."github/a/docs".branch = "main"
+repositories."github/a/docs".role = "owned"
+repositories."github/a/lib".type = "git"
+repositories."github/a/lib".url = "https://example.com/lib.git"
+repositories."github/a/lib".branch = "main"
+repositories."github/a/lib".role = "owned"
+repositories."github/a/lib".history = "merge"
+"#;
+
     fn layouts() -> Vec<(&'static str, String)> {
         vec![
+            ("root-dotted", ROOT_DOTTED.to_owned()),
             ("sorted", SORTED.to_owned()),
             ("hand", HAND.to_owned()),
             ("inline", INLINE.to_owned()),
