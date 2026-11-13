@@ -988,18 +988,6 @@ every_scenario!(
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
     check_a_text_merge(scenarios::TextMerge::SettingMovedByHand),
-    check_a_text_merge(scenarios::TextMerge::KilledAtTheNextPause(
-        scenarios::AbortOr::Continue
-    )),
-    check_a_text_merge(scenarios::TextMerge::KilledAtTheNextPause(
-        scenarios::AbortOr::Abort
-    )),
-    check_a_text_merge(scenarios::TextMerge::KilledBeforeTheCheck(
-        scenarios::AbortOr::Continue
-    )),
-    check_a_text_merge(scenarios::TextMerge::KilledBeforeTheCheck(
-        scenarios::AbortOr::Abort
-    )),
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -7259,38 +7247,6 @@ fn text_merge_setting_moved_pull() {
 fn text_merge_setting_moved_by_hand() {
     runner::run(scenarios::check_a_text_merge(
         scenarios::TextMerge::SettingMovedByHand,
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_killed_at_the_next_pause_continued() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::KilledAtTheNextPause(scenarios::AbortOr::Continue),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_killed_at_the_next_pause_aborted() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::KilledAtTheNextPause(scenarios::AbortOr::Abort),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_killed_before_the_check_continued() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::KilledBeforeTheCheck(scenarios::AbortOr::Continue),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_killed_before_the_check_aborted() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::KilledBeforeTheCheck(scenarios::AbortOr::Abort),
     ))
     .assert_fully_decided_green();
 }

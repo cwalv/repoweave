@@ -7,7 +7,7 @@
 
 use crate::manifest::Manifest;
 use crate::op_state::OpVerb;
-use crate::vcs::{CommitId, ConflictSides, ResolvedRevisionId, Vcs, VcsAction, VcsError};
+use crate::vcs::{CommitId, ConflictSides, ResolvedRevisionId, Vcs, VcsAction};
 use anyhow::Context;
 use std::path::Path;
 
@@ -349,36 +349,6 @@ pub(crate) fn sides_at(
     }
 }
 
-/// Check the commit a replay of `dir` stopped at, where its pick left
-/// `rwv.toml` merged: committed, at a pause after a pick with no conflict
-/// where `paused`, or staged beside another path's conflict. The text is checked against the
-/// merge of the values of the commit's parent, the commit the replay built
-/// on, and the commit. Return whether it recorded `rwv.toml` unmerged.
-pub(crate) fn check_replayed(vcs: &dyn Vcs, dir: &Path, paused: bool) -> anyhow::Result<bool> {
-    let Some(picked) = vcs.rebase_replaying(dir)? else {
-        return Ok(false);
-    };
-    let unmerged = vcs.unmerged_paths(dir)?;
-    if unmerged.iter().any(|path| path == Manifest::FILE_NAME) {
-        return Ok(false);
-    }
-    let Some(text_merge) = vcs.staged_file(dir, Manifest::FILE_NAME)? else {
-        return Ok(false);
-    };
-    let head = vcs.head_revision(dir)?.id().clone();
-    let built_on = if paused {
-        match vcs.parents(dir, &head)?.into_iter().next() {
-            Some(parent) => parent,
-            None => return Ok(false),
-        }
-    } else {
-        head
-    };
-    let base = vcs.parents(dir, &picked)?.into_iter().next();
-    let sides = sides_at(vcs, dir, base.as_ref(), &built_on, &picked);
-    check_text_merge(vcs, dir, &sides, &text_merge)
-}
-
 /// Whether `text_merge`, the text the VCS merged `rwv.toml` into with no
 /// conflict, differs from the merge of the values of `sides`.
 pub(crate) fn text_merge_differs(sides: &ConflictSides, text_merge: &str) -> anyhow::Result<bool> {
@@ -412,85 +382,6 @@ pub(crate) fn check_merge_in_flight(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result
     let base = vcs.merge_bases(dir, &ours, &theirs)?.into_iter().next();
     let sides = sides_at(vcs, dir, base.as_ref(), &ours, &theirs);
     check_text_merge(vcs, dir, &sides, &text_merge)
-}
-
-/// Replay the project repo in `dir` onto `onto`, pausing after each commit
-/// that changes `rwv.toml` where `onto` changed it too, then drive it with
-/// [`drive_replay`].
-pub(crate) fn replay(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    onto: &ResolvedRevisionId,
-    derived: crate::vcs::DerivedContentPolicy,
-) -> anyhow::Result<Result<(), VcsError>> {
-    let head = vcs.head_revision(dir)?.id().clone();
-    let base = vcs.merge_bases(dir, &head, onto.id())?.into_iter().next();
-    let sides = sides_at(vcs, dir, base.as_ref(), onto.id(), onto.id());
-    let outcome = if sides.base == sides.ours {
-        vcs.rebase(dir, onto, onto, derived)
-    } else {
-        vcs.rebase_pausing(dir, onto, onto, derived, Manifest::FILE_NAME)
-    };
-    drive_replay(vcs, dir, outcome, derived, None)
-}
-
-/// Drive the project replay in `dir` from `outcome` to its end or to a stop.
-/// At each pause whose commit holds `rwv.toml` as the pick left it, the text
-/// is checked and a right one goes on; at a stop on a conflict, a pick other
-/// than `resumed`, the one a continue went on from, is checked too. A check
-/// that records `rwv.toml` unmerged stops the replay there.
-pub(crate) fn drive_replay(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    mut outcome: Result<(), VcsError>,
-    derived: crate::vcs::DerivedContentPolicy,
-    resumed: Option<CommitId>,
-) -> anyhow::Result<Result<(), VcsError>> {
-    let stopped = || VcsError::RebaseConflict {
-        repo: dir.to_path_buf(),
-        op: crate::vcs::ConflictOp::Rebase,
-    };
-    loop {
-        let replaying = vcs.rebase_replaying(dir)?;
-        match outcome {
-            Ok(()) if replaying.is_none() => return Ok(Ok(())),
-            Ok(()) => {
-                crate::test_pause::point("replay-paused");
-                let head = vcs.head_revision(dir)?;
-                let committed = vcs
-                    .read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME))
-                    .ok();
-                let as_picked = vcs.staged_file(dir, Manifest::FILE_NAME)? == committed;
-                if as_picked && check_replayed(vcs, dir, true)? {
-                    return Ok(Err(stopped()));
-                }
-                outcome = vcs.rebase_continue(dir, derived);
-            }
-            Err(VcsError::RebaseConflict { .. }) => {
-                if replaying.is_some() && replaying != resumed {
-                    check_replayed(vcs, dir, false)?;
-                }
-                return Ok(Err(stopped()));
-            }
-            Err(e) => return Ok(Err(e)),
-        }
-    }
-}
-
-/// Go on with the project replay stopped in `dir`, from a pause as from a
-/// conflict, through [`drive_replay`].
-pub(crate) fn continue_replay(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    derived: crate::vcs::DerivedContentPolicy,
-) -> anyhow::Result<Result<(), VcsError>> {
-    let resumed = vcs.rebase_replaying(dir)?;
-    let outcome = if vcs.rebase_paused(dir)? {
-        Ok(())
-    } else {
-        vcs.rebase_continue(dir, derived)
-    };
-    drive_replay(vcs, dir, outcome, derived, resumed)
 }
 
 fn kept_lines(vcs: &dyn Vcs, dir: &Path, kept: &crate::vcs::BackupWitness) -> [String; 2] {
@@ -558,20 +449,6 @@ pub(crate) fn continue_at_stop(
     let path = dir.join(Manifest::FILE_NAME);
     let working = std::fs::read_to_string(&path).ok();
     let Some(recorded) = vcs.conflict_sides(&dir, Manifest::FILE_NAME)? else {
-        if vcs.rebase_paused(&dir)? {
-            let head = vcs.head_revision(&dir)?;
-            let committed = vcs
-                .read_file_at_revision(&dir, &head, Path::new(Manifest::FILE_NAME))
-                .ok();
-            let as_picked = vcs.staged_file(&dir, Manifest::FILE_NAME)? == committed;
-            if !(as_picked && check_replayed(vcs, &dir, true)?) {
-                return Ok(());
-            }
-            return Err(refused(
-                "rwv.toml is still in conflict",
-                stop_lines(vcs, &dir, &resume),
-            ));
-        }
         if let (Some(side), true) = (keep, record.verb == typed) {
             eprintln!(
                 "{}: rwv.toml is not unmerged, so `--keep {}` takes nothing",

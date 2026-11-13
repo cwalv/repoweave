@@ -19299,28 +19299,10 @@ pub enum TextMerge {
     SettingMovedPull,
     /// [`TextMerge::SettingMoved`] settled by a staged hand edit.
     SettingMovedByHand,
-    /// A replay whose text merge of `rwv.toml` holds a key twice, with a second workweave commit
-    /// changing `rwv.toml`: the continue writes the first, and the replay is
-    /// killed at the next pause and `then` exits it.
-    KilledAtTheNextPause(AbortOr),
-    /// A replay whose text merge of `rwv.toml` holds a key twice, killed at the pause before its
-    /// check ran.
-    KilledBeforeTheCheck(AbortOr),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum AbortOr {
-    Continue,
-    Abort,
 }
 
 pub fn check_a_text_merge(how: TextMerge) -> Scenario {
-    use ManifestStopHistory as H;
     use TextMerge as T;
-    let flag = |history: H| match history {
-        H::Merge => "merge",
-        H::Linear => "linear",
-    };
     let differs = "rwv.toml: the VCS merged its text with no conflict, into";
     let moved = || {
         vec![
@@ -19330,28 +19312,6 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                 .expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
-        ]
-    };
-    let duplicated = |history: H| {
-        vec![
-            create("w"),
-            Step::hand_edit(
-                &ww("w"),
-                Repo::Proj,
-                "rwv.toml",
-                "[repositories.\"local/remotes/lib\"]\n",
-                &format!(
-                    "[repositories.\"local/remotes/lib\"]\nhistory = \"{}\"\n",
-                    flag(history)
-                ),
-            ),
-            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(
-                &a(),
-                &["branch", "set-history", flag(history), "--repo", LIB],
-            )
-            .expect(Exit::Succeeds),
-            Step::rwv(&a(), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
         ]
     };
     let one = |at: &Place, what: &'static str| {
@@ -19369,15 +19329,6 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
             .claim(Claim::OutputContains(
                 "role = \"fork\"\nhistory = \"merge\"",
             ))
-    };
-    let lib_merged = |at: &Place, history: H| {
-        Step::git(at, Repo::Proj, &["show", "HEAD:rwv.toml"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputContains(match history {
-                H::Merge => "history = \"merge\"",
-                H::Linear => "history = \"linear\"",
-            }))
-            .claim(Claim::OutputContains("role = \"fork\""))
     };
     let (name, steps) = match how {
         T::SettingMoved => {
@@ -19466,88 +19417,6 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
             ]);
             (
                 "a text merge of rwv.toml the check stopped is settled by a staged hand edit",
-                steps,
-            )
-        }
-        T::KilledAtTheNextPause(then) | T::KilledBeforeTheCheck(then) => {
-            let next = matches!(how, T::KilledAtTheNextPause(_));
-            let mut steps = duplicated(H::Linear);
-            if next {
-                steps.push(
-                    Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"])
-                        .expect(Exit::Succeeds),
-                );
-            }
-            if next {
-                steps.extend([
-                    Step::rwv(&ww("w"), &["sync", "--history", "linear"])
-                        .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                        .claim(Claim::OutputContains(differs)),
-                    Step::rwv_paused(
-                        &ww("w"),
-                        &["sync", "--continue"],
-                        "replay-paused",
-                        "replaying",
-                    ),
-                ]);
-            } else {
-                steps.push(Step::rwv_paused(
-                    &ww("w"),
-                    &["sync", "--history", "linear"],
-                    "replay-paused",
-                    "replaying",
-                ));
-            }
-            steps.push(Step::kill("replaying"));
-            match then {
-                AbortOr::Continue if next => steps.extend([
-                    Step::rwv(&ww("w"), &["sync", "--continue"])
-                        .expect(Exit::Succeeds)
-                        .may_strand(&[Repo::Proj]),
-                    lib_merged(&ww("w"), H::Linear),
-                    one(&ww("w"), "history"),
-                    Step::git(&ww("w"), Repo::Proj, &["show", "HEAD~1:rwv.toml"])
-                        .expect(Exit::Succeeds)
-                        .claim(Claim::OutputContains("role = \"fork\"")),
-                ]),
-                AbortOr::Continue => steps.extend([
-                    Step::rwv(&ww("w"), &["sync", "--continue"])
-                        .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                        .claim(Claim::OutputContains(differs)),
-                    Step::rwv(&ww("w"), &["sync", "--continue"])
-                        .expect(Exit::Succeeds)
-                        .may_strand(&[Repo::Proj]),
-                    lib_merged(&ww("w"), H::Linear),
-                    one(&ww("w"), "history"),
-                ]),
-                AbortOr::Abort => steps.extend([
-                    Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
-                    Step::git(
-                        &ww("w"),
-                        Repo::Proj,
-                        &["rev-parse", "-q", "--verify", "REBASE_HEAD"],
-                    )
-                    .expect(Exit::Code(1)),
-                    Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-                        .expect(Exit::Succeeds)
-                        .claim(Claim::OutputLacks("dependency")),
-                ]),
-            }
-            (
-                match (next, then) {
-                    (true, AbortOr::Continue) => {
-                        "a replay killed at the pause after a corrected one is continued"
-                    }
-                    (true, AbortOr::Abort) => {
-                        "a replay killed at the pause after a corrected one is aborted"
-                    }
-                    (false, AbortOr::Continue) => {
-                        "a replay killed at a pause before its check is continued and checked"
-                    }
-                    (false, AbortOr::Abort) => {
-                        "a replay killed at a pause before its check is aborted"
-                    }
-                },
                 steps,
             )
         }

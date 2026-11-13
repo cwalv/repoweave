@@ -3609,22 +3609,6 @@ pub trait Vcs: Send + Sync {
         derived: DerivedContentPolicy,
     ) -> Result<(), VcsError>;
 
-    /// [`Vcs::rebase`], pausing after each commit that changes `path` once
-    /// it is replayed with no conflict: the replay is then still in flight,
-    /// with nothing unmerged, the commit [`Vcs::rebase_replaying`] names
-    /// replayed as the tip, and changes staged there are taken into it by
-    /// [`Vcs::rebase_continue`].
-    ///
-    /// For git: the planned `pick` of each such commit becomes an `edit`.
-    fn rebase_pausing(
-        &self,
-        repo: &Path,
-        onto: &ResolvedRevisionId,
-        upstream: &ResolvedRevisionId,
-        derived: DerivedContentPolicy,
-        path: &str,
-    ) -> Result<(), VcsError>;
-
     /// Which commit each commit of `from..old` became, where a replay of
     /// `old` onto `onto` by [`Vcs::rebase`] wrote `onto..new`, as that
     /// replay recorded it, or as [`Vcs::record_replayed`] recorded a rewrite
@@ -5445,18 +5429,6 @@ pub trait Vcs: Send + Sync {
         path: &str,
         sides: &ConflictSides,
     ) -> Result<(), VcsError>;
-
-    /// The commit a replay in flight in `checkout` stopped at, `None` where
-    /// none is.
-    ///
-    /// For git: `REBASE_HEAD`.
-    fn rebase_replaying(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
-
-    /// Whether the replay in flight in `checkout` is paused after a commit it
-    /// replayed with no conflict, by [`Vcs::rebase_pausing`].
-    ///
-    /// For git: the `edit` stop's `rebase-merge/amend`.
-    fn rebase_paused(&self, checkout: &Path) -> Result<bool, VcsError>;
 
     /// The staged content of `path` in `checkout`, `None` where nothing is
     /// staged there.

@@ -976,17 +976,6 @@ impl Vcs for FakeVcs {
         unsupported("conflict_sides")
     }
 
-    fn rebase_pausing(
-        &self,
-        _repo: &Path,
-        _onto: &ResolvedRevisionId,
-        _upstream: &ResolvedRevisionId,
-        _derived: DerivedContentPolicy,
-        _path: &str,
-    ) -> Result<(), VcsError> {
-        unsupported("rebase_pausing")
-    }
-
     fn record_conflict(
         &self,
         _checkout: &Path,
@@ -994,14 +983,6 @@ impl Vcs for FakeVcs {
         _sides: &crate::vcs::ConflictSides,
     ) -> Result<(), VcsError> {
         unsupported("record_conflict")
-    }
-
-    fn rebase_replaying(&self, _checkout: &Path) -> Result<Option<CommitId>, VcsError> {
-        unsupported("rebase_replaying")
-    }
-
-    fn rebase_paused(&self, _checkout: &Path) -> Result<bool, VcsError> {
-        unsupported("rebase_paused")
     }
 
     fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {

@@ -8298,11 +8298,16 @@ fn apply_project_strategy(
     {
         return Ok(());
     }
-    let policy = DerivedContentPolicy::rewritten_after();
     let outcome = if mid_rebase {
-        crate::manifest_conflict::continue_replay(vcs, cwd_project_dir, policy)?
+        vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::rewritten_after())
     } else {
-        crate::manifest_conflict::replay(vcs, cwd_project_dir, source_tip, policy)?
+        vcs.rebase(
+            cwd_project_dir,
+            source_tip,
+            source_tip,
+            DerivedContentPolicy::rewritten_after(),
+        )
+        .map(drop)
     };
     match outcome {
         Ok(()) => Ok(()),
