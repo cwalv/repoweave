@@ -834,6 +834,7 @@ every_scenario!(
     ),
     earlier_replayed_commits_keep_an_unparseable_rwv_toml(scenarios::TakingIn::LandLinear),
     a_fix_that_empties_the_replayed_tip_drops_it(scenarios::TakingIn::SyncLinear),
+    another_staged_edit_stays_staged_past_a_carried_fix(scenarios::TakingIn::LandLinear),
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
@@ -6576,6 +6577,17 @@ fn a_fix_is_not_carried_off_the_replayed_tip() {
             ))
             .assert_fully_decided_green();
         }
+    }
+}
+
+#[test]
+fn another_staged_edit_stays_staged_past_a_carried_fix() {
+    for taking_in in [
+        scenarios::TakingIn::SyncLinear,
+        scenarios::TakingIn::LandLinear,
+    ] {
+        runner::run(scenarios::another_staged_edit_stays_staged_past_a_carried_fix(taking_in))
+            .assert_fully_decided_green();
     }
 }
 

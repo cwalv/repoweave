@@ -3210,7 +3210,7 @@ impl Vcs for GitVcs {
         to: &CommitId,
     ) -> Result<(), VcsError> {
         self.verify_attachment(on)?;
-        Self::reset_keeping_to(on, from, to)
+        Self::checkout_rewritten(on, from, to)
     }
 
     fn rebase_continue(&self, repo: &Path, derived: DerivedContentPolicy) -> Result<(), VcsError> {

@@ -479,7 +479,7 @@ impl GitVcs {
         commit_id(&String::from_utf8_lossy(&written), &args, repo)
     }
 
-    pub(super) fn reset_keeping_to(
+    pub(super) fn checkout_rewritten(
         on: &AttachedRef,
         from: &CommitId,
         to: &CommitId,
@@ -493,17 +493,19 @@ impl GitVcs {
                 observed: head.to_string(),
             });
         }
+        let branch = on.to_string();
+        let args = ["checkout", "-q", "-B", branch.as_str(), to.as_str(), "--"];
         let output = git_command()
-            .args(["reset", "--keep", "--quiet", to.as_str()])
+            .args(args)
             .current_dir(repo)
             .output()
             .map_err(|e| VcsError::Io {
-                ctx: "failed to spawn git reset --keep".to_owned(),
+                ctx: "failed to spawn git checkout -B".to_owned(),
                 source: e,
             })?;
         if !output.status.success() {
             return Err(failed(
-                &["reset", "--keep", to.as_str()],
+                &args,
                 repo,
                 String::from_utf8_lossy(&output.stderr).into_owned(),
             ));

@@ -587,6 +587,22 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git/replay.rs",
+        pattern: "\"checkout\"",
+        count: 1,
+        callers: &[("checkout_rewritten", 1)],
+        justification: "checkout_rewritten, the branch move of a re-map: \
+            `checkout -B <branch> <to>` on the branch an AttachedRef witness \
+            names, re-verified first, and only after HEAD was read to be \
+            `from`, the tip the replay's record describes. `to` is a copy of \
+            that replay the record names before the move, differing only in \
+            the lock and in a staged rwv.toml the checkout already holds as \
+            `to` does. The move is git's two-way merge, so other staged and \
+            unstaged edits are kept as they are and one in a path the move \
+            changes refuses it; no -f. The commits it leaves were never \
+            published.",
+    },
+    Allowed {
+        file: "git/replay.rs",
         pattern: "remove_file",
         count: 2,
         callers: &[],

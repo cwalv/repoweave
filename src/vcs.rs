@@ -3531,9 +3531,10 @@ pub trait Vcs: Send + Sync {
     /// `to`, a copy of that replay whose commits differ from it only in
     /// paths the checkout holds unchanged or already stages as `to` holds
     /// them. Refuses a branch not at `from` and an uncommitted change the
-    /// move would overwrite.
+    /// move would overwrite. What the checkout stages in paths the move
+    /// leaves alone stays staged.
     ///
-    /// For git: `git reset --keep <to>`.
+    /// For git: `git checkout -B <branch> <to>`, a two-way merge from `from`.
     fn take_rewritten(
         &self,
         on: &AttachedRef,

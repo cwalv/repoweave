@@ -21884,6 +21884,32 @@ pub fn a_carried_fix_beside_an_edited_lock(taking_in: TakingIn, then: ThenRun) -
     scenario("a carried fix beside an edited lock", steps)
 }
 
+/// [`a_fix_staged_at_the_replayed_tip`] with an edit to another file staged
+/// beside the fix: the `--continue` carries only `rwv.toml` into the
+/// replayed tip, and the other edit stays staged.
+pub fn another_staged_edit_stays_staged_past_a_carried_fix(taking_in: TakingIn) -> Scenario {
+    let mut steps = a_fix_staged_at_the_replayed_tip(taking_in);
+    steps.extend([
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "w-proj.txt",
+            "w-proj\n",
+            "w-proj, staged\n",
+        ),
+        Step::git(&ww("w"), Repo::Proj, &["add", "w-proj.txt"]),
+        Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&ww("w"), Repo::Proj, &["diff", "--cached", "--name-only"])
+            .claim(Claim::OutputLine("w-proj.txt")),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:w-proj.txt"])
+            .claim(Claim::OutputLine("w-proj")),
+    ]);
+    steps.extend(the_fix_is_in_the_tip(taking_in));
+    scenario("another staged edit stays staged past a carried fix", steps)
+}
+
 /// How the checkout is moved off the replayed tip by hand before the
 /// `--continue`.
 #[derive(Clone, Copy)]
