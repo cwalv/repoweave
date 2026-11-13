@@ -266,7 +266,7 @@ fn set_history_on_a_hand_laid_out_manifest_adds_only_its_key() {
     );
     assert!(
         manifest(&w)
-            .starts_with("# Members, kept by hand.\nhistory = \"linear\"\n\n[repositories]\n"),
+            .starts_with("history = \"linear\"\n\n# Members, kept by hand.\n[repositories]\n"),
         "{}",
         manifest(&w)
     );
