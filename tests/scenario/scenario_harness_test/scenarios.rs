@@ -21912,6 +21912,55 @@ pub fn another_staged_edit_stays_staged_past_a_carried_fix(taking_in: TakingIn) 
     scenario("another staged edit stays staged past a carried fix", steps)
 }
 
+/// A landing that stopped on a conflict in `app` after its project replay
+/// took in `a`'s removal of `lib`, with the working `rwv.toml` then broken by
+/// hand: the project repo is stopped in nothing, so `rwv abort` reads the
+/// members it restores at the savepoint, which lists `lib`, not at the
+/// replayed tip, which does not, and drops `lib`'s savepoint with the rest.
+pub fn abort_reads_the_savepoint_past_a_broken_working_rwv_toml() -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        Step::drop_manifest_entry(&a(), Repo::Proj, Repo::Lib),
+        Step::drop_lock_entry(&a(), Repo::Proj, Repo::Lib),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "remove lib"]),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "beta"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("local/remotes/app")),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputLacks(LIB)),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            UNDER_INTEGRATIONS,
+            "enabled = false\n[[[\n",
+        ),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_restore(&[Repo::Proj, Repo::App])
+            .may_rewind(&[Repo::App]),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains(LIB)),
+        Step::git(
+            &ww("w"),
+            Repo::Lib,
+            &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-op"],
+        )
+        .claim(Claim::OutputLacks("refs/rwv/pre-op")),
+    ];
+    steps.push(Step::rwv(&ww("w"), &["status"]).expect(Exit::Succeeds));
+    scenario(
+        "abort reads the savepoint past a broken working rwv.toml",
+        steps,
+    )
+}
+
 /// How the checkout is moved off the replayed tip by hand before the
 /// `--continue`.
 #[derive(Clone, Copy)]
