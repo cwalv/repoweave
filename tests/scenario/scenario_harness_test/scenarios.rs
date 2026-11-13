@@ -16818,6 +16818,43 @@ pub fn abort_a_carried_stack_killed_after_putting_it_back() -> Scenario {
     )
 }
 
+/// `stack-carry-conflict` stopped on `w2` in `app`, and the operator leaves
+/// the replay with `git rebase --quit`, its conflicted edits in the
+/// worktree: `rwv abort` refuses before anything moves, since no checkout
+/// switches over an unresolved index, and naming `app` on
+/// `--abandon-foreign-tip` gives the edits up, kept as a backup.
+pub fn abort_over_a_carry_left_by_a_quit() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::git(&ww("w1"), Repo::App, &["rebase", "--quit"]),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        Step::rwv_printed_exactly(
+            &ww("w1"),
+            "rwv abort --abandon-foreign-tip local/remotes/app",
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::App]),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+    ];
+    scenario("stack: an abort over a carry left by a quit", steps)
+}
+
 /// How a dependent that moved as its carry was moving it is taken up.
 #[derive(Debug, Clone, Copy)]
 pub enum MovedAsCarried {

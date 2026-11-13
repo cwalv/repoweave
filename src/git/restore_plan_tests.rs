@@ -356,3 +356,69 @@ fn a_ref_plan_the_branch_moved_under_writes_nothing() {
     );
     assert_eq!(git(p.path(), &["rev-parse", "topic"]), moved.as_str());
 }
+
+fn switch_refused(p: &Path, to: &str) -> bool {
+    let refused = !git_command()
+        .args(["switch", "-q", "--detach", to])
+        .current_dir(p)
+        .status()
+        .unwrap()
+        .success();
+    if !refused {
+        git(p, &["switch", "-q", "-"]);
+    }
+    refused
+}
+
+fn agrees_with_git(p: &Path, to: &CommitId) {
+    let predicted = GitVcs::edits_block_switch(p, to).unwrap();
+    assert_eq!(predicted, switch_refused(p, to.as_str()));
+}
+
+#[test]
+fn an_unresolved_index_blocks_a_switch_as_git_does() {
+    let tmp = repo();
+    let p = tmp.path();
+    git(p, &["switch", "-qc", "side"]);
+    std::fs::write(p.join("f"), "side").unwrap();
+    git(p, &["commit", "-qam", "side"]);
+    git(p, &["switch", "-q", "main"]);
+    std::fs::write(p.join("f"), "main").unwrap();
+    git(p, &["commit", "-qam", "main"]);
+    let main = head(p);
+    git(p, &["switch", "-q", "side"]);
+    let _ = git_command()
+        .args(["rebase", "main"])
+        .current_dir(p)
+        .output()
+        .unwrap();
+    git(p, &["rebase", "--quit"]);
+    assert!(GitVcs::edits_block_switch(p, &main).unwrap());
+    agrees_with_git(p, &main);
+}
+
+#[test]
+fn a_renamed_file_with_edits_blocks_a_switch_as_git_does() {
+    let tmp = repo();
+    let p = tmp.path();
+    std::fs::write(p.join("f"), "one\ntwo\nthree\nfour\nfive\n").unwrap();
+    git(p, &["commit", "-qam", "f long"]);
+    let base = head(p);
+    git(p, &["mv", "f", "g"]);
+    git(p, &["commit", "-qm", "f renamed g"]);
+    std::fs::write(p.join("g"), "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
+    assert!(GitVcs::edits_block_switch(p, &base).unwrap());
+    agrees_with_git(p, &base);
+}
+
+#[test]
+fn an_ignored_file_a_switch_would_overwrite_blocks_it() {
+    let tmp = repo();
+    let p = tmp.path();
+    let base = head(p);
+    let to = commit(p, "u");
+    git(p, &["switch", "-q", "--detach", base.as_str()]);
+    std::fs::write(p.join(".git/info/exclude"), "u\n").unwrap();
+    std::fs::write(p.join("u"), "mine").unwrap();
+    assert!(GitVcs::edits_block_switch(p, &to).unwrap());
+}

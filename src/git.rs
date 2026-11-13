@@ -5732,30 +5732,62 @@ impl GitVcs {
         })
     }
 
-    /// Whether `repo`'s uncommitted edits keep its checkout from switching
-    /// to `to`: a tracked change to a path `to` differs at, or an untracked
-    /// file, not ignored, where `to` has a path.
+    /// Whether `repo`'s uncommitted state keeps its checkout from switching
+    /// to `to` without loss: with the index's stat data refreshed, as a
+    /// switch refreshes it, git's own two-way merge, run dry, refuses it
+    /// (an unresolved index, a tracked edit or an untracked file `to`
+    /// differs at), or an ignored file sits where `to` has a path, which a
+    /// switch overwrites without refusing.
     fn edits_block_switch(repo: &Path, to: &CommitId) -> Result<bool, VcsError> {
+        git_command()
+            .args(["update-index", "-q", "--refresh"])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git update-index --refresh in {}",
+                    repo.display()
+                ),
+                source: e,
+            })?;
+        let dry = git_command()
+            .args(["read-tree", "-n", "-m", "-u", "HEAD", to.as_str()])
+            .current_dir(repo)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|e| VcsError::Io {
+                ctx: format!(
+                    "failed to spawn git read-tree -n -m -u HEAD {to} in {}",
+                    repo.display()
+                ),
+                source: e,
+            })?;
+        if !dry.success() {
+            return Ok(true);
+        }
         let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
             Ok(Self::run(args.to_vec(), repo)?
                 .split('\0')
                 .filter(|p| !p.is_empty())
-                .map(str::to_owned)
+                .map(|p| p.trim_end_matches('/').to_owned())
                 .collect())
         };
-        let dirty = Self::dirty_file_names_inner(repo, StatusReach::Tracked)?;
-        if !dirty.is_empty() {
-            let differs = listed(&["diff", "--name-only", "-z", "HEAD", to.as_str()])?;
-            if dirty.iter().any(|path| differs.contains(path)) {
-                return Ok(true);
-            }
-        }
-        let untracked = listed(&["ls-files", "--others", "--exclude-standard", "-z"])?;
-        if untracked.is_empty() {
+        let ignored = listed(&[
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ])?;
+        if ignored.is_empty() {
             return Ok(false);
         }
         let tracked = listed(&["ls-tree", "-r", "-z", "--name-only", to.as_str()])?;
-        Ok(untracked.iter().any(|path| {
+        Ok(ignored.iter().any(|path| {
             tracked.iter().any(|t| {
                 t == path
                     || t.strip_prefix(path.as_str())
