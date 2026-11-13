@@ -4,7 +4,7 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--tier=seat|landing | --stages=check,windows,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine,git-floor]
+# Usage: scripts/ci-local.sh [--tier=seat|landing | --stages=check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine,git-floor]
 #
 # With no argument, runs all stages in the order above but the last two — the
 # full gate, which CI, the release gate and the pre-push hook invoke.
@@ -37,7 +37,9 @@
 # cargo builds for that invocation, so the feature reaches it only by being
 # passed here. no-test-pause then builds without it, as every release does,
 # and holds that no pause survives there. The windows stage compiles the
-# featured build, its lint the shipped one; clippy lints both.
+# featured build, its lint the shipped one; clippy lints both. The apple stage
+# does the same for aarch64-apple-darwin, so code behind a macOS cfg compiles
+# and lints on a host that is not macOS before CI's macOS job runs it.
 #
 # test-ambient-autocrlf runs the suite a second time under a system-tier
 # core.autocrlf=true, which Git for Windows' installer sets, so every git a
@@ -55,10 +57,10 @@
 # time, while 8 cost half again: half the cores is as fast for one gate and
 # leaves room for another beside it. A caller's own RUST_TEST_THREADS wins.
 #
-# Exits non-zero on the first failure. The windows stage is the one
-# exception: ci-checks.yml's windows-check job already owns Windows compile
-# and lint truth authoritatively, so a contributor without the target
-# installed gets a loud skip there, not a red gate for a check CI runs
+# Exits non-zero on the first failure. The windows and apple stages are the
+# exceptions: ci-checks.yml's windows-check job and its macOS run already own
+# that compile and lint truth authoritatively, so a contributor without the
+# target installed gets a loud skip there, not a red gate for a check CI runs
 # regardless.
 
 set -euo pipefail
@@ -72,7 +74,7 @@ if [ -z "${RUST_TEST_THREADS:-}" ]; then
 fi
 export RUST_TEST_THREADS
 
-ALL_STAGES=(check windows test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
+ALL_STAGES=(check windows apple test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
 OPT_IN_STAGES=(windows-wine git-floor)
 KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
 SEAT_STAGES=(check test no-test-pause clippy doc fmt drift)
@@ -193,6 +195,17 @@ if run_stage windows; then
         cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings
     else
         printf 'windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc\n'
+    fi
+fi
+
+if run_stage apple; then
+    header "cargo check --locked --all-targets --features test-pause --target aarch64-apple-darwin"
+    if command -v rustup >/dev/null 2>&1 && rustup target list --installed 2>/dev/null | grep -qx aarch64-apple-darwin; then
+        cargo check --locked --all-targets --features test-pause --target aarch64-apple-darwin
+        header "cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings"
+        cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings
+    else
+        printf 'apple cross-check skipped: aarch64-apple-darwin not installed — rustup target add aarch64-apple-darwin\n'
     fi
 fi
 

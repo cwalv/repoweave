@@ -58,6 +58,9 @@ if [ \"$*\" = \"target list --installed\" ]; then\n\
     if [ \"${CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED:-1}\" = \"1\" ]; then\n\
         echo x86_64-pc-windows-msvc\n\
     fi\n\
+    if [ \"${CI_LOCAL_TEST_APPLE_TARGET_INSTALLED:-1}\" = \"1\" ]; then\n\
+        echo aarch64-apple-darwin\n\
+    fi\n\
     exit 0\n\
 fi\n\
 exit 0\n";
@@ -159,6 +162,8 @@ const HEADERS_IN_ORDER: &[&str] = &[
     "==> cargo check",
     "==> cargo check --locked --all-targets --features test-pause --target x86_64-pc-windows-msvc",
     "==> cargo clippy --locked --all-targets --target x86_64-pc-windows-msvc -- -D warnings",
+    "==> cargo check --locked --all-targets --features test-pause --target aarch64-apple-darwin",
+    "==> cargo clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings",
     "==> cargo test --release --no-fail-fast --features test-pause",
     AMBIENT_AUTOCRLF_HEADER,
     NO_TEST_PAUSE_HEADER,
@@ -239,7 +244,7 @@ fn assert_cargo_headers_agree_with_invocations(stdout: &str) {
 /// `assert_eq!` has nothing to object to. Only the comparison count catches
 /// the drop.
 #[test]
-#[should_panic(expected = "expected 10 header/invocation comparisons")]
+#[should_panic(expected = "expected 12 header/invocation comparisons")]
 fn header_invocation_floor_catches_a_header_the_position_scan_never_finds() {
     let stdout = "\n==> cargo check\nSTUB_CARGO: check\n\
 \n==> cargo check --locked --all-targets --target x86_64-pc-windows-msvc\nSTUB_CARGO: check --locked --all-targets --target x86_64-pc-windows-msvc\n\
@@ -365,7 +370,7 @@ fn stages_flag_naming_every_default_stage_explicitly_gets_the_full_run_line() {
     let out = run_ci_local(
         fixture.path(),
         stub.path(),
-        &["--stages=drift,fmt,doc,clippy,no-test-pause,test-ambient-autocrlf,test,windows,check"],
+        &["--stages=drift,fmt,doc,clippy,no-test-pause,test-ambient-autocrlf,test,apple,windows,check"],
         &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
     );
     assert!(out.status.success(), "{}", stderr_of(&out));
@@ -543,6 +548,58 @@ fn windows_stage_skips_loudly_with_the_install_command_when_the_target_is_missin
     assert!(
         stdout.contains(
             "windows cross-check skipped: x86_64-pc-windows-msvc not installed — rustup target add x86_64-pc-windows-msvc"
+        ),
+        "missing the loud skip line with its remedy:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("STUB_CARGO:"),
+        "neither cross-target command should have run:\n{stdout}"
+    );
+}
+
+#[test]
+fn apple_stage_runs_the_cross_check_when_the_target_is_installed() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=apple"],
+        &[("CI_LOCAL_TEST_APPLE_TARGET_INSTALLED", "1")],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let stdout = stdout_of(&out);
+    assert!(stdout.contains(
+        "STUB_CARGO: check --locked --all-targets --features test-pause --target aarch64-apple-darwin"
+    ));
+    assert!(stdout.contains(
+        "STUB_CARGO: clippy --locked --all-targets --target aarch64-apple-darwin -- -D warnings"
+    ));
+    assert!(
+        !stdout.contains("apple cross-check skipped"),
+        "should not skip when the target is installed:\n{stdout}"
+    );
+}
+
+#[test]
+fn apple_stage_skips_loudly_with_the_install_command_when_the_target_is_missing() {
+    let fixture = fixture_repo();
+    let stub = stub_bin_dir();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=apple"],
+        &[("CI_LOCAL_TEST_APPLE_TARGET_INSTALLED", "0")],
+    );
+    assert!(
+        out.status.success(),
+        "a missing target should skip, not fail: {}",
+        stderr_of(&out)
+    );
+    let stdout = stdout_of(&out);
+    assert!(
+        stdout.contains(
+            "apple cross-check skipped: aarch64-apple-darwin not installed — rustup target add aarch64-apple-darwin"
         ),
         "missing the loud skip line with its remedy:\n{stdout}"
     );
@@ -1244,7 +1301,7 @@ fn each_tier_names_itself_and_its_stages_on_the_terminal_line() {
         ),
         (
             "landing",
-            "All checks passed (tier: landing; stages: windows,test-ambient-autocrlf).",
+            "All checks passed (tier: landing; stages: windows,apple,test-ambient-autocrlf).",
         ),
     ] {
         let fixture = fixture_repo();

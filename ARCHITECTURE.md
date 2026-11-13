@@ -802,7 +802,7 @@ a plain one names the same path. A location that is compared or recorded is a
 verdict, and comparable with nothing but another identity. `clippy.toml` bans
 `Path::starts_with` so containment goes through `contains`. Host clippy cannot
 see a `cfg(windows)` item, so the gate's windows stage also lints for the
-Windows target.
+Windows target, and its apple stage for `aarch64-apple-darwin`.
 
 ## 9. Where the contract lives
 

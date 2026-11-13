@@ -411,13 +411,13 @@ the release gate and the pre-push hook run. Two named tiers split it:
   `no-test-pause`, `clippy`, `doc`, `fmt`, `drift` — for iterating on a
   change in its own checkout.
 - `scripts/ci-local.sh --tier=landing` runs exactly the default stages seat
-  skips — `windows` and `test-ambient-autocrlf`, a cross-target check and a
-  second whole-suite run — once per landing.
+  skips — `windows`, `apple` and `test-ambient-autocrlf`, two cross-target
+  checks and a second whole-suite run — once per landing.
 
 Together they are the full gate, each stage once. The script writes down only
 the seat list and computes landing from it, and
 `tests/source/ci_local_stages_test.rs` holds the partition. A change touching
-`cfg(windows)` code, or how line endings are read, written or compared, runs
+`cfg(windows)` or macOS-only code, or how line endings are read, written or compared, runs
 the full gate in its own checkout, since those are exactly what the landing
 stages catch. A tier run's terminal line names the tier and its stages, so
 its log never reads as a full gate's. `--tier` and `--stages` are refused

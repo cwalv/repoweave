@@ -537,8 +537,10 @@ fn filesystem_of(dir: &Path) -> String {
     if unsafe { libc::statfs(c_dir.as_ptr(), stat.as_mut_ptr()) } != 0 {
         return "a filesystem the OS did not name".to_owned();
     }
-    // SAFETY: statfs returned 0, and f_fstypename is NUL-terminated.
-    let name = unsafe { std::ffi::CStr::from_ptr(stat.assume_init().f_fstypename.as_ptr()) };
+    // SAFETY: statfs returned 0, so `stat` is initialized.
+    let stat = unsafe { stat.assume_init() };
+    // SAFETY: f_fstypename is NUL-terminated and `stat` outlives the borrow.
+    let name = unsafe { std::ffi::CStr::from_ptr(stat.f_fstypename.as_ptr()) };
     name.to_string_lossy().into_owned()
 }
 
