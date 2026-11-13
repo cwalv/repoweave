@@ -189,6 +189,13 @@ fn replay_reports(output: OutputMode, reported: &mut Reported, take_in: &TakeInR
                 "{repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
                 was.short()
             ),
+            crate::op_state::LandingReport::HistoryPinSkipped {
+                repo: RepoKey::Member(member),
+                lock,
+                pin,
+                by,
+                verb,
+            } => crate::lineage::skipped_line(member, lock, pin, by, verb),
             _ => continue,
         };
         say(output, &line);
@@ -490,6 +497,21 @@ fn fresh(
                 Some(crate::set_history::merged_line(&member.path, merge)),
             )?;
         }
+        for skipped in &member.skipped {
+            report_integration(
+                output,
+                &op.workspace,
+                reported,
+                crate::op_state::LandingReport::HistoryPinSkipped {
+                    repo: RepoKey::Member(member.path.clone()),
+                    lock: skipped.lock.clone(),
+                    pin: skipped.pin.clone(),
+                    by: skipped.by.clone(),
+                    verb: skipped.verb.clone(),
+                },
+                Some(skipped.line(&member.path)),
+            )?;
+        }
         for line in member.report_lines() {
             say(output, &line);
         }
@@ -510,7 +532,7 @@ impl Member {
     }
 
     fn report_lines(&self) -> Vec<String> {
-        let mut lines: Vec<String> = self.skipped.iter().map(|s| s.line(&self.path)).collect();
+        let mut lines = Vec::new();
         if !self.beyond_pin.is_empty() {
             lines.push(format!(
                 "{}: the branch it lands on holds {} commit(s) beyond the target's pin, which the \

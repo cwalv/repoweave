@@ -6833,6 +6833,44 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
     )
 }
 
+/// [`landed_history_pin_no_ref_keeps`] taken in on machine B by `rwv sync
+/// --json` from a seat cut before the re-pin: the skip is one of the sync's
+/// reports, as it is a landing's.
+pub fn a_sync_reports_a_skipped_history_pin_in_json() -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "a sync reports a skipped history pin in json",
+        vec![
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "early"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("early"), Repo::App, "early-app"),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["commit", "--amend", "-q", "-m", "w-app amended"],
+            )
+            .may_strand(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App]),
+            Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b_ww("early"), &["sync", "--history", "linear", "--json"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .claim(Claim::OutputContains("\"history-pin-skipped\"")),
+        ],
+    )
+}
+
 /// Which verb replays the seat's project commits onto a `main` that moved,
 /// in [`a_re_pin_follows_its_lock_through_a_replay`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
