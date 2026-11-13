@@ -2699,6 +2699,7 @@ fn no_verb_commits_the_reverse_of_a_project_branch_move() {
         vec!["lock", "--commit"],
         vec!["land"],
         vec!["sync"],
+        vec!["cherry-pick", "HEAD"],
     ]
     .into_iter()
     .map(|v| v.into_iter().map(str::to_owned).collect())
