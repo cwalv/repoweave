@@ -557,19 +557,42 @@ impl Carrier<'_> {
                 else {
                     continue;
                 };
-                let journaled = take_in(self.workspace)?
-                    .carries
-                    .into_iter()
+                let carries = take_in(self.workspace)?.carries;
+                let journaled = carries
+                    .iter()
                     .find(|c| &c.repo == repo && c.branch == carry.dependent.as_str());
-                let tip = match journaled.and_then(|c| c.composed.clone().map(|t| (c, t))) {
-                    Some((c, tip))
+                let sibling = carries.iter().find(|c| {
+                    &c.repo == repo
+                        && c.branch != carry.dependent.as_str()
+                        && c.composed.is_some()
+                        && c.from == *from
+                        && c.base == base
+                        && c.onto == onto
+                });
+                let reused = journaled.and_then(|c| c.composed.clone().map(|t| (c, t)));
+                let tip = match (reused, sibling) {
+                    (Some((c, tip)), _)
                         if (c.from == *from || c.composed.as_ref() == Some(from))
                             && c.base == base
                             && c.onto == onto =>
                     {
                         tip
                     }
-                    _ => self.compose(repo, carry, from, &base, &onto, &record.rebases)?,
+                    (_, Some(sibling)) => {
+                        crate::op_state::journal_carrying(
+                            self.workspace,
+                            Carrying {
+                                branch: carry.dependent.as_str().to_owned(),
+                                ..sibling.clone()
+                            },
+                        )?;
+                        sibling.composed.clone().unwrap_or_else(|| from.clone())
+                    }
+                    _ => {
+                        let tip = self.compose(repo, carry, from, &base, &onto, &record.rebases)?;
+                        crate::test_pause::point("carry-composed");
+                        tip
+                    }
                 };
                 new_tips.insert(
                     (carry.dependent.as_str().to_owned(), repo.clone()),

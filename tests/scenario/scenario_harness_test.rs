@@ -800,6 +800,7 @@ every_scenario!(
     a_landing_resumed_after_its_target_moved_past_a_carry,
     a_carry_left_by_a_quit_is_unrecorded,
     a_project_carry_follows_its_member_recomposed_across_a_stop,
+    siblings_at_one_commit_are_carried_to_one_commit,
     a_carry_stopped_in_the_project_continues,
     sync_continue_judges_dependents_before_a_rejudged_rebase,
     a_sync_continued_after_its_relock_keeps_it,
@@ -5410,6 +5411,12 @@ fn a_landing_into_a_dependent_lands_once_its_stopped_carry_continues() {
         ),
     )
     .assert_fully_decided_green();
+}
+
+#[test]
+fn siblings_at_one_commit_are_carried_to_one_commit_is_green() {
+    runner::run(scenarios::siblings_at_one_commit_are_carried_to_one_commit())
+        .assert_fully_decided_green();
 }
 
 #[test]

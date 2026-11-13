@@ -17028,6 +17028,55 @@ pub fn a_project_carry_follows_its_member_recomposed_across_a_stop() -> Scenario
     )
 }
 
+/// `w2` and `w3` both land into `w1` and sit at one commit in `app` and in
+/// the project repo, `w3` set there by hand. `w1`'s sync, held after its first replay until a
+/// second has passed, carries both to one commit in each: the second
+/// dependent takes the first one's replay rather than replaying the same
+/// commits again over the first one's record.
+pub fn siblings_at_one_commit_are_carried_to_one_commit() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend([
+        dependent_of(&ww("w1"), "w3", "proj--w1"),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::git(&ww("w1"), Repo::App, &["update-ref", "refs/heads/w3", "w2"]),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["update-ref", "refs/heads/w3", "w2"],
+        ),
+    ]);
+    steps.extend(main_moves_app("main-app"));
+    let same = |repo: Repo, one: &'static str, other: &'static str| {
+        Step::git(
+            &ww("w1"),
+            repo,
+            &["merge-base", "--is-ancestor", one, other],
+        )
+        .expect(Exit::Succeeds)
+    };
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["sync"], "carry-composed", "carrying"),
+        Step::git(&ww("w1"), Repo::App, &["-c", "alias.nap=!sleep 1.2", "nap"]),
+        Step::release("carrying")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w3' along")),
+        same(Repo::App, "w2", "w3"),
+        same(Repo::App, "w3", "w2"),
+        same(Repo::Proj, "w2", "w3"),
+        same(Repo::Proj, "w3", "w2"),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge-base", "--is-ancestor", "proj--w1", "w3"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "stack: siblings at one commit are carried to one commit",
+        steps,
+    )
+}
+
 /// How the carry a landing into its dependent waits on ends.
 #[derive(Debug, Clone, Copy)]
 pub enum StoppedCarryEnds {
