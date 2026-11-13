@@ -1,5 +1,7 @@
 //! Each member verb commits its own change and nothing else, and `member add`
-//! of a registered member refuses a flag that would change nothing.
+//! of a registered member refuses a flag that would change nothing. On an
+//! `rwv.toml` laid out and commented by hand, a verb's commit changes only the
+//! lines of the entry or key it sets, adds or removes.
 
 use std::path::PathBuf;
 
@@ -158,4 +160,209 @@ fn add_of_a_registered_member_refuses_a_flag_that_disagrees_and_names_the_setter
     ));
     assert!(text.contains("rwv member set-recurse-submodules"), "{text}");
     assert_eq!((commits(&w), manifest(&w)), before);
+}
+
+fn url_of(w: &PushWorkspace, repo: &str) -> String {
+    w.manifest_bares
+        .iter()
+        .find(|(p, _)| p == repo)
+        .map(|(_, bare)| common::file_url(bare))
+        .unwrap()
+}
+
+/// `rwv.toml` rewritten as a hand edit leaves it: lib before app, app's keys
+/// out of serializer order, comments throughout; committed.
+fn hand_laid_out(w: &PushWorkspace) -> String {
+    let text = format!(
+        "# Members, kept by hand.\n[repositories]\n\n# the library first\n\
+         [repositories.\"{LIB}\"]\ntype = \"git\"\nurl = \"{lib}\" # origin\nbranch = \"main\"\n\
+         role = \"owned\"\n\n[repositories.\"{APP}\"]\nrole = \"owned\"\ntype = \"git\"\n\
+         url = \"{app}\"\nbranch = \"main\"\n# end\n",
+        lib = url_of(w, LIB),
+        app = url_of(w, APP),
+    );
+    std::fs::write(project(w).join("rwv.toml"), &text).unwrap();
+    git_in(project(w), &["commit", "-qam", "hand: lay out rwv.toml"]);
+    text
+}
+
+/// The lines the verb's commit removed from and added to `rwv.toml`.
+fn changed_lines(w: &PushWorkspace) -> (Vec<String>, Vec<String>) {
+    let diff = git_in(
+        project(w),
+        &["diff", "-U0", "HEAD~1", "HEAD", "--", "rwv.toml"],
+    );
+    let mut removed = Vec::new();
+    let mut added = Vec::new();
+    for line in diff.lines() {
+        if line.starts_with("---") || line.starts_with("+++") {
+            continue;
+        }
+        if let Some(gone) = line.strip_prefix('-') {
+            removed.push(gone.to_owned());
+        } else if let Some(new) = line.strip_prefix('+') {
+            added.push(new.to_owned());
+        }
+    }
+    (removed, added)
+}
+
+fn lines(of: &[&str]) -> Vec<String> {
+    of.iter().map(|l| (*l).to_owned()).collect()
+}
+
+fn verb_on_hand_laid_out(args: &[&str]) -> (PushWorkspace, Vec<String>, Vec<String>) {
+    let w = two_members();
+    hand_laid_out(&w);
+    let before = commits(&w);
+    succeeded(&run(&w, args));
+    assert_eq!(commits(&w), before + 1, "{args:?} commits its change");
+    assert_eq!(
+        committed_manifest(&w),
+        manifest(&w).trim_end(),
+        "{args:?}: the working file is what was committed"
+    );
+    let (removed, added) = changed_lines(&w);
+    (w, removed, added)
+}
+
+#[test]
+fn set_role_on_a_hand_laid_out_manifest_changes_only_the_role_line() {
+    let (_w, removed, added) = verb_on_hand_laid_out(&["member", "set-role", APP, "fork"]);
+    assert_eq!(
+        (removed, added),
+        (lines(&["role = \"owned\""]), lines(&["role = \"fork\""]))
+    );
+}
+
+#[test]
+fn set_recurse_submodules_on_a_hand_laid_out_manifest_adds_only_its_key() {
+    let (_w, removed, added) =
+        verb_on_hand_laid_out(&["member", "set-recurse-submodules", LIB, "false"]);
+    assert_eq!(
+        (removed, added),
+        (lines(&[]), lines(&["recurse-submodules = false"]))
+    );
+}
+
+#[test]
+fn set_history_on_a_hand_laid_out_manifest_adds_only_its_key() {
+    let (w, removed, added) =
+        verb_on_hand_laid_out(&["branch", "set-history", "merge", "--repo", APP]);
+    assert_eq!(
+        (removed, added),
+        (lines(&[]), lines(&["history = \"merge\""]))
+    );
+    assert!(
+        manifest(&w).contains("branch = \"main\"\nhistory = \"merge\"\n# end\n"),
+        "app's keys stand out of serializer order, so the key goes at the end of its table:\n{}",
+        manifest(&w)
+    );
+
+    let (w, removed, added) = verb_on_hand_laid_out(&["branch", "set-history", "linear"]);
+    assert_eq!(
+        (removed, added),
+        (lines(&[]), lines(&["history = \"linear\"", ""]))
+    );
+    assert!(
+        manifest(&w)
+            .starts_with("# Members, kept by hand.\nhistory = \"linear\"\n\n[repositories]\n"),
+        "{}",
+        manifest(&w)
+    );
+}
+
+#[test]
+fn set_branch_on_a_hand_laid_out_manifest_changes_only_the_branch_line() {
+    let w = two_members();
+    hand_laid_out(&w);
+    let lib = w.workspace.join(LIB);
+    git_in(&lib, &["switch", "-q", "-c", "dev"]);
+    git_in(&lib, &["push", "-q", "origin", "dev"]);
+    git_in(&lib, &["switch", "-q", "main"]);
+    succeeded(&run(&w, &["member", "set-branch", LIB, "dev"]));
+    assert_eq!(
+        changed_lines(&w),
+        (lines(&["branch = \"main\""]), lines(&["branch = \"dev\""]))
+    );
+}
+
+#[test]
+fn set_url_on_a_hand_laid_out_manifest_changes_only_the_url_and_keeps_its_comment() {
+    let w = two_members();
+    hand_laid_out(&w);
+    let mirror = w._tmp.path().join("lib-mirror.git");
+    let lib_bare = w
+        .manifest_bares
+        .iter()
+        .find(|(p, _)| p == LIB)
+        .unwrap()
+        .1
+        .clone();
+    git_in(
+        w._tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--bare",
+            lib_bare.to_str().unwrap(),
+            mirror.to_str().unwrap(),
+        ],
+    );
+    let lib = w.workspace.join(LIB);
+    git_in(
+        &lib,
+        &["remote", "add", "mirror", &common::file_url(&mirror)],
+    );
+    git_in(&lib, &["fetch", "-q", "mirror"]);
+    succeeded(&run(
+        &w,
+        &["member", "set-url", LIB, &common::file_url(&mirror)],
+    ));
+    assert_eq!(
+        changed_lines(&w),
+        (
+            vec![format!("url = \"{}\" # origin", url_of(&w, LIB))],
+            vec![format!("url = \"{}\" # origin", common::file_url(&mirror))]
+        )
+    );
+}
+
+#[test]
+fn member_add_on_a_hand_laid_out_manifest_adds_only_the_new_table_after_the_last_one() {
+    let w = two_members();
+    let text = hand_laid_out(&w);
+    let docs = w._tmp.path().join("docs.git");
+    common::init_bare_repo_with_commit(&docs);
+    succeeded(&run(&w, &["member", "add", &common::file_url(&docs)]));
+    let (removed, added) = changed_lines(&w);
+    assert!(removed.is_empty(), "{removed:?}");
+    let now = manifest(&w);
+    let header = added
+        .iter()
+        .find(|l| l.starts_with("[repositories."))
+        .unwrap_or_else(|| panic!("a table was added: {added:?}"));
+    let at = now.find(header.as_str()).unwrap();
+    assert!(
+        now[..at] == format!("{}\n", &text[..text.find("# end\n").unwrap()]),
+        "the new table follows app, the last table, and nothing before it changed:\n{now}"
+    );
+    assert!(now.ends_with("# end\n"), "{now}");
+}
+
+#[test]
+fn member_remove_on_a_hand_laid_out_manifest_removes_only_that_table() {
+    let (w, removed, added) = verb_on_hand_laid_out(&["member", "remove", APP]);
+    assert!(added.is_empty(), "{added:?}");
+    assert_eq!(
+        removed,
+        vec![
+            String::new(),
+            format!("[repositories.\"{APP}\"]"),
+            "role = \"owned\"".to_owned(),
+            "type = \"git\"".to_owned(),
+            format!("url = \"{}\"", url_of(&w, APP)),
+            "branch = \"main\"".to_owned(),
+        ]
+    );
 }
