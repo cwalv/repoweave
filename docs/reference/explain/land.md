@@ -1338,6 +1338,41 @@ Schema:
           }
         },
         {
+          "description": "A pin of `path` that `lock` in the target's history held, which this clone lacks, left out of the lineage rule because `by`, a later lock of that history, re-pinned it by `verb`.",
+          "type": "object",
+          "required": [
+            "by",
+            "kind",
+            "lock",
+            "path",
+            "pin",
+            "verb"
+          ],
+          "properties": {
+            "by": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "history-pin-skipped"
+              ]
+            },
+            "lock": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "pin": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "verb": {
+              "type": "string"
+            }
+          }
+        },
+        {
           "description": "`branch` holds the landing and its push branch does not: the landing is not published until `branch` is pushed.",
           "type": "object",
           "required": [
