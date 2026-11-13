@@ -5752,21 +5752,18 @@ impl GitVcs {
                 ),
                 source: e,
             })?;
-        let dry = git_command()
-            .args(["read-tree", "-n", "-m", "-u", "HEAD", to.as_str()])
-            .current_dir(repo)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map_err(|e| VcsError::Io {
-                ctx: format!(
-                    "failed to spawn git read-tree -n -m -u HEAD {to} in {}",
-                    repo.display()
-                ),
-                source: e,
-            })?;
-        if !dry.success() {
-            return Ok(true);
+        match Self::run(
+            vec!["read-tree", "-n", "-m", "-u", "HEAD", to.as_str()],
+            repo,
+        ) {
+            Ok(_) => {}
+            Err(VcsError::CommandFailed { args, repo, stderr })
+                if stderr.contains("index.lock") =>
+            {
+                return Err(VcsError::CommandFailed { args, repo, stderr });
+            }
+            Err(VcsError::CommandFailed { .. }) => return Ok(true),
+            Err(other) => return Err(other),
         }
         let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
             Ok(Self::run(args.to_vec(), repo)?
@@ -5974,6 +5971,25 @@ impl GitVcs {
                         vcs.set_detached_head(repo, &ResolvedRevisionId::from(savepoint.clone()))
                     }
                 };
+                if *discard_blocking_edits {
+                    let lands_on = match onto {
+                        Some(branch) => self.resolve_local_branch_tip(repo, branch)?,
+                        None => Some(ResolvedRevisionId::from(savepoint.clone())),
+                    };
+                    if let Some(ignored) = lands_on
+                        .map(|to| Self::hard_move_discards(repo, &to))
+                        .transpose()?
+                        .flatten()
+                    {
+                        if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)?
+                        {
+                            let source = self.head_backup_source(repo)?;
+                            kept.push(KeptWork::Edits(
+                                self.create_backup(repo, &source, &snapshot, None)?,
+                            ));
+                        }
+                    }
+                }
                 if let Err(refused) = switch_back(self) {
                     if self.snapshot_edits(repo)?.is_none() {
                         return Err(refused);

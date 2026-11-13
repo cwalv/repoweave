@@ -17395,6 +17395,8 @@ pub fn abort_over_a_carry_left_by_a_quit() -> Scenario {
         Step::git(&ww("w1"), Repo::App, &["rebase", "--quit"]),
         Step::rwv(&ww("w1"), &["abort"])
             .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains("nothing is restored"))
+            .claim(Claim::OutputLacks("abort stopped there"))
             .claim(Claim::LocalStateUnchanged(ww("w1"))),
         Step::rwv_printed_exactly(
             &ww("w1"),

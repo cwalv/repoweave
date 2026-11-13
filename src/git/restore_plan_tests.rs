@@ -422,3 +422,42 @@ fn an_ignored_file_a_switch_would_overwrite_blocks_it() {
     std::fs::write(p.join("u"), "mine").unwrap();
     assert!(GitVcs::edits_block_switch(p, &to).unwrap());
 }
+
+#[test]
+fn an_abandoned_switch_back_keeps_the_ignored_file_it_overwrites() {
+    let tmp = repo();
+    let p = tmp.path();
+    let base = head(p);
+    commit(p, "u");
+    GitVcs.create_savepoint(p, &key()).unwrap();
+    git(p, &["switch", "-q", "-c", "other", base.as_str()]);
+    std::fs::write(p.join(".git/info/exclude"), "u\n").unwrap();
+    std::fs::write(p.join("u"), "mine").unwrap();
+    let attribution = Attribution {
+        edits_here: true,
+        ..Attribution::default()
+    };
+    let plan = GitVcs
+        .plan_checkout_restore(p, &key(), &attribution, ForeignTipPolicy::Abandon)
+        .unwrap();
+    let outcome = GitVcs
+        .execute_checkout_restore(p, &key(), &plan, true)
+        .unwrap();
+    assert_eq!(git(p, &["branch", "--show-current"]), "main", "{outcome:?}");
+    assert!(
+        !git(p, &["log", "--all", "--format=%H", "-Smine"]).is_empty(),
+        "the ignored file's content is kept as a backup: {outcome:?}"
+    );
+}
+
+#[test]
+fn a_held_index_lock_is_named_by_the_plan_not_read_as_edits() {
+    let tmp = repo();
+    let p = tmp.path();
+    let base = head(p);
+    let to = commit(p, "u");
+    git(p, &["switch", "-q", "-c", "other", base.as_str()]);
+    std::fs::write(p.join(".git/index.lock"), "").unwrap();
+    let err = GitVcs::edits_block_switch(p, &to).unwrap_err();
+    assert!(format!("{err:#}").contains("index.lock"), "{err:#}");
+}
