@@ -398,11 +398,12 @@ const ALLOWLIST: &[Allowed] = &[
             ref; it rewrites one unmerged path's working file as git's own \
             merge of the stages the same call has just recorded for it, as \
             the operator's own `git checkout --merge` does. It is reached \
-            only from a setter settling an entry of a conflicted rwv.toml; \
-            an unstaged hand edit of that file is replaced, as git's own \
-            `checkout --merge` replaces it, and a staged one has taken the \
-            path out of the unmerged state, so the setter never reaches \
-            this.",
+            only from a setter settling an entry of a conflicted rwv.toml, \
+            which first keeps the checkout's edits as a backup and prints \
+            how to read rwv.toml from it, so an unstaged hand edit of that \
+            file is replaced only once it is kept; a staged one has taken \
+            the path out of the unmerged state, so the setter never \
+            reaches this.",
     },
     Allowed {
         file: "git.rs",

@@ -18482,6 +18482,9 @@ pub enum ManifestSettle {
     /// A `git merge` the operator ran, settled by the setter and concluded
     /// with git.
     RawGitMerge,
+    /// An edit of the conflicted `rwv.toml` the operator has not staged,
+    /// kept where the setter that rewrites the file names it.
+    UnstagedEditKept,
 }
 
 pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
@@ -18809,6 +18812,38 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 .expect(Exit::Succeeds),
             ]);
             "a git merge the operator ran is settled by the setter and concluded with git"
+        }
+        S::UnstagedEditKept => {
+            steps.extend([
+                set_history(&a(), "merge", APP),
+                set_history(&a(), "merge", LIB),
+                set_history(&ww("w"), "linear", APP),
+                set_history(&ww("w"), "linear", LIB),
+                stop(H::Merge),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[integrations.vscode-workspace]\nenabled = false\n",
+                    "[integrations.vscode-workspace]\nenabled = false\n# half-way through\n",
+                ),
+                settles(
+                    &["branch", "set-history", "merge", "--repo", APP],
+                    Some("local/remotes/lib"),
+                )
+                .claim(Claim::OutputContains("kept")),
+                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("half-way through")),
+                Step::rwv_printed_holding(&ww("w"), "git -C ", "show")
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("# half-way through"))
+                    .claim(Claim::OutputContains("<<<<<<<")),
+                settles(&["branch", "set-history", "linear", "--repo", LIB], None),
+                continues(),
+                head_manifest().claim(Claim::OutputLacks("half-way through")),
+            ]);
+            "an unstaged edit of the conflicted rwv.toml is kept when a setter rewrites it"
         }
     };
     scenario(name, steps)

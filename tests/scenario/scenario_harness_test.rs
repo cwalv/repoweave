@@ -952,6 +952,7 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::StagedUnedited),
     settle_a_manifest_stop(scenarios::ManifestSettle::Abort),
     settle_a_manifest_stop(scenarios::ManifestSettle::RawGitMerge),
+    settle_a_manifest_stop(scenarios::ManifestSettle::UnstagedEditKept),
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -6751,6 +6752,14 @@ fn manifest_stop_settled_staged_unedited() {
 fn manifest_stop_settled_abort() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::Abort,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_settled_keeps_an_unstaged_edit() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::UnstagedEditKept,
     ))
     .assert_fully_decided_green();
 }

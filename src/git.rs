@@ -3370,6 +3370,7 @@ impl Vcs for GitVcs {
             VcsAction::AddRemote => "git -C <checkout> remote add <r> <url>",
             VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream",
             VcsAction::MarkResolved => "git -C <checkout> add -- <paths>",
+            VcsAction::ShowKeptFile => "git -C <checkout> show <revision>:<paths>",
             VcsAction::SetCommitIdentity => {
                 "git config --global user.name <name> && git config --global user.email <email>"
             }

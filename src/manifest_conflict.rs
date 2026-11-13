@@ -98,6 +98,9 @@ impl Setting {
 pub(crate) struct Settled {
     pub(crate) entry: String,
     pub(crate) left: Vec<EntryConflict>,
+    /// The commit holding the checkout's edits as they stood before the
+    /// rewrite, `rwv.toml` with any unstaged edit of it among them.
+    pub(crate) kept: Option<crate::vcs::BackupWitness>,
 }
 
 struct Sides {
@@ -257,6 +260,7 @@ pub(crate) fn settle(
     }
     setting.apply(&mut sides.ours);
     setting.apply(&mut sides.theirs);
+    let kept = vcs.backup_edits(dir)?;
     let left = sides.conflicts();
     if left.is_empty() {
         sides.merged()?.write(&dir.join(Manifest::FILE_NAME))?;
@@ -278,6 +282,7 @@ pub(crate) fn settle(
     Ok(Some(Settled {
         entry: entry_name(&entry),
         left,
+        kept,
     }))
 }
 
@@ -313,6 +318,19 @@ pub(crate) fn settle_at_stop(
         "rwv {verb}: settled rwv.toml entry {} on both sides",
         settled.entry
     );
+    if let Some(kept) = &settled.kept {
+        eprintln!(
+            "rwv.toml as it stood before is kept in backup {}; to read it:",
+            kept.backup().name
+        );
+        eprintln!(
+            "  {}",
+            vcs.hint(VcsAction::ShowKeptFile)
+                .replace("<checkout>", &dir.display().to_string())
+                .replace("<revision>", kept.backup().tip.id().as_str())
+                .replace("<paths>", Manifest::FILE_NAME)
+        );
+    }
     if settled.left.is_empty() {
         eprintln!("rwv.toml has no entry left in conflict, and is staged");
     } else {
