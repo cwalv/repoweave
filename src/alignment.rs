@@ -1224,7 +1224,8 @@ impl Aligner {
         if self.carry_edits {
             dirty = self.overwritten(m, plan, dirty)?;
         }
-        if m.vcs.mid_operation(m.dir).is_some() {
+        if m.vcs.mid_operation(m.dir).is_some() || matches!(m.vcs.set_back_from(m.dir), Ok(Some(_)))
+        {
             return Ok(
                 crate::diagnosis::judge_edits(m.vcs, repo, m.dir, dirty, None)
                     .into_iter()

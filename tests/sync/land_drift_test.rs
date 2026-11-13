@@ -2894,3 +2894,26 @@ fn a_set_back_checkout_whose_branch_is_gone_is_offered_creating_it_again() {
     let said = common::cli::describe(&out);
     assert!(on_branch(&f.ww_lib), "{said}");
 }
+
+/// A set-back checkout under `rwv update`, `rwv switch` and `rwv status`:
+/// each names it set back, beside no `alignment detached` line and no choice
+/// that runs `rwv update` or `rwv lock --commit`.
+#[test]
+fn update_switch_and_status_name_a_set_back_checkout_alone() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    for verb in [&["update"][..], &["switch", "ww/project"], &["status"]] {
+        let out = common::cli::run(verb, &f.ww);
+        let said = common::cli::describe(&out);
+        assert!(said.contains("set back"), "{verb:?}:\n{said}");
+        assert!(!said.contains("alignment detached"), "{verb:?}:\n{said}");
+        let offered = choice_lines(&said);
+        assert!(
+            !offered
+                .iter()
+                .any(|l| l == "rwv update" || l.starts_with("rwv lock --commit")),
+            "{verb:?}:\n{said}"
+        );
+        assert!(!said.contains("rwv lock --commit"), "{verb:?}:\n{said}");
+    }
+}

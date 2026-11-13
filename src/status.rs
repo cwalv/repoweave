@@ -510,7 +510,18 @@ pub fn run_status(
             {
                 judged.add(line);
             }
-            if let Some(aligner) = &aligner {
+            let set_back = matches!(vcs.set_back_from(&repo_abs), Ok(Some(_)));
+            if set_back {
+                if let Some(line) = crate::diagnosis::judge_edits(
+                    vcs.as_ref(),
+                    repo_path,
+                    &repo_abs,
+                    Vec::new(),
+                    None,
+                ) {
+                    judged.add(line);
+                }
+            } else if let Some(aligner) = &aligner {
                 let member = Member {
                     path: repo_path,
                     entry,
@@ -539,7 +550,7 @@ pub fn run_status(
                 .map(|e| e.version.clone());
 
             let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
-            if let Some(head) = &tip {
+            if let Some(head) = tip.as_ref().filter(|_| !set_back) {
                 let judging = match &lock_sha {
                     None => Some(
                         crate::diagnosis::State::PinNone
