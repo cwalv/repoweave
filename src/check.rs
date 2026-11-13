@@ -10378,7 +10378,16 @@ fn collect_doctor_violations(
             Ok(reading) if reading.left.is_none() && project_repo => continue,
             Err(_) if project_repo => continue,
             Ok(reading) => drift_findings(&reading),
-            Err(_) => (Vec::new(), vec![WorkingTreeDriftKind::LiveEdits]),
+            Err(e) => {
+                unjudged.push(format!(
+                    "{repo_path}: its drift could not be read, so nothing it holds is judged an \
+                     edit, and a commit there could record the move's reverse: {e:#}; `{}` \
+                     keeps every difference and leaves the checkout at HEAD",
+                    vcs.hint(crate::vcs::VcsAction::Stash)
+                        .replace("<checkout>", &repo_abs.display().to_string())
+                ));
+                continue;
+            }
         };
         for kind in index_kinds {
             violations.push(CheckViolation::IndexDrift {

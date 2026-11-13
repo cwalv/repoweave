@@ -2177,11 +2177,11 @@ fn a_landing_refused_before_its_target_lists_no_drift_as_edits() {
     );
 }
 
-/// A drift reading that fails refuses naming the failure, offering no
-/// commit: nothing in the checkout is judged an edit it may not be.
+/// A tracked name that is not UTF-8 beside drift elsewhere: the drift is
+/// read and refreshed, and an edit beside it is judged as any other.
 #[cfg(target_os = "linux")]
 #[test]
-fn a_drift_reading_that_fails_offers_no_commit() {
+fn drift_beside_a_name_that_is_not_utf8_is_read_and_refreshed() {
     use std::os::unix::ffi::OsStrExt;
     let f = fixture();
     let odd = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
@@ -2191,12 +2191,51 @@ fn a_drift_reading_that_fails_offers_no_commit() {
     f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
     std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
 
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(edits_listing(&stderr), vec!["README.md".to_owned()]);
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+}
+
+/// Drift at a name that is not UTF-8 cannot be read: every verb refuses with
+/// no commit, offering the stash that keeps every difference, and once that
+/// has run as printed the verb proceeds.
+#[cfg(target_os = "linux")]
+#[test]
+fn drift_at_a_name_that_is_not_utf8_is_exited_by_the_printed_stash() {
+    use std::os::unix::ffi::OsStrExt;
+    let f = fixture();
+    let odd = std::ffi::OsStr::from_bytes(b"caf\xe9.txt");
+    std::fs::write(f.ww_lib.join(odd), "x\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "-A"]);
+    common::git_in(&f.ww_lib, &["commit", "-q", "-m", "odd name"]);
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join(odd), "x2\n").unwrap();
+    });
+
     for verb in [&["lock"][..], &["land"]] {
         let out = common::cli::run(verb, &f.ww);
         let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
         assert!(stderr.contains("could not be read"), "{verb:?}:\n{stderr}");
         assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
     }
+    let said = common::cli::describe(&common::cli::run(&["doctor"], &f.ww));
+    assert!(said.contains("could not be read"), "{said}");
+    assert!(!said.contains("commit them if they are yours"), "{said}");
+    let out = common::cli::run(&["lock"], &f.ww);
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let out = run_printed(&stderr, "stash push", &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(std::fs::read(f.ww_lib.join(odd)).unwrap(), b"x2\n".to_vec());
 }
 
 /// With the set-back mark gone, the `dirty` refusal's commit, made on the

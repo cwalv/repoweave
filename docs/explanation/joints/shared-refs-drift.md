@@ -236,6 +236,14 @@ the checkout shows no move rwv can read (below). Drift it leaves in place refuse
 `drift left in place`, whose one choice is `rwv doctor --fix`; the checkout's
 other edits are judged once that has refreshed it.
 
+A path is a byte string to git, and rwv reads every listing that way, so a
+tracked name that is not UTF-8 does not stop the reading. Where such a name is
+itself one of the paths that differ from HEAD, the drift cannot be read: every
+verb refuses the checkout as `edits` `drift left in place`, naming why, and
+offers `git stash push`, which keeps every difference, the move's reverse with
+your edits, and leaves the checkout at HEAD; take back only your own files
+from it. `rwv doctor` names the same and offers no commit.
+
 ### Drift rwv cannot show
 
 Where nothing shows that the branch moved under the checkout — the move went

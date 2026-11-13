@@ -755,6 +755,7 @@ impl State {
                     Form::DriftLandAgain,
                     Form::DriftResolveThenLand,
                     Form::DriftRefreshAgain,
+                    Form::StashUnreadDrift,
                 ],
                 verb_offers: &[],
             },
@@ -2007,6 +2008,7 @@ pub enum ChoiceId {
     CompareSkipped,
     UnstageThenMerge,
     RemoveLockThenMerge,
+    StashUnreadDrift,
     TakeBackSetAside,
 }
 
@@ -2329,6 +2331,13 @@ impl ChoiceId {
                          there is taken back the same way, with its own id",
                 keeps_work: "the set-aside record stays until you drop it",
             },
+            Self::StashUnreadDrift => &ChoiceRow {
+                id: None,
+                phrase: "stash every difference from HEAD, the edits with the move's reverse, \
+                         so the checkout stands at HEAD; take back only your own files from \
+                         the stash afterwards",
+                keeps_work: "the stash keeps every difference, edits included",
+            },
             Self::RemoveLockThenMerge => &ChoiceRow {
                 id: None,
                 phrase: "once no VCS process is running in the checkout, remove the index lock \
@@ -2561,6 +2570,7 @@ pub enum Form {
     CompareSkipped,
     UnstageThenMerge,
     RemoveLockThenMerge,
+    StashUnreadDrift,
     TakeBackSetAside,
 }
 
@@ -2589,7 +2599,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 110] = [
+    pub const ALL: [Form; 111] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2700,6 +2710,7 @@ impl Form {
         Self::UnstageThenMerge,
         Self::RemoveLockThenMerge,
         Self::TakeBackSetAside,
+        Self::StashUnreadDrift,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3291,6 +3302,12 @@ impl Form {
             Self::TakeBackSetAside => &FormRow {
                 choice: C::TakeBackSetAside,
                 steps: &[Vcs(A::TakeBackSetAside)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::StashUnreadDrift => &FormRow {
+                choice: C::StashUnreadDrift,
+                steps: &[Vcs(A::Stash)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -4377,12 +4394,13 @@ pub fn settle_project_drift(
 }
 
 /// A checkout whose drift could not be read: nothing it holds is judged an
-/// edit, since any of it may be the move's reverse, and no choice is offered.
+/// edit, since any of it may be the move's reverse, so the one choice is a
+/// stash, which keeps every difference without recording any.
 pub fn drift_unread(repo: impl fmt::Display, e: &crate::vcs::VcsError) -> Judging {
     State::EditsDriftLeftInPlace
         .of(repo)
         .subject(format!("its drift could not be read: {e:#}"))
-        .only_forms(&[])
+        .only_forms(&[Form::StashUnreadDrift])
 }
 
 /// Edits beside drift a verb refuses before refreshing: each listed, with

@@ -815,6 +815,53 @@ struct RawChange {
 
 const GITLINK: &str = "160000";
 
+/// The NUL-separated fields git wrote for `args`, as bytes: a path is a byte
+/// string to git, and only those a reading names need be text.
+fn listed_fields(args: &[&str], repo: &Path) -> Result<Vec<Vec<u8>>, VcsError> {
+    let output = git_command()
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .map_err(|e| VcsError::Io {
+            ctx: format!("failed to spawn git {args:?}"),
+            source: e,
+        })?;
+    if !output.status.success() {
+        return Err(VcsError::CommandFailed {
+            args: args.iter().map(|a| (*a).to_owned()).collect(),
+            repo: repo.to_path_buf(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        });
+    }
+    Ok(output
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|f| !f.is_empty())
+        .map(<[u8]>::to_vec)
+        .collect())
+}
+
+/// `field` as a path the reading names, refused where it is not UTF-8.
+fn named_path(repo: &Path, field: Vec<u8>) -> Result<String, VcsError> {
+    String::from_utf8(field).map_err(|e| VcsError::Io {
+        ctx: format!(
+            "{}: a path that differs from HEAD is named {:?}, which is not UTF-8",
+            repo.display(),
+            String::from_utf8_lossy(e.as_bytes())
+        ),
+        source: std::io::Error::new(std::io::ErrorKind::InvalidData, "path not UTF-8"),
+    })
+}
+
+/// The UTF-8 records of a listing; a record naming another path is one no
+/// reading names, since every path that differs is read as text.
+fn text_fields(args: &[&str], repo: &Path) -> Result<Vec<String>, VcsError> {
+    Ok(listed_fields(args, repo)?
+        .into_iter()
+        .filter_map(|f| String::from_utf8(f).ok())
+        .collect())
+}
+
 /// Each path `diff-index` reports between `rev` and the index (`cached`) or
 /// the working tree.
 fn changed_against(
@@ -827,7 +874,7 @@ fn changed_against(
         args.push("--cached");
     }
     args.push(rev);
-    let fields = nul_terminated_fields(&GitVcs::run(&args, repo)?);
+    let fields = listed_fields(&args, repo)?;
     let unreadable = || VcsError::Io {
         ctx: format!("unreadable diff-index record in {}", repo.display()),
         source: std::io::Error::new(std::io::ErrorKind::InvalidData, "malformed -z stream"),
@@ -837,12 +884,14 @@ fn changed_against(
         let [meta, path] = record else {
             return Err(unreadable());
         };
+        let path = named_path(repo, path.clone())?;
+        let meta = String::from_utf8_lossy(meta);
         let parts: Vec<&str> = meta.trim_start_matches(':').split(' ').collect();
         let [rev_mode, other_mode, rev_object, _, status] = parts[..] else {
             return Err(unreadable());
         };
         changed.insert(
-            path.clone(),
+            path,
             RawChange {
                 status: status.to_owned(),
                 rev_mode: rev_mode.to_owned(),
@@ -980,11 +1029,10 @@ fn exec_bit_matches(repo: &Path, path: &str, mode: &str) -> bool {
 /// ones and skip-worktree ones with something on disk, and whose file does
 /// not hold the entry's content.
 fn unwatched_entries(repo: &Path) -> Result<BTreeSet<String>, VcsError> {
-    let listing = GitVcs::run(["ls-files", "-v", "-s", "-z"], repo)?;
     let none = BTreeSet::new();
     let mut unwatched = BTreeSet::new();
     let mut regular: Vec<(String, String, String)> = Vec::new();
-    for record in nul_terminated_fields(&listing) {
+    for record in text_fields(&["ls-files", "-v", "-s", "-z"], repo)? {
         let Some((head, path)) = record.split_once('\t') else {
             continue;
         };
@@ -1042,8 +1090,8 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
     let index_vs_head = changed_against(repo, "HEAD", true)?;
     let (moved, file_vs_left, index_vs_left, unwatched, indexed) = match left {
         Some(left) => (
-            nul_terminated_fields(&GitVcs::run(
-                [
+            listed_fields(
+                &[
                     "diff-tree",
                     "-r",
                     "-z",
@@ -1053,13 +1101,14 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
                     "HEAD",
                 ],
                 repo,
-            )?)
+            )?
             .into_iter()
-            .collect::<BTreeSet<String>>(),
+            .map(|field| named_path(repo, field))
+            .collect::<Result<BTreeSet<String>, VcsError>>()?,
             changed_against(repo, left.as_str(), false)?,
             changed_against(repo, left.as_str(), true)?,
             unwatched_entries(repo)?,
-            nul_terminated_fields(&GitVcs::run(["ls-files", "-z"], repo)?)
+            text_fields(&["ls-files", "-z"], repo)?
                 .into_iter()
                 .collect::<BTreeSet<String>>(),
         ),
@@ -1228,7 +1277,7 @@ fn refresh_paths_if_left(
     if paths.is_empty() {
         return Ok(RefreshWrite::Written);
     }
-    if !GitVcs::run(["ls-files", "-u", "-z"], repo)?.is_empty() {
+    if !listed_fields(&["ls-files", "-u", "-z"], repo)?.is_empty() {
         return Ok(RefreshWrite::Unresolved);
     }
     let scratch = |name: &str| {
@@ -1348,16 +1397,17 @@ fn tree_entries(
     rev: &CommitId,
     wanted: &BTreeSet<&str>,
 ) -> Result<BTreeMap<String, String>, VcsError> {
-    let listing = GitVcs::run(["ls-tree", "-r", "-z", "--full-tree", rev.as_str()], repo)?;
-    Ok(nul_terminated_fields(&listing)
-        .into_iter()
-        .filter_map(|record| {
-            let (entry, path) = record.split_once('\t')?;
-            wanted
-                .contains(path)
-                .then(|| (path.to_owned(), entry.to_owned()))
-        })
-        .collect())
+    Ok(
+        text_fields(&["ls-tree", "-r", "-z", "--full-tree", rev.as_str()], repo)?
+            .into_iter()
+            .filter_map(|record| {
+                let (entry, path) = record.split_once('\t')?;
+                wanted
+                    .contains(path)
+                    .then(|| (path.to_owned(), entry.to_owned()))
+            })
+            .collect(),
+    )
 }
 
 /// `left`'s tree with each of `paths` as `head` has it, removed where `head`
