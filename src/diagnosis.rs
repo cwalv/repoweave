@@ -4345,7 +4345,7 @@ pub fn dirty_beside_drift(
     (!left.is_empty()).then(|| dirty(vcs, repo, dir, left))
 }
 
-/// The project repo at `dir` given [`dirty_beside_drift`]'s judgement before a
+/// The project repo at `dir` given [`dirty_beside_drift`]'s judgment before a
 /// verb reads its manifest or stages anything there: drift its branch's move
 /// left is refreshed, and the verb is refused where that move's content cannot
 /// be told from what the verb would commit. Edits of the operator's own are
