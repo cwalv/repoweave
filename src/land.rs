@@ -2260,12 +2260,31 @@ fn judge_receiving_checkout(
 /// those left, each with why. Without `write` nothing is deleted or moved,
 /// and the checkouts in `freed`, which the caller switches off first, do not
 /// hold a branch.
+/// What an abort's restore leaves of the branches around a branch it
+/// deletes: the checkouts it moves, the branches it moves as refs, and the
+/// tips it moves both to.
+#[derive(Default)]
+pub(crate) struct RestoredTips {
+    pub(crate) checkouts: Vec<PathBuf>,
+    pub(crate) branches: Vec<RawRefName>,
+    pub(crate) to: Vec<CommitId>,
+}
+
+/// Whether an undo of created branches deletes them, or judges whether it
+/// would, with the branches standing as the restore leaves them.
+#[derive(Clone, Copy)]
+pub(crate) enum Undo<'a> {
+    Judge(&'a RestoredTips),
+    Delete,
+}
+
+/// Delete each branch in `created`, or judge each as `how` says.
 pub(crate) fn undo_created(
     dir_of: impl Fn(&RepoPath) -> Option<PathBuf>,
     created: &[CreatedRef],
     wrote: Option<&BTreeMap<RepoKey, CommitId>>,
     freed: &[PathBuf],
-    write: bool,
+    how: Undo<'_>,
 ) -> Vec<(RepoKey, String, String)> {
     let vcs = crate::vcs::probe_vcs();
     let mut left = Vec::new();
@@ -2282,7 +2301,7 @@ pub(crate) fn undo_created(
                 &made.at,
                 wrote.and_then(|w| w.get(&made.repo)),
                 freed,
-                write,
+                how,
             ),
             None => Err("no checkout of its repo is left to reach it from".to_owned()),
         };
@@ -2300,7 +2319,7 @@ fn undo_one(
     at: &CommitId,
     wrote: Option<&CommitId>,
     freed: &[PathBuf],
-    write: bool,
+    how: Undo<'_>,
 ) -> Result<(), String> {
     let tip = vcs
         .resolve_local_branch_tip(dir, branch)
@@ -2328,7 +2347,7 @@ fn undo_one(
             ))
         }
         Some(tip) if Some(tip.id()) == wrote && tip.id() != at => {
-            if write {
+            if matches!(how, Undo::Delete) {
                 vcs.restore_branch_ref(dir, branch, tip.id(), at)
                     .map_err(|e| format!("{e:#}"))?;
             }
@@ -2342,8 +2361,8 @@ fn undo_one(
         }
         Some(_) => {}
     }
-    if !write {
-        return Ok(());
+    if let Undo::Judge(restored) = how {
+        return reached_once_restored(vcs, dir, branch, at, restored);
     }
     let others: Vec<ResolvedRevisionId> = vcs
         .branch_tips(dir)
@@ -2356,6 +2375,42 @@ fn undo_one(
         .map_err(|e: VcsError| format!("{e:#}"))?
         .ok_or_else(|| "no other branch reaches it".to_owned())?;
     vcs.delete_branch(proof).map_err(|e| format!("{e:#}"))
+}
+
+fn reached_once_restored(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &RawRefName,
+    at: &CommitId,
+    restored: &RestoredTips,
+) -> Result<(), String> {
+    let moved = |other: &RawRefName| {
+        restored.branches.contains(other)
+            || vcs.checkouts_of_branch(dir, other).is_ok_and(|held| {
+                held.iter().any(|held| {
+                    let held = crate::path_spelling::CanonicalPath::of(held);
+                    restored
+                        .checkouts
+                        .iter()
+                        .any(|dir| crate::path_spelling::CanonicalPath::of(dir) == held)
+                })
+            })
+    };
+    let at = ResolvedRevisionId::from(at.clone());
+    let reached = vcs
+        .branch_tips(dir)
+        .map_err(|e| format!("{e:#}"))?
+        .into_iter()
+        .filter(|other| other.label != branch.as_str())
+        .filter(|other| !moved(&RawRefName::new(other.label.clone())))
+        .map(|other| other.tip)
+        .chain(restored.to.iter().cloned().map(ResolvedRevisionId::from))
+        .any(|other| vcs.is_ancestor(dir, &at, &other).unwrap_or(false));
+    if reached {
+        Ok(())
+    } else {
+        Err("no other branch reaches it once abort has put back what it moves".to_owned())
+    }
 }
 
 /// What taking `branch` from `before` in to its upstream's `upstream` brings:
@@ -2450,4 +2505,59 @@ pub(crate) fn upstream_taken_in(
         pins,
         entries,
     })
+}
+
+#[cfg(test)]
+mod undo_created_tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = crate::git::git_command_in_test()
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn a_created_branch_no_branch_reaches_once_restored_is_judged_before_anything_moves() {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.email", "t@t"]);
+        git(dir, &["config", "user.name", "T"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        let base = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
+        git(dir, &["switch", "-q", "-c", "feature"]);
+        git(dir, &["commit", "-q", "--allow-empty", "-m", "op"]);
+        let made = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
+        git(dir, &["branch", "made"]);
+        git(dir, &["switch", "-q", "main"]);
+        let path = RepoPath::new("m").unwrap();
+        let created = [CreatedRef {
+            repo: RepoKey::Member(path.clone()),
+            branch: "made".to_owned(),
+            at: made,
+        }];
+        let judge = |restored: &RestoredTips| {
+            undo_created(
+                |_| Some(dir.to_path_buf()),
+                &created,
+                None,
+                &[],
+                Undo::Judge(restored),
+            )
+        };
+        assert!(judge(&RestoredTips::default()).is_empty());
+        let left = judge(&RestoredTips {
+            checkouts: Vec::new(),
+            branches: vec![RawRefName::new("feature".to_owned())],
+            to: vec![base],
+        });
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert!(left[0].2.contains("no other branch reaches it"), "{left:?}");
+        assert_eq!(git(dir, &["rev-parse", "made"]), created[0].at.as_str());
+    }
 }

@@ -1215,6 +1215,28 @@ fn abandon_consent_does_not_reach_a_repo_it_did_not_name() {
         fx.root.join(".rwv-op").exists(),
         "op-state must be retained while any repo is still refused"
     );
+
+    let closing = stderr
+        .lines()
+        .rev()
+        .find_map(|line| line.trim().strip_prefix("rwv abort"))
+        .unwrap_or_else(|| panic!("the refusal prints a closing command.\nstderr:\n{stderr}"));
+    rwv()
+        .arg("abort")
+        .args(closing.split_whitespace())
+        .current_dir(&fx.root)
+        .assert()
+        .success();
+    assert_eq!(
+        common::git_in(named_dir, &["rev-parse", "HEAD"]),
+        named_savepoint,
+        "the printed command keeps the consent already given"
+    );
+    assert_eq!(
+        common::git_in(unnamed_dir, &["rev-parse", "HEAD"]),
+        unnamed_savepoint
+    );
+    assert!(!fx.root.join(".rwv-op").exists());
 }
 
 /// The flag cannot be spelled as a blanket. Its bare form is a parse error

@@ -317,6 +317,10 @@ impl AbandonForeignTipConsent {
         self.abandon.contains(&RepoOperand::of(repo_key, project))
     }
 
+    pub fn named(&self) -> impl Iterator<Item = &RepoOperand> {
+        self.abandon.iter()
+    }
+
     /// A project other than `project` whose repo the operator named, if any:
     /// consent given for it reaches nothing in this op.
     pub fn names_another_project(&self, project: &ProjectName) -> Option<&ProjectName> {

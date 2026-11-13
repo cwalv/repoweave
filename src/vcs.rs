@@ -1278,6 +1278,18 @@ impl CheckoutRestorePlan {
         }
     }
 
+    /// The tip this plan moves the checkout to, where it moves it.
+    pub fn restores_to(&self) -> Option<&CommitId> {
+        match self {
+            Self::Reset { savepoint, .. } | Self::SwitchBack { savepoint, .. } => Some(savepoint),
+            Self::Cancel { then, .. } => then.restores_to(),
+            Self::NoSavepoint
+            | Self::LeaveStopped { .. }
+            | Self::Untouched { .. }
+            | Self::Blocked(_) => None,
+        }
+    }
+
     /// The branches this plan switches the checkout off.
     pub fn switches_off(&self) -> Vec<&RawRefName> {
         match self {

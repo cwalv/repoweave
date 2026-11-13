@@ -890,6 +890,8 @@ every_scenario!(
     rebased_backup_of_another_branch_offers_no_republish,
     abort_deletes_a_created_receiving_branch,
     abort_stops_at_the_first_write_that_fails,
+    leave_target_gives_up_the_target_only_after_the_source_is_restored,
+    abort_refuses_while_the_target_cannot_be_read,
     abort_after_the_target_aligned(
         scenarios::ReceivingCase::Followed,
         scenarios::AbortFrom::Source
@@ -3077,6 +3079,18 @@ holding_rwv! {
 #[test]
 fn an_abort_stops_at_the_first_write_that_fails() {
     runner::run(scenarios::abort_stops_at_the_first_write_that_fails())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_refuses_while_the_target_cannot_be_read() {
+    runner::run(scenarios::abort_refuses_while_the_target_cannot_be_read())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn leave_target_gives_up_the_target_only_after_the_source_is_restored() {
+    runner::run(scenarios::leave_target_gives_up_the_target_only_after_the_source_is_restored())
         .assert_fully_decided_green();
 }
 

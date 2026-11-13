@@ -12251,6 +12251,101 @@ pub fn abort_after_another_landing_built_on_the_target(
     scenario("abort after another landing built on the target", steps)
 }
 
+/// A landing stopped in its retire, and the target's `rwv.toml` mid-edit so
+/// that it does not parse: abort cannot plan the target's restore, so it
+/// restores nothing of either side and names what it could not read; once
+/// the file parses, the abort it printed ends the landing.
+pub fn abort_refuses_while_the_target_cannot_be_read() -> Scenario {
+    let broken = format!("{}\n[[[", declared_branch_text(Repo::Lib, "main"));
+    scenario(
+        "abort refuses while the target cannot be read",
+        vec![
+            create("w1"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                &declared_branch_text(Repo::Lib, "main"),
+                &broken,
+            ),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("could not be read"))
+                .claim(Claim::OutputContains("rwv abort --leave-target"))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w1"))),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                &broken,
+                &declared_branch_text(Repo::Lib, "main"),
+            ),
+            Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w1-app")),
+            Step::rwv(&ww("w1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ],
+    )
+}
+
+/// A landing stopped in its retire, an edit in the target's `app`, and
+/// `rwv abort --leave-target` that begins and then finds the source's `app`
+/// moved under its write: it stops there and gives up nothing of the
+/// target, so the command it prints, run as printed, still leaves the
+/// target and ends the landing.
+pub fn leave_target_gives_up_the_target_only_after_the_source_is_restored() -> Scenario {
+    scenario(
+        "leave-target gives up the target only after the source is restored",
+        vec![
+            create("w1"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "edited in the target"),
+            Step::rwv_paused(
+                &ww("w1"),
+                &["abort", "--leave-target"],
+                "abort-begun",
+                "aborting",
+            ),
+            Step::commit(&ww("w1"), Repo::App, "w1-late"),
+            Step::release("aborting")
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed_holding(&ww("w1"), "rwv abort --leave-target", "")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w1-app")),
+            Step::rwv(&ww("w1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ],
+    )
+}
+
 /// A landing stopped in its retire, and an abort that begins and then finds
 /// the target's project branch moved under its first write: it stops there,
 /// no member is reset beneath the lock that pins it, and the printed

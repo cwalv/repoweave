@@ -8408,6 +8408,8 @@ struct AbortTally {
     /// The repos abort cannot switch back onto their saved branch, with the
     /// choice that frees it.
     blocked: Vec<(RepoOperand, String, bool)>,
+    /// What abort could not read to plan its restore.
+    unread: Vec<String>,
 }
 
 impl AbortTally {
@@ -8606,9 +8608,6 @@ fn abort_op(
 
         let mut other_ws_dir: Option<PathBuf> = None;
         if let Some(other_dir) = &other_workspace {
-            // Best-effort: an other workspace that does not present the op's
-            // project is skipped with a warning rather than restored from
-            // whatever else lives there.
             match WorkspaceContext::resolve_for_project(other_dir.as_path(), &op_project_name) {
                 Ok(other_ctx) => {
                     let dir = other_ctx.active_path().to_path_buf();
@@ -8641,24 +8640,18 @@ fn abort_op(
                             );
                             other_ws_dir = Some(dir);
                         }
-                        Err(e) => plan.steps.push(AbortStep::Said {
-                            line: format!(
-                                "  warning: could not load project at {}: {e:#}; skipping",
-                                other_project_dir.display()
-                            ),
-                            to_stderr: true,
-                            failed: false,
-                        }),
+                        Err(e) => plan.unread(
+                            header.target.as_ref() == Some(other_dir),
+                            format!("the project at {}", other_project_dir.display()),
+                            format!("{e:#}"),
+                        ),
                     }
                 }
-                Err(e) => plan.steps.push(AbortStep::Said {
-                    line: format!(
-                        "  warning: could not resolve workspace at {}: {e:#}; skipping",
-                        other_dir.as_path().display()
-                    ),
-                    to_stderr: true,
-                    failed: false,
-                }),
+                Err(e) => plan.unread(
+                    header.target.as_ref() == Some(other_dir),
+                    format!("the workspace at {}", other_dir.as_path().display()),
+                    format!("{e:#}"),
+                ),
             }
         }
 
@@ -8811,7 +8804,7 @@ fn abort_op(
     // evidence (savepoint, tip, blocking commits); this block tells the
     // operator what to do about it.
     if tally.any_foreign {
-        print_abort_recovery_options(&tally, "rwv abort");
+        print_abort_recovery_options(&tally, "rwv abort", abandon);
     }
 
     // Clear op-state from CWD workspace only on a fully clean abort. If any
@@ -9013,8 +9006,13 @@ pub(crate) enum AbortStep {
     },
     Said {
         line: String,
-        to_stderr: bool,
-        failed: bool,
+    },
+    /// What the plan could not read, so it cannot say what abort would do
+    /// there.
+    Unread {
+        on_target: bool,
+        what: String,
+        why: String,
     },
     Settle {
         on_target: bool,
@@ -9068,6 +9066,7 @@ impl AbortStep {
                 InPlaceRefPlan::Moved { .. } | InPlaceRefPlan::Held(_) | InPlaceRefPlan::Unread(_)
             ),
             Self::OpRefMoves { blocked, .. } | Self::Carried { blocked, .. } => *blocked,
+            Self::Unread { .. } => true,
             Self::UndoCreated { left, .. } => !left.is_empty(),
             Self::LeaveCheckout { .. }
             | Self::UnwrittenRef { .. }
@@ -9086,7 +9085,7 @@ impl AbortStep {
             | Self::UnwrittenRef { at, .. }
             | Self::InPlaceRef { at, .. } => at.on_target,
             Self::UndoCreated { .. } | Self::BeginInPlace | Self::EndInPlace { .. } => true,
-            Self::Settle { on_target, .. } => *on_target,
+            Self::Settle { on_target, .. } | Self::Unread { on_target, .. } => *on_target,
             Self::OpRefMoves { .. } | Self::Carried { .. } | Self::Said { .. } => false,
         }
     }
@@ -9109,18 +9108,14 @@ pub(crate) struct AbortPlan {
 
 impl AbortPlan {
     fn say(&mut self, line: String) {
-        self.steps.push(AbortStep::Said {
-            line,
-            to_stderr: false,
-            failed: false,
-        });
+        self.steps.push(AbortStep::Said { line });
     }
 
-    fn fail(&mut self, line: String) {
-        self.steps.push(AbortStep::Said {
-            line,
-            to_stderr: true,
-            failed: true,
+    fn unread(&mut self, on_target: bool, what: String, why: String) {
+        self.steps.push(AbortStep::Unread {
+            on_target,
+            what,
+            why,
         });
     }
 
@@ -9211,6 +9206,28 @@ impl AbortPlan {
                 .filter(|step| !step.on_target())
                 .collect(),
         }
+    }
+
+    /// The checkouts the plan moves, the branches it moves as refs, and the
+    /// tips it moves them to.
+    fn restored_tips(&self) -> crate::land::RestoredTips {
+        let mut restored = crate::land::RestoredTips::default();
+        for step in &self.steps {
+            match step {
+                AbortStep::Checkout { at, plan, .. } => {
+                    if let Some(to) = plan.restores_to() {
+                        restored.checkouts.push(at.dir.clone());
+                        restored.to.push(to.clone());
+                    }
+                }
+                AbortStep::Ref { saved, .. } => {
+                    restored.branches.push(saved.branch.clone());
+                    restored.to.push(saved.at.clone());
+                }
+                _ => {}
+            }
+        }
+        restored
     }
 
     /// The checkouts the plan switches off `branch` before it moves it, or
@@ -9416,7 +9433,7 @@ fn plan_checkout(
             plan: checkout,
             edits_here: attribution.edits_here,
         }),
-        Err(e) => plan.fail(format!("  {}: verified restore failed: {e:#}", at.label)),
+        Err(e) => plan.unread(at.on_target, at.label, format!("{e:#}")),
     }
 }
 
@@ -9511,9 +9528,11 @@ fn plan_in_place_as_ref(
     named: RepoOperand,
 ) {
     let Some(store) = stores.dir(vcs.as_ref(), path) else {
-        plan.fail(format!(
-            "  {label}: no checkout is left to reach its branches from"
-        ));
+        plan.unread(
+            true,
+            label,
+            "no checkout is left to reach its branches from".to_owned(),
+        );
         return;
     };
     let branch = crate::vcs::RawRefName::new(receiving.branch.clone());
@@ -10189,7 +10208,8 @@ fn refuse_abort(
     let target_foreign = unit.is_some() || plan.blocks(true);
     let source_blocked = plan.blocks(false);
     let mut lines = Vec::new();
-    let mut unit_moved = Vec::new();
+    let given: Vec<RepoOperand> = abandon.named().cloned().collect();
+    let mut unit_moved = given.clone();
     if let Some(standing) = unit {
         for moved in &standing.moved {
             unit_moved.push(RepoOperand::of(&moved.repo, project));
@@ -10292,7 +10312,7 @@ fn refuse_abort(
     lines.extend(fixes(&source));
     lines.extend(fixes(&target));
     if !target_foreign {
-        lines.extend(closing("rwv abort", &[&source], &[]));
+        lines.extend(closing("rwv abort", &[&source], &given));
     } else {
         if unit_abandonable {
             lines.extend(closing("rwv abort", &[&source, &target], &unit_moved));
@@ -10313,14 +10333,17 @@ fn refuse_abort(
                  reaches it:"
                     .to_owned(),
             );
-            lines.extend(closing("rwv abort --leave-target", &[&source], &[]));
+            lines.extend(closing("rwv abort --leave-target", &[&source], &given));
         } else {
-            lines.push(
+            lines.push(format!(
                 "  end the operation leaving the target as it stands, the source restored, each \
                  tip this landing wrote there kept as a backup first where no branch reaches \
-                 it:\n\trwv abort --leave-target"
-                    .to_owned(),
-            );
+                 it:\n\trwv abort --leave-target{}",
+                given
+                    .iter()
+                    .map(|named| format!(" --abandon-foreign-tip {named}"))
+                    .collect::<String>()
+            ));
         }
     }
     if let (Some(dependents), Some(record)) = (&built_on, record.filter(|_| !begun)) {
@@ -10360,38 +10383,43 @@ fn abort_leaving_target(
     plan: AbortPlan,
 ) -> anyhow::Result<()> {
     let project = &record.project;
-    op_state::mark_abort_begun(owner.as_path()).context("could not record that abort began")?;
     let source = WorkspaceContext::resolve_for_project(owner.as_path(), project)?;
     let source_dir = source.active_path().to_path_buf();
     let source_project_dir = project_dir(&source_dir, project);
+    op_state::mark_abort_begun(owner.as_path()).context("could not record that abort began")?;
+    crate::test_pause::point("abort-begun");
     let take_in = record.take_in.as_ref();
     let plan = plan.source_only();
     let mut tally = AbortTally::default();
     execute_abort_plan(plan, abandon, &mut tally);
-    leave_target(record, standing, stores, &mut tally);
-    for leased in record
-        .target
-        .iter()
-        .map(|t| t.as_path().to_path_buf())
-        .chain(
-            take_in
-                .into_iter()
-                .flat_map(op_state::TakeInRecord::in_place_workspaces),
-        )
-    {
-        op_state::clear_lease_owned_by(&leased, owner.as_path());
+    if tally.clean() {
+        leave_target(record, standing, stores, &mut tally);
     }
-    if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
-        project_vcs().as_ref(),
-        &source_project_dir,
-        &record.id,
-    ) {
-        eprintln!("  {e:#}");
-        tally.any_failure = true;
+    if tally.clean() {
+        for leased in record
+            .target
+            .iter()
+            .map(|t| t.as_path().to_path_buf())
+            .chain(
+                take_in
+                    .into_iter()
+                    .flat_map(op_state::TakeInRecord::in_place_workspaces),
+            )
+        {
+            op_state::clear_lease_owned_by(&leased, owner.as_path());
+        }
+        if let Err(e) = crate::landing_claim::LandingClaim::release_held_by(
+            project_vcs().as_ref(),
+            &source_project_dir,
+            &record.id,
+        ) {
+            eprintln!("  {e:#}");
+            tally.any_failure = true;
+        }
     }
     print_abort_noise_summary(&tally.noise);
     if tally.any_foreign {
-        print_abort_recovery_options(&tally, "rwv abort --leave-target");
+        print_abort_recovery_options(&tally, "rwv abort --leave-target", abandon);
     }
     if tally.clean() {
         let kept = take_in
@@ -10541,9 +10569,11 @@ fn plan_landing_refs(
         let saved = match vcs.ref_savepoints(&dir, &key) {
             Ok(saved) => saved,
             Err(e) => {
-                plan.fail(format!(
-                    "  {named}: could not read its branch savepoints: {e:#}"
-                ));
+                plan.unread(
+                    true,
+                    named.to_string(),
+                    format!("its branch savepoints: {e:#}"),
+                );
                 continue;
             }
         };
@@ -10582,10 +10612,11 @@ fn plan_landing_refs(
                     saved,
                     plan: restore,
                 }),
-                Err(e) => plan.fail(format!(
-                    "  {named}: '{}' could not be restored: {e:#}",
-                    saved.branch
-                )),
+                Err(e) => plan.unread(
+                    true,
+                    named.to_string(),
+                    format!("'{}': {e:#}", saved.branch),
+                ),
             }
         }
     }
@@ -10613,7 +10644,7 @@ fn plan_landing_refs(
         &created,
         wrote.as_ref(),
         &freed,
-        false,
+        crate::land::Undo::Judge(&plan.restored_tips()),
     );
     plan.steps.push(AbortStep::UndoCreated {
         project: record.project.clone(),
@@ -10824,17 +10855,11 @@ fn run_step(
             }
             at.vcs.drop_savepoint(&at.dir, &key);
         }
-        AbortStep::Said {
-            line,
-            to_stderr,
-            failed,
-        } => {
-            if to_stderr {
-                eprintln!("{line}");
-            } else {
-                outln!("{line}");
-            }
-            tally.any_failure |= failed;
+        AbortStep::Said { line } => outln!("{line}"),
+        AbortStep::Unread { what, why, .. } => {
+            eprintln!("  {what}: could not be read: {why}");
+            tally.any_failure = true;
+            tally.unread.push(what);
         }
         AbortStep::Settle {
             on_target: _,
@@ -10894,7 +10919,7 @@ fn run_step(
                     &created,
                     wrote.as_ref(),
                     &[],
-                    true,
+                    crate::land::Undo::Delete,
                 )
             } else {
                 left
@@ -11351,9 +11376,14 @@ fn report_abort_outcome(
 /// Print, once, what clears each repo abort left at a foreign tip or
 /// stopped in an operation it may not cancel unasked, then the one command
 /// that ends the operation, `base` with what it gives up.
-fn print_abort_recovery_options(tally: &AbortTally, base: &str) {
+fn print_abort_recovery_options(
+    tally: &AbortTally,
+    base: &str,
+    abandon: &crate::cli::consent::AbandonForeignTipConsent,
+) {
+    let given: Vec<RepoOperand> = abandon.named().cloned().collect();
     let mut lines = fixes(tally);
-    lines.extend(closing(base, &[tally], &[]));
+    lines.extend(closing(base, &[tally], &given));
     if lines.is_empty() {
         return;
     }
@@ -11373,6 +11403,12 @@ fn fixes(tally: &AbortTally) -> Vec<String> {
     }
     for (named, choice, _) in &tally.blocked {
         lines.push(format!("  {named}: {choice}"));
+    }
+    for what in &tally.unread {
+        lines.push(format!(
+            "  {what}: make it readable, as the error above names; abort plans nothing until \
+             it reads"
+        ));
     }
     for named in &tally.abandonable {
         lines.push(format!(
@@ -11397,7 +11433,7 @@ fn closing(base: &str, tallies: &[&AbortTally], abandoned: &[RepoOperand]) -> Ve
     };
     let fixed = tallies
         .iter()
-        .any(|t| !t.stopped.is_empty() || !t.blocked.is_empty());
+        .any(|t| !t.stopped.is_empty() || !t.blocked.is_empty() || !t.unread.is_empty());
     let needs: std::collections::BTreeSet<&RepoOperand> = tallies
         .iter()
         .flat_map(|t| &t.abandonable)
@@ -11415,7 +11451,7 @@ fn closing(base: &str, tallies: &[&AbortTally], abandoned: &[RepoOperand]) -> Ve
         .collect();
     let all_may_go = tallies
         .iter()
-        .all(|t| t.blocked.iter().all(|(_, _, abandonable)| *abandonable));
+        .all(|t| t.unread.is_empty() && t.blocked.iter().all(|(_, _, abandonable)| *abandonable));
     let mut lines = Vec::new();
     if fixed {
         lines.push(format!(
