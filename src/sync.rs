@@ -3377,6 +3377,7 @@ fn judge_source_relations(
     class: &LockClassification,
     root: &Path,
     manifest: &Manifest,
+    verb: &'static str,
     report: &mut Report,
 ) {
     for (repo_path, raw) in &class.unresolvable {
@@ -3395,7 +3396,7 @@ fn judge_source_relations(
                     "the lock pins {}, which this clone lacks",
                     raw.as_str()
                 ))
-                .by_verb("land")
+                .by_verb(verb)
                 .judge(vcs.as_ref()),
         );
     }
@@ -3419,7 +3420,7 @@ fn judge_source_relations(
                 .bind("<m>", &r.repo_path)
                 .bind("<repo>", &r.repo_path)
                 .subject(format!("HEAD {} the lock's pin", r.relation))
-                .by_verb("land")
+                .by_verb(verb)
                 .judge(vcs.as_ref()),
         );
     }
@@ -3438,18 +3439,33 @@ pub(crate) fn judge_landing_source(
     let dir = project_dir(root, &project);
     let source = Project::from_dir(&dir, project)?;
     judge_edits_source_preflight(&source, root, &dir, report, None);
-    let class = {
-        let (resolved, unresolvable) = match source.lock.as_ref() {
-            Some(raw) => {
-                let (resolved, failures) = raw.clone().resolve_versions(root);
-                (Some(resolved), failures)
-            }
-            None => (None, Vec::new()),
-        };
-        classify_lock_relations(root, &source.manifest, resolved.as_ref(), unresolvable)
-    };
-    judge_source_relations(&class, root, &source.manifest, report);
+    judge_source_pins(root, &source, "land", &[], report);
     Ok(())
+}
+
+/// Where each member of `source` but those `named`, checked out under
+/// `root`, stands to the pin its lock holds, judged for `verb`, which moves
+/// the pins on from there: a pin its checkout does not contain moves only by
+/// name.
+pub(crate) fn judge_source_pins(
+    root: &Path,
+    source: &Project,
+    verb: &'static str,
+    named: &[RepoPath],
+    report: &mut Report,
+) {
+    let (resolved, unresolvable) = match source.lock.as_ref() {
+        Some(raw) => {
+            let (resolved, failures) = raw.clone().resolve_versions(root);
+            (Some(resolved), failures)
+        }
+        None => (None, Vec::new()),
+    };
+    let mut class =
+        classify_lock_relations(root, &source.manifest, resolved.as_ref(), unresolvable);
+    class.relations.retain(|r| !named.contains(&r.repo_path));
+    class.unresolvable.retain(|(path, _)| !named.contains(path));
+    judge_source_relations(&class, root, &source.manifest, verb, report);
 }
 
 /// Each pin of a lock `T`'s landing reads, `T`'s tip's or its workspace's,
@@ -3635,6 +3651,7 @@ fn run_preconditions_after_acquire(
         &cwd_class,
         cwd_workspace_dir,
         &cwd_project.manifest,
+        "land",
         &mut report,
     );
     let checked_out_target = match dest {

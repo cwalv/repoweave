@@ -931,8 +931,9 @@ impl State {
                 means: "the lock has no entry for the member, or there is no lock file; the \
                         checkout is on the declared branch at the tip of the remote's branch, \
                         or where it was found",
-                refused_by: "`rwv push`; `rwv clone`, which does not refuse: it completes, \
-                             lists the member and exits with status 3; `rwv lock`, `rwv \
+                refused_by: "`rwv push`; `rwv land` and `rwv sync`, for a member of the \
+                             workspace they run in; `rwv clone`, which does not refuse: it \
+                             completes, lists the member and exits with status 3; `rwv lock`, `rwv \
                              update` and `rwv status` report it",
                 offers: &[Form::C25, Form::C1UpdateRemoteCommit],
                 verb_offers: &[],
@@ -1556,8 +1557,9 @@ impl State {
                         does not descend from the pinned commit: it is behind the pin or has \
                         diverged from it, or the pinned commit is in no ref here",
                 refused_by: "`rwv lock`, with or without `--repo`; `rwv update --remote`; \
-                             `rwv cherry-pick`, for a member `--except` names. \
-                             A pin moves backward only by name: `rwv member pin`, a setter, \
+                             `rwv cherry-pick`, for a member `--except` names; `rwv land` and \
+                             `rwv sync`, for a member of the workspace they run in, before \
+                             anything moves. A pin moves backward only by name: `rwv member pin`, a setter, \
                              or a hand edit of the member's entry that `rwv lock --commit` \
                              commits",
                 offers: &[Form::C25],

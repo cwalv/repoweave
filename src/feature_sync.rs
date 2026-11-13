@@ -728,6 +728,22 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let head = vcs.head_revision(dir)?.id().clone();
     let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
     let our_lock = lock_at(vcs, dir, &head);
+    if !resets.contains(&RepoOperand::Project(sync.project.clone())) {
+        let named: Vec<RepoPath> = resets
+            .iter()
+            .filter_map(|reset| match reset {
+                RepoOperand::Member(path) => Some(path.clone()),
+                RepoOperand::Project(_) => None,
+            })
+            .collect();
+        crate::sync::judge_source_pins(
+            sync.ctx.active_path(),
+            &crate::manifest::Project::from_dir(dir, sync.project.clone())?,
+            "sync",
+            &named,
+            &mut report,
+        );
+    }
     let theirs = match vcs
         .read_file_at_revision(dir, &rev(&source), Path::new(Manifest::FILE_NAME))
         .map_err(anyhow::Error::from)

@@ -7037,6 +7037,59 @@ pub fn merged_project_with_rebased_members_on_a_second_machine() -> Scenario {
     )
 }
 
+/// A seat whose locked `app` commit was amended away with no re-pin by name:
+/// `rwv sync` refuses it before anything moves, as `rwv land` does, and the
+/// printed re-pin by name clears it. The sync then rebases `app` onto the
+/// target with a record of the move, and machine B lands after A's push.
+/// `project` is the project's history setting, `merge` or `linear`.
+pub fn sync_refuses_a_pin_its_member_no_longer_holds(project: &'static str) -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "sync refuses a pin its member no longer holds",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", project]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", &app])
+                .expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["commit", "--amend", "-q", "-m", "w-app amended"],
+            )
+            .may_strand(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App]),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses(Repo::App, State::PinBackwards))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv_printed_filling(&ww("w"), "rwv member pin", "", &[("<rev>", "HEAD")])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .claim(Claim::WorkweaveGone(ww("w"))),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("held by no branch")),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&b_ww("w2"), &["land"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+        ],
+    )
+}
+
 /// A project that lands by merge, its `app` by `history` (`linear` or
 /// `ff-only`): `rwv sync` rebases `app` and merges `main` into the seat's
 /// project branch, the merge recording the rebase's move of `app` by name.
