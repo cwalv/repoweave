@@ -8350,6 +8350,9 @@ fn settle_held_drift(
         .collect();
     locations.sort();
     for (location, repo_abs) in &locations {
+        if !vcs.is_repo(repo_abs) {
+            continue;
+        }
         let interrupted = match vcs.interrupted_merge(repo_abs) {
             Ok(Some(interrupted)) => interrupted,
             Ok(None) => continue,
