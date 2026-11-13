@@ -12285,7 +12285,7 @@ mod pausing_edits_tests {
             "pick 1111111 {named}\npick 1111111 # {named}\npick 2222222 {other}\n\
              exec echo {named}\nlabel onto\nmerge -C 1111111 {named}\nreset onto\n"
         );
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let file = dir.path().join("todo");
         std::fs::write(&file, &todo).unwrap();
         let out = std::process::Command::new("sh")
