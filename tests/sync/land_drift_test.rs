@@ -2782,6 +2782,39 @@ fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
     assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
 
+/// A refresh killed once its files are written, then a second move that
+/// puts a file back to the content it had before the first: the move from
+/// the first tip to the second no longer touches that file, so the first
+/// move's content it still holds reads as an edit made here, offered a
+/// commit like any other. That is the one shape a stop between the writes
+/// leaves that reads as the operator's own edit.
+#[test]
+fn a_file_the_second_move_puts_back_after_a_killed_refresh_reads_as_an_edit() {
+    let f = fixture();
+    commit_file(&f.ww_lib, "z.txt", "z\n", "z");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("z.txt"), "z2\n").unwrap();
+    });
+    drop(held_landing(&f, "drift-write-index"));
+    assert_eq!(read(&f.ww_lib.join("z.txt")).as_deref(), Some("z2\n"));
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("z.txt"), "z\n").unwrap();
+    });
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    assert!(stderr.contains("refreshed drift"), "{stderr}");
+    assert_eq!(edits_listing(&stderr), vec!["z.txt".to_owned()], "{stderr}");
+    assert!(stderr.contains("commit"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("z.txt")).as_deref(), Some("z2\n"));
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The set-aside stash: whose it is, what it holds, and its take-back lines
 // ---------------------------------------------------------------------------

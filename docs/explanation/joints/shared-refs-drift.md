@@ -181,7 +181,11 @@ entry where that tip lacks the path, beside the file, link or directory HEAD
 puts there, which reads as drift again whatever the move did to the path and
 is finished by the next verb. Where the branch moves again before that, a file both moves
 changed holds the first move's content, which reads as `moved and edited`;
-its merge brings it onto the newer tip. Only a refresh that leaves nothing stale is recorded in the checkout's
+its merge brings it onto the newer tip. A file the second move puts back to
+its content before the first is one the move from the first tip to the second
+does not touch, so the first move's content it still holds reads as an edit
+made here, and a commit is offered for it: `git diff` shows the first move's
+change, and `git restore` on that file returns it to HEAD. Only a refresh that leaves nothing stale is recorded in the checkout's
 own reflog as standing at HEAD, so the refreshed checkout no longer reads as
 moved under: a staged deletion, return to the old content or mode, or revert
 made after the refresh is an edit like any other. Each refreshed file and each
