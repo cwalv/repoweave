@@ -844,6 +844,7 @@ every_scenario!(
     a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues,
     a_landing_whose_carry_stopped_in_the_project_continues,
     abort_refuses_a_tip_amended_during_a_stop,
+    sync_continue_refuses_a_tip_amended_during_a_stop,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
         scenarios::AfterHandContinue::Continue
@@ -5796,6 +5797,12 @@ fn a_sync_killed_after_its_relock_commit_then_stopped_aborts() {
         ),
     )
     .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_refuses_a_tip_amended_during_a_stop() {
+    runner::run(scenarios::sync_continue_refuses_a_tip_amended_during_a_stop())
+        .assert_fully_decided_green();
 }
 
 #[test]

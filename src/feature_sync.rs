@@ -2115,6 +2115,7 @@ fn remap(sync: &Sync<'_>, op: &Op, output: OutputMode) -> anyhow::Result<()> {
         &sync.dir,
         sync.ctx.active_path(),
         &rebases,
+        &op.workspace,
     )?;
     for moved in remapped.unwrap_or_default() {
         say(

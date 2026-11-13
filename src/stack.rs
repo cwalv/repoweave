@@ -518,6 +518,10 @@ impl Carrier<'_> {
             &carrying.from,
             &carrying.onto,
             &tip,
+            crate::remap::HeldBy {
+                workspace: self.workspace,
+                repo: &carrying.repo,
+            },
         )?;
         if carrying.repo == RepoKey::Project {
             let carries = take_in(self.workspace)?.carries;
@@ -526,6 +530,7 @@ impl Carrier<'_> {
                 self.repos.manifest,
                 rebases,
                 &carries,
+                self.workspace,
             )?;
             let remap = crate::remap::remap_project(
                 vcs.as_ref(),

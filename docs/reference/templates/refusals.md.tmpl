@@ -789,9 +789,11 @@ amend or a reset, in a way the rebase's record does not cover.
 commits by author, date or subject would guess, and a wrong guess pins a
 commit the branch never held or moves a pin onto the wrong one, without a word.
 
-**Exits.** `rwv abort` puts back what the operation moved; then rerun the verb,
-leaving the rewritten branch as the rebase left it. Nothing was moved by this
-refusal.
+**Exits.** The refusal prints the one that works. `rwv abort` puts back what
+the operation moved; where the branch holds a tip the operation did not write,
+such as an amended one, abort refuses it as foreign, and `rwv abort
+--abandon-foreign-tip <repo>` puts the branch back and keeps that tip as an
+`abandoned` backup. Then rerun the verb. Nothing was moved by this refusal.
 
 ### `repo-not-in-manifest`
 

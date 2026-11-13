@@ -6035,6 +6035,7 @@ fn remap_landing(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.cwd_project_dir,
         &ctx.cwd_workspace_dir,
         &rebases,
+        &ctx.owner_workspace_dir,
     )?
     else {
         return Ok(());
@@ -6734,7 +6735,13 @@ fn rebased_jumps(
     if rebases.is_empty() {
         return Ok(Vec::new());
     }
-    let replays = crate::remap::member_replays(&ctx.cwd_workspace_dir, manifest, &rebases, &[])?;
+    let replays = crate::remap::member_replays(
+        &ctx.cwd_workspace_dir,
+        manifest,
+        &rebases,
+        &[],
+        &ctx.owner_workspace_dir,
+    )?;
     let mut jumps = Vec::new();
     for (member, replays) in &replays {
         let (Some(from), Some(to)) = (on.pins.get(member), pins.get(member)) else {

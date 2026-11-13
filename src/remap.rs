@@ -63,20 +63,54 @@ pub(crate) fn recorded(
     from: &CommitId,
     onto: &CommitId,
     tip: &CommitId,
+    held_by: HeldBy<'_>,
 ) -> anyhow::Result<Replayed> {
-    vcs.replayed(dir, base, from, onto, tip)?.ok_or_else(|| {
-        crate::refusal::refusal(
+    let Some(replayed) = vcs.replayed(dir, base, from, onto, tip)? else {
+        return Err(crate::refusal::refusal(
             crate::refusal::RefusalKind::ReplayUnrecorded,
             format!(
                 "{label}: no record of the rebase of {} onto {} describes the tip {}, so \
-                 which commit became which is unknown and no pin is moved by a guess; \
-                 `rwv abort` puts back what this operation moved",
+                 which commit became which is unknown and no pin is moved by a guess; {}",
                 from.short(),
                 onto.short(),
-                tip.short()
+                tip.short(),
+                held_by.abort_choice(tip)
             ),
+        ));
+    };
+    Ok(replayed)
+}
+
+/// The repo whose tip a refusal names, in the workspace holding the record
+/// of the operation that moved it.
+#[derive(Clone, Copy)]
+pub(crate) struct HeldBy<'a> {
+    pub(crate) workspace: &'a Path,
+    pub(crate) repo: &'a RepoKey,
+}
+
+impl HeldBy<'_> {
+    fn abort_choice(&self, tip: &CommitId) -> String {
+        let Ok(Some(owner)) = crate::op_state::read_owner(self.workspace) else {
+            return "this puts back what this operation moved:\n\trwv abort".to_owned();
+        };
+        let written = match &owner.tips {
+            crate::op_state::PhaseTips::Replay(tips)
+            | crate::op_state::PhaseTips::Converged(tips) => tips.get(self.repo),
+        };
+        if written.is_none_or(|written| written == tip) {
+            return "this puts back what this operation moved:\n\trwv abort".to_owned();
+        }
+        let operand = match self.repo {
+            RepoKey::Project => crate::manifest::RepoOperand::Project(owner.project.clone()),
+            RepoKey::Member(path) => crate::manifest::RepoOperand::Member(path.clone()),
+        };
+        format!(
+            "the tip is not one this operation wrote, so `rwv abort` refuses it as foreign; \
+             this puts the branch back and keeps that tip as an `abandoned` backup:\n\t\
+             rwv abort --abandon-foreign-tip {operand}"
         )
-    })
+    }
 }
 
 /// The member rebases of `rebases`, each read back from its branch's tip in
@@ -90,6 +124,7 @@ pub(crate) fn member_replays(
     manifest: &Manifest,
     rebases: &[Rebasing],
     carries: &[crate::op_state::Carrying],
+    workspace: &Path,
 ) -> anyhow::Result<BTreeMap<RepoPath, Vec<MemberReplay>>> {
     let mut replays: BTreeMap<RepoPath, Vec<MemberReplay>> = BTreeMap::new();
     for carry in carries {
@@ -107,6 +142,10 @@ pub(crate) fn member_replays(
             &carry.from,
             &carry.onto,
             composed,
+            HeldBy {
+                workspace,
+                repo: &carry.repo,
+            },
         )?;
         replays.entry(path.clone()).or_default().push(MemberReplay {
             replayed,
@@ -139,6 +178,10 @@ pub(crate) fn member_replays(
             &rebase.from,
             &rebase.onto,
             tip.id(),
+            HeldBy {
+                workspace,
+                repo: &rebase.repo,
+            },
         )?;
         replays.entry(path.clone()).or_default().push(MemberReplay {
             replayed,
@@ -370,6 +413,7 @@ pub(crate) fn remap_rebased_project(
     project_dir: &Path,
     root: &Path,
     rebases: &[Rebasing],
+    workspace: &Path,
 ) -> anyhow::Result<Option<Vec<Remapped>>> {
     let Some(project) = rebases.iter().find(|r| r.repo == RepoKey::Project) else {
         return Ok(None);
@@ -391,9 +435,13 @@ pub(crate) fn remap_rebased_project(
         &project.from,
         &project.onto,
         &tip,
+        HeldBy {
+            workspace,
+            repo: &RepoKey::Project,
+        },
     )?;
     let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
-    let replays = member_replays(root, &manifest, rebases, &[])?;
+    let replays = member_replays(root, &manifest, rebases, &[], workspace)?;
     let remap = remap_project(project_vcs, project_dir, &replayed, &project.onto, &replays)?;
     if let Some((rewritten, became)) = &remap.rewritten {
         project_vcs.record_replayed(project_dir, &project.from, &project.onto, became)?;

@@ -659,7 +659,11 @@ of a replay of any commit is missing or incomplete, or names a commit the branch
 `onto` no longer holds (a replay of no commit needs no record), and the
 callers that move pins on it refuse `replay-unrecorded`; abort reads `None`
 as "not this op's tip". When the re-map rewrites the replayed project
-commits, `Vcs::record_replayed` rewrites the record to name the copies.
+commits, `Vcs::record_replayed` keeps a second record naming the copies beside
+the replay's own, written before the branch moves to them, so `Vcs::replayed`
+describes either tip and a kill between the two writes resumes. The refusal
+prints `rwv abort`, or `rwv abort --abandon-foreign-tip` where the tip named
+is not the one the op journaled.
 The records live as long as the op record does: the op's end and a clean
 `rwv abort` drop every one in the checkouts of the workspaces it ran in
 (`Vcs::forget_replays`), and the scenario harness reports one left in a

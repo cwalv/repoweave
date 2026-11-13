@@ -15780,6 +15780,47 @@ fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
     ]
 }
 
+/// `abort-refuses-a-tip-amended-during-a-stop`'s stop, continued instead:
+/// the re-map refuses naming the tip it read, and each choice it prints, run
+/// as printed, ends the state.
+pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib\n", "lib in w\n"),
+        Step::git(&ww("w"), Repo::Lib, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib on main\n"),
+        Step::git(&a(), Repo::Lib, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("app: rebased")),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app", "app amended"),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["commit", "-qa", "--amend", "--no-edit"],
+        ),
+        Step::git(&ww("w"), Repo::Lib, &["checkout", "--ours", "README"]),
+        Step::git(&ww("w"), Repo::Lib, &["add", "README"]),
+        Step::rwv(&ww("w"), &["sync", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::ReplayUnrecorded))
+            .may_rewind(&[Repo::App, Repo::Lib])
+            .claim(Claim::OutputLacks("rwv abort\n")),
+        Step::rwv_printed_exactly(
+            &ww("w"),
+            "rwv abort --abandon-foreign-tip local/remotes/app",
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::App, Repo::Lib])
+        .may_restore(&[Repo::App, Repo::Proj]),
+    ];
+    scenario("sync continue refuses a tip amended during a stop", steps)
+}
+
 /// A sync rebases `app` and stops on a conflict in `lib`; while stopped, the
 /// operator amends `app`'s rebased tip, which keeps its author date. Abort
 /// refuses that tip as foreign and leaves the amended commit where it is.
