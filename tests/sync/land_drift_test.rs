@@ -2196,3 +2196,46 @@ fn a_drift_reading_that_fails_offers_no_commit() {
         assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
     }
 }
+
+/// With the set-back mark gone, the `dirty` refusal's commit, made on the
+/// detached HEAD, records the edit alone on the tip the files hold; `rwv
+/// update` then leaves the checkout and names the commit, which no branch
+/// reaches, as `detached with unpushed commits`.
+#[test]
+fn a_commit_made_where_the_set_back_mark_is_gone_records_the_edit_alone() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    let at = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+    common::git_in(&f.ww_lib, &["reflog", "expire", "--expire=now", "--all"]);
+    let out = common::cli::run(&["lock"], &f.ww);
+    let stderr = common::cli::refused(&out, State::EditsDirty);
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("git -C ") && l.ends_with(" commit"))
+        .unwrap_or_else(|| panic!("{stderr}"));
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let ran = std::process::Command::new(words[0])
+        .args(&words[1..])
+        .args(["-a", "-m", "mine"])
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{}", common::cli::describe(&ran));
+    assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD^"]), at);
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["diff", "--name-only", "HEAD^", "HEAD"]),
+        "notes.txt"
+    );
+    let mine = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+
+    let out = common::cli::run(&["update"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("detached with unpushed commits"), "{said}");
+    assert!(said.contains(&mine[..12]), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]),
+        mine,
+        "{said}"
+    );
+}
