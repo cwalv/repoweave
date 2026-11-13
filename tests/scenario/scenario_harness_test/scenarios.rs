@@ -21420,9 +21420,9 @@ pub fn abort_restores_members_past_an_unparseable_manifest(change: TargetMembers
     scenario("abort restores members past an unparseable rwv.toml", steps)
 }
 
-/// A landing stops on an unparseable `rwv.toml` having moved `lib`, and the
-/// operator's half-finished fix leaves a working `rwv.toml` that parses but
-/// no longer lists `lib`. `rwv abort` still puts `lib` back at its
+/// A sync stops on an unparseable `rwv.toml` having fast-forwarded the
+/// workweave's `lib` to `a`'s, and the operator's half-finished fix leaves a
+/// working `rwv.toml` that parses but no longer lists `lib`. `rwv abort` still puts `lib` back at its
 /// savepoint, keeping the half-finished fix in a backup.
 pub fn abort_ignores_a_half_finished_manifest_fix() -> Scenario {
     let mut steps = vec![
@@ -21436,9 +21436,15 @@ pub fn abort_ignores_a_half_finished_manifest_fix() -> Scenario {
     steps.push(Step::commit(&ww("w"), Repo::Proj, "w-proj"));
     steps.extend([
         stops_unparseable(
-            Step::rwv(&ww("w"), &["land", "--history", "linear"]),
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"]),
             "the replay finished",
-        ),
+        )
+        .claim(Claim::Contains {
+            at: ww("w"),
+            repo: Repo::Lib,
+            rev: "HEAD",
+            mark: "a-lib",
+        }),
         Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", W_COPIES, ""),
         Step::drop_manifest_entry(&ww("w"), Repo::Proj, Repo::Lib),
         Step::rwv(&ww("w"), &["abort"])
@@ -21457,7 +21463,7 @@ pub fn abort_ignores_a_half_finished_manifest_fix() -> Scenario {
                 rev: "main",
                 mark: "w-proj",
             }),
-        Step::git(&ww("w"), Repo::Lib, &["log", "--format=%s", "-1"])
+        Step::git(&ww("w"), Repo::Lib, &["log", "--format=%s", "-3"])
             .claim(Claim::OutputLacks("a-lib")),
         Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
             .claim(Claim::OutputContains(LIB))
