@@ -18373,7 +18373,11 @@ fn settle_by_the_printed_merge_then_push(b_moved_lib: bool) -> Vec<Step> {
             member: Repo::App,
             mark: "a-app",
         });
+    let mut refused_push = Step::rwv(&a(), &["push"])
+        .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+        .claim(Claim::OutputContains("ahead: 1"));
     if b_moved_lib {
+        refused_push = refused_push.claim(Claim::OutputContains("behind: 2"));
         merge = merge
             .claim(Claim::PinContains {
                 site: local,
@@ -18392,13 +18396,7 @@ fn settle_by_the_printed_merge_then_push(b_moved_lib: bool) -> Vec<Step> {
             mark: "b-lib",
         });
     }
-    vec![
-        Step::rwv(&a(), &["push"])
-            .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
-            .claim(Claim::OutputContains("behind: 2")),
-        merge,
-        push,
-    ]
+    vec![refused_push, merge, push]
 }
 
 pub fn pull_merge_upstream_joins_both_sides_moving_the_same_member() -> Scenario {

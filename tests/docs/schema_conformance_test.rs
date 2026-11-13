@@ -1558,6 +1558,8 @@ fn judged_on_every_axis() -> Vec<JudgedOutput> {
         FactKind::PinLanded,
         FactKind::Checkout,
         FactKind::PatchEquivalent,
+        FactKind::Ahead,
+        FactKind::Behind,
     ];
     let mut out: Vec<JudgedOutput> = Axis::ALL
         .into_iter()
