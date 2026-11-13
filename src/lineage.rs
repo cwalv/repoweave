@@ -7,11 +7,64 @@ use crate::vcs::{CommitId, ResolvedRevisionId, Vcs, VcsError};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+/// A pin of the target's history that a later lock of that history
+/// re-pinned by name: `lock` held `pin`, and `by`, which descends from every
+/// lock holding it, records re-pinning the member by `verb`. Where this clone
+/// lacks the pin, it does not decide the base. `known` where the source's
+/// project branch already holds `by`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Superseded {
+    pub(crate) lock: CommitId,
+    pub(crate) pin: CommitId,
+    pub(crate) by: CommitId,
+    pub(crate) verb: String,
+    pub(crate) known: bool,
+}
+
+impl Superseded {
+    pub(crate) fn line(&self, member: &RepoPath) -> String {
+        skipped_line(member, &self.lock, &self.pin, &self.by, &self.verb)
+    }
+}
+
+pub(crate) fn skipped_line(
+    member: &RepoPath,
+    lock: &CommitId,
+    pin: &CommitId,
+    by: &CommitId,
+    verb: &str,
+) -> String {
+    format!(
+        "{member}: history pin skipped: {} pinned {}, which this clone lacks; {} re-pinned it \
+         by name later ({verb}), so it does not decide the base",
+        lock.short(),
+        pin.short(),
+        by.short()
+    )
+}
+
 /// Every pin each member had in the locks of a project branch's history,
-/// through every parent.
+/// through every parent, and those a later lock re-pinned by name.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PinHistory {
     pub(crate) pins: BTreeMap<RepoPath, BTreeSet<CommitId>>,
+    superseded: BTreeMap<RepoPath, Vec<Superseded>>,
+}
+
+fn pins_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<BTreeMap<RepoPath, CommitId>> {
+    let text = vcs
+        .read_file_at_revision(
+            dir,
+            &ResolvedRevisionId::from(commit.clone()),
+            Path::new(LockFile::FILE_NAME),
+        )
+        .ok()?;
+    let lock = LockFile::from_json_str(&text).ok()?;
+    Some(
+        lock.iter_entries()
+            .filter_map(|(path, entry)| Some((path.clone(), entry.version.as_commit_id()?)))
+            .collect(),
+    )
 }
 
 impl PinHistory {
@@ -22,28 +75,114 @@ impl PinHistory {
         tip: &CommitId,
     ) -> Result<Self, VcsError> {
         let mut history = Self::default();
+        let mut holders: BTreeMap<(RepoPath, CommitId), Vec<CommitId>> = BTreeMap::new();
+        let mut repins: BTreeMap<RepoPath, Vec<(CommitId, String)>> = BTreeMap::new();
         for commit in project_vcs.commits_changing(project_dir, tip, LockFile::FILE_NAME)? {
-            let Ok(text) = project_vcs.read_file_at_revision(
-                project_dir,
-                &ResolvedRevisionId::from(commit),
-                Path::new(LockFile::FILE_NAME),
-            ) else {
+            let Some(held) = pins_at(project_vcs, project_dir, &commit) else {
                 continue;
             };
-            let Ok(lock) = LockFile::from_json_str(&text) else {
+            for (path, pin) in &held {
+                history
+                    .pins
+                    .entry(path.clone())
+                    .or_default()
+                    .insert(pin.clone());
+                holders
+                    .entry((path.clone(), pin.clone()))
+                    .or_default()
+                    .push(commit.clone());
+            }
+            let records = crate::repin::recorded(project_vcs, project_dir, &commit)?;
+            if records.is_empty() {
                 continue;
-            };
-            for (path, entry) in lock.iter_entries() {
-                if let Some(pin) = entry.version.as_commit_id() {
-                    history.pins.entry(path.clone()).or_default().insert(pin);
+            }
+            let parents: Vec<BTreeMap<RepoPath, CommitId>> = project_vcs
+                .parents(project_dir, &commit)?
+                .iter()
+                .map(|parent| pins_at(project_vcs, project_dir, parent).unwrap_or_default())
+                .collect();
+            for record in records {
+                if held.get(&record.member) == Some(&record.to)
+                    && parents
+                        .iter()
+                        .any(|parent| parent.get(&record.member) == record.from.as_ref())
+                {
+                    repins
+                        .entry(record.member)
+                        .or_default()
+                        .push((commit.clone(), record.verb));
                 }
+            }
+        }
+        for ((path, pin), locks) in holders {
+            let Some(records) = repins.get(&path) else {
+                continue;
+            };
+            let mut by = None;
+            for lock in &locks {
+                let mut found = None;
+                for (record, verb) in records {
+                    if record != lock
+                        && project_vcs.is_ancestor(
+                            project_dir,
+                            &ResolvedRevisionId::from(lock.clone()),
+                            &ResolvedRevisionId::from(record.clone()),
+                        )?
+                    {
+                        found = Some((record, verb));
+                        break;
+                    }
+                }
+                match found {
+                    Some(found) => by = by.or(Some((lock, found))),
+                    None => {
+                        by = None;
+                        break;
+                    }
+                }
+            }
+            if let Some((lock, (record, verb))) = by {
+                history
+                    .superseded
+                    .entry(path)
+                    .or_default()
+                    .push(Superseded {
+                        lock: lock.clone(),
+                        pin,
+                        by: record.clone(),
+                        verb: verb.clone(),
+                        known: false,
+                    });
             }
         }
         Ok(history)
     }
 
+    /// Mark each superseded pin whose re-pin `source`, the source's project
+    /// branch, already holds.
+    pub(crate) fn seen_from(
+        mut self,
+        project_vcs: &dyn Vcs,
+        project_dir: &Path,
+        source: &CommitId,
+    ) -> Result<Self, VcsError> {
+        let source = ResolvedRevisionId::from(source.clone());
+        for superseded in self.superseded.values_mut().flatten() {
+            superseded.known = project_vcs.is_ancestor(
+                project_dir,
+                &ResolvedRevisionId::from(superseded.by.clone()),
+                &source,
+            )?;
+        }
+        Ok(self)
+    }
+
     pub(crate) fn of_member(&self, member: &RepoPath) -> BTreeSet<CommitId> {
         self.pins.get(member).cloned().unwrap_or_default()
+    }
+
+    pub(crate) fn superseded_of(&self, member: &RepoPath) -> &[Superseded] {
+        self.superseded.get(member).map_or(&[], Vec::as_slice)
     }
 }
 
@@ -52,8 +191,12 @@ impl PinHistory {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Lineage {
     /// The receiving branch contains the base, or the target never pinned
-    /// the member, so it has none.
-    Passes { base: Option<CommitId> },
+    /// the member, so it has none; `skipped` are the pins this clone lacks
+    /// that a later lock re-pinned by name, which decided nothing.
+    Passes {
+        base: Option<CommitId>,
+        skipped: Vec<Superseded>,
+    },
     /// The receiving branch lacks the base.
     Off { base: CommitId },
     /// A pin this clone lacks could make the base newer than any commit the
@@ -117,18 +260,26 @@ pub(crate) fn base_of(
     Ok(newest.map(|at| chain[at].clone()))
 }
 
-/// Judge `work` against `receiving` by the pins the target's history held.
+/// Judge `work` against `receiving` by the pins the target's history held,
+/// less those this clone lacks that `superseded` holds.
 pub(crate) fn judge(
     vcs: &dyn Vcs,
     dir: &Path,
     work: &CommitId,
     pins: &BTreeSet<CommitId>,
+    superseded: &[Superseded],
     receiving: &CommitId,
 ) -> Result<Lineage, VcsError> {
     if pins.is_empty() {
-        return Ok(Lineage::Passes { base: None });
+        return Ok(Lineage::Passes {
+            base: None,
+            skipped: Vec::new(),
+        });
     }
     let (present, absent) = split_present(vcs, dir, pins);
+    let (skipped, absent): (Vec<CommitId>, Vec<CommitId>) = absent
+        .into_iter()
+        .partition(|pin| superseded.iter().any(|s| &s.pin == pin));
     let base = base_of(vcs, dir, work, &present)?;
     let receiving_rev = ResolvedRevisionId::from(receiving.clone());
     if let Some(base) = &base {
@@ -136,12 +287,21 @@ pub(crate) fn judge(
             return Ok(Lineage::Off { base: base.clone() });
         }
     }
-    if !absent.is_empty()
-        && !vcs.is_ancestor(dir, &ResolvedRevisionId::from(work.clone()), &receiving_rev)?
-    {
+    let lands = (!absent.is_empty() || !skipped.is_empty())
+        && !vcs.is_ancestor(dir, &ResolvedRevisionId::from(work.clone()), &receiving_rev)?;
+    if lands && !absent.is_empty() {
         return Ok(Lineage::Unreachable { absent });
     }
-    Ok(Lineage::Passes { base })
+    let skipped = if lands {
+        superseded
+            .iter()
+            .filter(|s| skipped.contains(&s.pin))
+            .cloned()
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(Lineage::Passes { base, skipped })
 }
 
 /// The commits of `work` that `receiving` lacks and that no pin of the
@@ -213,8 +373,11 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let u = commit(&dir, "b");
         assert_eq!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin]), &u).unwrap(),
-            Lineage::Passes { base: Some(pin) }
+            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin]), &[], &u).unwrap(),
+            Lineage::Passes {
+                base: Some(pin),
+                skipped: vec![]
+            }
         );
     }
 
@@ -229,7 +392,15 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let u = commit(&dir, "b");
         assert_eq!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&root, &old_pin]), &u).unwrap(),
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&root, &old_pin]),
+                &[],
+                &u
+            )
+            .unwrap(),
             Lineage::Off { base: old_pin }
         );
     }
@@ -248,8 +419,19 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let u = commit(&dir, "b");
         assert_eq!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin, &other_pin]), &u).unwrap(),
-            Lineage::Passes { base: Some(pin) }
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&pin, &other_pin]),
+                &[],
+                &u
+            )
+            .unwrap(),
+            Lineage::Passes {
+                base: Some(pin),
+                skipped: vec![]
+            }
         );
     }
 
@@ -267,7 +449,7 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let u = commit(&dir, "b");
         assert!(matches!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin]), &u).unwrap(),
+            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin]), &[], &u).unwrap(),
             Lineage::Passes { .. }
         ));
     }
@@ -283,9 +465,164 @@ mod tests {
         let u = commit(&dir, "b");
         let absent = CommitId::parse(&"ab".repeat(20)).unwrap();
         assert_eq!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin, &absent]), &u).unwrap(),
+            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin, &absent]), &[], &u).unwrap(),
             Lineage::Unreachable {
                 absent: vec![absent]
+            }
+        );
+    }
+
+    fn lock_commit(dir: &Path, pin: &CommitId, repin: Option<(&CommitId, &str)>) -> CommitId {
+        std::fs::write(
+            dir.join(LockFile::FILE_NAME),
+            format!(
+                r#"{{"repositories":{{"m":{{"type":"git","url":"u","version":"{}"}}}}}}"#,
+                pin.as_str()
+            ),
+        )
+        .unwrap();
+        git(dir, &["add", LockFile::FILE_NAME]);
+        let mut message = format!("lock {}", pin.short());
+        if let Some((from, verb)) = repin {
+            message.push_str(&format!(
+                "\n\nRwv-Repin: \"m\" {} {} {verb}",
+                from.as_str(),
+                pin.as_str()
+            ));
+        }
+        git(dir, &["commit", "-qm", &message]);
+        CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap()
+    }
+
+    fn fake(fill: char) -> CommitId {
+        CommitId::parse(&fill.to_string().repeat(40)).unwrap()
+    }
+
+    fn superseded_pins(dir: &Path) -> BTreeSet<CommitId> {
+        let vcs = crate::git::git_vcs();
+        let tip = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
+        let history = PinHistory::of(vcs.as_ref(), dir, &tip).unwrap();
+        history
+            .superseded_of(&RepoPath::new("m").unwrap())
+            .iter()
+            .map(|s| s.pin.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_pin_re_pinned_by_name_and_that_re_pin_re_pinned_again_are_both_superseded() {
+        let (_tmp, dir) = repo();
+        let (p1, p2, p3) = (fake('1'), fake('2'), fake('3'));
+        lock_commit(&dir, &p1, None);
+        lock_commit(&dir, &p2, Some((&p1, "member pin")));
+        lock_commit(&dir, &p3, Some((&p2, "member pin")));
+        assert_eq!(superseded_pins(&dir), pins(&[&p1, &p2]));
+    }
+
+    #[test]
+    fn a_merge_re_pinning_by_name_supersedes_the_pins_of_the_range_it_merges() {
+        let (_tmp, dir) = repo();
+        let (n, p, q) = (fake('a'), fake('b'), fake('c'));
+        lock_commit(&dir, &n, None);
+        git(&dir, &["checkout", "-q", "-b", "side"]);
+        lock_commit(&dir, &p, None);
+        git(&dir, &["checkout", "-q", "main"]);
+        commit(&dir, "other");
+        git(&dir, &["merge", "-q", "--no-commit", "-s", "ours", "side"]);
+        lock_commit(&dir, &q, Some((&n, "land")));
+        assert_eq!(superseded_pins(&dir), pins(&[&n, &p]));
+    }
+
+    fn merge_of_side(dir: &Path, n: &CommitId, p: &CommitId) {
+        lock_commit(dir, n, None);
+        git(dir, &["checkout", "-q", "-b", "side"]);
+        lock_commit(dir, p, None);
+        git(dir, &["checkout", "-q", "main"]);
+        commit(dir, "other");
+        git(dir, &["merge", "-q", "--no-commit", "-s", "ours", "side"]);
+    }
+
+    #[test]
+    fn a_merge_re_pinning_from_its_second_parents_pin_is_trusted() {
+        let (_tmp, dir) = repo();
+        let (n, p, q) = (fake('a'), fake('b'), fake('c'));
+        merge_of_side(&dir, &n, &p);
+        lock_commit(&dir, &q, Some((&p, "land")));
+        assert_eq!(superseded_pins(&dir), pins(&[&n, &p]));
+    }
+
+    #[test]
+    fn a_merge_re_pinning_from_a_pin_neither_parent_holds_supersedes_nothing() {
+        let (_tmp, dir) = repo();
+        let (n, p, q) = (fake('a'), fake('b'), fake('c'));
+        merge_of_side(&dir, &n, &p);
+        lock_commit(&dir, &q, Some((&fake('9'), "land")));
+        assert!(superseded_pins(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_record_whose_pins_are_not_its_commits_supersedes_nothing() {
+        let (_tmp, dir) = repo();
+        let (p1, p2) = (fake('1'), fake('2'));
+        lock_commit(&dir, &p1, None);
+        lock_commit(&dir, &p2, Some((&fake('9'), "member pin")));
+        assert!(superseded_pins(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_pin_a_later_lock_holds_again_is_not_superseded() {
+        let (_tmp, dir) = repo();
+        let (p1, p2) = (fake('1'), fake('2'));
+        lock_commit(&dir, &p1, None);
+        lock_commit(&dir, &p2, Some((&p1, "member pin")));
+        lock_commit(&dir, &p1, None);
+        assert!(superseded_pins(&dir).is_empty());
+    }
+
+    #[test]
+    fn an_absent_pin_a_later_lock_re_pinned_is_skipped_and_reported_and_any_other_refuses() {
+        let (_tmp, dir) = repo();
+        let vcs = crate::git::git_vcs();
+        let pin = commit(&dir, "a");
+        git(&dir, &["checkout", "-q", "-b", "feat"]);
+        let work = commit(&dir, "f");
+        git(&dir, &["checkout", "-q", "main"]);
+        let u = commit(&dir, "b");
+        let (gone, other) = (fake('d'), fake('e'));
+        let superseded = vec![Superseded {
+            lock: fake('1'),
+            pin: gone.clone(),
+            by: fake('2'),
+            verb: "member pin".to_owned(),
+            known: false,
+        }];
+        assert_eq!(
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&pin, &gone]),
+                &superseded,
+                &u
+            )
+            .unwrap(),
+            Lineage::Passes {
+                base: Some(pin.clone()),
+                skipped: superseded.clone()
+            }
+        );
+        assert_eq!(
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&pin, &gone, &other]),
+                &superseded,
+                &u
+            )
+            .unwrap(),
+            Lineage::Unreachable {
+                absent: vec![other]
             }
         );
     }

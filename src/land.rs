@@ -88,6 +88,10 @@ pub struct Plan {
     /// The commits each moved member's receiving branch holds beyond `T`'s
     /// pin, which the landing pins into `T` with the member's work.
     pub beyond_pin: BTreeMap<RepoPath, Vec<CommitSummary>>,
+    /// Each pin of `T`'s history this clone lacks that the lineage rule left
+    /// out, a later lock having re-pinned it by name, where the source had
+    /// not taken that re-pin in.
+    pub skipped_pins: Vec<crate::op_state::LandingReport>,
     /// Each change to `T`'s entries `--allow-member-change` named.
     pub landed_changes: Vec<crate::op_state::LandingReport>,
     /// The repos composed by a merge commit, first parent the receiving
@@ -636,7 +640,7 @@ impl Sides {
             our_lock: lock_at(vcs, dir, head),
             their_lock: lock_at(vcs, dir, target_tip),
             base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, dir, b)),
-            history: PinHistory::of(vcs, dir, target_tip)?,
+            history: PinHistory::of(vcs, dir, target_tip)?.seen_from(vcs, dir, head)?,
         })
     }
 
@@ -1289,7 +1293,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         our_lock: None,
         their_lock: None,
         base_lock: None,
-        history: PinHistory::of(vcs, &dir, resumed.target_tip)?,
+        history: PinHistory::of(vcs, &dir, resumed.target_tip)?.seen_from(vcs, &dir, &head)?,
     };
     let changes = entry_changes(resumed.project, &sides, source_root, None);
     if let Some(refused) = inapplicable(resumed.added, &changes, resumed.target) {
@@ -1871,7 +1875,9 @@ fn judge_member(
         }
     }
     if moved {
-        judge_moved(landing, sides, member, &receiving, &head, &tip, report)?;
+        judge_moved(
+            landing, sides, member, &receiving, &head, &tip, plan, report,
+        )?;
         let scoped = |state: State| {
             state
                 .of(path)
@@ -1932,6 +1938,7 @@ fn judge_member(
 /// The lineage rule for a member the landing moves. The branch its work is
 /// rebased off is the feature's own, which the Names rule has already refused
 /// wherever a live weave branch declares it, so no protection is judged here.
+#[allow(clippy::too_many_arguments)]
 fn judge_moved(
     landing: &Landing,
     sides: &Sides,
@@ -1939,12 +1946,25 @@ fn judge_moved(
     receiving: &RawRefName,
     head: &CommitId,
     tip: &CommitId,
+    plan: &mut Plan,
     report: &mut Report,
 ) -> anyhow::Result<()> {
     let Member { path, dir, vcs, .. } = *member;
     let pins = sides.history.of_member(path);
-    match crate::lineage::judge(vcs, dir, head, &pins, tip)? {
-        Lineage::Passes { .. } => {}
+    let superseded = sides.history.superseded_of(path);
+    match crate::lineage::judge(vcs, dir, head, &pins, superseded, tip)? {
+        Lineage::Passes { skipped, .. } => {
+            plan.skipped_pins
+                .extend(skipped.into_iter().filter(|s| !s.known).map(|s| {
+                    crate::op_state::LandingReport::HistoryPinSkipped {
+                        repo: RepoKey::Member(path.clone()),
+                        lock: s.lock,
+                        pin: s.pin,
+                        by: s.by,
+                        verb: s.verb,
+                    }
+                }));
+        }
         Lineage::Off { base } => {
             let mut judging = State::PinOffLineage
                 .of(path)

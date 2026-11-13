@@ -231,7 +231,33 @@ pub(crate) fn commit_lock_file_with_message(
     message: &str,
     naming: &Naming,
 ) -> anyhow::Result<bool> {
-    stage_and_commit(vcs, project_dir, &[LockFile::FILE_NAME], message, naming)
+    stage_and_commit(
+        vcs,
+        project_dir,
+        &[LockFile::FILE_NAME],
+        message,
+        naming,
+        Vec::new(),
+    )
+}
+
+/// [`commit_lock_file_with_message`], recording `extra` too, after the
+/// re-pins.
+pub(crate) fn commit_lock_file_annotated(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    message: &str,
+    naming: &Naming,
+    extra: Vec<crate::vcs::Annotation>,
+) -> anyhow::Result<bool> {
+    stage_and_commit(
+        vcs,
+        project_dir,
+        &[LockFile::FILE_NAME],
+        message,
+        naming,
+        extra,
+    )
 }
 
 /// Stage `paths` (relative to `project_dir`) and commit from `project_dir`.
@@ -246,12 +272,21 @@ fn stage_and_commit(
     paths: &[&str],
     message: &str,
     naming: &Naming,
+    extra: Vec<crate::vcs::Annotation>,
 ) -> anyhow::Result<bool> {
     vcs.stage_paths(project_dir, paths)
         .context("failed to stage paths for the lock commit")?;
     let staged = LockFile::from_state(&LockFile::path_in(project_dir)).ok();
 
-    match crate::repin::commit(vcs, project_dir, paths, message, staged.as_ref(), naming) {
+    match crate::repin::commit_annotated(
+        vcs,
+        project_dir,
+        paths,
+        message,
+        staged.as_ref(),
+        naming,
+        extra,
+    ) {
         Ok(committed) => Ok(committed),
         Err(refused) => {
             let refused = anyhow::Error::from(refused).context("failed to commit the lock");
@@ -375,7 +410,14 @@ fn commit_lock_file(
         ),
         CommitMessage::Given(message) => message.clone(),
     };
-    if stage_and_commit(vcs, project_dir, &paths, &message, &pending.naming)? {
+    if stage_and_commit(
+        vcs,
+        project_dir,
+        &paths,
+        &message,
+        &pending.naming,
+        Vec::new(),
+    )? {
         eprintln!("Committed {}", paths.join(", "));
     } else {
         eprintln!("Lock unchanged, nothing to commit.");

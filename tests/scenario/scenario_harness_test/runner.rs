@@ -286,11 +286,6 @@ pub enum Exit {
 /// gives the step the exit the design decides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Defect {
-    /// A lock in the target's history pins a member commit no ref of the
-    /// clone keeps (locked, then amended and re-pinned by name), so every
-    /// clone lacking it refuses a landing in that member as `pin`
-    /// unreachable, with no printed choice that clears it.
-    HistoryPinNoRefKeeps,
     /// A setter run during an `rwv.toml` conflict stop reads the working
     /// `rwv.toml`, conflict markers and all, so it cannot settle the
     /// conflicted entry and stage the file as the conflict stop says it does.
@@ -303,9 +298,6 @@ impl Defect {
             Defect::SettersCannotReadAConflictedManifest => {
                 "a setter cannot read an rwv.toml a merge left conflicted, so it cannot settle \
                  the entry"
-            }
-            Defect::HistoryPinNoRefKeeps => {
-                "a pin of the target's history no ref keeps refuses every clone lacking it"
             }
         }
     }

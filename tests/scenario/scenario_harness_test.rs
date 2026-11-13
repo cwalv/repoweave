@@ -1135,6 +1135,10 @@ every_scenario!(
     a_landing_waits_on_another_landings_claim,
     records_drop_races_create,
     landed_history_pin_no_ref_keeps,
+    landed_history_waived_pin_on_a_second_machine,
+    a_history_pin_not_repinned_still_refuses,
+    merged_project_with_rebased_members_on_a_second_machine,
+    a_landing_records_no_rebase_jump_the_replay_did_not_record,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
     drift_staged_return_after_a_hand_refresh,
@@ -5039,8 +5043,31 @@ holding_rwv! {
 }
 
 #[test]
-fn a_landed_history_pin_no_ref_keeps_is_a_known_defect_on_a_second_machine() {
-    runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_green();
+fn a_landed_history_pin_no_ref_keeps_lands_on_a_second_machine() {
+    runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_waived_history_pin_lands_on_a_second_machine() {
+    runner::run(scenarios::landed_history_waived_pin_on_a_second_machine())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_merged_project_with_rebased_members_lands_on_a_second_machine() {
+    runner::run(scenarios::merged_project_with_rebased_members_on_a_second_machine())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_records_no_rebase_jump_the_replay_did_not_record() {
+    runner::run(scenarios::a_landing_records_no_rebase_jump_the_replay_did_not_record())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_history_pin_not_repinned_still_refuses_on_a_second_machine() {
+    runner::run(scenarios::a_history_pin_not_repinned_still_refuses()).assert_fully_decided_green();
 }
 
 #[test]

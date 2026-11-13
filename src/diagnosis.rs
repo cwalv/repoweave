@@ -918,7 +918,12 @@ impl State {
                 axis: Axis::Pin,
                 name: "unreachable",
                 means: "the lock pins a commit that no ref in the clone reaches; the checkout \
-                        is on the declared branch at the tip of the remote's branch",
+                        is on the declared branch at the tip of the remote's branch. At a \
+                        landing or `rwv sync`, a pin of the target's history this clone lacks \
+                        refuses unless a later lock of that history re-pinned the member by \
+                        name, the jump a waiver or a landing's rebase records included: that \
+                        pin does not decide the base, and the verb reports it (`history pin \
+                        skipped`) where the source had not taken that re-pin in",
                 refused_by: "`rwv push`; `rwv land`, for a pin of the target's lock as last \
                              fetched, naming `rwv fetch`; `rwv clone`, which does not refuse: it \
                              completes, lists the member and exits with status 3; `rwv \
@@ -1187,8 +1192,9 @@ impl State {
                 means: "a project commit of the range being pushed pins the commit named, which \
                         no branch or remote-tracking branch reaches, listed with the project \
                         commits pinning it, the backups holding it, and the pushed tip's pin \
-                        where that records a copy of it. Only the pushed tip's pins must be \
-                        reached, so the push publishes the range",
+                        where that records a copy of it. A pin a later lock of the pushed \
+                        history re-pinned by name is not listed. Only the pushed tip's pins \
+                        must be reached, so the push publishes the range",
                 refused_by: "nothing refuses; `rwv push` reports it",
                 offers: &[Form::C27],
                 verb_offers: &[],
@@ -1462,9 +1468,9 @@ impl State {
                         differently is listed and not refused. A commit at or after the merge \
                         that records re-pinning the member backward by name, to a commit \
                         reaching neither pin the merge left unmerged, waives it (`pin` \
-                        waived); a commit made outside rwv records none, and a record that \
-                        disagrees with what its commit's lock changed waives nothing and is \
-                        listed. At a landing: the feature and the target each changed a \
+                        waived); a commit made outside rwv records none, and a record whose old \
+                        pin no parent's lock holds, or whose new pin its own lock does not, \
+                        waives nothing and is listed. At a landing: the feature and the target each changed a \
                         `dependency` or `reference` member's pin since their merge base, and \
                         neither pin contains the other",
                 refused_by: "`rwv push`; `rwv land`, before anything moves",
@@ -1503,7 +1509,9 @@ impl State {
                         a commit in the range at or after it, the merge's own included, \
                         records re-pinning the member backward by name to a commit that does \
                         not reach the pin the merge left. The merge, the re-pin that waived it \
-                        and the verb that made it are listed",
+                        and the verb that made it are listed. A landing that rebased the member \
+                        records that re-pin in its project commit, from the commit the feature \
+                        pinned to the one the rebase made of it, and is listed as such",
                 refused_by: "nothing refuses; `rwv push` reports it and goes on",
                 offers: &[],
                 verb_offers: &[],

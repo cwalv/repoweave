@@ -993,6 +993,7 @@ fn report_pins_held_by_no_branch(
         &pushed.tip,
         project_url_remote,
     )?;
+    let history = crate::lineage::PinHistory::of(pvcs, &pushed.project_dir, pushed.tip.id())?;
     for member in members {
         if !member.acting
             || !member.dir.exists()
@@ -1001,6 +1002,7 @@ fn report_pins_held_by_no_branch(
             continue;
         }
         let vcs = member.vcs.as_ref();
+        let superseded = history.superseded_of(&member.path);
         let mut pinned_by: BTreeMap<crate::vcs::CommitId, Vec<crate::vcs::CommitId>> =
             BTreeMap::new();
         for (project_commit, lock) in &range {
@@ -1025,6 +1027,9 @@ fn report_pins_held_by_no_branch(
             });
         let mut backups = None;
         for (pin, project_commits) in pinned_by {
+            if superseded.iter().any(|s| s.pin == pin) {
+                continue;
+            }
             let at = ResolvedRevisionId::from(pin.clone());
             let unreached =
                 vcs.reached_by_no_branch(&member.dir, &at, crate::vcs::RemoteTracking::Counted)?;
@@ -1826,16 +1831,24 @@ fn judge_range(
                     .only(&[ChoiceId::C26])
                     .judge(member_vcs),
             ),
-            crate::unmerged::Verdict::Waived { by, to, verb } => reported.add(
+            crate::unmerged::Verdict::Waived { by, from, to, verb } => reported.add(
                 judging(State::PinWaived)
                     .listing(
                         [
                             pins,
-                            format!(
-                                "re-pinned by name to {} in {}, by `rwv {verb}`",
-                                to.short(),
-                                by.short()
-                            ),
+                            match from {
+                                Some(from) if verb == "land" => format!(
+                                    "the landing rebased it: {} became {}, recorded in {}",
+                                    from.short(),
+                                    to.short(),
+                                    by.short()
+                                ),
+                                _ => format!(
+                                    "re-pinned by name to {} in {}, by `rwv {verb}`",
+                                    to.short(),
+                                    by.short()
+                                ),
+                            },
                         ]
                         .into_iter()
                         .chain(untrusted),

@@ -84,6 +84,9 @@ struct Member {
     /// The merge its range holds, where that range is integrated by a merge
     /// commit under a rebasing setting.
     merged: Option<CommitId>,
+    /// Pins of the target's history this clone lacks that the lineage rule
+    /// left out, the re-pin new to this branch.
+    skipped: Vec<crate::lineage::Superseded>,
 }
 
 struct Sync<'a> {
@@ -507,7 +510,7 @@ impl Member {
     }
 
     fn report_lines(&self) -> Vec<String> {
-        let mut lines = Vec::new();
+        let mut lines: Vec<String> = self.skipped.iter().map(|s| s.line(&self.path)).collect();
         if !self.beyond_pin.is_empty() {
             lines.push(format!(
                 "{}: the branch it lands on holds {} commit(s) beyond the target's pin, which the \
@@ -731,7 +734,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let base_commit = vcs.merge_bases(dir, &head, &source)?.into_iter().next();
     let base_manifest = base_commit.as_ref().and_then(|b| manifest_at(vcs, dir, b));
     let history = match &sync.from {
-        SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?,
+        SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?.seen_from(vcs, dir, &head)?,
         SyncFrom::From(_) => PinHistory::default(),
     };
 
@@ -1135,6 +1138,7 @@ fn plan_member(
         vcs,
         act: Act::Nothing,
         beyond_pin: Vec::new(),
+        skipped: Vec::new(),
         new_work: Vec::new(),
         dropped: Vec::new(),
         was: Some(head.clone()),
@@ -1333,8 +1337,11 @@ fn plan_member(
         }
     };
     if !follows || (inputs.dependents && !contained) {
-        match crate::lineage::judge(mvcs, &mdir, &head, &pins, &source)? {
-            Lineage::Passes { .. } => {}
+        let superseded = inputs.history.superseded_of(path);
+        match crate::lineage::judge(mvcs, &mdir, &head, &pins, superseded, &source)? {
+            Lineage::Passes { skipped, .. } => {
+                member.skipped = skipped.into_iter().filter(|s| !s.known).collect();
+            }
             Lineage::Off { base } => {
                 let mut judging = State::PinOffLineage
                     .of(path)
@@ -2513,7 +2520,10 @@ impl FeatureLineage {
         by: MergeUpstreamBy,
     ) -> anyhow::Result<Option<Judged>> {
         let pins = self.pins.of_member(path);
-        let Lineage::Off { base } = crate::lineage::judge(vcs, dir, local, &pins, upstream)? else {
+        let superseded = self.pins.superseded_of(path);
+        let Lineage::Off { base } =
+            crate::lineage::judge(vcs, dir, local, &pins, superseded, upstream)?
+        else {
             return Ok(None);
         };
         let (present, _) = crate::lineage::split_present(vcs, dir, &pins);

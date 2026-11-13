@@ -24,6 +24,15 @@ enum Image {
 }
 
 impl MemberReplay {
+    /// The commit the replay made of `pin`, or for a commit it dropped, the
+    /// one it made of the nearest commit before it; `None` where the replay
+    /// did not hold `pin`.
+    pub(crate) fn image_of(&self, pin: &CommitId) -> Option<CommitId> {
+        match self.image(pin)? {
+            Image::Replayed(now) | Image::Dropped(now) => Some(now),
+        }
+    }
+
     fn image(&self, pin: &CommitId) -> Option<Image> {
         let at = self
             .replayed

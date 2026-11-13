@@ -6772,15 +6772,21 @@ pub fn records_drop_races_create() -> Scenario {
 }
 
 /// A lock commit that pinned a member commit no ref keeps (locked, then
-/// amended and re-pinned by name) lands into a target that did not move.
-/// Every clone judges a landing by the pins of the target's history, so a
-/// second machine, which lacks that commit, meets a known defect at its
-/// landing in that member.
+/// amended and re-pinned by name) lands into a target that did not move, and
+/// is published. Machine B lacks that commit. A seat B cut before it fetched
+/// lands: the lineage rule leaves the pin out, the later lock having
+/// re-pinned it by name, and says so, since the seat had not taken that
+/// re-pin in. A seat cut after it lands quietly. Machine A, which holds the
+/// commit, then lands as well: both clones judge the history alike.
 pub fn landed_history_pin_no_ref_keeps() -> Scenario {
     let app = Repo::App.rel_path();
     scenario(
         "a landed history pin no ref keeps",
         vec![
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "early"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("early"), Repo::App, "early-app"),
             create("w"),
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
@@ -6798,14 +6804,160 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
                 .pushes(Remote::origin(Repo::App), "main")
                 .pushes(Remote::origin(Repo::Proj), "main")
                 .expect(Exit::Succeeds),
-            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b_ww("early"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: history pin skipped",
+                ))
+                .claim(Claim::OutputContains("by name later (member pin)")),
             Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
                 .expect(Exit::Succeeds),
             Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
             Step::rwv(&b_ww("w2"), &["land"])
-                .expect(Exit::Defect(Defect::HistoryPinNoRefKeeps))
-                .claim(Claim::LocalStateUnchanged(b_ww("w2")))
-                .claim(Claim::LocalStateUnchanged(b())),
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("history pin skipped")),
+            publishes_records(Step::rwv(&b(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            create("w3"),
+            Step::commit(&ww("w3"), Repo::App, "w3-app"),
+            Step::rwv(&ww("w3"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("history pin skipped")),
+        ],
+    )
+}
+
+/// A merge whose unjoined `app` pin a later backward re-pin by name waived
+/// is published; machine B, which lacks the commit the merge left unjoined,
+/// lands a seat: the waiver covers the pin, so it does not decide the base.
+pub fn landed_history_waived_pin_on_a_second_machine() -> Scenario {
+    let mut steps = waiver_per_merge().steps;
+    steps.extend([
+        Step::new_machine(Machine::B),
+        Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"]).expect(Exit::Succeeds),
+        Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&b_ww("w2"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
+    ]);
+    scenario("a waived history pin on a second machine", steps)
+}
+
+/// A project that lands by merge, its `app` by rebase: the merged range's
+/// locks pin `app` commits the rebase replaced, which no ref keeps once the
+/// landing drops its rebased backups. `main` publishes, and machine B, which
+/// never held them, lands in `app`: the landing's merge commit re-pinned
+/// `app` by name, so those pins do not decide the base.
+pub fn merged_project_with_rebased_members_on_a_second_machine() -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "a merged project with rebased members on a second machine",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", &app])
+                .expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .claim(Claim::WorkweaveGone(ww("w"))),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/app: pin waived"))
+                .claim(Claim::OutputContains("the landing rebased it:"))
+                .claim(Claim::OutputLacks("held by no branch")),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+            Step::commit(&b(), Repo::App, "b-main-app"),
+            Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&b_ww("w2"), &["land"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+            publishes_records(Step::rwv(&b(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+        ],
+    )
+}
+
+/// A merged project's landing whose member rebase was rewritten by hand
+/// before the relock: no record says which commit became which, so the
+/// landing writes no re-pin on the operator's behalf and stops before its
+/// project commit.
+pub fn a_landing_records_no_rebase_jump_the_replay_did_not_record() -> Scenario {
+    let app = Repo::App.rel_path();
+    scenario(
+        "a landing records no rebase jump the replay did not record",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", &app])
+                .expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv_paused(&ww("w"), &["land"], "relocking", "relocking"),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["commit", "--amend", "-q", "-m", "w-app by hand"],
+            )
+            .may_strand(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App]),
+            Step::release("relocking")
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .may_rewrite(&[Repo::App])
+                .claim(Claim::OutputContains("no record of the rebase"))
+                .claim(Claim::OutputLacks("re-locked in the merge")),
+        ],
+    )
+}
+
+/// A lock commit of the target's history pins a member commit machine B
+/// lacks, and no later lock re-pinned it by name: B's landing in that member
+/// still refuses, and the printed fetch clears it once the commit is
+/// published.
+pub fn a_history_pin_not_repinned_still_refuses() -> Scenario {
+    scenario(
+        "a history pin not re-pinned still refuses",
+        vec![
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+            Step::commit(&a(), Repo::App, "a-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "a-app-2"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .may_leave_unresolved(&[Repo::App]),
+            Step::git(&b(), Repo::Proj, &["fetch", "origin"]).may_leave_unresolved(&[Repo::App]),
+            Step::rwv(&b_ww("w2"), &["land"])
+                .may_leave_unresolved(&[Repo::App])
+                .expect(Exit::refuses(Repo::App, State::PinUnreachable))
+                .claim(Claim::OutputContains("rwv fetch"))
+                .claim(Claim::OutputLacks("history pin skipped"))
+                .claim(Claim::LocalStateUnchanged(b_ww("w2"))),
+            Step::rwv(&a(), &["push", "--repo", &Repo::App.rel_path()])
+                .pushes(Remote::origin(Repo::App), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b_ww("w2"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
         ],
     )
 }

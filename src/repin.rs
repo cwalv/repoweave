@@ -78,7 +78,7 @@ impl Repin {
         })
     }
 
-    fn annotation(&self) -> Annotation {
+    pub(crate) fn annotation(&self) -> Annotation {
         Annotation {
             key: KEY,
             value: self.value(),
@@ -174,12 +174,25 @@ pub(crate) fn commit_annotated(
 pub(crate) fn commit_merge(
     vcs: &dyn Vcs,
     dir: &Path,
-    (first, second): (&CommitId, &CommitId),
+    parents: (&CommitId, &CommitId),
     message: &str,
     lock: Option<&LockFile>,
     naming: &Naming,
 ) -> Result<CommitId, VcsError> {
-    let annotations = match lock {
+    commit_merge_annotated(vcs, dir, parents, message, lock, naming, Vec::new())
+}
+
+/// [`commit_merge`], recording `extra` too, after the re-pins.
+pub(crate) fn commit_merge_annotated(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    (first, second): (&CommitId, &CommitId),
+    message: &str,
+    lock: Option<&LockFile>,
+    naming: &Naming,
+    extra: Vec<Annotation>,
+) -> Result<CommitId, VcsError> {
+    let mut annotations = match lock {
         Some(lock) => repins(
             vcs,
             dir,
@@ -189,6 +202,7 @@ pub(crate) fn commit_merge(
         ),
         None => Vec::new(),
     };
+    annotations.extend(extra);
     vcs.commit_merge(dir, first, second, message, &annotations)
 }
 

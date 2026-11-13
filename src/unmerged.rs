@@ -31,6 +31,7 @@ pub(crate) enum Verdict {
     /// abandoning the pin the merge left unmerged.
     Waived {
         by: CommitId,
+        from: Option<CommitId>,
         to: CommitId,
         verb: String,
     },
@@ -216,8 +217,8 @@ struct Search {
 
 /// The first commit at or after `range[index]`, the merge's own included,
 /// that records re-pinning the member backward by name to a commit reaching
-/// no pin the merge left unmerged. A record whose pins are not the ones the
-/// commit's first parent and the commit itself hold is untrusted.
+/// no pin the merge left unmerged. A record whose old pin no parent of the
+/// commit holds, or whose new pin the commit does not, is untrusted.
 fn waiver(
     reader: &mut Reader<'_>,
     member: &Member<'_>,
@@ -259,12 +260,13 @@ fn waiver(
             continue;
         }
         let to = reader.held(&candidate.id).pins.get(member.path).cloned();
-        let from = candidate
+        let parents: Vec<Option<CommitId>> = candidate
             .parents
-            .first()
-            .and_then(|parent| reader.held(parent).pins.get(member.path).cloned());
+            .iter()
+            .map(|parent| reader.held(parent).pins.get(member.path).cloned())
+            .collect();
         for repin in records {
-            if Some(&repin.to) != to.as_ref() || repin.from != from {
+            if Some(&repin.to) != to.as_ref() || !parents.contains(&repin.from) {
                 search.untrusted.push(candidate.id.clone());
                 continue;
             }
@@ -278,6 +280,7 @@ fn waiver(
             if backward && abandons && search.waived.is_none() {
                 search.waived = Some(Verdict::Waived {
                     by: candidate.id.clone(),
+                    from: repin.from.clone(),
                     to: repin.to,
                     verb: repin.verb,
                 });

@@ -792,6 +792,16 @@ pub enum LandingReportOutput {
         into: String,
         commits: Vec<LeftCommitOutput>,
     },
+    /// A pin of `path` that `lock` in the target's history held, which this
+    /// clone lacks, left out of the lineage rule because `by`, a later lock
+    /// of that history, re-pinned it by `verb`.
+    HistoryPinSkipped {
+        path: String,
+        lock: CommitId,
+        pin: CommitId,
+        by: CommitId,
+        verb: String,
+    },
     /// `branch` holds the landing and its push branch does not: the landing
     /// is not published until `branch` is pushed.
     PushBranchAhead { path: String, branch: String },
@@ -927,6 +937,19 @@ impl LandingReportOutput {
                 moved_to: moved_to.clone(),
                 files: files.clone(),
                 index_entries: index_entries.clone(),
+            },
+            op_state::LandingReport::HistoryPinSkipped {
+                repo,
+                lock,
+                pin,
+                by,
+                verb,
+            } => Self::HistoryPinSkipped {
+                path: repo.to_string(),
+                lock: lock.clone(),
+                pin: pin.clone(),
+                by: by.clone(),
+                verb: verb.clone(),
             },
             op_state::LandingReport::BeyondPin {
                 repo,
@@ -1092,6 +1115,20 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                     checkout.display(),
                     refreshed.describe()
                 );
+            }
+            op_state::LandingReport::HistoryPinSkipped {
+                repo,
+                lock,
+                pin,
+                by,
+                verb,
+            } => {
+                if let RepoKey::Member(path) = repo {
+                    eprintln!(
+                        "land: {}",
+                        crate::lineage::skipped_line(path, lock, pin, by, verb)
+                    );
+                }
             }
             op_state::LandingReport::BeyondPin {
                 repo,
@@ -4391,7 +4428,13 @@ fn guard_and_mark<'a>(
             target: landing.target.to_string(),
             commits: commits.clone(),
         });
-    for report in beyond_pin.chain(plan.landed_changes.iter().cloned()) {
+    for report in plan
+        .skipped_pins
+        .iter()
+        .cloned()
+        .chain(beyond_pin)
+        .chain(plan.landed_changes.iter().cloned())
+    {
         emit_landing_report(handler, &report);
         take_in.reports.push(report);
     }
@@ -6370,6 +6413,7 @@ fn read_member_tips(
 // longer pins them, and advance-target publishes that lock to the target.
 
 fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    crate::test_pause::point("relocking");
     let emit_text = ctx.handler.emit_text();
 
     let pre_op = pre_op_manifest(ctx)?;
@@ -6659,20 +6703,27 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             )?;
         }
     }
-    let named = crate::repin::Naming::by_name("land", named_members);
     let head = vcs.head_revision(dir)?;
     let staged_merge = vcs.merge_in_flight(dir)?.as_ref() == Some(target)
         || (vcs.is_ancestor(dir, &ResolvedRevisionId::from(target.clone()), &head)?
             && !vcs.on_first_parents(dir, head.id(), target)?);
+    let rebased = rebased_jumps(ctx, manifest, &held(head.id()), &pins)?;
+    let rebased: Vec<crate::vcs::Annotation> = rebased
+        .into_iter()
+        .filter(|jump| staged_merge || !named_members.contains(&jump.member))
+        .map(|jump| jump.annotation())
+        .collect();
+    let named = crate::repin::Naming::by_name("land", named_members);
     if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
-        let merge = crate::repin::commit_merge(
+        let merge = crate::repin::commit_merge_annotated(
             vcs,
             dir,
             (target, head.id()),
             &merge_message(target),
             Some(&lock),
             &named,
+            rebased,
         )?;
         op_state::journal_tip(&ctx.owner_workspace_dir, RepoKey::Project, &merge)?;
         if ctx.handler.emit_text() {
@@ -6684,11 +6735,12 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         }
         return Ok(());
     }
-    if !commit_lock_file_with_message(
+    if !crate::lock::commit_lock_file_annotated(
         vcs,
         dir,
         &auto_relock_commit_message(&ctx.source_workspace_name),
         &named,
+        rebased,
     )? {
         return Ok(());
     }
@@ -6705,6 +6757,56 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         );
     }
     Ok(())
+}
+
+/// Each member the landing rebased whose pin in the project commit the
+/// relock is written on, `on`, the replay record maps to the pin the relock
+/// records, or to a commit on that pin's first-parent chain: the landing's
+/// re-pin of it by name, from `on`'s pin to the relock's.
+fn rebased_jumps(
+    ctx: &OpContext<'_>,
+    manifest: &Manifest,
+    on: &crate::lock_merge::Held,
+    pins: &std::collections::BTreeMap<RepoPath, CommitId>,
+) -> anyhow::Result<Vec<crate::repin::Repin>> {
+    let rebases: Vec<op_state::Rebasing> = op_state::read_owner(&ctx.owner_workspace_dir)?
+        .and_then(|owner| owner.take_in)
+        .map(|take_in| take_in.rebases)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|rebase| matches!(rebase.repo, RepoKey::Member(_)))
+        .collect();
+    if rebases.is_empty() {
+        return Ok(Vec::new());
+    }
+    let replays = crate::remap::member_replays(&ctx.cwd_workspace_dir, manifest, &rebases, &[])?;
+    let mut jumps = Vec::new();
+    for (member, replays) in &replays {
+        let (Some(from), Some(to)) = (on.pins.get(member), pins.get(member)) else {
+            continue;
+        };
+        if from == to {
+            continue;
+        }
+        let Some(entry) = manifest.get_entry(member) else {
+            continue;
+        };
+        let mvcs = vcs_for(entry.vcs_type);
+        let checkout = ctx.cwd_workspace_dir.join(member.as_path());
+        let Some(image) = replays.iter().find_map(|replay| replay.image_of(from)) else {
+            continue;
+        };
+        let on_chain = image == *to || mvcs.on_first_parents(&checkout, to, &image)?;
+        if on_chain {
+            jumps.push(crate::repin::Repin {
+                member: member.clone(),
+                from: Some(from.clone()),
+                to: to.clone(),
+                verb: "land".to_owned(),
+            });
+        }
+    }
+    Ok(jumps)
 }
 
 /// Read post-replay HEADs of each manifest repo + project repo and write
