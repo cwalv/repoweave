@@ -80,7 +80,7 @@ fn each_workspace_side_is_classified_once_on_the_sync_path() {
     let expected: BTreeMap<&str, usize> = BTreeMap::from([
         ("pin_source_snapshot", 1),
         ("run_preconditions_after_acquire", 1),
-        ("judge_landing_source", 1),
+        ("judge_source_pins", 1),
     ]);
 
     assert_eq!(
@@ -89,8 +89,10 @@ fn each_workspace_side_is_classified_once_on_the_sync_path() {
          `pin_source_snapshot`, whose result the whole path reads back off \
          `SourceSnapshot::source_class`, and the destination in \
          `run_preconditions_after_acquire`; a landing refused before it has a \
-         target classifies its own workspace once, in `judge_landing_source`, \
-         and never reaches the preconditions.\n\
+         target classifies its own workspace once, in `judge_source_pins`, \
+         and never reaches the preconditions; `rwv sync` classifies its own \
+         workspace once, in `judge_source_pins` from its plan, before anything \
+         moves.\n\
          \n\
          A second call inside a function that already has one re-reads a \
          workspace this op has already classified, at a later instant — the \

@@ -431,7 +431,7 @@ Every refusal is judged before anything moves, and all of them are reported toge
 | `history` | `unset` | A repo needs more than a fast-forward, the target records no `history` for it, and no `--history` gives one |
 | `history` | `contradicted` | `--history` differs from the setting the target records for a repo |
 | `pin` | `off lineage` | A member's base is not on the branch it lands on (above) |
-| `pin` | `backwards` | A member's checkout does not contain the pin this branch's lock holds for it (behind it, diverged from it, or the pin in no ref here), as `rwv land` refuses it: the sync would move the pin off it with no name. `rwv member pin <m> <rev> --commit` moves it by name; a member `--reset-to-target` names is not judged |
+| `pin` | `backwards` | A member's checkout does not contain the pin this branch's lock holds for it (behind it, diverged from it, or the pin in no ref here), as `rwv land` refuses it: the sync would move the pin off it with no name. The `rwv member pin` the refusal prints moves it by name; a member `--reset-to-target` names is not judged |
 | `pin` | `none` | This branch's lock has no entry for a member, as `rwv land` refuses it |
 | `pin` | `unreachable` | The target pins a commit this clone lacks, or a pin in its history the lineage rule must read |
 | `pin` | `not on declared branch` | `--from` on a declared branch, for a member the named branch declares elsewhere |
