@@ -8272,7 +8272,15 @@ fn apply_project_strategy(
     };
     if how == Integration::Merge {
         op_state::journal_merging(owner, RepoKey::Project, source_tip.id())?;
-        return match stage_merge(vcs, cwd_project_dir, source_tip) {
+        let fresh = vcs.merge_in_flight(cwd_project_dir)? != Some(source_tip.id().clone());
+        let staged = stage_merge(vcs, cwd_project_dir, source_tip);
+        if fresh
+            && matches!(staged, Ok(_) | Err(VcsError::RebaseConflict { .. }))
+            && crate::manifest_conflict::check_merge_in_flight(vcs, cwd_project_dir)?
+        {
+            return Err(conflict(cwd_project_dir, ConflictOp::Merge));
+        }
+        return match staged {
             Ok(_) => Ok(()),
             Err(VcsError::RebaseConflict { repo, op }) => Err(conflict(&repo, op)),
             Err(e) => Err(crate::untokened!(
@@ -8290,16 +8298,11 @@ fn apply_project_strategy(
     {
         return Ok(());
     }
+    let policy = DerivedContentPolicy::rewritten_after();
     let outcome = if mid_rebase {
-        vcs.rebase_continue(cwd_project_dir, DerivedContentPolicy::rewritten_after())
+        crate::manifest_conflict::continue_replay(vcs, cwd_project_dir, policy)?
     } else {
-        vcs.rebase(
-            cwd_project_dir,
-            source_tip,
-            source_tip,
-            DerivedContentPolicy::rewritten_after(),
-        )
-        .map(drop)
+        crate::manifest_conflict::replay(vcs, cwd_project_dir, source_tip, policy)?
     };
     match outcome {
         Ok(()) => Ok(()),

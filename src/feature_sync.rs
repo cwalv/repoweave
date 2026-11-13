@@ -2130,8 +2130,12 @@ fn take_project(
     let dir = &sync.dir;
     let label = sync.label();
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
-        vcs.rebase_continue(dir, DerivedContentPolicy::rewritten_after())
-            .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
+        crate::manifest_conflict::continue_replay(
+            vcs,
+            dir,
+            DerivedContentPolicy::rewritten_after(),
+        )?
+        .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
         return Ok(());
     }
     let attached = match vcs.head_attachment(dir)? {
@@ -2212,7 +2216,7 @@ fn take_project(
         },
         None,
     )?;
-    vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
+    crate::manifest_conflict::replay(vcs, dir, &src, DerivedContentPolicy::rewritten_after())?
         .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
     crate::op_state::journal_tip(
         sync.ctx.active_path(),

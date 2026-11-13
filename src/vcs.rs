@@ -5452,6 +5452,12 @@ pub trait Vcs: Send + Sync {
     /// For git: `REBASE_HEAD`.
     fn rebase_replaying(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
 
+    /// Whether the replay in flight in `checkout` is paused after a commit it
+    /// replayed with no conflict, by [`Vcs::rebase_pausing`].
+    ///
+    /// For git: the `edit` stop's `rebase-merge/amend`.
+    fn rebase_paused(&self, checkout: &Path) -> Result<bool, VcsError>;
+
     /// The staged content of `path` in `checkout`, `None` where nothing is
     /// staged there.
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError>;

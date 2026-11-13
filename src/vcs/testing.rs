@@ -1000,6 +1000,10 @@ impl Vcs for FakeVcs {
         unsupported("rebase_replaying")
     }
 
+    fn rebase_paused(&self, _checkout: &Path) -> Result<bool, VcsError> {
+        unsupported("rebase_paused")
+    }
+
     fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {
         unsupported("staged_file")
     }

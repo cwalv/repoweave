@@ -712,14 +712,28 @@ impl ProjectMerge<'_> {
             report.into_result()?;
         }
         if let Some(trees) = vcs.tree_merges() {
-            match trees.merge_tree(dir, &sides.first, &sides.second)? {
-                TreeMerge::Clean(tree) => return Ok(Merged::Tree(tree)),
+            let tree = match trees.merge_tree(dir, &sides.first, &sides.second)? {
+                TreeMerge::Clean(tree) => Some(tree),
                 TreeMerge::Conflicted { tree, paths }
                     if paths.iter().all(|path| path == LockFile::FILE_NAME) =>
                 {
-                    return Ok(Merged::Tree(tree))
+                    Some(tree)
                 }
-                TreeMerge::Conflicted { .. } => {}
+                TreeMerge::Conflicted { .. } => None,
+            };
+            if let Some(tree) = tree {
+                let merged = Merged::Tree(tree);
+                let held = sides.held(self.head);
+                let incoming = sides.incoming(self.head);
+                let base = vcs.merge_bases(dir, held, incoming)?.into_iter().next();
+                let text = merged
+                    .file(vcs, dir, Manifest::FILE_NAME)?
+                    .unwrap_or_default();
+                let recorded =
+                    crate::manifest_conflict::sides_at(vcs, dir, base.as_ref(), held, incoming);
+                if !crate::manifest_conflict::text_merge_differs(&recorded, &text)? {
+                    return Ok(merged);
+                }
             }
         }
         op_state::journal_merging(
@@ -727,7 +741,7 @@ impl ProjectMerge<'_> {
             crate::manifest::RepoKey::Project,
             sides.incoming(self.head),
         )?;
-        let paths: Vec<String> = vcs
+        let mut paths: Vec<String> = vcs
             .start_merge(
                 dir,
                 sides.incoming(self.head),
@@ -736,6 +750,9 @@ impl ProjectMerge<'_> {
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
             .collect();
+        if crate::manifest_conflict::check_merge_in_flight(vcs, dir)? {
+            paths.push(Manifest::FILE_NAME.to_owned());
+        }
         if paths.is_empty() {
             Ok(Merged::Index)
         } else {

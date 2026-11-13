@@ -19283,6 +19283,327 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
     scenario(name, steps)
 }
 
+/// A text merge of `rwv.toml` git makes with no conflict, checked against
+/// the merge of both sides' values.
+#[derive(Debug, Clone, Copy)]
+pub enum TextMerge {
+    /// The workweave adds `docs` after setting `app`'s role, `main` sets
+    /// `app`'s `history`: git's merge puts the setting in `docs`. Under
+    /// linear history the same edits conflict, as plain git's do.
+    SettingMoved,
+    /// [`TextMerge::SettingMoved`] at a landing.
+    SettingMovedLand,
+    /// [`TextMerge::SettingMoved`] at a pull.
+    SettingMovedPull,
+    /// [`TextMerge::SettingMoved`] settled by a staged hand edit.
+    SettingMovedByHand,
+    /// The workweave sets `lib`'s `history` by hand under its header and
+    /// `main` by its setter: git's merge holds the key twice.
+    DuplicateKey(ManifestStopHistory),
+    /// [`TextMerge::DuplicateKey`] at a landing.
+    DuplicateKeyLand(ManifestStopHistory),
+    /// [`TextMerge::DuplicateKey`] replayed, with a second workweave commit
+    /// changing `rwv.toml`: the continue writes the first, and the replay is
+    /// killed at the next pause and `then` exits it.
+    KilledAtTheNextPause(AbortOr),
+    /// [`TextMerge::DuplicateKey`] replayed, killed at the pause before its
+    /// check ran.
+    KilledBeforeTheCheck(AbortOr),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AbortOr {
+    Continue,
+    Abort,
+}
+
+pub fn check_a_text_merge(how: TextMerge) -> Scenario {
+    use ManifestStopHistory as H;
+    use TextMerge as T;
+    let flag = |history: H| match history {
+        H::Merge => "merge",
+        H::Linear => "linear",
+    };
+    let replayed = |step: Step, history: H| match history {
+        H::Merge => step,
+        H::Linear => step.may_strand(&[Repo::Proj]),
+    };
+    let differs = "rwv.toml: the VCS merged its text with no conflict, into";
+    let moved = || {
+        vec![
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            create("w"),
+            Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", APP])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        ]
+    };
+    let duplicated = |history: H| {
+        vec![
+            create("w"),
+            Step::hand_edit(
+                &ww("w"),
+                Repo::Proj,
+                "rwv.toml",
+                "[repositories.\"local/remotes/lib\"]\n",
+                &format!(
+                    "[repositories.\"local/remotes/lib\"]\nhistory = \"{}\"\n",
+                    flag(history)
+                ),
+            ),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &["branch", "set-history", flag(history), "--repo", LIB],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+        ]
+    };
+    let one = |at: &Place, what: &'static str| {
+        Step::git(
+            at,
+            Repo::Proj,
+            &["grep", "-c", what, "HEAD", "--", "rwv.toml"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("rwv.toml:1"))
+    };
+    let app_history = |at: &Place| {
+        Step::git(at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "role = \"fork\"\nhistory = \"merge\"",
+            ))
+    };
+    let lib_merged = |at: &Place, history: H| {
+        Step::git(at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(match history {
+                H::Merge => "history = \"merge\"",
+                H::Linear => "history = \"linear\"",
+            }))
+            .claim(Claim::OutputContains("role = \"fork\""))
+    };
+    let (name, steps) = match how {
+        T::SettingMoved => {
+            let mut steps = moved();
+            steps.extend([
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs))
+                    .claim(Claim::OutputContains(
+                        "local/remotes/app history: absent in the text merge, \"merge\" in the merge of the values",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "local/remotes/docs history: \"merge\" in the text merge, absent in the merge of the values",
+                    ))
+                    .claim(Claim::OutputContains("`rwv sync --continue` writes and stages")),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
+                Step::rwv(&ww("w"), &["sync", "--continue"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("wrote and staged the merge")),
+                one(&ww("w"), "history"),
+                app_history(&ww("w")),
+            ]);
+            (
+                "a sync's merge whose text merge of rwv.toml moved a setting stops",
+                steps,
+            )
+        }
+        T::SettingMovedLand => {
+            let mut steps = moved();
+            steps.extend([
+                Step::rwv(
+                    &ww("w"),
+                    &["land", "--history", "merge", "--allow-member-change", APP],
+                )
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(differs)),
+                Step::rwv(&ww("w"), &["land", "--continue"]).expect(Exit::Succeeds),
+                one(&a(), "history"),
+                app_history(&a()),
+            ]);
+            (
+                "a landing's merge whose text merge of rwv.toml moved a setting stops",
+                steps,
+            )
+        }
+        T::SettingMovedPull => {
+            let steps = vec![
+                Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                    .pushes(Remote::origin(Repo::Proj), "main"),
+                Step::new_machine(Machine::B),
+                Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", APP])
+                    .expect(Exit::Succeeds),
+                Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                    .pushes(Remote::origin(Repo::Proj), "main"),
+                Step::rwv(&b(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+                Step::rwv(&b(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+                Step::rwv(&b(), &["pull", "--merge-upstream"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs)),
+                Step::rwv(&b(), &["pull", "--continue"]).expect(Exit::Succeeds),
+                one(&b(), "history"),
+                app_history(&b()),
+            ];
+            (
+                "a pull whose text merge of rwv.toml moved a setting stops",
+                steps,
+            )
+        }
+        T::SettingMovedByHand => {
+            let mut steps = moved();
+            steps.extend([
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs)),
+                Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"])
+                    .expect(Exit::Succeeds),
+                Step::rwv_printed_holding(&ww("w"), "git -C ", "add -- rwv.toml")
+                    .expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("local/remotes/docs")),
+            ]);
+            (
+                "a text merge of rwv.toml the check stopped is settled by a staged hand edit",
+                steps,
+            )
+        }
+        T::DuplicateKey(history) | T::DuplicateKeyLand(history) => {
+            let land = matches!(how, T::DuplicateKeyLand(_));
+            let mut steps = duplicated(history);
+            let (start, resume): (Vec<&str>, &[&str]) = if land {
+                (
+                    vec!["land", "--history", flag(history)],
+                    &["land", "--continue"],
+                )
+            } else {
+                (
+                    vec!["sync", "--history", flag(history)],
+                    &["sync", "--continue"],
+                )
+            };
+            let at = if land { a() } else { ww("w") };
+            steps.extend([
+                Step::rwv(&ww("w"), &start)
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("into a file that does not parse"))
+                    .claim(Claim::OutputContains("--continue` writes and stages")),
+                replayed(Step::rwv(&ww("w"), resume).expect(Exit::Succeeds), history),
+                lib_merged(&at, history),
+                one(&at, "history"),
+            ]);
+            (
+                match (land, history) {
+                    (false, H::Merge) => {
+                        "a sync's merge whose text merge of rwv.toml holds a key twice stops"
+                    }
+                    (false, H::Linear) => {
+                        "a sync's replay whose text merge of rwv.toml holds a key twice stops"
+                    }
+                    (true, H::Merge) => {
+                        "a landing's merge whose text merge of rwv.toml holds a key twice stops"
+                    }
+                    (true, H::Linear) => {
+                        "a landing's replay whose text merge of rwv.toml holds a key twice stops"
+                    }
+                },
+                steps,
+            )
+        }
+        T::KilledAtTheNextPause(then) | T::KilledBeforeTheCheck(then) => {
+            let next = matches!(how, T::KilledAtTheNextPause(_));
+            let mut steps = duplicated(H::Linear);
+            if next {
+                steps.push(
+                    Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"])
+                        .expect(Exit::Succeeds),
+                );
+            }
+            if next {
+                steps.extend([
+                    Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+                        .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                        .claim(Claim::OutputContains(differs)),
+                    Step::rwv_paused(
+                        &ww("w"),
+                        &["sync", "--continue"],
+                        "replay-paused",
+                        "replaying",
+                    ),
+                ]);
+            } else {
+                steps.push(Step::rwv_paused(
+                    &ww("w"),
+                    &["sync", "--history", "linear"],
+                    "replay-paused",
+                    "replaying",
+                ));
+            }
+            steps.push(Step::kill("replaying"));
+            match then {
+                AbortOr::Continue if next => steps.extend([
+                    Step::rwv(&ww("w"), &["sync", "--continue"])
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj]),
+                    lib_merged(&ww("w"), H::Linear),
+                    one(&ww("w"), "history"),
+                    Step::git(&ww("w"), Repo::Proj, &["show", "HEAD~1:rwv.toml"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputContains("role = \"fork\"")),
+                ]),
+                AbortOr::Continue => steps.extend([
+                    Step::rwv(&ww("w"), &["sync", "--continue"])
+                        .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                        .claim(Claim::OutputContains(differs)),
+                    Step::rwv(&ww("w"), &["sync", "--continue"])
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj]),
+                    lib_merged(&ww("w"), H::Linear),
+                    one(&ww("w"), "history"),
+                ]),
+                AbortOr::Abort => steps.extend([
+                    Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+                    Step::git(
+                        &ww("w"),
+                        Repo::Proj,
+                        &["rev-parse", "-q", "--verify", "REBASE_HEAD"],
+                    )
+                    .expect(Exit::Code(1)),
+                    Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputLacks("dependency")),
+                ]),
+            }
+            (
+                match (next, then) {
+                    (true, AbortOr::Continue) => {
+                        "a replay killed at the pause after a corrected one is continued"
+                    }
+                    (true, AbortOr::Abort) => {
+                        "a replay killed at the pause after a corrected one is aborted"
+                    }
+                    (false, AbortOr::Continue) => {
+                        "a replay killed at a pause before its check is continued and checked"
+                    }
+                    (false, AbortOr::Abort) => {
+                        "a replay killed at a pause before its check is aborted"
+                    }
+                },
+                steps,
+            )
+        }
+    };
+    scenario(name, steps)
+}
+
 /// What the operator does at a `sync` merge stop on `NOTES.txt`, a file of
 /// the project repo both sides added differently.
 #[derive(Debug, Clone, Copy)]

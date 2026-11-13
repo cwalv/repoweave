@@ -2648,10 +2648,8 @@ impl GitVcs {
         let todo = match pausing {
             Some(path) => {
                 let range = format!("{}..{}", upstream.id().as_str(), old.as_str());
-                let edits: String = Self::run(["rev-list", range.as_str(), "--", path], repo)?
-                    .split_whitespace()
-                    .map(|sha| format!(" -e 's/^pick \\([0-9a-f]*\\) {sha}$/edit \\1 {sha}/'"))
-                    .collect();
+                let edits =
+                    pausing_edits(&Self::run(["rev-list", range.as_str(), "--", path], repo)?);
                 if edits.is_empty() {
                     todo
                 } else {
@@ -2721,6 +2719,36 @@ impl GitVcs {
             repo: repo.to_path_buf(),
             stderr,
         })
+    }
+}
+
+/// `sed` arguments, POSIX basic syntax, that turn the todo's `pick` of each
+/// of `commits`, listed with the full id `rebase.instructionFormat=%H`
+/// prints, into an `edit`.
+fn pausing_edits(commits: &str) -> String {
+    commits
+        .split_whitespace()
+        .map(|sha| format!(" -e 's/^pick \\(.* \\){sha}$/edit \\1{sha}/'"))
+        .collect()
+}
+
+impl GitVcs {
+    /// The commit a replay paused at an `edit` stop wrote, as git recorded it
+    /// there; the tip is still that commit unless it was amended since.
+    fn paused_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
+        let amend = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "rebase-merge/amend",
+            ],
+            repo,
+        )?;
+        match std::fs::read_to_string(&amend) {
+            Ok(id) => Ok(CommitId::parse(id.trim()).ok()),
+            Err(_) => Ok(None),
+        }
     }
 }
 
@@ -5767,6 +5795,10 @@ impl Vcs for GitVcs {
         Ok(Self::ref_tip(checkout, "REBASE_HEAD")?.map(|tip| tip.id().clone()))
     }
 
+    fn rebase_paused(&self, checkout: &Path) -> Result<bool, VcsError> {
+        Ok(Self::paused_at(checkout)?.is_some())
+    }
+
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {
         Self::staged(checkout, path)
     }
@@ -6007,7 +6039,12 @@ impl GitVcs {
                 let Some(onto) = self.rebase_in_flight(repo)? else {
                     return Ok(false);
                 };
-                let head = self.head_revision(repo)?.id().clone();
+                let mut head = self.head_revision(repo)?.id().clone();
+                if Self::paused_at(repo)?.as_ref() == Some(&head) {
+                    if let Some(parent) = self.parents(repo, &head)?.into_iter().next() {
+                        head = parent;
+                    }
+                }
                 steps.iter().any(|step| match step {
                     OwnStep::Rebase {
                         base,
@@ -12235,5 +12272,36 @@ mod drift_tests {
 
         let x = standings.iter().find(|s| s.path == "notes/x.txt").unwrap();
         assert_eq!((x.index, x.file), (Holds::LeftTip, Holds::Other));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod pausing_edits_tests {
+    #[test]
+    fn the_pausing_edits_turn_only_the_named_picks_into_edits() {
+        let named = "1111111111111111111111111111111111111111";
+        let other = "2222222222222222222222222222222222222222";
+        let todo = format!(
+            "pick 1111111 {named}\npick 1111111 # {named}\npick 2222222 {other}\n\
+             exec echo {named}\nlabel onto\nmerge -C 1111111 {named}\nreset onto\n"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("todo");
+        std::fs::write(&file, &todo).unwrap();
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "sed{} \"$1\"",
+                super::pausing_edits(&format!("{named}\n"))
+            ))
+            .arg("sh")
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert_eq!(
+            String::from_utf8(out.stdout).unwrap(),
+            todo.replacen("pick 1111111 ", "edit 1111111 ", 2)
+        );
     }
 }
