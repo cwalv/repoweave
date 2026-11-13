@@ -145,6 +145,20 @@ lease and the claim) only once every source step executed as planned. Each
 closing command a refusal prints names every repo the invocation already
 named on `--abandon-foreign-tip`, so run as printed it ends the operation.
 
+A blocked checkout is planned again under the abandon, and the refusal
+offers giving it up only where that plan is unblocked: by naming it on
+`--abandon-foreign-tip` where abort was run, or else by `rwv -C <workspace>
+abort` in the workspace whose edits are in the way, printed only where that
+workspace's abort takes up this op (it holds the op's record or lease, or
+the landing released it with its retire recorded as stopped) and its plan,
+with those edits its own, is unblocked. The fix printed for edits in the way
+sets aside exactly what the move would discard: `stash push
+--include-untracked`, or `stash push --all` where an ignored file is in the
+way; in a stopped operation or an unresolved index, which no stash sets
+aside, the status that shows how to end it. A submodule's own state is never
+in the way: a hard move of its superproject leaves the submodule's checkout
+as it stands.
+
 The residual against raw git: each planned write checks, immediately before
 it writes, the state the plan judged (HEAD, attachment, the operation in
 progress, a branch's tip, its holders) and a branch moves by compare-and-swap,

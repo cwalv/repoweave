@@ -8,16 +8,16 @@ use crate::vcs::{
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
     DiffBeyond, DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation,
-    Holds, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth, MidOperation,
-    NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch, PublishRef, RangeCommit,
-    RangeListing, RawRefName, RawRevisionId, RecordedSubmodule, RecordedUrl, RecordsAdvance,
-    RecordsPublish, RecordsSite, RefMerge, RefOrigin, RefRestoreOutcome, RefSavepoint,
-    RefreshScope, RefreshWrite, RegistrationPrune, RemoteBranchCopies, RemoteBranchMove,
-    RemoteDefaultBranch, RemoteHandle, RemoteNameTaken, RemoteRef, RemoteTip, RemoteTracking,
-    Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId, SavepointListing, Site,
-    SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile, TrackedFileKind, TreeMerges,
-    UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError, VerifiedRestoreOutcome,
-    WorkspacePopulation,
+    Holds, InTheWay, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth,
+    MidOperation, NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch,
+    PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule,
+    RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge, RefOrigin,
+    RefRestoreOutcome, RefSavepoint, RefreshScope, RefreshWrite, RegistrationPrune,
+    RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
+    RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId,
+    SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile,
+    TrackedFileKind, TreeMerges, UnconfirmedRemote, Upstream, UrlRemote, Vcs, VcsAction, VcsError,
+    VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use crate::vcs::{
     Attribution, CheckoutRestorePlan, Integrates, KeptWork, OwnStep, RefRestorePlan, RestoredFrom,
@@ -2987,6 +2987,8 @@ impl Vcs for GitVcs {
         match action {
             VcsAction::Commit => "git -C <checkout> commit",
             VcsAction::Stash => "git -C <checkout> stash push",
+            VcsAction::StashUntracked => "git -C <checkout> stash push --include-untracked",
+            VcsAction::StashIgnored => "git -C <checkout> stash push --all",
             VcsAction::Status => "git -C <checkout> status",
             VcsAction::RemoveWorktree => "git -C <checkout> worktree remove <worktree>",
             VcsAction::BranchAt => "git -C <checkout> branch <name> <sha>",
@@ -5306,6 +5308,7 @@ impl GitVcs {
         if !self.keep_before_discarding(repo, savepoint, edits_here, kept)? {
             return Ok(VerifiedRestoreOutcome::EditsElsewhere {
                 savepoint: savepoint.id().clone(),
+                in_the_way: InTheWay::Edits,
             });
         }
         Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
@@ -5460,12 +5463,23 @@ impl GitVcs {
     /// uncommitted: a tracked change, or an untracked file or directory
     /// (ignored or not) at a path `to` has, inside one, or holding one. Where
     /// it does, the ignored paths it discards, which a snapshot adds only by
-    /// name.
+    /// name. A submodule's state is not among them: `reset --hard` leaves
+    /// the submodule's checkout as it stands.
     fn hard_move_discards(
         repo: &Path,
         to: &ResolvedRevisionId,
     ) -> Result<Option<Vec<String>>, VcsError> {
-        let tracked_dirt = !Self::dirty_file_names_inner(repo, StatusReach::Tracked)?.is_empty();
+        let tracked_dirt = !Self::run(
+            vec![
+                "status",
+                "--porcelain",
+                "-z",
+                "--untracked-files=no",
+                "--ignore-submodules=all",
+            ],
+            repo,
+        )?
+        .is_empty();
         let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
             Ok(Self::run(args.to_vec(), repo)?
                 .split('\0')
@@ -5544,9 +5558,10 @@ impl GitVcs {
         held: CheckoutHolds,
     ) -> Result<CheckoutRestorePlan, VcsError> {
         let attributable = |tip: &CommitId| tip == savepoint || attribution.wrote(tip);
-        let edits_elsewhere = || {
+        let edits_elsewhere = |in_the_way| {
             CheckoutRestorePlan::Blocked(VerifiedRestoreOutcome::EditsElsewhere {
                 savepoint: savepoint.clone(),
+                in_the_way,
             })
         };
 
@@ -5575,7 +5590,7 @@ impl GitVcs {
                     && Self::hard_move_discards(repo, &ResolvedRevisionId::from(lands_at.clone()))?
                         .is_some()
                 {
-                    return Ok(edits_elsewhere());
+                    return Ok(edits_elsewhere(InTheWay::Unresolved));
                 }
                 keep_edits_to = Some(lands_at.clone());
             }
@@ -5586,7 +5601,7 @@ impl GitVcs {
                     ));
                 }
                 if !attribution.edits_here {
-                    return Ok(edits_elsewhere());
+                    return Ok(edits_elsewhere(InTheWay::Unresolved));
                 }
             }
             let on_after = match stopped {
@@ -5665,14 +5680,20 @@ impl GitVcs {
             let lands_at = onto
                 .as_ref()
                 .map_or_else(|| savepoint.clone(), |(_, tip)| tip.clone());
-            let blocks = !held.edits_cleared && Self::edits_block_switch(repo, &lands_at)?;
-            if blocks && !attribution.edits_here {
-                return Ok(edits_elsewhere());
+            let in_the_way = if held.edits_cleared {
+                None
+            } else {
+                Self::edits_block_switch(repo, &lands_at)?
+            };
+            let blocks = in_the_way.is_some();
+            if let (Some(in_the_way), false) = (in_the_way, attribution.edits_here) {
+                return Ok(edits_elsewhere(in_the_way));
             }
-            if blocks && foreign_tip_policy == ForeignTipPolicy::Refuse {
+            if let (Some(in_the_way), ForeignTipPolicy::Refuse) = (in_the_way, foreign_tip_policy) {
                 return Ok(CheckoutRestorePlan::Blocked(
                     VerifiedRestoreOutcome::EditsBlockSwitchBack {
                         savepoint: savepoint.clone(),
+                        in_the_way,
                     },
                 ));
             }
@@ -5720,12 +5741,16 @@ impl GitVcs {
                 },
             ));
         };
-        if !held.edits_cleared
-            && !attribution.edits_here
-            && Self::hard_move_discards(repo, &ResolvedRevisionId::from(savepoint.clone()))?
-                .is_some()
-        {
-            return Ok(edits_elsewhere());
+        if !held.edits_cleared && !attribution.edits_here {
+            if let Some(ignored) =
+                Self::hard_move_discards(repo, &ResolvedRevisionId::from(savepoint.clone()))?
+            {
+                return Ok(edits_elsewhere(if ignored.is_empty() {
+                    InTheWay::Edits
+                } else {
+                    InTheWay::Ignored
+                }));
+            }
         }
         Ok(CheckoutRestorePlan::Reset {
             from: held.head,
@@ -5734,12 +5759,6 @@ impl GitVcs {
         })
     }
 
-    /// Whether `repo`'s uncommitted state keeps its checkout from switching
-    /// to `to` without loss: with the index's stat data refreshed, as a
-    /// switch refreshes it, git's own two-way merge, run dry, refuses it
-    /// (an unresolved index, a tracked edit or an untracked file `to`
-    /// differs at), or an ignored file sits where `to` has a path, which a
-    /// switch overwrites without refusing.
     /// Why the VCS's own cancel of `stopped` would refuse, where it would: a
     /// path the operation staged and the working tree has changed since.
     fn cancel_refuses(repo: &Path, stopped: ConflictOp) -> Result<Option<String>, VcsError> {
@@ -5770,7 +5789,13 @@ impl GitVcs {
         Ok(None)
     }
 
-    fn edits_block_switch(repo: &Path, to: &CommitId) -> Result<bool, VcsError> {
+    /// What in `repo`'s uncommitted state keeps its checkout from switching
+    /// to `to` without loss: with the index's stat data refreshed, as a
+    /// switch refreshes it, git's own two-way merge, run dry, refuses it
+    /// (an unresolved index, a tracked edit or an untracked file `to`
+    /// differs at), or an ignored file sits where `to` has a path, which a
+    /// switch overwrites without refusing.
+    fn edits_block_switch(repo: &Path, to: &CommitId) -> Result<Option<InTheWay>, VcsError> {
         git_command()
             .args(["update-index", "-q", "--refresh"])
             .current_dir(repo)
@@ -5784,11 +5809,11 @@ impl GitVcs {
                 ),
                 source: e,
             })?;
-        match Self::run(
+        let refused = match Self::run(
             vec!["read-tree", "-n", "-m", "-u", "HEAD", to.as_str()],
             repo,
         ) {
-            Ok(_) => {}
+            Ok(_) => None,
             Err(VcsError::CommandFailed { args, stderr, .. }) => {
                 let lock = PathBuf::from(
                     Self::run(
@@ -5809,10 +5834,13 @@ impl GitVcs {
                         stderr: format!("{} is held by another process: {stderr}", lock.display()),
                     });
                 }
-                return Ok(true);
+                if !Self::run(vec!["ls-files", "--unmerged", "-z"], repo)?.is_empty() {
+                    return Ok(Some(InTheWay::Unresolved));
+                }
+                Some(InTheWay::Edits)
             }
             Err(other) => return Err(other),
-        }
+        };
         let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
             Ok(Self::run(args.to_vec(), repo)?
                 .split('\0')
@@ -5829,10 +5857,10 @@ impl GitVcs {
             "-z",
         ])?;
         if ignored.is_empty() {
-            return Ok(false);
+            return Ok(refused);
         }
         let tracked = listed(&["ls-tree", "-r", "-z", "--name-only", to.as_str()])?;
-        Ok(ignored.iter().any(|path| {
+        let collides = ignored.iter().any(|path| {
             tracked.iter().any(|t| {
                 t == path
                     || t.strip_prefix(path.as_str())
@@ -5841,7 +5869,12 @@ impl GitVcs {
                         .strip_prefix(t.as_str())
                         .is_some_and(|rest| rest.starts_with('/'))
             })
-        }))
+        });
+        Ok(if collides {
+            Some(InTheWay::Ignored)
+        } else {
+            refused
+        })
     }
 
     /// The checkout's state where `plan` expects it, or the restore of
@@ -5950,9 +5983,10 @@ impl GitVcs {
                 }
                 let edits_elsewhere = |vcs: &Self| -> Result<VerifiedRestoreOutcome, VcsError> {
                     Ok(match vcs.checkout_savepoint(repo, key)? {
-                        Some((_, savepoint)) => {
-                            VerifiedRestoreOutcome::EditsElsewhere { savepoint }
-                        }
+                        Some((_, savepoint)) => VerifiedRestoreOutcome::EditsElsewhere {
+                            savepoint,
+                            in_the_way: InTheWay::Unresolved,
+                        },
                         None => VerifiedRestoreOutcome::NoSavepoint,
                     })
                 };
@@ -6045,11 +6079,13 @@ impl GitVcs {
                     if !edits_here {
                         return Ok(VerifiedRestoreOutcome::EditsElsewhere {
                             savepoint: savepoint.clone(),
+                            in_the_way: InTheWay::Edits,
                         });
                     }
                     if !discard_blocking_edits {
                         return Ok(VerifiedRestoreOutcome::EditsBlockSwitchBack {
                             savepoint: savepoint.clone(),
+                            in_the_way: InTheWay::Edits,
                         });
                     }
                     self.discard_edits_kept(repo, kept)?;

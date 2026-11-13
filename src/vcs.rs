@@ -415,6 +415,8 @@ pub struct RangeListing {
 pub enum VcsAction {
     Commit,
     Stash,
+    StashUntracked,
+    StashIgnored,
     Status,
     RemoveWorktree,
     BranchAt,
@@ -436,9 +438,11 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 20] = [
+    pub const ALL: [VcsAction; 22] = [
         Self::Commit,
         Self::Stash,
+        Self::StashUntracked,
+        Self::StashIgnored,
         Self::Status,
         Self::RemoveWorktree,
         Self::BranchAt,
@@ -458,6 +462,19 @@ impl VcsAction {
         Self::UnsetUpstream,
         Self::SetCommitIdentity,
     ];
+}
+
+/// What setting aside the uncommitted state a restore would discard must
+/// take with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InTheWay {
+    /// Tracked edits and untracked files.
+    Edits,
+    /// An ignored file as well.
+    Ignored,
+    /// An operation stopped there, or an index one left unresolved, which
+    /// no stash sets aside: it is ended first.
+    Unresolved,
 }
 
 /// In-flight VCS operation whose conflict needs human resolution.
@@ -1103,16 +1120,19 @@ pub enum VerifiedRestoreOutcome {
     /// The checkout is stopped in an operation the op never starts there,
     /// begun at the savepoint: it is left as it is and the savepoint dropped.
     LeftStopped { stopped: ConflictOp },
-    /// The checkout is stopped in an operation the op cannot attribute to
-    /// itself: one it never starts there begun on a tip it moved, or one
-    /// begun on a tip it never wrote. Nothing was touched.
     /// The checkout is stopped in an operation abort would cancel, and the
     /// VCS refused to cancel it, saying `why`. Its edits, where any were kept
     /// first, are in the backup the restore reports.
     CancelRefused { stopped: ConflictOp, why: String },
     /// The restore would discard uncommitted edits in a checkout of another
     /// workspace than the one abort was run in. Nothing was touched.
-    EditsElsewhere { savepoint: CommitId },
+    EditsElsewhere {
+        savepoint: CommitId,
+        in_the_way: InTheWay,
+    },
+    /// The checkout is stopped in an operation the op cannot attribute to
+    /// itself: one it never starts there begun on a tip it moved, or one
+    /// begun on a tip it never wrote. Nothing was touched.
     StoppedForeign {
         stopped: ConflictOp,
         /// Where canceling the operation would leave HEAD.
@@ -1131,7 +1151,10 @@ pub enum VerifiedRestoreOutcome {
     /// The checkout, at a tip abort may restore, is off where its savepoint
     /// was taken, and its uncommitted edits keep it from switching back.
     /// Nothing was touched.
-    EditsBlockSwitchBack { savepoint: CommitId },
+    EditsBlockSwitchBack {
+        savepoint: CommitId,
+        in_the_way: InTheWay,
+    },
     /// Work was kept as backups before the steps that would have discarded
     /// it; `then` is what the restore did.
     Kept {

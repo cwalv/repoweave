@@ -260,6 +260,41 @@ fn edits_elsewhere_block_and_are_left() {
 }
 
 #[test]
+fn a_submodule_left_dirty_elsewhere_does_not_block_the_reset_that_never_touches_it() {
+    let sub = repo();
+    let p = repo();
+    git(
+        p.path(),
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            sub.path().to_str().unwrap(),
+            "sub",
+        ],
+    );
+    git(p.path(), &["commit", "-qm", "sub"]);
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    let wrote = commit(p.path(), "op");
+    std::fs::write(p.path().join("sub/f"), "dirt in the submodule").unwrap();
+    planned_then_run(
+        p.path(),
+        &Attribution {
+            intent: Some(&wrote),
+            ..Attribution::default()
+        },
+        ForeignTipPolicy::Refuse,
+        "RestoredFromIntent",
+    );
+    assert_eq!(
+        std::fs::read_to_string(p.path().join("sub/f")).unwrap(),
+        "dirt in the submodule"
+    );
+}
+
+#[test]
 fn a_branch_held_elsewhere_blocks_the_switch_back() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
@@ -371,7 +406,7 @@ fn switch_refused(p: &Path, to: &str) -> bool {
 }
 
 fn agrees_with_git(p: &Path, to: &CommitId) {
-    let predicted = GitVcs::edits_block_switch(p, to).unwrap();
+    let predicted = GitVcs::edits_block_switch(p, to).unwrap().is_some();
     assert_eq!(predicted, switch_refused(p, to.as_str()));
 }
 
@@ -393,7 +428,10 @@ fn an_unresolved_index_blocks_a_switch_as_git_does() {
         .output()
         .unwrap();
     git(p, &["rebase", "--quit"]);
-    assert!(GitVcs::edits_block_switch(p, &main).unwrap());
+    assert_eq!(
+        GitVcs::edits_block_switch(p, &main).unwrap(),
+        Some(InTheWay::Unresolved)
+    );
     agrees_with_git(p, &main);
 }
 
@@ -407,7 +445,10 @@ fn a_renamed_file_with_edits_blocks_a_switch_as_git_does() {
     git(p, &["mv", "f", "g"]);
     git(p, &["commit", "-qm", "f renamed g"]);
     std::fs::write(p.join("g"), "one\ntwo\nthree\nfour\nfive\nsix\n").unwrap();
-    assert!(GitVcs::edits_block_switch(p, &base).unwrap());
+    assert_eq!(
+        GitVcs::edits_block_switch(p, &base).unwrap(),
+        Some(InTheWay::Edits)
+    );
     agrees_with_git(p, &base);
 }
 
@@ -420,7 +461,45 @@ fn an_ignored_file_a_switch_would_overwrite_blocks_it() {
     git(p, &["switch", "-q", "--detach", base.as_str()]);
     std::fs::write(p.join(".git/info/exclude"), "u\n").unwrap();
     std::fs::write(p.join("u"), "mine").unwrap();
-    assert!(GitVcs::edits_block_switch(p, &to).unwrap());
+    assert_eq!(
+        GitVcs::edits_block_switch(p, &to).unwrap(),
+        Some(InTheWay::Ignored)
+    );
+}
+
+fn set_aside_as_hinted(p: &Path, in_the_way: InTheWay) {
+    let action = match in_the_way {
+        InTheWay::Edits => VcsAction::StashUntracked,
+        InTheWay::Ignored => VcsAction::StashIgnored,
+        InTheWay::Unresolved => panic!("no stash sets aside an unresolved index"),
+    };
+    let line = GitVcs
+        .hint(action)
+        .replace("<checkout>", &p.display().to_string());
+    let words: Vec<&str> = line.split_whitespace().skip(1).collect();
+    git(p, &words);
+}
+
+#[test]
+fn the_stash_each_obstacle_prints_clears_it() {
+    let tmp = repo();
+    let p = tmp.path();
+    let base = head(p);
+    let to = commit(p, "u");
+    git(p, &["switch", "-q", "-c", "other", base.as_str()]);
+    std::fs::write(p.join("u"), "untracked").unwrap();
+    let in_the_way = GitVcs::edits_block_switch(p, &to).unwrap().unwrap();
+    set_aside_as_hinted(p, in_the_way);
+    assert_eq!(GitVcs::edits_block_switch(p, &to).unwrap(), None);
+    std::fs::write(p.join(".git/info/exclude"), "u\n").unwrap();
+    std::fs::write(p.join("u"), "ignored").unwrap();
+    let in_the_way = GitVcs::edits_block_switch(p, &to).unwrap().unwrap();
+    set_aside_as_hinted(p, in_the_way);
+    assert_eq!(GitVcs::edits_block_switch(p, &to).unwrap(), None);
+    assert_eq!(
+        GitVcs::hard_move_discards(p, &ResolvedRevisionId::from(to.clone())).unwrap(),
+        None
+    );
 }
 
 #[test]

@@ -22,7 +22,7 @@ use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, Attribution, CheckoutRestorePlan, CommitId, ConflictOp,
-    DerivedContentPolicy, ForeignTipPolicy, HeadAttachment, Integrates, RefRestorePlan,
+    DerivedContentPolicy, ForeignTipPolicy, HeadAttachment, InTheWay, Integrates, RefRestorePlan,
     RefSavepoint, RemoteTracking, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput,
     VerifiedRestoreOutcome,
 };
@@ -8223,14 +8223,8 @@ fn released_landing_to_abort(
         0 => Ok(None),
         1 => {
             let (reading, owner) = released.remove(0);
-            let stopped = matches!(
-                &reading,
-                op_state::OwnerReading::Whole(record)
-                    if record.phase == op_state::OpPhase::Retire
-                        && record.take_in.as_ref().is_some_and(|take_in| take_in.retire_stopped)
-            );
             let id = reading.header().id.clone();
-            if !stopped {
+            if !retire_stopped(&reading) {
                 crate::refuse!(
                     RefusalKind::AbortInItsWorkspace,
                     "the landing from {owner} (op {id}) moved this workspace and released it, \
@@ -8262,6 +8256,28 @@ fn released_landing_to_abort(
                 .collect::<Vec<_>>()
                 .join("\n"),
         ),
+    }
+}
+
+fn retire_stopped(reading: &op_state::OwnerReading) -> bool {
+    matches!(
+        reading,
+        op_state::OwnerReading::Whole(record)
+            if record.phase == op_state::OpPhase::Retire
+                && record.take_in.as_ref().is_some_and(|take_in| take_in.retire_stopped)
+    )
+}
+
+/// Whether `rwv abort` run in `workspace` takes up the op `op`, as
+/// [`abort_op`] finds the op it aborts.
+fn abort_accepted_in(ctx: &WorkspaceContext, workspace: &CanonicalPath, op: &OpId) -> bool {
+    match op_state::resolve_for_abort(workspace.as_path()) {
+        Ok(Some((reading, _))) => reading.header().id == *op,
+        Ok(None) => landing_released_into(ctx, workspace).is_ok_and(|released| {
+            matches!(released.as_slice(), [(reading, _)]
+                if reading.header().id == *op && retire_stopped(reading))
+        }),
+        Err(_) => false,
     }
 }
 
@@ -8312,12 +8328,13 @@ struct AbortTally {
     any_failure: bool,
     /// The repos left at a tip `--abandon-foreign-tip` restores over.
     abandonable: Vec<RepoOperand>,
-    /// The repos left stopped in an operation abort may not cancel unasked,
-    /// with the VCS action that shows how to end it there.
-    stopped: Vec<(RepoOperand, ConflictOp, String)>,
-    /// The repos abort cannot switch back onto their saved branch, with the
-    /// choice that frees it.
+    /// The repos abort cannot restore as they stand, each with the choice
+    /// that clears it and whether naming it on `--abandon-foreign-tip`
+    /// gives it up instead.
     blocked: Vec<(RepoOperand, String, bool)>,
+    /// The repos the rerun names on `--abandon-foreign-tip` once their fix
+    /// is made.
+    named_after_fix: Vec<RepoOperand>,
     /// What abort could not read to plan its restore.
     unread: Vec<String>,
 }
@@ -8513,6 +8530,7 @@ fn abort_op(
             &carries,
             &own_steps,
             abandon,
+            None,
             &mut plan,
         );
 
@@ -8546,6 +8564,8 @@ fn abort_op(
                                 &carries,
                                 &own_steps,
                                 abandon,
+                                abort_accepted_in(ctx, other_dir, &op_id)
+                                    .then_some(other_dir.as_path()),
                                 &mut plan,
                             );
                             other_ws_dir = Some(dir);
@@ -8881,12 +8901,27 @@ pub(crate) enum InPlaceRefPlan {
 }
 
 /// One thing `rwv abort` does, each judged before the first is done.
+/// What gives up a blocked checkout's obstacle instead of fixing it, from
+/// that checkout's own plan under the abandon.
+#[derive(Clone)]
+pub(crate) enum GiveUp {
+    /// Naming it on `--abandon-foreign-tip`, where abort was run.
+    Here,
+    /// `rwv abort` run in `workspace`, where the edits in the way are its
+    /// own, naming it on `--abandon-foreign-tip` where `abandon`.
+    There { workspace: PathBuf, abandon: bool },
+    /// Nothing: the abandon from here meets the edits `in_the_way` there,
+    /// where they are known, and abort is not accepted where they are.
+    Not { in_the_way: Option<InTheWay> },
+}
+
 pub(crate) enum AbortStep {
     Checkout {
         at: RepoAt,
         key: SavepointKey,
         plan: CheckoutRestorePlan,
         edits_here: bool,
+        give_up: GiveUp,
     },
     /// A target checkout this landing never moved: left, what its savepoint
     /// held kept where no branch reaches it, and the savepoint dropped.
@@ -9190,6 +9225,7 @@ fn plan_abort_workspace(
     carries: &[op_state::Carrying],
     own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
+    aborts_there: Option<&Path>,
     plan: &mut AbortPlan,
 ) {
     let empty_tips = std::collections::BTreeMap::new();
@@ -9311,7 +9347,14 @@ fn plan_abort_workspace(
             },
             edits_here: label.is_empty(),
         };
-        plan_checkout(plan, at, &restore_key, &attribution, consented);
+        plan_checkout(
+            plan,
+            at,
+            &restore_key,
+            &attribution,
+            consented,
+            aborts_there,
+        );
     }
     plan.steps.push(AbortStep::Settle {
         on_target: matches!(side, AbortSide::LandTarget),
@@ -9322,30 +9365,79 @@ fn plan_abort_workspace(
 }
 
 /// Plan the restore of one checkout to its savepoint under `key`.
+/// Plan `at`'s restore, and where that is blocked, what gives it up: the
+/// plan under the abandon from here, else from `aborts_there`, the
+/// workspace that holds it where abort run there is accepted.
 fn plan_checkout(
     plan: &mut AbortPlan,
     at: RepoAt,
     key: &SavepointKey,
     attribution: &Attribution<'_>,
     abandon_foreign_tip: bool,
+    aborts_there: Option<&Path>,
 ) {
     let policy = if abandon_foreign_tip {
         ForeignTipPolicy::Abandon
     } else {
         ForeignTipPolicy::Refuse
     };
-    match at
-        .vcs
-        .plan_checkout_restore(&at.dir, key, attribution, policy)
-    {
-        Ok(checkout) => plan.steps.push(AbortStep::Checkout {
-            at,
-            key: key.clone(),
-            plan: checkout,
-            edits_here: attribution.edits_here,
-        }),
-        Err(e) => plan.unread(at.on_target, at.label, format!("{e:#}")),
-    }
+    let planned = |attribution: &Attribution<'_>, policy| {
+        at.vcs
+            .plan_checkout_restore(&at.dir, key, attribution, policy)
+    };
+    let checkout = match planned(attribution, policy) {
+        Ok(checkout) => checkout,
+        Err(e) => return plan.unread(at.on_target, at.label, format!("{e:#}")),
+    };
+    let give_up = if checkout.blocked().is_none() {
+        GiveUp::Here
+    } else {
+        let abandoned = match policy {
+            ForeignTipPolicy::Refuse => planned(attribution, ForeignTipPolicy::Abandon).ok(),
+            ForeignTipPolicy::Abandon => Some(checkout.clone()),
+        };
+        let unblocked = |attribution: &Attribution<'_>, policy| {
+            planned(attribution, policy).is_ok_and(|p| p.blocked().is_none())
+        };
+        let there = Attribution {
+            edits_here: true,
+            ..*attribution
+        };
+        let abandon_meets = abandoned.as_ref().map(CheckoutRestorePlan::blocked);
+        let in_the_way = match abandon_meets {
+            Some(Some(VerifiedRestoreOutcome::EditsElsewhere { in_the_way, .. })) => {
+                Some(*in_the_way)
+            }
+            _ => None,
+        };
+        let aborts_there = aborts_there.filter(|_| !attribution.edits_here);
+        if policy == ForeignTipPolicy::Refuse && abandon_meets == Some(None) {
+            GiveUp::Here
+        } else if let Some(workspace) = aborts_there {
+            if unblocked(&there, ForeignTipPolicy::Refuse) {
+                GiveUp::There {
+                    workspace: workspace.to_path_buf(),
+                    abandon: false,
+                }
+            } else if unblocked(&there, ForeignTipPolicy::Abandon) {
+                GiveUp::There {
+                    workspace: workspace.to_path_buf(),
+                    abandon: true,
+                }
+            } else {
+                GiveUp::Not { in_the_way }
+            }
+        } else {
+            GiveUp::Not { in_the_way }
+        }
+    };
+    plan.steps.push(AbortStep::Checkout {
+        at,
+        key: key.clone(),
+        plan: checkout,
+        edits_here: attribution.edits_here,
+        give_up,
+    });
 }
 
 /// Plan the restore of each checkout a landing fast-forwarded in place,
@@ -9415,6 +9507,7 @@ fn plan_in_place(
                 &key,
                 &attribution,
                 abandon.covers(repo_key, project),
+                None,
             );
         }
         plan.steps.push(AbortStep::EndInPlace {
@@ -10620,12 +10713,14 @@ fn report_blocked(
                 key,
                 plan,
                 edits_here,
+                give_up,
             } => match plan.blocked().cloned() {
                 Some(blocked) => AbortStep::Checkout {
                     at,
                     key,
                     plan: CheckoutRestorePlan::Blocked(blocked),
                     edits_here,
+                    give_up,
                 },
                 None => continue,
             },
@@ -10651,6 +10746,7 @@ fn run_step(
             key,
             plan,
             edits_here,
+            give_up,
         } => match at
             .vcs
             .execute_checkout_restore(&at.dir, &key, &plan, edits_here)
@@ -10658,10 +10754,13 @@ fn run_step(
             Ok(outcome) => {
                 report_abort_outcome(
                     at.vcs.as_ref(),
-                    &at.label,
-                    &at.named,
+                    &Reported {
+                        label: &at.label,
+                        named: &at.named,
+                        dir: &at.dir,
+                        give_up: &give_up,
+                    },
                     &outcome,
-                    &at.dir,
                     tally,
                 );
             }
@@ -11042,14 +11141,71 @@ struct AbortNoiseSummary {
 /// Record a per-repo abort outcome into `tally`, printing actionable lines
 /// immediately and deferring non-actionable counts to the summary. The
 /// recovery block is printed once, after every repo.
+/// The checkout a restore outcome is reported for.
+struct Reported<'a> {
+    label: &'a str,
+    named: &'a RepoOperand,
+    dir: &'a Path,
+    give_up: &'a GiveUp,
+}
+
+impl Reported<'_> {
+    /// The line that gives the obstacle up instead of fixing it, where one
+    /// does.
+    fn giving_up(&self, what: &str) -> Option<String> {
+        match self.give_up {
+            GiveUp::Here => Some(format!(
+                "\nor give it up, {what} kept as a backup first, by naming it on \
+                 --abandon-foreign-tip"
+            )),
+            GiveUp::There { workspace, abandon } => Some(format!(
+                "\nor give it up from that workspace, where abort keeps {what} as a backup \
+                 first:\n\trwv -C {} abort{}",
+                workspace.display(),
+                if *abandon {
+                    format!(" --abandon-foreign-tip {}", self.named)
+                } else {
+                    String::new()
+                }
+            )),
+            GiveUp::Not { .. } => None,
+        }
+    }
+}
+
+/// How the operator sets aside what is `in_the_way` in `dir`, `there`
+/// where abort was not run.
+fn setting_aside(vcs: &dyn Vcs, in_the_way: InTheWay, dir: &Path, there: bool) -> String {
+    let there = if there { " there" } else { "" };
+    let (how, action) = match in_the_way {
+        InTheWay::Edits => (
+            format!("commit or set aside its edits{there}"),
+            crate::vcs::VcsAction::StashUntracked,
+        ),
+        InTheWay::Ignored => (
+            format!("commit or set aside its edits{there}, its ignored files among them"),
+            crate::vcs::VcsAction::StashIgnored,
+        ),
+        InTheWay::Unresolved => (
+            format!("finish or abandon what is in progress{there} first"),
+            crate::vcs::VcsAction::Status,
+        ),
+    };
+    format!(
+        "{how}, as this shows:\n\t{}",
+        vcs.hint(action)
+            .replace("<checkout>", &dir.display().to_string())
+    )
+}
+
 fn report_abort_outcome(
     vcs: &dyn Vcs,
-    label: &str,
-    named: &RepoOperand,
+    at: &Reported<'_>,
     outcome: &VerifiedRestoreOutcome,
-    repo_abs: &Path,
     tally: &mut AbortTally,
 ) {
+    let (label, named, repo_abs) = (at.label, at.named, at.dir);
+    let may_give_up = matches!(at.give_up, GiveUp::Here);
     match outcome {
         VerifiedRestoreOutcome::NoSavepoint => {
             tally.noise.no_savepoint += 1;
@@ -11071,7 +11227,7 @@ fn report_abort_outcome(
             }
             then => {
                 outln!("  {label}: canceled the {stopped} in progress");
-                report_abort_outcome(vcs, label, named, then, repo_abs, tally);
+                report_abort_outcome(vcs, at, then, tally);
             }
         },
         VerifiedRestoreOutcome::LeftStopped { stopped } => {
@@ -11088,7 +11244,15 @@ fn report_abort_outcome(
             let status = vcs
                 .hint(crate::vcs::VcsAction::Status)
                 .replace("<checkout>", &repo_abs.display().to_string());
-            tally.stopped.push((named.clone(), *stopped, status));
+            tally.blocked.push((
+                named.clone(),
+                format!(
+                    "finish or abandon the {stopped} in progress first, as this shows:\n\t{status}{}",
+                    at.giving_up("its uncommitted edits and its commits")
+                        .unwrap_or_default()
+                ),
+                may_give_up,
+            ));
             let begun = if returns_to == savepoint {
                 format!("begun at the savepoint {}", savepoint.short())
             } else {
@@ -11154,18 +11318,19 @@ fn report_abort_outcome(
             tally.blocked.push((
                 named.clone(),
                 format!(
-                    "commit or set aside the edits it names, as this shows:\n\t{}\n\
-                     or give them up, kept as a backup first, by naming it on \
-                     --abandon-foreign-tip",
+                    "commit or set aside the edits it names, as this shows:\n\t{}{}",
                     vcs.hint(crate::vcs::VcsAction::Status)
-                        .replace("<checkout>", &dir)
+                        .replace("<checkout>", &dir),
+                    at.giving_up("its edits").unwrap_or_default()
                 ),
-                true,
+                may_give_up,
             ));
         }
-        VerifiedRestoreOutcome::EditsElsewhere { savepoint } => {
+        VerifiedRestoreOutcome::EditsElsewhere {
+            savepoint,
+            in_the_way,
+        } => {
             tally.any_foreign = true;
-            let dir = repo_abs.display().to_string();
             eprintln!(
                 "  {label}: holds uncommitted edits, which restoring it to its savepoint {} \
                  would discard, in a workspace abort was not run in; it is left as it is",
@@ -11174,17 +11339,18 @@ fn report_abort_outcome(
             tally.blocked.push((
                 named.clone(),
                 format!(
-                    "commit or set aside its edits there, as this shows:\n\t{}\n\
-                     or run `rwv abort` in that workspace, which keeps them as a backup first",
-                    vcs.hint(crate::vcs::VcsAction::Stash)
-                        .replace("<checkout>", &dir)
+                    "{}{}",
+                    setting_aside(vcs, *in_the_way, repo_abs, true),
+                    at.giving_up("its edits").unwrap_or_default()
                 ),
                 false,
             ));
         }
-        VerifiedRestoreOutcome::EditsBlockSwitchBack { savepoint } => {
+        VerifiedRestoreOutcome::EditsBlockSwitchBack {
+            savepoint,
+            in_the_way,
+        } => {
             tally.any_foreign = true;
-            let dir = repo_abs.display().to_string();
             eprintln!(
                 "  {label}: is off where its savepoint {} was taken, and its uncommitted edits \
                  keep it from switching back; it is left as it is",
@@ -11193,13 +11359,11 @@ fn report_abort_outcome(
             tally.blocked.push((
                 named.clone(),
                 format!(
-                    "commit or set aside its edits, as this shows:\n\t{}\n\
-                     or give them up, kept as a backup first, by naming it on \
-                     --abandon-foreign-tip",
-                    vcs.hint(crate::vcs::VcsAction::Stash)
-                        .replace("<checkout>", &dir)
+                    "{}{}",
+                    setting_aside(vcs, *in_the_way, repo_abs, false),
+                    at.giving_up("its edits").unwrap_or_default()
                 ),
-                true,
+                may_give_up,
             ));
         }
         VerifiedRestoreOutcome::Kept { kept, then } => {
@@ -11216,14 +11380,14 @@ fn report_abort_outcome(
                     ),
                 }
             }
-            report_abort_outcome(vcs, label, named, then, repo_abs, tally);
+            report_abort_outcome(vcs, at, then, tally);
         }
         VerifiedRestoreOutcome::SwitchedBack { off, then } => {
             let off = off
                 .as_ref()
                 .map_or_else(|| "a detached HEAD".to_owned(), |b| format!("'{b}'"));
             outln!("  {label}: switched back off {off}, which is left where it stands");
-            report_abort_outcome(vcs, label, named, then, repo_abs, tally);
+            report_abort_outcome(vcs, at, then, tally);
         }
         VerifiedRestoreOutcome::AbandonedForeignTip {
             abandoned_tip,
@@ -11243,7 +11407,38 @@ fn report_abort_outcome(
             recorded_converged_tip,
         } => {
             tally.any_foreign = true;
-            tally.abandonable.push(named.clone());
+            match at.give_up {
+                GiveUp::Here => tally.abandonable.push(named.clone()),
+                GiveUp::There { .. } => tally.blocked.push((
+                    named.clone(),
+                    format!(
+                        "holds a tip abort cannot attribute to this operation, and edits there \
+                         that returning it to the savepoint would discard{}",
+                        at.giving_up("them").unwrap_or_default()
+                    ),
+                    false,
+                )),
+                GiveUp::Not { in_the_way } => {
+                    tally.blocked.push((
+                        named.clone(),
+                        match in_the_way {
+                            Some(in_the_way) => format!(
+                                "holds a tip abort cannot attribute to this operation, and edits \
+                                 there that returning it to the savepoint would discard: {}\n\
+                                 then name it on --abandon-foreign-tip",
+                                setting_aside(vcs, *in_the_way, repo_abs, true)
+                            ),
+                            None => "holds a tip abort cannot attribute to this operation, and \
+                                     nothing abort can do returns it to the savepoint"
+                                .to_owned(),
+                        },
+                        false,
+                    ));
+                    if in_the_way.is_some() {
+                        tally.named_after_fix.push(named.clone());
+                    }
+                }
+            }
             let converged_text = match recorded_converged_tip {
                 Some(c) => format!("recorded converged tip: {c}"),
                 None => "no converged tip recorded (op crashed before relock)".to_string(),
@@ -11304,14 +11499,6 @@ fn print_abort_recovery_options(
 /// The fix each obstacle in `tally` names.
 fn fixes(tally: &AbortTally) -> Vec<String> {
     let mut lines = Vec::new();
-    for (named, stopped, status) in &tally.stopped {
-        lines.push(format!(
-            "  {named}: finish or abandon the {stopped} in progress first, as this shows:\n\
-             \t{status}\n\
-             or give it up, its uncommitted edits and its commits kept as backups first, by \
-             naming it on --abandon-foreign-tip"
-        ));
-    }
     for (named, choice, _) in &tally.blocked {
         lines.push(format!("  {named}: {choice}"));
     }
@@ -11344,20 +11531,15 @@ fn closing(base: &str, tallies: &[&AbortTally], abandoned: &[RepoOperand]) -> Ve
     };
     let fixed = tallies
         .iter()
-        .any(|t| !t.stopped.is_empty() || !t.blocked.is_empty() || !t.unread.is_empty());
+        .any(|t| !t.blocked.is_empty() || !t.unread.is_empty());
     let needs: std::collections::BTreeSet<&RepoOperand> = tallies
         .iter()
-        .flat_map(|t| &t.abandonable)
+        .flat_map(|t| t.abandonable.iter().chain(&t.named_after_fix))
         .chain(abandoned)
         .collect();
     let every: std::collections::BTreeSet<&RepoOperand> = tallies
         .iter()
-        .flat_map(|t| {
-            t.stopped
-                .iter()
-                .map(|(named, ..)| named)
-                .chain(t.blocked.iter().map(|(named, ..)| named))
-        })
+        .flat_map(|t| t.blocked.iter().map(|(named, ..)| named))
         .chain(needs.iter().copied())
         .collect();
     let all_may_go = tallies

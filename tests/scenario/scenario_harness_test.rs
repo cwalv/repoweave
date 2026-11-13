@@ -964,6 +964,7 @@ every_scenario!(
     ),
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
     abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
+    abort_sets_aside_an_untracked_file_in_the_way_in_the_target,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
     abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Landed),
@@ -3046,6 +3047,12 @@ holding_rwv! {
         for stop in scenarios::LandedStop::ALL {
             runner::run(scenarios::abort_abandons_colliding_edits_keeping_them(stop)).assert_fully_decided_green();
         }
+    }
+
+    /// The stash a refused abort prints sets aside an untracked file in the
+    /// way of the restore in the other workspace.
+    fn abort_sets_aside_an_untracked_file_in_the_way_in_the_target() {
+        runner::run(scenarios::abort_sets_aside_an_untracked_file_in_the_way_in_the_target()).assert_fully_decided_green();
     }
 
     /// A merge someone started in the target's workspace on a tip the

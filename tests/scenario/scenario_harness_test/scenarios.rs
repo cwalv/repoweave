@@ -11119,25 +11119,43 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
             )
             .claim(Claim::OutputContains("kept ")),
         ]),
-        AbortFrom::Source => steps.extend([
-            Step::rwv(&ww("w"), &["abort"])
+        AbortFrom::Source => {
+            let refused = Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
                 .claim(Claim::OutputLacks("abort stopped there"))
                 .claim(Claim::OutputContains(
                     "[target] local/remotes/app: holds uncommitted edits",
                 ))
-                .claim(Claim::OutputContains("run `rwv abort` in that workspace"))
+                .claim(Claim::OutputContains("nothing of either side is restored"))
                 .claim(Claim::LocalStateUnchanged(a()))
-                .claim(Claim::LocalStateUnchanged(ww("w"))),
-            Step::git(&a(), Repo::App, &["diff", "--name-only"]).claim(Claim::OutputLine("README")),
-            Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["abort"])
-                .expect(Exit::Succeeds)
-                .may_strand(&[Repo::Proj])
-                .may_rewind(&[Repo::App])
-                .may_restore(&[Repo::App, Repo::Proj]),
-            Step::git(&a(), Repo::App, &["stash", "list"]).claim(Claim::OutputContains("stash@")),
-        ]),
+                .claim(Claim::LocalStateUnchanged(ww("w")));
+            match stop {
+                LandedStop::Landed => steps.extend([
+                    refused,
+                    Step::rwv_printed(&ww("w"), "rwv -C ")
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj])
+                        .may_rewind(&[Repo::App])
+                        .may_restore(&[Repo::App, Repo::Proj])
+                        .claim(Claim::OutputContains(
+                            "local/remotes/app: its uncommitted edits are kept as backup",
+                        )),
+                ]),
+                LandedStop::Retire => steps.extend([
+                    refused.claim(Claim::OutputLacks("rwv -C ")),
+                    Step::git(&a(), Repo::App, &["diff", "--name-only"])
+                        .claim(Claim::OutputLine("README")),
+                    Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+                    Step::rwv(&ww("w"), &["abort"])
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj])
+                        .may_rewind(&[Repo::App])
+                        .may_restore(&[Repo::App, Repo::Proj]),
+                    Step::git(&a(), Repo::App, &["stash", "list"])
+                        .claim(Claim::OutputContains("stash@")),
+                ]),
+            }
+        }
     }
     steps.push(
         Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
@@ -11158,11 +11176,73 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
     scenario("abort keeps edits made in the target after the stop", steps)
 }
 
+/// A landing that removed `app`'s README fast-forwarded the target's
+/// workspace and was killed in its retire, releasing it; someone puts an
+/// untracked README back there. Restoring the savepoint would overwrite it,
+/// and abort from the source is refused before anything moves; abort in the
+/// target is refused too, so the printed stash is the way out, and it sets
+/// the untracked file aside: the rerun restores everything.
+pub fn abort_sets_aside_an_untracked_file_in_the_way_in_the_target() -> Scenario {
+    let steps = vec![
+        create("w"),
+        Step::git(&ww("w"), Repo::App, &["rm", "-q", "README"]),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qm", "w drops README"]),
+        Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("w drops README")),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["restore", "--source=HEAD~1", "--worktree", "--", "README"],
+        ),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "untracked in the target"),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains(
+                "[target] local/remotes/app: holds uncommitted edits",
+            ))
+            .claim(Claim::OutputContains("nothing of either side is restored"))
+            .claim(Claim::OutputLacks("rwv -C "))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj]),
+        Step::git(
+            &a(),
+            Repo::App,
+            &[
+                "log",
+                "--all",
+                "--format=kept %s",
+                "-Suntracked in the target",
+            ],
+        )
+        .claim(Claim::OutputContains("kept ")),
+        Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLacks("w drops README")),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
+    ];
+    scenario(
+        "abort sets aside an untracked file in the way in the target",
+        steps,
+    )
+}
+
 /// A landing fast-forwarded `app` in the target's workspace, then was
 /// killed; someone starts a merge there on the landing's tip. Abort never
 /// cancels an operation in the target: it refuses before anything of either
-/// side moves, keeping the op; once that merge is given up, the printed rerun
-/// restores everything.
+/// side moves, keeping the op. Where the landing still leases the target,
+/// the printed abort run there gives the merge up, its edits kept as a
+/// backup; where it was killed in its retire, abort there is refused, so
+/// no give-up is printed, and once that merge is given up by hand, the
+/// printed rerun restores everything.
 pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop) -> Scenario {
     let mut steps = vec![
         create("w"),
@@ -11171,33 +11251,55 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop
         Step::kill("landing"),
     ];
     steps.extend(own_merge_at_the_savepoint(&a(), Repo::App));
-    steps.extend([
-        Step::rwv(&ww("w"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::OutputContains(
-                "[target] local/remotes/app: stopped in a merge begun at",
-            ))
-            .claim(Claim::LocalStateUnchanged(a()))
-            .claim(Claim::LocalStateUnchanged(ww("w"))),
-        Step::git(
-            &a(),
-            Repo::App,
-            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-        ),
-        Step::git(&a(), Repo::App, &["merge", "--abort"]),
-        Step::rwv_printed(&ww("w"), "rwv abort")
-            .expect(Exit::Succeeds)
-            .may_strand(&[Repo::Proj])
-            .may_rewind(&[Repo::App])
-            .may_restore(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputContains(
-                "[target] local/remotes/app: restored (from recorded converged tip)",
-            )),
-        Step::rwv(&ww("w"), &["land", "--retire"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::WorkweaveGone(ww("w"))),
-    ]);
+    let refused = Step::rwv(&ww("w"), &["abort"])
+        .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+        .claim(Claim::OutputLacks("abort stopped there"))
+        .claim(Claim::OutputContains(
+            "[target] local/remotes/app: stopped in a merge begun at",
+        ))
+        .claim(Claim::OutputContains("nothing of either side is restored"))
+        .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
+        .claim(Claim::LocalStateUnchanged(a()))
+        .claim(Claim::LocalStateUnchanged(ww("w")));
+    steps.push(match stop {
+        LandedStop::Landed => refused,
+        LandedStop::Retire => refused.claim(Claim::OutputLacks("rwv -C ")),
+    });
+    match stop {
+        LandedStop::Landed => steps.extend([
+            Step::rwv_printed_holding(&ww("w"), "rwv -C ", "--abandon-foreign-tip")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: its uncommitted edits are kept as backup",
+                ))
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: restored (from mid-op state)",
+                )),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
+            )
+            .expect(Exit::Code(1)),
+        ]),
+        LandedStop::Retire => steps.extend([
+            Step::git(&a(), Repo::App, &["merge", "--abort"]),
+            Step::rwv_printed(&ww("w"), "rwv abort")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: restored (from recorded converged tip)",
+                )),
+        ]),
+    }
+    steps.extend([Step::rwv(&ww("w"), &["land", "--retire"])
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w")))]);
     scenario(
         "abort refuses a merge in a target repo the landing moved",
         steps,
