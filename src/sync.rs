@@ -1750,16 +1750,19 @@ fn per_conflict_bail_message(
     op_label: &str,
     detail: &str,
     verb: OpVerb,
+    entries: &[String],
 ) -> String {
     let hint = vcs.conflict_resolution_hint(op);
     let resume = op_state::resume_command(verb);
     let repo_display = repo.display();
+    let entries: String = entries.iter().map(|line| format!("{line}\n")).collect();
     format!(
         "sync hit a conflict in {repo_display} during {op_label} ({detail}).\n\
          \n\
          To resolve:\n\
            cd {repo_display}\n\
          {hint}\n\
+         {entries}\
          then resume (repos already composed are left as they are):\n\
            {resume}\n\
          \n\
@@ -8240,6 +8243,7 @@ fn apply_project_strategy(
                 },
                 &detail,
                 verb,
+                &crate::manifest_conflict::stop_lines(vcs, repo, &op_state::resume_command(verb)),
             ),
         )
     };
@@ -14127,6 +14131,7 @@ mod tests {
             "cherry-pick (rebase replay)",
             "commit deadbeef on paths: foo.txt",
             OpVerb::Sync,
+            &[],
         );
         assert!(
             msg.contains("git cherry-pick --continue"),
@@ -14162,6 +14167,7 @@ mod tests {
             "merge",
             "paths: bar.txt",
             OpVerb::Land,
+            &[],
         );
         assert!(
             msg.contains("git merge --continue"),
@@ -14195,6 +14201,7 @@ mod tests {
             "rebase (project repo)",
             detail,
             OpVerb::Sync,
+            &[],
         );
         assert!(
             msg.contains("abc1234"),

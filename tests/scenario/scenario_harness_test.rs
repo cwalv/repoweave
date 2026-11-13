@@ -958,6 +958,13 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanFieldBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::BothAdded),
+    settle_a_manifest_stop(scenarios::ManifestSettle::Land(
+        scenarios::ManifestStopHistory::Merge
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::Land(
+        scenarios::ManifestStopHistory::Linear
+    )),
+    settle_a_manifest_stop(scenarios::ManifestSettle::Pull),
     settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnly(
         scenarios::ManifestStopHistory::Merge
     )),
@@ -6880,6 +6887,30 @@ fn manifest_stop_lines_only_continued_keeps_an_unstaged_edit() {
 fn manifest_stop_lines_only_at_each_replay_stop() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnlyReplayed,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_at_a_landing_lists_entries_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::Land(scenarios::ManifestStopHistory::Merge),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_at_a_landing_lists_entries_linear() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::Land(scenarios::ManifestStopHistory::Linear),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_at_a_pull_lists_entries() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::Pull,
     ))
     .assert_fully_decided_green();
 }
