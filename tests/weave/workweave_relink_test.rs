@@ -512,7 +512,7 @@ fn a_pin_lost_with_the_deleted_clone_is_given_up_under_consent_keeping_the_files
         &[
             "`rwv update --project demo`",
             "`rwv doctor --fix` there",
-            "`--abandon-lost-pins`",
+            "`--fix --abandon-lost-pins`",
         ],
     );
     rwv(&w.primary, &["update", "--project", "demo"]);
