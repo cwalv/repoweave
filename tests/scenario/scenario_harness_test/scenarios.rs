@@ -17214,7 +17214,7 @@ pub fn a_sync_continued_after_its_relock_keeps_it() -> Scenario {
 /// `a-sync-continued-after-its-relock-keeps-it`, with a commit made in
 /// `w1`'s project repo during the stop: the project branch `w2` was composed
 /// on before the stop no longer sits on `w1`'s project tip, so the continued
-/// carry composes it again and `w2` holds the commit.
+/// carry composes it again and `w2` holds `w1`'s project tip.
 pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry() -> Scenario {
     let steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
@@ -17247,13 +17247,13 @@ pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::App])
-            .may_rewind(&[Repo::App])
-            .claim(Claim::Contains {
-                at: ww("w1"),
-                repo: Repo::Proj,
-                rev: "w2",
-                mark: "w1-later",
-            }),
+            .may_rewind(&[Repo::App]),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Succeeds),
     ];
     scenario(
         "stack: a sync continued after its project tip moved recomposes the project carry",
