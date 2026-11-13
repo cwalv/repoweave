@@ -10970,9 +10970,23 @@ fn run_step(
                     return;
                 }
                 let removed = match made_holds(at.vcs.as_ref(), &at.dir) {
-                    Ok(None) => at.vcs.remove_worktree(&store, &at.dir).map(|()| {
-                        let _ = at.vcs.worktree_prune(&store);
-                    }),
+                    Ok(None) => at
+                        .vcs
+                        .backup_unpreserved_head(&at.dir)
+                        .and_then(|kept| {
+                            if let Some(kept) = kept {
+                                outln!(
+                                    "  {}: the commits its detached HEAD held are kept as backup \
+                                     {} (`rwv backup list`)",
+                                    at.label,
+                                    kept.backup().name
+                                );
+                            }
+                            at.vcs.remove_worktree(&store, &at.dir)
+                        })
+                        .map(|()| {
+                            let _ = at.vcs.worktree_prune(&store);
+                        }),
                     Ok(Some(_)) => {
                         eprintln!(
                             "  {}: the checkout this landing made holds what no commit does \

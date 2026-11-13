@@ -267,7 +267,7 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "\"worktree\", \"remove\"",
         count: 2,
         callers: &[
-            ("remove_worktree", 3),
+            ("remove_worktree", 4),
             ("prune_orphan_worktrees_for", 2),
             ("prune_stale_worktree_registration", 3),
         ],
@@ -302,6 +302,15 @@ const ALLOWLIST: &[Allowed] = &[
             `worktree_path.exists()` guard inside \
             prune_orphan_worktrees_for is false for every pair and only \
             `worktree prune` (admin entries for absent dirs) actually runs. \
+            (5) rwv abort's removal of a checkout of the target's workspace \
+            the landing made (sync::run_step, AbortStep::RemoveMade): only a \
+            checkout the record journals as made by this landing; planned \
+            only where it is a linked worktree, not its own store, and holds \
+            no operation in progress, no ignored file and no uncommitted \
+            change, and that same check is read again immediately before the \
+            removal; the commits a detached HEAD holds that no branch reaches \
+            are kept as a backup first, and the branch it was on keeps the \
+            rest. \
             The second site is prune_stale_worktree_registration, WITHOUT \
             `--force`, and only after it has read the registration as \
             unlocked and found nothing at its path, so git drops the \
