@@ -8688,6 +8688,36 @@ pub fn abort_typed_in_a_released_in_place_workspace_names_the_landing() -> Scena
     )
 }
 
+/// `shared-checkout-detached` killed in its retire, which released the
+/// primary, where `docs`' `main` moved in place, then aborted from the
+/// landing's workspace: abort leases the primary again before it moves
+/// anything there, so a verb typed in the primary meanwhile is refused, and
+/// the abort restores everything.
+pub fn abort_at_retire_leases_the_in_place_workspace_again() -> Scenario {
+    let mut steps = stable_holding_docs_detached();
+    steps.extend([
+        Step::rwv_paused(
+            &ww("hotfix"),
+            &["land", "--history", "linear", "--retire"],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::rwv_paused(&ww("hotfix"), &["abort"], "abort-retaken", "aborting"),
+        Step::rwv(&a(), &["lock", "--commit"])
+            .expect(Exit::refuses_kind(RefusalKind::OpInProgress))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::release("aborting")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Docs, Repo::Proj])
+            .may_restore(&[Repo::Docs, Repo::Proj]),
+        Step::git(&a(), Repo::Docs, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("hotfix-docs")),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    scenario("abort at retire leases the in-place workspace again", steps)
+}
+
 /// `removal-is-member-change`: a feature removing a member its target lists
 /// refuses to land until `--allow-member-change` names the member, before
 /// anything lands; the consent, run as the refusal prints it, lands it, and

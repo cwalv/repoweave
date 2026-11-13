@@ -874,6 +874,7 @@ every_scenario!(
     abort_refuses_to_strand_another_projects_pin_on_the_target,
     abort_restores_as_a_ref_a_branch_its_in_place_checkout_left,
     abort_typed_in_a_released_in_place_workspace_names_the_landing,
+    abort_at_retire_leases_the_in_place_workspace_again,
     landing_merge_continued_writes_one_project_merge,
     abort_after_a_sync_merge_stops,
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitWhileUnmerged),
@@ -6175,6 +6176,12 @@ fn abort_restores_as_a_ref_a_branch_its_in_place_checkout_left_scenario() {
 #[test]
 fn abort_typed_in_a_released_in_place_workspace_names_the_landing_scenario() {
     runner::run(scenarios::abort_typed_in_a_released_in_place_workspace_names_the_landing())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_at_retire_leases_the_in_place_workspace_again_scenario() {
+    runner::run(scenarios::abort_at_retire_leases_the_in_place_workspace_again())
         .assert_fully_decided_green();
 }
 
