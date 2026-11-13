@@ -1071,7 +1071,7 @@ mod tests {
 
     #[test]
     fn a_replay_above_the_tip_is_the_same_whichever_of_several_merge_bases_there_are() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         history(dir.path());
         let (tip, from) = (id(dir.path(), "left"), id(dir.path(), "crossed"));
         let vcs = crate::vcs::project_vcs();
@@ -1085,7 +1085,7 @@ mod tests {
 
     #[test]
     fn no_replay_base_is_chosen_between_histories_sharing_none() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         history(dir.path());
         git(dir.path(), &["switch", "-q", "--orphan", "alone"]);
         git(
