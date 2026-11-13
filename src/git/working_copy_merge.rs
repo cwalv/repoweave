@@ -286,28 +286,23 @@ fn index_stages(repo: &Path, path: &str) -> Result<Vec<(String, String, String)>
         .collect())
 }
 
-/// The paths of `paths` whose index entry only records an intent to add.
+/// The paths of `paths` whose index entry only records an intent to add: the
+/// working copy alone holds what it names, whatever `HEAD` holds there.
 fn intended(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsError> {
     let mut args = Argv::from([
         "--literal-pathspecs",
-        "status",
-        "--porcelain=v2",
-        "-z",
-        "--untracked-files=no",
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--diff-filter=A",
         "--ignore-submodules=all",
+        "-z",
         "--",
     ]);
     for path in paths {
         args = args.text(path);
     }
-    let listing = succeeded(args, repo, None)?;
-    Ok(fields(&listing)
-        .filter_map(|record| {
-            let rest = record.strip_prefix("1 .A ")?;
-            let path = rest.splitn(7, ' ').nth(6)?;
-            Some(path.to_owned())
-        })
-        .collect())
+    Ok(fields(&succeeded(args, repo, None)?).collect())
 }
 
 /// The paths of `paths` git does not compare with what the index records:
@@ -1902,6 +1897,60 @@ mod tests {
         assert_eq!(at.stages("gone-there.txt"), ["1", "2"]);
         assert_eq!(at.text("gone-here.txt"), MOVED);
         assert_eq!(at.stages("gone-here.txt"), ["1", "3"]);
+    }
+
+    #[test]
+    fn a_file_only_intended_for_adding_where_the_move_adds_one_is_merged_as_added_on_both_sides() {
+        let at = Moved::new(
+            LineEndings::Verbatim,
+            &[("keep.txt", "k\n")],
+            &[("f.txt", "theirs\n")],
+        );
+        write(&at.repo, &[("f.txt", "mine\n")]);
+        run(&at.repo, &["add", "-N", "f.txt"]);
+        assert_eq!(
+            at.merge(&["f.txt"], &[]),
+            WorkingCopyMerge::Merged {
+                clean: vec![],
+                took_incoming: vec![],
+                conflicted: vec!["f.txt".to_owned()],
+                staged_apart: vec![],
+            }
+        );
+        assert_eq!(at.stages("f.txt"), ["2", "3"]);
+        let text = at.text("f.txt");
+        assert!(
+            text.contains("mine\n") && text.contains("theirs\n"),
+            "{text}"
+        );
+        run(&at.repo, &["checkout", "--ours", "--", "f.txt"]);
+        assert_eq!(at.text("f.txt"), "mine\n");
+    }
+
+    #[test]
+    fn a_submodule_the_move_adds_is_declined_and_nothing_is_written() {
+        let at = Moved::shaped(LineEndings::Verbatim, &[("keep.txt", "k\n")], &[], |repo| {
+            let head = run(repo, &["rev-parse", "HEAD"]);
+            std::fs::create_dir_all(repo.join("sub")).unwrap();
+            run(
+                repo,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("160000,{head},sub"),
+                ],
+            );
+        });
+        write(&at.repo, &[("sub", "mine\n")]);
+        let before = at.status();
+        assert_eq!(
+            at.merge(&["sub"], &[]),
+            WorkingCopyMerge::Declined(MergeDeclined::Submodule(vec!["sub".to_owned()]))
+        );
+        assert_eq!(at.status(), before);
+        assert_eq!(at.text("sub"), "mine\n");
+        assert!(!at.journal_left());
     }
 
     crate::git::under_both_line_endings!(
