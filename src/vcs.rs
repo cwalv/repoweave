@@ -3505,13 +3505,16 @@ pub trait Vcs: Send + Sync {
 
     /// A copy of `commit` whose parent is `parent`, its message and
     /// authorship kept and its tree `commit`'s with `changes` applied,
-    /// referenced by nothing.
+    /// referenced by nothing. Where `annotations` is `Some((key, values))`,
+    /// the copy records `values` under `key` in place of what `commit`
+    /// recorded under it.
     fn copy_replayed(
         &self,
         repo: &Path,
         commit: &CommitId,
         parent: &CommitId,
         changes: &[FileChange],
+        annotations: Option<(&str, &[Annotation])>,
     ) -> Result<CommitId, VcsError>;
 
     /// Move the branch `on` witnesses from `from`, where a replay left it, to

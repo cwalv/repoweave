@@ -6833,6 +6833,62 @@ pub fn landed_history_pin_no_ref_keeps() -> Scenario {
     )
 }
 
+/// Which verb replays the seat's project commits onto a `main` that moved,
+/// in [`a_re_pin_follows_its_lock_through_a_replay`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Replays {
+    Landing,
+    SyncFirst,
+}
+
+/// [`landed_history_pin_no_ref_keeps`] with `main` moved before the seat
+/// lands by rebase: the replay re-maps the re-pinning lock commit's pins,
+/// and its re-pin record with them, so machine B, which lacks the amended-
+/// away commit, lands in `app`.
+pub fn a_re_pin_follows_its_lock_through_a_replay(by: Replays) -> Scenario {
+    let app = Repo::App.rel_path();
+    let mut steps = vec![
+        Step::new_machine(Machine::B),
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["commit", "--amend", "-q", "-m", "w-app amended"],
+        )
+        .may_strand(&[Repo::App])
+        .may_leave_unresolved(&[Repo::App]),
+        Step::rwv(&ww("w"), &["member", "pin", &app, "HEAD", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    if by == Replays::SyncFirst {
+        steps.push(
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+        );
+    }
+    steps.extend([
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App]),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("held by no branch")),
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+        Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"]).expect(Exit::Succeeds),
+        Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+        Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App]),
+    ]);
+    scenario("a re-pin follows its lock through a replay", steps)
+}
+
 /// A merge whose unjoined `app` pin a later backward re-pin by name waived
 /// is published; machine B, which lacks the commit the merge left unjoined,
 /// lands a seat: the waiver covers the pin, so it does not decide the base.

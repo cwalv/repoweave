@@ -345,6 +345,7 @@ impl GitVcs {
         commit: &CommitId,
         parent: &CommitId,
         changes: &[FileChange],
+        annotations: Option<(&str, &[crate::vcs::Annotation])>,
     ) -> Result<CommitId, VcsError> {
         let raw = Self::run_bytes_in(&["cat-file", "commit", commit.as_str()], repo, &[], &[])?;
         let split = raw
@@ -358,6 +359,14 @@ impl GitVcs {
             .find_map(|line| line.strip_prefix("encoding "))
             .unwrap_or("UTF-8")
             .to_owned();
+        let replaced;
+        let message = match annotations {
+            Some((key, annotations)) => {
+                replaced = super::with_trailers_replaced(message, key, annotations);
+                replaced.as_slice()
+            }
+            None => message,
+        };
         let author = headers
             .lines()
             .find_map(|line| line.strip_prefix("author "))

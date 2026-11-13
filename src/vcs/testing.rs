@@ -543,6 +543,7 @@ impl Vcs for FakeVcs {
         _commit: &CommitId,
         _parent: &CommitId,
         _changes: &[super::FileChange],
+        _annotations: Option<(&str, &[super::Annotation])>,
     ) -> Result<CommitId, VcsError> {
         unsupported("copy_replayed")
     }

@@ -2177,6 +2177,7 @@ fn a_replayed_commit_copied_under_commit_gpgsign_is_signed() {
                 path: "rwv.lock".to_owned(),
                 content: Some(b"{}".to_vec()),
             }],
+            None,
         )
         .unwrap();
 
@@ -2204,6 +2205,7 @@ fn a_replayed_commit_copied_under_a_non_utf8_commit_encoding_keeps_its_message_a
                 path: "rwv.lock".to_owned(),
                 content: Some(b"{}".to_vec()),
             }],
+            None,
         )
         .unwrap();
 
@@ -2219,6 +2221,64 @@ fn a_replayed_commit_copied_under_a_non_utf8_commit_encoding_keeps_its_message_a
     let message = |raw: &[u8]| raw.rsplit(|b| *b == b'\n').nth(1).map(<[u8]>::to_vec);
     assert_eq!(message(&was), message(&now));
     assert!(String::from_utf8_lossy(&now).contains("\nencoding ISO-8859-1\n"));
+}
+
+#[test]
+fn a_re_pin_record_replaced_in_a_non_utf8_message_keeps_every_other_byte() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    common::git_in(p, &["config", "i18n.commitEncoding", "ISO-8859-1"]);
+    fs::write(p.join("more.txt"), "more").unwrap();
+    common::git_in(p, &["add", "."]);
+    let (old, new) = ("a".repeat(40), "b".repeat(40));
+    let mut latin1 = b"caf\xe9\n\nRwv-Repin: ".to_vec();
+    latin1.extend_from_slice(format!("\"m\" {old} {old} member pin\n").as_bytes());
+    fs::write(p.join(".git").join("message"), &latin1).unwrap();
+    assert!(common::git()
+        .args(["commit", "-q", "-F", ".git/message"])
+        .current_dir(p)
+        .status()
+        .unwrap()
+        .success());
+    let replayed = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
+    let value = format!("\"m\" {old} {new} member pin");
+
+    let copy = git_vcs()
+        .copy_replayed(
+            p,
+            &repoweave::vcs::CommitId::parse(&replayed).unwrap(),
+            &repoweave::vcs::CommitId::parse(&base).unwrap(),
+            &[repoweave::vcs::FileChange {
+                path: "rwv.lock".to_owned(),
+                content: Some(b"{}".to_vec()),
+            }],
+            Some((
+                "Rwv-Repin",
+                &[repoweave::vcs::Annotation {
+                    key: "Rwv-Repin",
+                    value: value.clone(),
+                }],
+            )),
+        )
+        .unwrap();
+
+    let raw = common::git()
+        .args(["cat-file", "commit", copy.as_str()])
+        .current_dir(p)
+        .output()
+        .unwrap()
+        .stdout;
+    let message = &raw[raw.windows(2).position(|pair| pair == b"\n\n").unwrap() + 2..];
+    let mut expected = b"caf\xe9\n\nRwv-Repin: ".to_vec();
+    expected.extend_from_slice(value.as_bytes());
+    expected.push(b'\n');
+    assert_eq!(message, expected.as_slice());
+    assert!(String::from_utf8_lossy(&raw).contains("\nencoding ISO-8859-1\n"));
+    assert_eq!(
+        git_vcs().annotation_values(p, &copy, "Rwv-Repin").unwrap(),
+        vec![value]
+    );
 }
 
 #[test]
@@ -2241,6 +2301,7 @@ fn a_utf8_replayed_commit_copied_under_a_non_utf8_commit_encoding_stays_utf8() {
                 path: "rwv.lock".to_owned(),
                 content: Some(b"{}".to_vec()),
             }],
+            None,
         )
         .unwrap();
 

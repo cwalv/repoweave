@@ -221,14 +221,26 @@ pub(crate) fn recorded(
 }
 
 /// A copy of the replayed `commit` on `parent` whose `rwv.lock` is `lock`,
-/// its message, and the members it names by name, kept as they were.
+/// its message kept, each re-pin it records taken through `map` as its
+/// lock's pins were; a re-pin `map` leaves moving nothing is dropped.
 pub(crate) fn copy_with_lock(
     vcs: &dyn Vcs,
     dir: &Path,
     commit: &CommitId,
     parent: &CommitId,
     lock: Vec<u8>,
+    map: &mut dyn FnMut(&RepoPath, &CommitId) -> CommitId,
 ) -> Result<CommitId, VcsError> {
+    let records = recorded(vcs, dir, commit)?;
+    let had_records = !records.is_empty();
+    let mapped: Vec<Annotation> = records
+        .into_iter()
+        .filter_map(|repin| {
+            let from = repin.from.as_ref().map(|from| map(&repin.member, from));
+            let to = map(&repin.member, &repin.to);
+            (from.as_ref() != Some(&to)).then(|| Repin { from, to, ..repin }.annotation())
+        })
+        .collect();
     vcs.copy_replayed(
         dir,
         commit,
@@ -237,6 +249,7 @@ pub(crate) fn copy_with_lock(
             path: LockFile::FILE_NAME.to_owned(),
             content: Some(lock),
         }],
+        had_records.then_some((KEY, mapped.as_slice())),
     )
 }
 

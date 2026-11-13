@@ -1161,6 +1161,8 @@ every_scenario!(
     records_drop_races_create,
     landed_history_pin_no_ref_keeps,
     landed_history_waived_pin_on_a_second_machine,
+    a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::Landing),
+    a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::SyncFirst),
     a_history_pin_not_repinned_still_refuses,
     merged_project_with_rebased_members_on_a_second_machine,
     a_landing_records_no_rebase_jump_the_replay_did_not_record,
@@ -5198,6 +5200,22 @@ holding_rwv! {
 #[test]
 fn a_landed_history_pin_no_ref_keeps_lands_on_a_second_machine() {
     runner::run(scenarios::landed_history_pin_no_ref_keeps()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_re_pin_record_replayed_by_a_landing_lands_on_a_second_machine() {
+    runner::run(scenarios::a_re_pin_follows_its_lock_through_a_replay(
+        scenarios::Replays::Landing,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_re_pin_record_replayed_by_a_linear_sync_lands_on_a_second_machine() {
+    runner::run(scenarios::a_re_pin_follows_its_lock_through_a_replay(
+        scenarios::Replays::SyncFirst,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

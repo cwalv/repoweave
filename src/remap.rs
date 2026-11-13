@@ -376,7 +376,23 @@ pub(crate) fn remap_project(
             written.clone()
         } else {
             rewritten = true;
-            crate::repin::copy_with_lock(vcs, dir, written, &parent, rendered.into_bytes())?
+            crate::repin::copy_with_lock(
+                vcs,
+                dir,
+                written,
+                &parent,
+                rendered.into_bytes(),
+                &mut |member, pin| {
+                    map_pin(
+                        member,
+                        &RawRevisionId::new(pin.as_str()),
+                        replays,
+                        &mut Vec::new(),
+                    )
+                    .as_commit_id()
+                    .unwrap_or_else(|| pin.clone())
+                },
+            )?
         };
         became.push((written.clone(), parent.clone()));
         before = Some(lock);

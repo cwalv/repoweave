@@ -189,6 +189,54 @@ fn with_trailers(message: &str, annotations: &[Annotation]) -> String {
     text
 }
 
+/// `message`, bytes in whatever encoding its commit names, recording
+/// `annotations` under `key` in place of each trailer it held under `key`, in
+/// its trailer block where it has one; every other byte is kept as it was.
+fn with_trailers_replaced(message: &[u8], key: &str, annotations: &[Annotation]) -> Vec<u8> {
+    let held_under_key = |line: &[u8]| {
+        line.strip_prefix(key.as_bytes())
+            .is_some_and(|rest| rest.starts_with(b":"))
+    };
+    let mut lines: Vec<&[u8]> = message
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !held_under_key(line))
+        .collect();
+    while lines
+        .last()
+        .is_some_and(|line| line.iter().all(u8::is_ascii_whitespace))
+    {
+        lines.pop();
+    }
+    let paragraph_start = lines
+        .iter()
+        .rposition(|line| line.iter().all(u8::is_ascii_whitespace))
+        .map(|at| at + 1);
+    let trailer_block = paragraph_start.is_some_and(|start| {
+        lines[start..].iter().all(|line| {
+            line.windows(2)
+                .position(|pair| pair == b": ")
+                .is_some_and(|at| {
+                    at > 0
+                        && line[..at]
+                            .iter()
+                            .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'-')
+                })
+        })
+    });
+    let mut text = lines.join(&b'\n');
+    text.push(b'\n');
+    if annotations.is_empty() {
+        return text;
+    }
+    if !trailer_block {
+        text.push(b'\n');
+    }
+    for annotation in annotations {
+        text.extend_from_slice(format!("{}: {}\n", annotation.key, annotation.value).as_bytes());
+    }
+    text
+}
+
 fn commit_id_printed(out: &str, args: &[&str], repo: &Path) -> Result<CommitId, VcsError> {
     CommitId::parse(out.trim()).map_err(|e| VcsError::CommandFailed {
         args: args.iter().map(|a| (*a).to_owned()).collect(),
@@ -3122,8 +3170,9 @@ impl Vcs for GitVcs {
         commit: &CommitId,
         parent: &CommitId,
         changes: &[FileChange],
+        annotations: Option<(&str, &[Annotation])>,
     ) -> Result<CommitId, VcsError> {
-        Self::copy_with_changes(repo, commit, parent, changes)
+        Self::copy_with_changes(repo, commit, parent, changes, annotations)
     }
 
     fn take_rewritten(
