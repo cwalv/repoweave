@@ -1213,4 +1213,52 @@ repositories."github/a/lib".history = "merge"
             "the header stays on top:\n{set}"
         );
     }
+
+    #[test]
+    fn layouts_whose_spelling_is_normalised_still_declare_what_the_change_made() {
+        let member = |name: &str| {
+            [
+                ("type", "\"git\"".to_owned()),
+                ("url", format!("\"https://example.com/{name}.git\"")),
+                ("branch", "\"main\"".to_owned()),
+                ("role", "\"owned\"".to_owned()),
+            ]
+        };
+        let spaced = ["app", "docs", "lib"]
+            .iter()
+            .enumerate()
+            .map(|(n, name)| {
+                let head = if n == 0 {
+                    "repositories ."
+                } else {
+                    "repositories."
+                };
+                let body: String = member(name)
+                    .iter()
+                    .map(|(k, v)| format!("{k} = {v}\n"))
+                    .collect();
+                format!("[{head}\"github/a/{name}\"]\n{body}\n")
+            })
+            .collect::<String>();
+        let interleaved = (0..4)
+            .flat_map(|n| {
+                ["app", "docs", "lib"].map(|name| {
+                    let (k, v) = &member(name)[n];
+                    format!("repositories.\"github/a/{name}\".{k} = {v}\n")
+                })
+            })
+            .collect::<String>();
+        for (layout, text) in [("spaced-header", spaced), ("interleaved", interleaved)] {
+            for (name, change) in changes() {
+                let before = Manifest::from_toml_str(&text).unwrap();
+                let mut wanted = before.clone();
+                change(&mut wanted);
+                let (edited, _) = Manifest::edit_text(&text, |m| change(m))
+                    .unwrap_or_else(|e| panic!("{layout}/{name}: {e:#}"));
+                let reread = Manifest::from_toml_str(&edited)
+                    .unwrap_or_else(|e| panic!("{layout}/{name}: {e:#}\n{edited}"));
+                assert!(reread.declares_same(&wanted), "{layout}/{name}:\n{edited}");
+            }
+        }
+    }
 }
