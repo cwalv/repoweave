@@ -3011,6 +3011,40 @@ fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
     );
 }
 
+/// An entry only intended for adding beside a both-file, merged: git refuses
+/// it, and every printed line that shows a staged version from the backup
+/// runs; the entry has no staged version, so none names it.
+#[test]
+fn an_intent_to_add_entry_beside_a_refused_merge_is_shown_by_no_failing_line() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(f.ww_lib.join("README.md"), "staged\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "README.md"]);
+    std::fs::write(f.ww_lib.join("newf.txt"), "new work\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "-N", "newf.txt"]);
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    common::cli::refused(&out, State::EditsSetBack);
+    let said = common::cli::describe(&out);
+    let shown: Vec<&str> = said
+        .lines()
+        .map(str::trim)
+        .filter(|l| l.starts_with("git -C ") && l.contains(" show "))
+        .collect();
+    assert!(!shown.is_empty(), "{said}");
+    assert!(!shown.iter().any(|l| l.contains("newf.txt")), "{said}");
+    for line in shown {
+        let out = run_printed(line, " show ", &f.ww);
+        assert!(
+            out.status.success(),
+            "{line}: {}",
+            common::cli::describe(&out)
+        );
+    }
+}
+
 /// An entry only intended for adding beside a both-file: the stash refuses
 /// it, and the set-back judgment prints the unstage that clears it before
 /// the merge; run as printed, the two finish, the new file kept.
@@ -3026,6 +3060,15 @@ fn an_intent_to_add_entry_in_a_set_back_checkout_is_cleared_by_the_printed_unsta
 
     let stderr = common::cli::refused(&out, State::EditsSetBack);
     assert!(stderr.contains("restore --staged"), "{stderr}");
+    let said = common::cli::describe(&out);
+    for shown in said.lines().map(str::trim).filter(|l| l.contains(" show ")) {
+        let out = run_printed(shown, " show ", &f.ww);
+        assert!(
+            out.status.success(),
+            "{shown}: {}",
+            common::cli::describe(&out)
+        );
+    }
     let out = run_printed(&stderr, "restore --staged", &f.ww);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
     let out = run_printed(&stderr, "merge-edited-drift", &f.ww);

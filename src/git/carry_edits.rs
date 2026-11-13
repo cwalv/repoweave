@@ -204,12 +204,12 @@ pub(super) fn set_aside_from(
     Ok(kept)
 }
 
-pub(super) fn staged_against_head(repo: &Path) -> Result<Vec<String>, VcsError> {
+pub(super) fn staged_against_head(repo: &Path, ita: &str) -> Result<Vec<String>, VcsError> {
     Ok(fields(&succeeded(
         [
             "diff",
             "--cached",
-            "--ita-visible-in-index",
+            ita,
             "--name-only",
             "--no-renames",
             "--ignore-submodules=all",

@@ -4169,6 +4169,10 @@ pub trait Vcs: Send + Sync {
     /// intended for adding included.
     fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
 
+    /// The paths whose index entry holds a version differing from HEAD's; an
+    /// entry only intended for adding holds none.
+    fn staged_versions_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+
     /// The lock a killed VCS process left on `repo`'s index, if any.
     fn index_lock(&self, repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError>;
 

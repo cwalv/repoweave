@@ -1292,6 +1292,10 @@ impl Vcs for FakeVcs {
         unsupported("staged_against_head")
     }
 
+    fn staged_versions_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        unsupported("staged_versions_against_head")
+    }
+
     fn index_lock(&self, _repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError> {
         Ok(None)
     }

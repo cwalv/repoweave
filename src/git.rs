@@ -4179,7 +4179,11 @@ impl Vcs for GitVcs {
     }
 
     fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
-        carry_edits::staged_against_head(repo)
+        carry_edits::staged_against_head(repo, "--ita-visible-in-index")
+    }
+
+    fn staged_versions_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
+        carry_edits::staged_against_head(repo, "--ita-invisible-in-index")
     }
 
     fn index_lock(&self, repo: &Path) -> Result<Option<PathBuf>, VcsError> {

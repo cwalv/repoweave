@@ -8451,7 +8451,9 @@ fn settle_held_drift(
             Ok(EditedDriftMerge::NoMove | EditedDriftMerge::NothingHeld) => true,
             Ok(EditedDriftMerge::Refused { back, said, backup }) => {
                 if let Some(kept) = &backup {
-                    let staged = vcs.staged_against_head(repo_abs).unwrap_or_default();
+                    let staged = vcs
+                        .staged_versions_against_head(repo_abs)
+                        .unwrap_or_default();
                     if !staged.is_empty() {
                         outln!(
                             "rwv doctor: {location}: each staged version is kept in {}, shown by:",
