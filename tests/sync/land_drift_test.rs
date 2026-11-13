@@ -1738,6 +1738,30 @@ fn a_refresh_killed_with_its_index_copy_written_leaves_nothing_after_the_next() 
     );
 }
 
+/// A second refresh while the first stands with its index copy written
+/// leaves that copy alone: the first's write still runs through it.
+#[test]
+fn a_refresh_leaves_a_running_refreshs_index_copy_alone() {
+    let f = fixture();
+    move_of_every_shape(&f);
+    let held = held_landing(&f, "drift-write-spawn");
+    let running = drift_scratch(&f.ww_lib);
+    assert!(!running.is_empty());
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    let left = drift_scratch(&f.ww_lib);
+    assert!(
+        running.iter().all(|name| left.contains(name)),
+        "{running:?} {left:?}\n{said}"
+    );
+    let out = held.release();
+    let said = common::cli::describe(&out);
+    assert!(holds_every_shape(&f), "{said}");
+    assert_eq!(drift_scratch(&f.ww_lib), Vec::<String>::new(), "{said}");
+}
+
 /// A file write git declines part way, after it wrote the files the move
 /// adds: once what stopped it is cleared, the printed choice finishes the
 /// refresh, nothing having been edited.
