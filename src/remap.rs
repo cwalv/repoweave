@@ -443,4 +443,65 @@ mod tests {
             Some(Image::Dropped(commit(9)))
         );
     }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.name=T", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    fn lock_pinning(version: &str) -> String {
+        format!(
+            r#"{{"repositories":{{"github/o/lib":{{"type":"git","url":"https://example.invalid/o/lib.git","version":"{version}"}}}}}}"#
+        )
+    }
+
+    fn commit_lock(dir: &Path, version: &str) -> CommitId {
+        let lock = LockFile::from_json_str(&lock_pinning(version)).unwrap();
+        std::fs::write(
+            dir.join(LockFile::FILE_NAME),
+            crate::lock::render(&lock).unwrap(),
+        )
+        .unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-qm", "lock"]);
+        crate::git::git_vcs()
+            .head_revision(dir)
+            .unwrap()
+            .id()
+            .clone()
+    }
+
+    #[test]
+    fn a_written_commit_no_replayed_commit_became_keeps_the_pins_it_changed() {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        let onto = commit_lock(dir, &"a".repeat(40));
+        let relock = commit_lock(dir, &"b".repeat(40));
+        let replayed = Replayed {
+            images: Vec::new(),
+            written: vec![relock],
+        };
+
+        let remap = remap_project(
+            crate::git::git_vcs().as_ref(),
+            dir,
+            &replayed,
+            &onto,
+            &BTreeMap::new(),
+        )
+        .unwrap();
+
+        assert!(remap.rewritten.is_none());
+        assert!(remap.remapped.is_empty());
+    }
 }
