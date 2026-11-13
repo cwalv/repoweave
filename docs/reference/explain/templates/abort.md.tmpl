@@ -77,6 +77,10 @@ when all repos restored without a foreign-tip violation.
 - **Uncommitted working-tree changes.** The savepoint records commits, not
   edits. Edits a reset would discard are kept as a backup (`rwv backup
   list`), not restored into the working tree.
+- **A replay you finished by hand.** Where you resolved a stopped replay of
+  the operation's own and finished it yourself, the commits it made hold your
+  resolution: abort keeps them as a backup before it moves the branch or
+  detached HEAD off them, and prints the backup's name.
 - **Side effects outside the git history** — integration-generated files,
   `node_modules/`, `.venv/`, etc. are not snapshotted and are not rolled back.
 
