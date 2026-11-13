@@ -549,6 +549,20 @@ Schema:
           "enum": [
             "patch-equivalent"
           ]
+        },
+        {
+          "description": "How many commits the branch holds that its push branch lacks.",
+          "type": "string",
+          "enum": [
+            "ahead"
+          ]
+        },
+        {
+          "description": "How many commits the push branch holds that the branch lacks.",
+          "type": "string",
+          "enum": [
+            "behind"
+          ]
         }
       ]
     },

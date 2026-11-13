@@ -89,6 +89,22 @@ commits the target's pin for the member lacks, read in the target's lock at
 the newer of the target and its own upstream; a target diverged from its
 upstream refuses as `push-branch` `diverged`.
 
+**A half-published composition.** A push that publishes members and then does
+not publish the project branch (a pin withheld, or the remote refusing the
+project branch because it moved after the fetch) leaves members' new commits
+public while the published lock still pins the old ones. That state is safe to
+sit in: every published lock still names commits that exist, nothing needs
+undoing, and nothing is replaced. A project branch that is behind its push
+branch, or has diverged from it, is refused before any member is published,
+with how many commits it is ahead and behind (`ahead`, `behind`); a push that
+refuses there has published nothing. Where the project branch has diverged,
+`rwv pull --merge-upstream` merges the push branch into it, each member the two
+sides both moved merged, the lock written from the merged members and a member
+the merge drops removed; `rwv push` then publishes. Where the project branch is
+only behind, `rwv pull` takes the push branch in. Where the push was withheld
+or a member's push was rejected, the refusal names the member; fix that and
+re-run `rwv push`, which publishes what is left.
+
 **The record.** The branch's record, and every drop this machine has made of a
 record whose branch is gone everywhere, is published to the project branch's
 push target before the project branch, as one commit on that remote's records
@@ -222,7 +238,11 @@ rwv push -j 4
   is configured for it and the repo has no url remote. Run a choice printed
   beneath it (configure its push remote, or add the remote).
 - *`push-branch diverged`* — the branch and its push branch each hold commits
-  the other lacks, and the branch's own are listed. Take theirs in first.
+  the other lacks: `ahead` and `behind` give how many each, and the branch's own
+  are listed. For the project repo, `rwv pull --merge-upstream` merges theirs
+  in; then re-run `rwv push`. Nothing was published.
+- *`push-branch behind`* — the push branch holds `behind` commits the branch
+  lacks. Take them in first, by the printed choice.
 - *`<member>: pin unpinned`* — the member holds the commits listed beyond its
   pin, which nothing else holds. Run `rwv lock --commit` to record them, or move
   the repo's branch back to its pin without detaching it: `git branch <name>`
