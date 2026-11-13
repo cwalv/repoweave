@@ -17767,7 +17767,8 @@ pub fn a_carry_refuses_to_write_over_an_ignored_file() -> Scenario {
 /// refuses naming `rwv sync --continue` and `rwv abort`, the checkout is back
 /// on `w1`'s branch with no rebase in progress, and once the hook is gone
 /// `--continue` carries `w2`.
-pub fn a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_branch() -> Scenario {
+pub fn a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_branch() -> Scenario
+{
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));
     steps.extend([
@@ -17816,7 +17817,15 @@ pub fn a_dependent_opened_elsewhere_as_its_carry_moves_it_is_not_moved() -> Scen
         Step::rwv_paused(&ww("w1"), &["sync"], "carry-move", "carrying"),
         Step::rwv(
             &a(),
-            &["workweave", "create", "--project", "proj", "w2s", "--branch", "w2"],
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w2s",
+                "--branch",
+                "w2",
+            ],
         )
         .expect(Exit::Succeeds),
         Step::release("carrying")

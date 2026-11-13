@@ -577,7 +577,14 @@ impl Carrier<'_> {
             .iter()
             .map(|carrying| carrying.branch.as_str())
             .collect();
-        judge(&stack, &self.repos, self.t, verb, Some(&claimed), &mut report);
+        judge(
+            &stack,
+            &self.repos,
+            self.t,
+            verb,
+            Some(&claimed),
+            &mut report,
+        );
         report.into_result()?;
         refuse_in_the_way(&stack, &self.repos, self.verb)?;
         let project_dir = self.repos.dir(&RepoKey::Project);
@@ -823,7 +830,14 @@ impl Carrier<'_> {
         if !opened.uncarried.is_empty() {
             let claimed: Vec<&str> = record.carries.iter().map(|c| c.branch.as_str()).collect();
             let mut report = Report::default();
-            judge(&opened, &self.repos, self.t, verb, Some(&claimed), &mut report);
+            judge(
+                &opened,
+                &self.repos,
+                self.t,
+                verb,
+                Some(&claimed),
+                &mut report,
+            );
             report.into_result()?;
         }
         if !raced.is_empty() {

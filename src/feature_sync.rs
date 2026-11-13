@@ -919,7 +919,14 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         let branch = crate::records::BranchName::parse(vcs, &sync.branch)
             .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {e:?}", sync.branch))?;
         let stack = crate::stack::walk(&repos, &branch, &moved, &[])?;
-        crate::stack::judge(&stack, &repos, sync.source_name(), "sync", None, &mut report);
+        crate::stack::judge(
+            &stack,
+            &repos,
+            sync.source_name(),
+            "sync",
+            None,
+            &mut report,
+        );
     }
     report.into_result()?;
     Ok(Planned {
@@ -1976,7 +1983,14 @@ fn integration_now(
         .map_err(|e| crate::untokened!(EnvironmentPassthrough, "{}: {e:?}", sync.branch))?;
     let key = repo.map_or(RepoKey::Project, |path| RepoKey::Member(path.clone()));
     let stack = crate::stack::walk(&repos, &branch, &[(key, head.clone())], &[])?;
-    crate::stack::judge(&stack, &repos, sync.source_name(), "sync", None, &mut report);
+    crate::stack::judge(
+        &stack,
+        &repos,
+        sync.source_name(),
+        "sync",
+        None,
+        &mut report,
+    );
     report.into_result()?;
     Ok((how, merged))
 }
