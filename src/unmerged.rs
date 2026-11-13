@@ -120,14 +120,18 @@ impl<'a> Reach for &'a [Member<'a>] {
     }
 }
 
+/// Whether `ancestor` reaches `of`; `None` unless the clone holds both, since
+/// ancestry asked of a commit the clone lacks answers `false`.
 fn reaches(member: &Member<'_>, ancestor: &CommitId, of: &CommitId) -> Option<bool> {
+    let held = |commit: &CommitId| {
+        member
+            .vcs
+            .resolve_revision(&member.dir, commit.as_str())
+            .ok()
+    };
     member
         .vcs
-        .is_ancestor(
-            &member.dir,
-            &ResolvedRevisionId::from(ancestor.clone()),
-            &ResolvedRevisionId::from(of.clone()),
-        )
+        .is_ancestor(&member.dir, &held(ancestor)?, &held(of)?)
         .ok()
 }
 
@@ -288,4 +292,49 @@ fn waiver(
         }
     }
     Ok(search)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
+    #[test]
+    fn reach_is_unknown_where_the_clone_lacks_either_commit() {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "a"]);
+        let a = CommitId::parse(&git(&dir, &["rev-parse", "HEAD"])).unwrap();
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "b"]);
+        let b = CommitId::parse(&git(&dir, &["rev-parse", "HEAD"])).unwrap();
+        let absent = CommitId::parse(&"ab".repeat(20)).unwrap();
+        let vcs = crate::git::git_vcs();
+        let path = RepoPath::new("m").unwrap();
+        let member = Member {
+            path: &path,
+            dir,
+            vcs: vcs.as_ref(),
+        };
+        assert_eq!(
+            [
+                reaches(&member, &a, &b),
+                reaches(&member, &b, &a),
+                reaches(&member, &a, &absent),
+                reaches(&member, &absent, &b),
+            ],
+            [Some(true), Some(false), None, None]
+        );
+    }
 }
