@@ -2839,3 +2839,58 @@ fn on_branch(repo: &Path) -> bool {
         .status
         .success()
 }
+
+/// The branch a set-back checkout left is taken by another worktree: the
+/// merge's refusal names where, offers freeing it, and once freed the
+/// printed merge finishes.
+#[test]
+fn a_set_back_checkout_whose_branch_is_taken_is_offered_freeing_it() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    let other = f.scratch.join("taker");
+    common::git_in(
+        &f.primary_lib,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            other.to_str().unwrap(),
+            "ww/project",
+        ],
+    );
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsSetBack);
+    assert!(stderr.contains("is checked out at"), "{stderr}");
+    assert!(stderr.contains("out of the other checkout"), "{stderr}");
+    assert!(!stderr.contains("move out of the way"), "{stderr}");
+    common::git_in(
+        &f.primary_lib,
+        &["worktree", "remove", other.to_str().unwrap()],
+    );
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(on_branch(&f.ww_lib), "{said}");
+}
+
+/// The branch a set-back checkout left was deleted: the merge's refusal says
+/// so and offers creating it again; once created, the printed merge finishes.
+#[test]
+fn a_set_back_checkout_whose_branch_is_gone_is_offered_creating_it_again() {
+    let f = fixture();
+    set_back_by_a_killed_merge(&f);
+    let tip = common::git_in(&f.primary_lib, &["rev-parse", "ww/project"]);
+    common::git_in(&f.primary_lib, &["branch", "-q", "-D", "ww/project"]);
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsSetBack);
+    assert!(stderr.contains("no longer exists"), "{stderr}");
+    assert!(stderr.contains("create the branch it left"), "{stderr}");
+    assert!(!stderr.contains("move out of the way"), "{stderr}");
+    common::git_in(&f.primary_lib, &["branch", "-q", "ww/project", &tip]);
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(on_branch(&f.ww_lib), "{said}");
+}

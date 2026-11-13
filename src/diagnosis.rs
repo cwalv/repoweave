@@ -813,6 +813,9 @@ impl State {
                     Form::UnstageThenMerge,
                     Form::ReplaceThenMerge,
                     Form::RemoveLockThenMerge,
+                    Form::FreeBranchThenMerge,
+                    Form::RecreateBranchThenMerge,
+                    Form::ClearRefusalThenMerge,
                     Form::CompareMarked,
                     Form::CompareSkipped,
                     Form::TakeBackSetAside,
@@ -2009,6 +2012,9 @@ pub enum ChoiceId {
     UnstageThenMerge,
     RemoveLockThenMerge,
     StashUnreadDrift,
+    FreeBranchThenMerge,
+    RecreateBranchThenMerge,
+    ClearRefusalThenMerge,
     TakeBackSetAside,
 }
 
@@ -2331,6 +2337,25 @@ impl ChoiceId {
                          there is taken back the same way, with its own id",
                 keeps_work: "the set-aside record stays until you drop it",
             },
+            Self::FreeBranchThenMerge => &ChoiceRow {
+                id: None,
+                phrase: "check the branch it left, named in the subject, out of the other \
+                         checkout the subject names, then merge again",
+                keeps_work: "nothing here is written until the merge, which keeps a backup first",
+            },
+            Self::RecreateBranchThenMerge => &ChoiceRow {
+                id: None,
+                phrase: "create the branch it left, named in the subject, again at the tip it \
+                         should hold, then merge again",
+                keeps_work: "nothing here is written until the merge, which keeps a backup first",
+            },
+            Self::ClearRefusalThenMerge => &ChoiceRow {
+                id: None,
+                phrase: "clear what the VCS says stopped it, quoted in the subject, then merge \
+                         again",
+                keeps_work: "the working copy and index are kept as a backup before the merge \
+                             writes anything",
+            },
             Self::StashUnreadDrift => &ChoiceRow {
                 id: None,
                 phrase: "stash every difference from HEAD, the edits with the move's reverse, \
@@ -2571,6 +2596,9 @@ pub enum Form {
     UnstageThenMerge,
     RemoveLockThenMerge,
     StashUnreadDrift,
+    FreeBranchThenMerge,
+    RecreateBranchThenMerge,
+    ClearRefusalThenMerge,
     TakeBackSetAside,
 }
 
@@ -2599,7 +2627,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 111] = [
+    pub const ALL: [Form; 114] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2711,6 +2739,9 @@ impl Form {
         Self::RemoveLockThenMerge,
         Self::TakeBackSetAside,
         Self::StashUnreadDrift,
+        Self::FreeBranchThenMerge,
+        Self::RecreateBranchThenMerge,
+        Self::ClearRefusalThenMerge,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3303,6 +3334,24 @@ impl Form {
                 choice: C::TakeBackSetAside,
                 steps: &[Vcs(A::TakeBackSetAside)],
                 at: W::Checkout,
+                shipped: true,
+            },
+            Self::FreeBranchThenMerge => &FormRow {
+                choice: C::FreeBranchThenMerge,
+                steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
+                at: W::CheckoutsWorkspace,
+                shipped: true,
+            },
+            Self::RecreateBranchThenMerge => &FormRow {
+                choice: C::RecreateBranchThenMerge,
+                steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
+                at: W::CheckoutsWorkspace,
+                shipped: true,
+            },
+            Self::ClearRefusalThenMerge => &FormRow {
+                choice: C::ClearRefusalThenMerge,
+                steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
+                at: W::CheckoutsWorkspace,
                 shipped: true,
             },
             Self::StashUnreadDrift => &FormRow {
@@ -4543,6 +4592,26 @@ pub fn set_back(
             .collect();
         subject.push_str(&format!("; the VCS refused: {}", said.join(" ")));
     }
+    let gone = vcs.resolve_revision(dir, &back.branch).is_err();
+    let elsewhere: Vec<PathBuf> = vcs
+        .checkouts_of_branch(dir, &crate::vcs::RawRefName::new(back.branch.clone()))
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|other| {
+            crate::path_spelling::CanonicalPath::of(other)
+                != crate::path_spelling::CanonicalPath::of(dir)
+        })
+        .collect();
+    if gone {
+        subject.push_str(&format!("; branch {} no longer exists", back.branch));
+    }
+    if let Some(other) = elsewhere.first() {
+        subject.push_str(&format!(
+            "; branch {} is checked out at {}",
+            back.branch,
+            other.display()
+        ));
+    }
     let lock = vcs.index_lock(dir).ok().flatten();
     if let Some(lock) = &lock {
         if refused.is_none() {
@@ -4571,7 +4640,10 @@ pub fn set_back(
         ));
     }
     let kept = all_kept.last();
-    let carried = carried_over(vcs, dir, back, &edits);
+    let carried = match gone {
+        true => Ok(crate::vcs::UncomparedPaths::default()),
+        false => carried_over(vcs, dir, back, &edits),
+    };
     if let Ok(uncompared) = &carried {
         if !uncompared.ignored.is_empty() {
             subject.push_str(&format!(
@@ -4630,8 +4702,14 @@ pub fn set_back(
         }
         Ok(_) => {}
     }
+    if gone {
+        return judging.only_forms(&forms(&[Form::RecreateBranchThenMerge]));
+    }
+    if !elsewhere.is_empty() {
+        return judging.only_forms(&forms(&[Form::FreeBranchThenMerge]));
+    }
     match refused {
-        Some(_) => judging.only_forms(&forms(&[Form::ReplaceThenMerge])),
+        Some(_) => judging.only_forms(&forms(&[Form::ClearRefusalThenMerge])),
         None => judging.only_forms(&forms(&[Form::MergeEditedDrift, Form::SetEditsAside])),
     }
 }
