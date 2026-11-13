@@ -2642,6 +2642,46 @@ fn a_member_added_by_a_move_of_the_project_branch_is_not_removed_by_lock_commit(
     );
 }
 
+/// `rwv pull`, `rwv update --remote` and `rwv cherry-pick` judge the project
+/// repo's drift before they read its manifest: an edit of `rwv.toml` the
+/// branch's move also changed refuses each as moved and edited, and nothing
+/// in the project repo is written.
+#[test]
+fn pull_update_remote_and_cherry_pick_hold_a_moved_and_edited_project_manifest() {
+    let verbs: [&[&str]; 3] = [
+        &["pull"],
+        &["update", "--remote"],
+        &["cherry-pick", "HEAD"],
+    ];
+    for verb in verbs {
+        let f = fixture();
+        let moved = f.move_project_manifest();
+        let project = f.ww_project();
+        let manifest = project.join("rwv.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(&manifest, format!("# mine\n{text}")).unwrap();
+        let before = std::fs::read_to_string(&manifest).unwrap();
+
+        let out = common::cli::run(verb, &f.ww);
+
+        let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+        assert!(
+            listing_under(&stderr, "edits moved and edited").contains(&"rwv.toml".to_owned()),
+            "{verb:?}:\n{stderr}"
+        );
+        assert_eq!(
+            common::git_in(&project, &["rev-parse", "HEAD"]),
+            moved,
+            "{verb:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&manifest).unwrap(),
+            before,
+            "{verb:?}"
+        );
+    }
+}
+
 /// Every verb that commits in the project repo settles its drift first: run
 /// over a project branch moved under the workweave, none commits the move's
 /// reverse or leaves it standing beside its commit, whether it proceeds or
