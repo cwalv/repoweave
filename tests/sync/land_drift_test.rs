@@ -2920,13 +2920,15 @@ fn a_set_aside_keeps_an_unrelated_edit_in_place() {
 
 /// A set-aside stopped once its stash is made has already printed the line
 /// that takes it back. Edited again and set aside again, the finished report
-/// prints both take-back lines, the earlier first, and each, run as printed,
-/// holds its own edit.
+/// prints both take-back lines, the earlier first, each set-aside holding an
+/// edit of the same file. Run as printed, with what the first brings back
+/// staged before the next as the report says, both edits come back.
 #[test]
 fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
     let f = fixture();
-    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
-    std::fs::write(f.ww_lib.join("notes.txt"), "first edit\n").unwrap();
+    commit_file(&f.ww_lib, "u.txt", "a\nm\nm\nm\nb\nm\nm\nm\nc\n", "u");
+    f.move_from_elsewhere("ww/project", "u.txt", "A\nm\nm\nm\nb\nm\nm\nm\nc\n");
+    std::fs::write(f.ww_lib.join("u.txt"), "a\nm\nm\nm\nb1\nm\nm\nm\nc\n").unwrap();
     let stopped = held_at(&f, &f.ww, &SET_ASIDE, "drift-merge-carry").kill();
     let first = stashes(&f.ww_lib);
     assert_eq!(first.len(), 1);
@@ -2935,7 +2937,7 @@ fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
         said.contains(&format!("stash apply {}", first[0])),
         "the take-back line is printed as the stash is made: {said}"
     );
-    std::fs::write(f.ww_lib.join("README.md"), "second edit\n").unwrap();
+    std::fs::write(f.ww_lib.join("u.txt"), "a\nm\nm\nm\nb\nm\nm\nm\nc2\n").unwrap();
 
     let out = common::cli::run(&SET_ASIDE, &f.ww);
 
@@ -2954,6 +2956,21 @@ fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
     assert_eq!(
         common::git_in(&f.ww_lib, &["symbolic-ref", "--short", "HEAD"]),
         "ww/project"
+    );
+    assert!(
+        said.contains("stage or commit what each brings back before the next"),
+        "{said}"
+    );
+
+    let out = run_printed(&said, &format!("stash apply {oldest}"), &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    common::git_in(&f.ww_lib, &["add", "-u"]);
+    let out = run_printed(&said, &format!("stash apply {newest}"), &f.ww);
+
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(
+        read(&f.ww_lib.join("u.txt")).as_deref(),
+        Some("A\nm\nm\nm\nb1\nm\nm\nm\nc2\n")
     );
 }
 

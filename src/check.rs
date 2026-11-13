@@ -7809,11 +7809,15 @@ impl EditedDriftMerge {
                 took_incoming.join(", ")
             ));
         }
+        let heading = match earlier.is_empty() {
+            true => "\nthe set-aside edits merge back onto the checkout with:",
+            false => {
+                "\nthe set-aside edits merge back onto the checkout with, oldest first; stage or \
+                 commit what each brings back before the next:"
+            }
+        };
         for stash in earlier.iter().chain(set_aside) {
-            shown.push((
-                "\nthe set-aside edits merge back onto the checkout with, oldest first:",
-                take_back(stash),
-            ));
+            shown.push((heading, take_back(stash)));
         }
         if set_aside.is_none() && !took_incoming.is_empty() {
             said.push_str(&format!(

@@ -2326,7 +2326,8 @@ impl ChoiceId {
                 id: None,
                 phrase: "merge back the edits the newest set-aside kept, named last in the \
                          subject, once the checkout stands on its branch; any earlier one named \
-                         there is taken back the same way, with its own id",
+                         there is taken back the same way, with its own id, once what the one \
+                         taken back before it brought back is staged or committed",
                 keeps_work: "the set-aside record stays until you drop it",
             },
             Self::FreeBranchThenMerge => &ChoiceRow {
