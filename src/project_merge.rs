@@ -640,7 +640,7 @@ impl ProjectMerge<'_> {
             let paths = vcs.start_merge(
                 &dir,
                 sides.incoming(self.head),
-                DerivedContentPolicy::vcs_default(),
+                DerivedContentPolicy::keep_incoming_side(),
             )?;
             if !paths.iter().all(|path| path == LockFile::FILE_NAME) {
                 return Err(crate::untokened!(
@@ -756,7 +756,7 @@ impl ProjectMerge<'_> {
             .start_merge(
                 dir,
                 sides.incoming(self.head),
-                DerivedContentPolicy::vcs_default(),
+                DerivedContentPolicy::keep_incoming_side(),
             )?
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
@@ -797,7 +797,7 @@ impl ProjectMerge<'_> {
                 theirs,
                 Order::HeadFirst,
                 &message,
-                DerivedContentPolicy::vcs_default(),
+                DerivedContentPolicy::keep_incoming_side(),
             ) {
                 Ok(Joined::Merged(tip)) => {
                     merged.insert(path.clone(), tip);

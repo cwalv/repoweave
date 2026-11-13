@@ -3730,6 +3730,141 @@ pub fn resolve_app_conflict_and_continue() -> Vec<Step> {
     ]
 }
 
+/// `app` declares `DERIVED` regenerated; machine A pushes a regeneration of
+/// it, and of `OTHER` where `other` is set, while B commits its own. B's
+/// `pull --merge-upstream` merges `app`'s pins: `DERIVED` takes the
+/// upstream's content, as a rebase onto the upstream would, and a path
+/// nobody declared that both sides changed still stops with B's commit kept,
+/// which the operator resolves and `--continue` finishes.
+fn pull_merge_deriving(other: bool) -> Scenario {
+    let upstream: &[(&str, &str)] = if other {
+        &[("DERIVED", "upstream\n"), ("OTHER", "upstream-other\n")]
+    } else {
+        &[("DERIVED", "upstream\n")]
+    };
+    let local: &[(&str, &str)] = if other {
+        &[("DERIVED", "local\n"), ("OTHER", "local-other\n")]
+    } else {
+        &[("DERIVED", "local\n")]
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["member", "remove", "local/remotes/docs"]).expect(Exit::Succeeds),
+        Step::hand_commit(
+            &a(),
+            Repo::App,
+            "main",
+            &[
+                (".gitattributes", "DERIVED merge=rwv-ours\n"),
+                ("DERIVED", "base\n"),
+                ("OTHER", "base\n"),
+            ],
+        ),
+        Step::git(&a(), Repo::App, &["reset", "-q", "--hard"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+        Step::new_machine(Machine::B),
+        Step::hand_commit(&a(), Repo::App, "main", upstream),
+        Step::git(&a(), Repo::App, &["reset", "-q", "--hard"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::App, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+        Step::hand_commit(&b(), Repo::App, "main", local),
+        Step::git(&b(), Repo::App, &["reset", "-q", "--hard"]),
+        Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    let pull = Step::rwv(&b(), &["pull", "--merge-upstream"]);
+    if other {
+        steps.extend([
+            pull.expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(
+                    "merge conflict in local/remotes/app (OTHER)",
+                ))
+                .claim(Claim::OutputContains("rwv pull --continue")),
+            Step::git(&b(), Repo::App, &["show", "HEAD:OTHER"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local-other")),
+            Step::git(&b(), Repo::App, &["show", "MERGE_HEAD:OTHER"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("upstream-other")),
+            Step::git(&b(), Repo::App, &["checkout", "--ours", "OTHER"]),
+            Step::git(&b(), Repo::App, &["add", "OTHER"]),
+            Step::rwv(&b(), &["pull", "--continue"]).expect(Exit::Succeeds),
+            Step::git(&b(), Repo::App, &["show", "HEAD:OTHER"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local-other")),
+        ]);
+    } else {
+        steps.push(pull.expect(Exit::Succeeds));
+    }
+    steps.extend([
+        Step::git(&b(), Repo::App, &["rev-parse", "--verify", "-q", "HEAD^2"])
+            .expect(Exit::Succeeds),
+        Step::git(&b(), Repo::App, &["show", "HEAD:DERIVED"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("upstream")),
+    ]);
+    scenario(
+        if other {
+            "pull --merge-upstream: an undeclared path both sides changed still stops"
+        } else {
+            "pull --merge-upstream: a derived path both sides regenerated takes the upstream's"
+        },
+        steps,
+    )
+}
+
+pub fn pull_merge_resolves_derived_to_the_upstream() -> Scenario {
+    pull_merge_deriving(false)
+}
+
+pub fn pull_merge_still_stops_on_an_undeclared_path() -> Scenario {
+    pull_merge_deriving(true)
+}
+
+/// The project repo itself declares `DERIVED` regenerated, beside its lock's
+/// own driver; both machines regenerate it, and B's pull takes the
+/// upstream's.
+pub fn pull_project_merge_resolves_derived_to_the_upstream() -> Scenario {
+    scenario(
+        "pull --merge-upstream: a derived path of the project repo takes the upstream's",
+        vec![
+            Step::hand_commit(
+                &a(),
+                Repo::Proj,
+                "main",
+                &[
+                    (
+                        ".gitattributes",
+                        "rwv.lock merge=rwv-lock\nDERIVED merge=rwv-ours\n",
+                    ),
+                    ("DERIVED", "base\n"),
+                ],
+            ),
+            Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::new_machine(Machine::B),
+            Step::hand_commit(&a(), Repo::Proj, "main", &[("DERIVED", "upstream\n")]),
+            Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::hand_commit(&b(), Repo::Proj, "main", &[("DERIVED", "local\n")]),
+            Step::git(&b(), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::rwv(&b(), &["pull", "--merge-upstream"]).expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Proj, &["rev-parse", "--verify", "-q", "HEAD^2"])
+                .expect(Exit::Succeeds),
+            Step::git(&b(), Repo::Proj, &["show", "HEAD:DERIVED"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("upstream")),
+        ],
+    )
+}
+
 pub fn merge_upstream_as_refs() -> Scenario {
     scenario(
         "update --remote --merge-upstream: a branch checked out nowhere merges as refs",

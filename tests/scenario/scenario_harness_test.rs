@@ -1236,6 +1236,9 @@ every_scenario!(
     dc09_integrations_settle(Seed::default().integration()),
     both_sides_move_app_conflictingly,
     merge_conflict_continues,
+    pull_merge_resolves_derived_to_the_upstream,
+    pull_merge_still_stops_on_an_undeclared_path,
+    pull_project_merge_resolves_derived_to_the_upstream,
     merge_conflict_aborts,
     resolve_app_conflict_and_continue,
     merge_upstream_as_refs,
@@ -1513,6 +1516,24 @@ fn a_merge_that_adds_a_member_clones_it_and_settles_its_files() {
 #[test]
 fn a_member_merge_that_conflicts_stops_and_continue_finishes() {
     runner::run(scenarios::merge_conflict_continues()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_pull_merge_resolves_a_declared_derived_path_to_the_upstream() {
+    runner::run(scenarios::pull_merge_resolves_derived_to_the_upstream())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_pull_merge_still_stops_on_an_undeclared_path_and_continue_finishes() {
+    runner::run(scenarios::pull_merge_still_stops_on_an_undeclared_path())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_pull_merge_resolves_a_derived_path_of_the_project_repo_to_the_upstream() {
+    runner::run(scenarios::pull_project_merge_resolves_derived_to_the_upstream())
+        .assert_fully_decided_green();
 }
 
 #[test]

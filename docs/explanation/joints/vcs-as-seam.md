@@ -208,7 +208,10 @@ asymmetry is the whole shape of the thing.
   copy standing — through the derived-content policy the replay states. The
   merges `sync` and `land` compose run in the checkout of the work being
   integrated, so they define it as the shell command that copies the merged-in
-  side over it: the receiving side's copy stands, as after a rebase onto it. A
+  side over it: the receiving side's copy stands, as after a rebase onto it.
+  The merges `pull --merge-upstream` and `update --remote --merge-upstream`
+  make bring the upstream in, and define it the same way: the upstream's copy
+  stands, as after a rebase onto the upstream. A
   merge or rebase run outside rwv resolves the path as an ordinary textual
   conflict. That is noisy, not dangerous: the content is derived, so
   regenerate afterwards and the repo's own drift gate judges the result on

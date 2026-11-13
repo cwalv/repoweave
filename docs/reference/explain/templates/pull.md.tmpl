@@ -18,7 +18,11 @@ pin both sides changed under one declared branch merges the other side's pin int
 its branch; a member the merge drops is pruned once every member has merged; and
 the project commit is written last, carrying the relock: each merged member at
 where its merge ended, every other member at the pin the side that changed it
-holds. A conflict stops with the backend's hint up to staging and, for each
+holds. A path a repo declares derived (`<path> merge=rwv-ours` in its
+attributes) that both sides changed takes the upstream's version, in the
+project repo and in each member, as a rebase onto the upstream would; any other
+path both sides changed conflicts. A conflict stops with the backend's hint up
+to staging and, for each
 conflicted `rwv.toml` entry, its setter spelled with ours and with theirs;
 `rwv pull --continue` resumes and `rwv abort` restores everything the operation
 moved. `--reset-to-upstream` keeps the tip it leaves in a backup (`rwv backup
