@@ -4089,10 +4089,10 @@ impl Vcs for GitVcs {
         ) else {
             return Ok(None);
         };
-        let Some((at, said)) = recorded.split_once(' ') else {
+        let Some((at, subject)) = recorded.split_once(' ') else {
             return Ok(None);
         };
-        let Some(left) = said.strip_prefix(REFRESHING) else {
+        let Some(left) = subject.strip_prefix(REFRESHING) else {
             return Ok(None);
         };
         let (Ok(at), Ok(left)) = (CommitId::parse(at), CommitId::parse(left)) else {

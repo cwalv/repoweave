@@ -55,6 +55,7 @@ const TRACKED: &[&str] = &[
     "--force-with-lease=",      // git push --force-with-lease, leased to a tip
     "\"checkout\"",             // git checkout (worktree overwrite when forced)
     "\"update-ref\"",           // ref surgery
+    "\"stash\"",                // stash flows hide work; drop and clear lose it
     "\"read-tree\", \"-m\"",    // a merge into the real index, rewriting files with -u
 ];
 
@@ -70,7 +71,6 @@ const TRACKED: &[&str] = &[
 /// a leftover in the way a reported obstacle instead of a casualty.
 const FORBIDDEN: &[&str] = &[
     "\"clean\"",            // git clean: deletes untracked files
-    "\"stash\"",            // stash drop/clear loses work; stash flows hide it
     "\"filter-branch\"",    // history rewrite
     "\"checkout\", \"-f\"", // force-checkout bypasses git's dirty refusal
     "\"reflog\"",           // expire/delete cuts the last recovery path
@@ -446,7 +446,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 11,
+        count: 12,
         callers: &[],
         justification: "(1)-(2) savepoint creates, a checkout's and a \
             branch's moved as a ref; (A)-(C) savepoint drops: every one \
@@ -479,13 +479,16 @@ const ALLOWLIST: &[Allowed] = &[
             (8) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
             refresh read, by a compare-and-swap whose old and new values are \
             both that commit, so it moves no ref; a branch moved since makes \
-            it fail rather than move back or record the newer tip.",
+            it fail rather than move back or record the newer tip. (9) \
+            Vcs::mark_refreshing: the same compare-and-swap at HEAD, whose \
+            reflog message names the tip a refresh starts from; it moves no \
+            ref.",
     },
     Allowed {
         file: "git.rs",
         pattern: "\"read-tree\", \"-m\"",
         count: 1,
-        callers: &[("refresh_paths_if_left", 5)],
+        callers: &[("refresh_paths_if_left", 4)],
         justification: "refresh_paths_if_left, the one write of a drift \
             refresh: a two-way merge from the moved-from tip to that tip's \
             tree with the stale paths taken from HEAD, so in an index that \
@@ -503,48 +506,43 @@ const ALLOWLIST: &[Allowed] = &[
             check::read_drift agree are stale, and the put-back of the files \
             scope with the two tips swapped when the index-only scope is \
             declined after it, which git refuses unless each path still holds \
-            what the first write put there; and check::merge_edited_drift, \
-            which makes the same two writes and the same put-back on paths a \
-            second reading agrees are stale, after the checkout's working \
+            what the first write put there.",
+    },
+    Allowed {
+        file: "git/carry_edits.rs",
+        pattern: "\"update-ref\"",
+        count: 1,
+        callers: &[],
+        justification: "set_back: points an attached HEAD, with --no-deref, at \
+            the tip the checkout's files hold, the branch untouched and \
+            named in the reflog message; index and files are not written. \
+            Reached only from check::merge_edited_drift, after the drift \
+            reading names that tip and, for the merge, after the working \
             copy and index are kept as a backup.",
     },
     Allowed {
-        file: "git/working_copy_merge.rs",
-        pattern: "remove_dir_all",
+        file: "git/carry_edits.rs",
+        pattern: "\"checkout\"",
         count: 1,
         callers: &[],
-        justification: "merge_into_working_copy: removes the scratch \
-            directory it wrote the three blobs of each merge into, named for \
-            this process under the checkout's private git directory; no \
-            tracked or untracked file of the checkout is in it.",
+        justification: "carry_edits_onto: `git checkout -m <branch>`, never \
+            forced, from a checkout set back at the tip its files hold: git \
+            merges each local change onto the branch and refuses, writing \
+            nothing, where staged changes or an untracked file are in the \
+            way. Reached from the two edited-drift flags of doctor --fix, \
+            each consented to by name.",
     },
     Allowed {
-        file: "git/working_copy_merge.rs",
-        pattern: "symlink::remove(",
+        file: "git/carry_edits.rs",
+        pattern: "\"stash\"",
         count: 1,
         callers: &[],
-        justification: "remove_entry: removes the file or link standing at a \
-            path itself, never what a link names, once every leading \
-            directory is checked to be a directory: where the merge takes the \
-            incoming tip's removal of a declared derived file the working copy \
-            held as a regular file, after the checkout is kept as a backup and \
-            the path re-read unchanged; and where a put-back returns a path to \
-            what the journal holds.",
-    },
-    Allowed {
-        file: "git/working_copy_merge.rs",
-        pattern: "remove_file",
-        count: 4,
-        callers: &[],
-        justification: "(1) ScratchIndex::drop: the scratch index this \
-            process wrote under the checkout's private git directory to read \
-            the incoming tip's attributes. (2) write_file: the file it wrote \
-            beside the path, this process's name in it, where the rename over \
-            the path failed. (3) put_back and (4) merge_into_working_copy: the \
-            journal in the checkout's private git directory, once every path \
-            it names is put back or every write is made. No working file is \
-            removed here: remove_entry goes through symlink::remove, never \
-            through a link, and only after the journal holds what stood.",
+        justification: "set_edits_aside: `git stash push -- <paths>` of the \
+            files both moved and edited, from a checkout set back at the tip \
+            its files hold, so the stash holds the edits alone; the report \
+            prints the `git stash apply <stash>` that merges them back. \
+            Never drop, pop or clear. Reached only from \
+            --set-aside-edited-drift, consented to by name.",
     },
     Allowed {
         file: "git/backup.rs",

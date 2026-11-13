@@ -53,7 +53,8 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<paths>", "NOTES.txt"),
         ("<file>", "README.md"),
         ("<ignored>", "build.log"),
-        ("<marked>", "local.cfg"),
+        ("<assumed>", "local.cfg"),
+        ("<skipped>", "skip.cfg"),
     ])
 }
 

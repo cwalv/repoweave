@@ -5239,6 +5239,7 @@ fn judge_edits_beside_drift(
 ) {
     let reading = match crate::check::read_drift(vcs.as_ref(), &at.dir) {
         Ok(reading) => reading,
+        Err(_) if !vcs.is_repo(&at.dir) => crate::check::DriftReading::default(),
         Err(e) => {
             let mut judging = crate::diagnosis::drift_unread(&at.repo, &e);
             if let Some(workspace) = &at.elsewhere {

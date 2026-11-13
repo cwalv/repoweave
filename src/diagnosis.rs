@@ -4274,7 +4274,7 @@ pub fn dirty_beside_drift(
         || vcs.unmerged_paths(dir).is_ok_and(|u| !u.is_empty());
     let reading = match crate::check::read_drift(vcs, dir) {
         Ok(reading) if !held && reading.moved_and_edited().is_empty() => reading,
-        Err(e) if !held => return Some(drift_unread(repo, &e)),
+        Err(e) if !held && vcs.is_repo(dir) => return Some(drift_unread(repo, &e)),
         _ => return Some(dirty(vcs, repo, dir, files)),
     };
     if !reading.is_refreshable() {

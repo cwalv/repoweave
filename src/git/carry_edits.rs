@@ -4,6 +4,7 @@
 //! onto the branch, or `stash push` keeps them before a plain checkout.
 
 use super::{git_command, Argv, DERIVED_CONTENT_DRIVER_NAME};
+use crate::vcs::Vcs;
 use crate::vcs::{CommitId, Refusable, SetBack, UncomparedPaths, VcsError};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
@@ -54,15 +55,19 @@ fn refusable(output: Output) -> Refusable<()> {
     if output.status.success() {
         return Refusable::Done(());
     }
-    let mut said = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-    if said.is_empty() {
-        said = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    }
-    Refusable::Refused(said)
+    Refusable::Refused(String::from_utf8_lossy(&output.stderr).trim().to_owned())
 }
 
 pub(super) fn set_back(repo: &Path, at: &CommitId) -> Result<(), VcsError> {
-    let branch = text(succeeded(["symbolic-ref", "-q", "HEAD"], repo)?);
+    let crate::vcs::HeadAttachment::Attached(on) = super::GitVcs.head_attachment(repo)? else {
+        return Err(VcsError::CommandFailed {
+            args: vec!["set back".to_owned()],
+            repo: repo.to_path_buf(),
+            stderr: "HEAD is on no branch with commits".to_owned(),
+        });
+    };
+    let branch = on.to_string();
+
     let message = format!("{SET_BACK}{branch}");
     succeeded(
         [
@@ -97,13 +102,10 @@ pub(super) fn set_back_from(repo: &Path) -> Result<Option<SetBack>, VcsError> {
         return Ok(None);
     }
     let recorded = text(output.stdout);
-    let Some((at, said)) = recorded.split_once(' ') else {
+    let Some((at, subject)) = recorded.split_once(' ') else {
         return Ok(None);
     };
-    let Some(branch) = said
-        .strip_prefix(SET_BACK)
-        .and_then(|r| r.strip_prefix("refs/heads/"))
-    else {
+    let Some(branch) = subject.strip_prefix(SET_BACK) else {
         return Ok(None);
     };
     let Ok(at) = CommitId::parse(at) else {
@@ -144,7 +146,7 @@ pub(super) fn set_edits_aside(
         args = args.text(path);
     }
     match refusable(git(args, repo)?) {
-        Refusable::Refused(said) => return Ok(Refusable::Refused(said)),
+        Refusable::Refused(account) => return Ok(Refusable::Refused(account)),
         Refusable::Done(()) => {}
     }
     let kept = text(succeeded(
