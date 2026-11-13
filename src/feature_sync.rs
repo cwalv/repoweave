@@ -1748,18 +1748,29 @@ fn conflict_refusal(
     vcs: &dyn Vcs,
     op: ConflictOp,
 ) -> anyhow::Error {
+    let paths = vcs.unmerged_paths(dir).unwrap_or_default();
+    let entries = if dir == sync.dir {
+        crate::manifest_conflict::stop_lines(vcs, dir)
+    } else {
+        Vec::new()
+    };
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(
-            "rwv sync: the {} of {repo} onto {} stopped on a conflict at {}.\n{}\nthen run `{}`, \
-             or `rwv abort` to put everything back as it was",
+            "rwv sync: the {} of {repo} onto {} stopped on a conflict ({}) at {}.\n{}\n{}then run \
+             `{}`, or `rwv abort` to put everything back as it was",
             match op {
                 ConflictOp::Rebase => "rebase",
                 _ => "merge",
             },
             sync.source_name(),
+            paths.join(", "),
             dir.display(),
             vcs.conflict_resolution_hint(op),
+            entries
+                .iter()
+                .map(|line| format!("{line}\n"))
+                .collect::<String>(),
             crate::op_state::resume_command(OpVerb::Sync),
         ),
     )

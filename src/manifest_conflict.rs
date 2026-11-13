@@ -30,6 +30,9 @@ pub(crate) enum Reading {
     Entries(Vec<EntryConflict>),
     /// This side has no file, or one that does not read as a manifest.
     Unreadable { side: &'static str, why: String },
+    /// Nothing is left unmerged, and the file as it stands does not read as a
+    /// manifest.
+    Unparsed(String),
 }
 
 /// What a setter writes: one field of one member, the removal of a member,
@@ -295,13 +298,17 @@ pub(crate) fn settle_at_stop(
     if !vcs.is_repo(&dir) {
         return Ok(false);
     }
+    let recorded = crate::op_state::read_owner_header(ctx.active_path())
+        .ok()
+        .flatten()
+        .map(|header| header.verb);
+    if recorded == Some(crate::op_state::OpVerb::CherryPick) {
+        return Ok(false);
+    }
     let Some(settled) = settle(vcs, &dir, setting)? else {
         return Ok(false);
     };
-    let resume = crate::op_state::read_owner_header(ctx.active_path())
-        .ok()
-        .flatten()
-        .map(|header| crate::op_state::resume_command(header.verb));
+    let resume = recorded.map(crate::op_state::resume_command);
     eprintln!(
         "rwv {verb}: settled rwv.toml entry {} on both sides",
         settled.entry
@@ -334,11 +341,21 @@ pub(crate) fn refuse_continue_while_conflicted(
     if !vcs.is_repo(&dir) {
         return Ok(());
     }
-    let Some(reading) = reading(vcs, &dir)? else {
-        return Ok(());
-    };
     let Some(header) = crate::op_state::read_owner_header(ctx.active_path())? else {
         return Ok(());
+    };
+    if header.verb == crate::op_state::OpVerb::CherryPick {
+        return Ok(());
+    }
+    let reading = match reading(vcs, &dir)? {
+        Some(reading) => reading,
+        None => match std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) {
+            Ok(text) => match Manifest::from_toml_str(&text) {
+                Ok(_) => return Ok(()),
+                Err(e) => Reading::Unparsed(format!("{e:#}")),
+            },
+            Err(_) => return Ok(()),
+        },
     };
     let mut text = format!(
         "rwv.toml is still in conflict in {} at {}:\n",
@@ -379,24 +396,32 @@ pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
 }
 
 pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec<String> {
-    let by_hand = format!(
-        "no verb settles it: edit rwv.toml, then run `{}`",
-        vcs.hint(VcsAction::MarkResolved)
-            .replace("<checkout>", &dir.display().to_string())
-            .replace("<paths>", Manifest::FILE_NAME)
-    );
-    match reading {
+    let by_hand = "no verb settles it: edit rwv.toml, then stage it";
+    let mut lines = match reading {
         Reading::Unreadable { side, why } => vec![format!(
             "rwv.toml's {side} side does not read as a manifest ({why}); {by_hand}"
+        )],
+        Reading::Unparsed(why) => vec![format!(
+            "rwv.toml does not read as a manifest ({why}); {by_hand}"
         )],
         Reading::Entries(conflicts) if conflicts.is_empty() => vec![format!(
             "rwv.toml: no entry is in conflict, only lines are; {by_hand}"
         )],
         Reading::Entries(conflicts) => conflicts
             .iter()
-            .flat_map(|conflict| conflict_lines(conflict, &by_hand))
+            .flat_map(|conflict| conflict_lines(conflict, by_hand))
             .collect(),
+    };
+    if lines.iter().any(|line| line.contains(by_hand)) {
+        lines.push("to stage rwv.toml once it is edited:".to_owned());
+        lines.push(format!(
+            "  {}",
+            vcs.hint(VcsAction::MarkResolved)
+                .replace("<checkout>", &dir.display().to_string())
+                .replace("<paths>", Manifest::FILE_NAME)
+        ));
     }
+    lines
 }
 
 fn conflict_lines(conflict: &EntryConflict, by_hand: &str) -> Vec<String> {
