@@ -174,8 +174,9 @@ merge where a path's index entry or tracked file no longer holds the
 moved-from tip's content or something untracked is in the way. Two things git's
 merge does not refuse over, an ignored file or directory where the move adds a
 path and a tracked file deleted from disk, rwv checks itself just before git
-starts. The files are written first, checked against a copy of the index,
-and every index entry after them in one write, so a refresh stopped or refused
+starts. The files are written first, checked against a copy of the index
+kept in the checkout's git directory (one a killed run leaves is removed by
+the next refresh), and every index entry after them in one write, so a refresh stopped or refused
 between the two leaves each path's index entry at the moved-from tip, or no
 entry where that tip lacks the path, beside the file, link or directory HEAD
 puts there, which reads as drift again whatever the move did to the path and

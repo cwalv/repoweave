@@ -240,7 +240,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "remove_file",
-        count: 5,
+        count: 6,
         callers: &[],
         justification: "register_worktree_in_place: removes the checkout's \
             `.git` link file, which names a git directory that is not there \
@@ -259,9 +259,12 @@ const ALLOWLIST: &[Allowed] = &[
             wrote under the git directory, named for this process, once the \
             commit through it is made or refused; the repo's own index and \
             working files are never it. refresh_paths_if_left: removes the \
-            scratch index it built the merge's target tree in, and the copy of \
-            the checkout's index its file write ran through, each named for \
-            this process under the checkout's private git directory.",
+            scratch index it built the merge's target tree in. remove_scratch: \
+            removes a refresh's owner file and the scratch files named for it \
+            (that index, and the copy of the checkout's index its file write \
+            ran through), under the checkout's private git directory, when the \
+            refresh ends or, for one a killed process left, when no process \
+            holds the owner file's lock.",
     },
     Allowed {
         file: "git.rs",

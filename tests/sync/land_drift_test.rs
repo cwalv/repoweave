@@ -1707,6 +1707,37 @@ fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
     );
 }
 
+fn drift_scratch(repo: &Path) -> Vec<String> {
+    let dir = common::git_in(repo, &["rev-parse", "--absolute-git-dir"]);
+    std::fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with("rwv-drift-"))
+        .collect()
+}
+
+/// A refresh killed while its copy of the index stands in the git dir: the
+/// next refresh removes what it left and finishes the refresh.
+#[test]
+fn a_refresh_killed_with_its_index_copy_written_leaves_nothing_after_the_next() {
+    let f = fixture();
+    move_of_every_shape(&f);
+    drop(held_landing(&f, "drift-write-spawn"));
+    assert!(!drift_scratch(&f.ww_lib).is_empty());
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert_eq!(drift_scratch(&f.ww_lib), Vec::<String>::new(), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+}
+
 /// A file write git declines part way, after it wrote the files the move
 /// adds: once what stopped it is cleared, the printed choice finishes the
 /// refresh, nothing having been edited.

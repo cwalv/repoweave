@@ -1320,18 +1320,8 @@ fn refresh_paths_if_left(
     if !listed_fields(&["ls-files", "-u", "-z"], repo)?.is_empty() {
         return Ok(RefreshWrite::Unresolved);
     }
-    let scratch = |name: &str| {
-        GitVcs::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-drift-{name}-{}", std::process::id()),
-            ],
-            repo,
-        )
-    };
-    let index = scratch("index")?;
+    let scratch = Scratch::take(repo)?;
+    let index = scratch.path("index");
     let target = tree_with_paths_from(repo, &index, left, head, paths);
     let _ = std::fs::remove_file(&index);
     let target = match target {
@@ -1378,7 +1368,7 @@ fn refresh_paths_if_left(
             ["rev-parse", "--path-format=absolute", "--git-path", "index"],
             repo,
         )?;
-        let files_index = scratch("files")?;
+        let files_index = scratch.path("files");
         std::fs::copy(&own, &files_index).map_err(|e| VcsError::Io {
             ctx: format!("failed to copy the index {own} to {files_index}"),
             source: e,
@@ -1399,15 +1389,14 @@ fn refresh_paths_if_left(
     for (key, value) in &env {
         command.env(key, value);
     }
+    crate::test_pause::point("drift-write-spawn");
     let output = command
         .args(&args)
         .current_dir(repo)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .output();
-    for (_, written) in &env {
-        let _ = std::fs::remove_file(written);
-    }
+    drop(scratch);
     let output = output.map_err(|e| VcsError::Io {
         ctx: format!("failed to spawn git {args:?}"),
         source: e,
@@ -1421,6 +1410,84 @@ fn refresh_paths_if_left(
         refresh_stat_data(repo);
     }
     Ok(RefreshWrite::Written)
+}
+
+/// The scratch files of one refresh in the checkout's git dir, each named
+/// for the process beside an owner file the process holds locked while it
+/// runs. The lock ends with the process, so what a killed refresh left is
+/// removed by the next one to start.
+struct Scratch {
+    dir: PathBuf,
+    stem: String,
+    _owner: std::fs::File,
+}
+
+impl Scratch {
+    fn take(repo: &Path) -> Result<Self, VcsError> {
+        let stem = format!("rwv-drift-{}", std::process::id());
+        let owner = PathBuf::from(GitVcs::run_trimmed(
+            ["rev-parse", "--path-format=absolute", "--git-path", &stem],
+            repo,
+        )?);
+        let dir = owner.parent().map(Path::to_path_buf).unwrap_or_default();
+        let io = |e: std::io::Error| VcsError::Io {
+            ctx: format!("failed to hold {}", owner.display()),
+            source: e,
+        };
+        for entry in std::fs::read_dir(&dir).map_err(io)?.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name == stem
+                || name
+                    .strip_prefix("rwv-drift-")
+                    .is_none_or(|p| p.contains('-'))
+            {
+                continue;
+            }
+            let held = std::fs::OpenOptions::new().write(true).open(entry.path());
+            if held.is_ok_and(|f| f.try_lock().is_ok()) {
+                remove_scratch(&dir, &name);
+            }
+        }
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&owner)
+            .map_err(io)?;
+        file.try_lock().map_err(|e| io(e.into()))?;
+        Ok(Self {
+            dir,
+            stem,
+            _owner: file,
+        })
+    }
+
+    fn path(&self, name: &str) -> String {
+        self.dir
+            .join(format!("{}-{name}", self.stem))
+            .display()
+            .to_string()
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        remove_scratch(&self.dir, &self.stem);
+    }
+}
+
+/// Remove the owner file `stem` in `dir` and every scratch file named for it.
+fn remove_scratch(dir: &Path, stem: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let named = format!("{stem}-");
+    for entry in entries.flatten() {
+        if entry.file_name().to_string_lossy().starts_with(&named) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    let _ = std::fs::remove_file(dir.join(stem));
 }
 
 /// The merge target [`tree_with_paths_from`] builds, with which of the
