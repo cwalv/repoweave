@@ -1007,6 +1007,15 @@ every_scenario!(
         scenarios::EnteredEnd::LeaveTarget
     ),
     abort_at_retire_waits_for_the_target_back,
+    abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out(
+        scenarios::HeldInPlaceEnd::Detach
+    ),
+    abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out(
+        scenarios::HeldInPlaceEnd::Continue
+    ),
+    abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out(
+        scenarios::HeldInPlaceEnd::LeaveTarget
+    ),
     abort_at_retire_after_the_in_place_workspace_went,
     a_landing_meets_a_landing_stopped_as_refs,
     a_landing_meets_a_stopped_landing_in_a_checkout,
@@ -3358,6 +3367,15 @@ holding_rwv! {
     fn abort_at_retire_after_the_in_place_workspace_went() {
         runner::run(scenarios::abort_at_retire_after_the_in_place_workspace_went())
             .assert_fully_decided_green();
+    }
+
+    /// A branch moved in place in a workspace since gone, now checked out
+    /// elsewhere: abort refuses, and the printed detach lets it restore.
+    fn abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out() {
+        for end in scenarios::HeldInPlaceEnd::ALL {
+            runner::run(scenarios::abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out(end))
+                .assert_fully_decided_green();
+        }
     }
 
     /// Abort at retire takes the target back first, so it refuses while

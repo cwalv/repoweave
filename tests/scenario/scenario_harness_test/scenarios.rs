@@ -10400,6 +10400,89 @@ pub fn abort_at_retire_after_the_in_place_workspace_went() -> Scenario {
     )
 }
 
+/// As [`abort_at_retire_after_the_in_place_workspace_went`], and then the
+/// primary's `lib` is switched onto `main`, the branch the landing moved in
+/// place. Abort cannot put `main` back as a ref under that checkout: it
+/// refuses before anything moves, printing the detach that frees it; run
+/// verbatim, the plain abort then puts `main` back.
+pub fn abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out(
+    end: HeldInPlaceEnd,
+) -> Scenario {
+    let mut steps = vec![
+        create("w"),
+        create("w3"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
+        Step::git(&ww("w3"), Repo::Lib, &["switch", "main"]),
+        Step::rwv_paused(&ww("w"), &["land", "--retire"], "retire", "landing"),
+        Step::kill("landing"),
+        Step::git(&ww("w3"), Repo::Lib, &["switch", "--detach"]),
+        Step::rwv(&a(), &["workweave", "delete", "w3"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Lib, &["switch", "-q", "main"]),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+            .claim(Claim::OutputContains("is checked out at"))
+            .claim(Claim::OutputContains("nothing of either side is restored"))
+            .claim(Claim::OutputLacks("abort stopped there"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+    ];
+    match end {
+        HeldInPlaceEnd::Detach => steps.extend([
+            Step::rwv_printed_holding(&ww("w"), "git -C ", "switch --detach")
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::Lib, Repo::Proj])
+                .may_restore(&[Repo::Lib, Repo::Proj]),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w-lib")),
+        ]),
+        HeldInPlaceEnd::Continue => steps.extend([
+            Step::rwv_printed(&ww("w"), "rwv land --continue")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w"))),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w-lib")),
+        ]),
+        HeldInPlaceEnd::LeaveTarget => steps.extend([
+            Step::rwv_printed_exactly(&ww("w"), "rwv abort --leave-target")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj])
+                .may_rewind(&[Repo::Lib, Repo::Proj])
+                .may_restore(&[Repo::Lib, Repo::Proj]),
+            Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w-lib")),
+        ]),
+    }
+    steps.push(
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    );
+    scenario(
+        "abort after the in-place workspace went and its branch was checked out",
+        steps,
+    )
+}
+
+/// Which printed choice ends
+/// [`abort_after_the_in_place_workspace_went_and_its_branch_was_checked_out`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldInPlaceEnd {
+    Detach,
+    Continue,
+    LeaveTarget,
+}
+
+impl HeldInPlaceEnd {
+    pub const ALL: [HeldInPlaceEnd; 3] = [
+        HeldInPlaceEnd::Detach,
+        HeldInPlaceEnd::Continue,
+        HeldInPlaceEnd::LeaveTarget,
+    ];
+}
+
 /// From the primary, a target checked out in a workweave refuses: the primary
 /// would switch onto it. Freeing the workweave's checkout as printed, the
 /// target is checked out nowhere: it lands as refs, and the primary switches
