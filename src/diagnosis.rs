@@ -1073,7 +1073,13 @@ impl State {
                         it, or the remote rejected a member's push; the branches that do reach \
                         each pin, and what the remote answered, are listed",
                 refused_by: "`rwv push`",
-                offers: &[Form::C7Push, Form::C7PushRepo, Form::C27, Form::C17],
+                offers: &[
+                    Form::C7Push,
+                    Form::C7PushRepo,
+                    Form::C7PushTarget,
+                    Form::C27,
+                    Form::C17,
+                ],
                 verb_offers: &[],
             },
             Self::PublishRecordsRejected => &StateRow {

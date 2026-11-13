@@ -7139,6 +7139,50 @@ pub enum ProjectLands {
     Merge,
 }
 
+/// A seat lands without `--retire`, then pushes from the seat. Its member
+/// branch holds nothing beyond the target's pin, so the push leaves it alone,
+/// and its pin is published only by publishing the target: the refusal names
+/// that push, which runs from the seat, and the seat's push then publishes.
+pub fn a_seat_pushes_after_landing_without_retire() -> Scenario {
+    scenario(
+        "a seat pushes after landing without retire",
+        vec![
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w",
+                    "--new-branch",
+                    "feat-w",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PublishWithheld))
+                .claim(Claim::OutputLacks("rwv push --repo")),
+            publishes_records(Step::rwv_printed(&ww("w"), "rwv push --branch main"))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "w-app-2",
+                }),
+            publishes_records(Step::rwv(&ww("w"), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "feat-w")
+                .expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// A seat whose lock is behind its members' tips lands. The landing writes
 /// no relock commit of the source's own: the target's history gains the
 /// seat's commits and the landing's one project commit, which records the

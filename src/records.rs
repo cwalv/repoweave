@@ -106,7 +106,7 @@ impl Record {
         }
     }
 
-    fn target(&self) -> Option<&BranchName> {
+    pub(crate) fn target(&self) -> Option<&BranchName> {
         match self {
             Self::Declared => None,
             Self::Feature { target, .. } => Some(target),

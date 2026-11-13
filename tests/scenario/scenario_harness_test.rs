@@ -1182,6 +1182,7 @@ every_scenario!(
     a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::SyncFirst),
     a_history_pin_not_repinned_still_refuses,
     a_sync_reports_a_skipped_history_pin_in_json,
+    a_seat_pushes_after_landing_without_retire,
     a_fast_forward_landing_records_a_member_it_rebased,
     merged_project_with_rebased_members_on_a_second_machine,
     sync_rebased_members_in_a_merged_project_on_a_second_machine("linear"),
@@ -5260,6 +5261,12 @@ fn a_re_pin_record_replayed_by_a_linear_sync_lands_on_a_second_machine() {
 #[test]
 fn a_fast_forward_landing_records_a_member_it_rebased() {
     runner::run(scenarios::a_fast_forward_landing_records_a_member_it_rebased())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_seat_pushes_after_landing_without_retire() {
+    runner::run(scenarios::a_seat_pushes_after_landing_without_retire())
         .assert_fully_decided_green();
 }
 

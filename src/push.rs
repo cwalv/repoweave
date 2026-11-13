@@ -27,7 +27,7 @@ use crate::workspace::{project_dir, project_rel_path, WorkspaceContext};
 use anyhow::Context;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -734,6 +734,9 @@ struct Plan {
     /// Members whose branch the push left alone: even, behind, or nothing to
     /// publish.
     state_skipped: Vec<RepoPath>,
+    /// A feature's members whose branch holds nothing beyond the target's pin:
+    /// the target's push publishes their pin.
+    in_target: BTreeSet<RepoPath>,
     project: Option<ProjectPlan>,
     reported: Report,
 }
@@ -874,6 +877,7 @@ fn judge_into(
         items: Vec::new(),
         default_skipped: Vec::new(),
         state_skipped: Vec::new(),
+        in_target: BTreeSet::new(),
         project: None,
         reported: Report::default(),
     };
@@ -1198,6 +1202,7 @@ fn judge_member(
         && !holds_commits_beyond_target_pin(vcs, member, &head, target_lock)?
     {
         plan.state_skipped.push(path.clone());
+        plan.in_target.insert(path.clone());
         return Ok(());
     }
     let named = !request.filter.is_empty();
@@ -1988,7 +1993,7 @@ fn publish(
 
     if project_plan.push_branch {
         let mut gate = Report::default();
-        gate_reachability(pushed, members, fetched, &mut gate);
+        gate_reachability(pushed, members, fetched, &plan.in_target, &mut gate);
         if let Err(refusal) = gate.into_result() {
             if output.is_json() {
                 print_envelope(json_outcomes, &refusal, reported, ctx);
@@ -2149,7 +2154,13 @@ fn publish(
 /// declared branch's by the push branch of the branch each member declares,
 /// and a `dependency` or `reference` member's by a remote-tracking branch of
 /// its url remote.
-fn gate_reachability(pushed: &Pushed, members: &[Member], fetched: &Fetched, gate: &mut Report) {
+fn gate_reachability(
+    pushed: &Pushed,
+    members: &[Member],
+    fetched: &Fetched,
+    in_target: &BTreeSet<RepoPath>,
+    gate: &mut Report,
+) {
     for member in members {
         let vcs = member.vcs.as_ref();
         let path = &member.path;
@@ -2236,12 +2247,28 @@ fn gate_reachability(pushed: &Pushed, members: &[Member], fetched: &Fetched, gat
                 reaching.join(", ")
             )
         };
+        let withheld = judging(State::PublishWithheld)
+            .bind("<b>", member.entry.branch.local_counterpart().as_str());
         gate.add(
-            judging(State::PublishWithheld)
-                .listing([listing])
-                .bind("<b>", member.entry.branch.local_counterpart().as_str())
-                .only(&[ChoiceId::C7, ChoiceId::C27, ChoiceId::C17])
-                .judge(vcs),
+            match pushed.record.target().filter(|_| in_target.contains(path)) {
+                Some(target) => withheld
+                    .listing([
+                        listing,
+                        format!(
+                            "{} holds nothing beyond {target}'s pin, so {target}'s push \
+                             publishes it",
+                            pushed.branch
+                        ),
+                    ])
+                    .bind("<target>", target)
+                    .only_forms(&[Form::C7PushTarget, Form::C27]),
+                None => {
+                    withheld
+                        .listing([listing])
+                        .only(&[ChoiceId::C7, ChoiceId::C27, ChoiceId::C17])
+                }
+            }
+            .judge(vcs),
         );
     }
 }

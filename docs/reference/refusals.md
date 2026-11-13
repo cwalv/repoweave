@@ -256,6 +256,7 @@ The others follow.
 |---|---|---|---|---|
 | `withheld` | C7: publish it (again) | `rwv push` | here | adds only |
 | `withheld` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `withheld` | C7: publish it (again) | `rwv push --branch <target>` | any workspace | adds only |
 | `withheld` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
 | `no pin` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
