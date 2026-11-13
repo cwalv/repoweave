@@ -232,8 +232,16 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
   made of the commits it pinned (`remap::remap_rebased_project`, reading
   each rebase back through `Vcs::replayed`, so a rebase finished by the
   VCS's own continue reads the same); a commit left changing nothing is
-  dropped. `rwv abort` reads a tip that is a replay of a journaled rebase as
-  the op's own.
+  dropped. Where the replayed tip's `rwv.toml` does not parse and the
+  operator staged one that does, `project_merge::settle_replayed_manifest`
+  hands it to the re-map, which writes it into its copy of that tip under
+  the same record and branch move; it refuses instead, in the same state,
+  while the checkout is off the branch or the tip the replay wrote or holds
+  an edit to `rwv.lock`. The branch moves by a two-way merge, so what else
+  the operator staged stays staged. Like the replay itself, the copies run
+  no `pre-commit` or `commit-msg` hook, as `git rebase` runs neither.
+  `rwv abort` reads a tip that is a replay of a journaled rebase as the
+  op's own.
 
 - **Stack carry**, once the feature's own branches are final (`rwv sync`
   after its relock; `rwv land` at the end of `relock`): `stack::Carrier`
