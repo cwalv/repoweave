@@ -1364,6 +1364,14 @@ impl Vcs for FakeVcs {
         unsupported("commits_changing")
     }
 
+    fn ancestry(
+        &self,
+        _repo: &Path,
+        _tip: &CommitId,
+    ) -> Result<Vec<(CommitId, Vec<CommitId>)>, VcsError> {
+        unsupported("ancestry")
+    }
+
     fn patch_equivalents(
         &self,
         _repo: &Path,

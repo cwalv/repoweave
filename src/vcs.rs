@@ -4342,6 +4342,15 @@ pub trait Vcs: Send + Sync {
         path: &str,
     ) -> Result<Vec<CommitId>, VcsError>;
 
+    /// Every commit `tip` reaches, each with its parents in order.
+    ///
+    /// For git: `git rev-list --parents <tip>`.
+    fn ancestry(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+    ) -> Result<Vec<(CommitId, Vec<CommitId>)>, VcsError>;
+
     /// Which of `unlanded`'s commits carry a change equivalent to a commit
     /// `onto` holds beyond their merge-base, commit by commit, and which
     /// commit holds their combined change; `None` where the backend cannot

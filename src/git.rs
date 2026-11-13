@@ -4458,6 +4458,28 @@ impl Vcs for GitVcs {
             .collect()
     }
 
+    fn ancestry(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+    ) -> Result<Vec<(CommitId, Vec<CommitId>)>, VcsError> {
+        let args = ["rev-list", "--parents", tip.as_str()];
+        Self::run_trimmed(args, repo)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|line| {
+                let (commit, parents) = line.split_once(' ').unwrap_or((line, ""));
+                Ok((
+                    commit_id_printed(commit, &args, repo)?,
+                    parents
+                        .split_whitespace()
+                        .map(|id| commit_id_printed(id, &args, repo))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ))
+            })
+            .collect()
+    }
+
     fn patch_equivalents(
         &self,
         repo: &Path,

@@ -5,13 +5,14 @@
 use crate::manifest::{LockFile, RepoPath};
 use crate::vcs::{CommitId, ResolvedRevisionId, Vcs, VcsError};
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// A pin of the target's history that a later lock of that history
-/// re-pinned by name: `lock` held `pin`, and `by`, which descends from every
-/// lock holding it, records re-pinning the member by `verb`. Where this clone
-/// lacks the pin, it does not decide the base. `known` where the source's
-/// project branch already holds `by`.
+/// A pin of the target's history that the history moved off by name: `lock`
+/// held `pin`, and every later lock that changed the member's pin from it
+/// either records the move by name or advances to a pin that was itself
+/// moved off by name; `by` is the oldest record that chain reaches, written
+/// by `verb`. Where this clone lacks the pin, it does not decide the base.
+/// `known` where the source's project branch already holds `by`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Superseded {
     pub(crate) lock: CommitId,
@@ -44,11 +45,14 @@ pub(crate) fn skipped_line(
 }
 
 /// Every pin each member had in the locks of a project branch's history,
-/// through every parent, and those a later lock re-pinned by name.
+/// through every parent.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct PinHistory {
     pub(crate) pins: BTreeMap<RepoPath, BTreeSet<CommitId>>,
-    superseded: BTreeMap<RepoPath, Vec<Superseded>>,
+    dir: PathBuf,
+    tip: Option<CommitId>,
+    locks: BTreeMap<CommitId, (usize, BTreeMap<RepoPath, CommitId>)>,
+    source: Option<CommitId>,
 }
 
 fn pins_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<BTreeMap<RepoPath, CommitId>> {
@@ -67,6 +71,77 @@ fn pins_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<BTreeMap<Repo
     )
 }
 
+/// A member commit this clone holds, known only by resolving it: ancestry
+/// is asked of nothing else.
+struct Held(ResolvedRevisionId);
+
+/// The member's clone, as the supersession of its pins reads it.
+pub(crate) struct MemberClone<'a> {
+    vcs: &'a dyn Vcs,
+    dir: &'a Path,
+    lacking: Option<&'a BTreeSet<CommitId>>,
+}
+
+impl<'a> MemberClone<'a> {
+    /// A clone known to lack exactly `lacking` of the member's history pins.
+    pub(crate) fn lacking(
+        vcs: &'a dyn Vcs,
+        dir: &'a Path,
+        lacking: &'a BTreeSet<CommitId>,
+    ) -> Self {
+        Self {
+            vcs,
+            dir,
+            lacking: Some(lacking),
+        }
+    }
+
+    /// A clone whose pins are each resolved where asked.
+    pub(crate) fn probed(vcs: &'a dyn Vcs, dir: &'a Path) -> Self {
+        Self {
+            vcs,
+            dir,
+            lacking: None,
+        }
+    }
+
+    fn held(&self, pin: &CommitId) -> Option<Held> {
+        if self.lacking.is_some_and(|lacking| lacking.contains(pin)) {
+            return None;
+        }
+        self.vcs
+            .resolve_revision(self.dir, pin.as_str())
+            .ok()
+            .map(Held)
+    }
+
+    fn lacks(&self, pin: &CommitId) -> bool {
+        match self.lacking {
+            Some(lacking) => lacking.contains(pin),
+            None => self.held(pin).is_none(),
+        }
+    }
+
+    fn advances(&self, from: &Held, to: &Held) -> Result<bool, VcsError> {
+        self.vcs.is_ancestor(self.dir, &from.0, &to.0)
+    }
+}
+
+/// Where a lock commit `at` changed a member's pin from the one its parent's
+/// lock, held by `holder`, pinned.
+struct Exit {
+    at: CommitId,
+    holder: CommitId,
+    to: Option<CommitId>,
+}
+
+#[derive(Default)]
+struct Chain {
+    off: bool,
+    recorded: Option<(usize, CommitId, CommitId, String)>,
+    advances: Vec<(CommitId, CommitId)>,
+}
+
 impl PinHistory {
     /// Read every lock `tip`'s history held.
     pub(crate) fn of(
@@ -74,115 +149,265 @@ impl PinHistory {
         project_dir: &Path,
         tip: &CommitId,
     ) -> Result<Self, VcsError> {
-        let mut history = Self::default();
-        let mut holders: BTreeMap<(RepoPath, CommitId), Vec<CommitId>> = BTreeMap::new();
-        let mut repins: BTreeMap<RepoPath, Vec<(CommitId, String)>> = BTreeMap::new();
-        for commit in project_vcs.commits_changing(project_dir, tip, LockFile::FILE_NAME)? {
-            let Some(held) = pins_at(project_vcs, project_dir, &commit) else {
-                continue;
-            };
+        let mut history = Self {
+            dir: project_dir.to_path_buf(),
+            tip: Some(tip.clone()),
+            ..Self::default()
+        };
+        for (order, commit) in project_vcs
+            .commits_changing(project_dir, tip, LockFile::FILE_NAME)?
+            .into_iter()
+            .enumerate()
+        {
+            let held = pins_at(project_vcs, project_dir, &commit).unwrap_or_default();
             for (path, pin) in &held {
                 history
                     .pins
                     .entry(path.clone())
                     .or_default()
                     .insert(pin.clone());
-                holders
-                    .entry((path.clone(), pin.clone()))
-                    .or_default()
-                    .push(commit.clone());
             }
-            let records = crate::repin::recorded(project_vcs, project_dir, &commit)?;
-            if records.is_empty() {
-                continue;
-            }
-            let parents: Vec<BTreeMap<RepoPath, CommitId>> = project_vcs
-                .parents(project_dir, &commit)?
-                .iter()
-                .map(|parent| pins_at(project_vcs, project_dir, parent).unwrap_or_default())
-                .collect();
-            for record in records {
-                if held.get(&record.member) == Some(&record.to)
-                    && parents
-                        .iter()
-                        .any(|parent| parent.get(&record.member) == record.from.as_ref())
-                {
-                    repins
-                        .entry(record.member)
-                        .or_default()
-                        .push((commit.clone(), record.verb));
-                }
-            }
-        }
-        for ((path, pin), locks) in holders {
-            let Some(records) = repins.get(&path) else {
-                continue;
-            };
-            let mut by = None;
-            for lock in &locks {
-                let mut found = None;
-                for (record, verb) in records {
-                    if record != lock
-                        && project_vcs.is_ancestor(
-                            project_dir,
-                            &ResolvedRevisionId::from(lock.clone()),
-                            &ResolvedRevisionId::from(record.clone()),
-                        )?
-                    {
-                        found = Some((record, verb));
-                        break;
-                    }
-                }
-                match found {
-                    Some(found) => by = by.or(Some((lock, found))),
-                    None => {
-                        by = None;
-                        break;
-                    }
-                }
-            }
-            if let Some((lock, (record, verb))) = by {
-                history
-                    .superseded
-                    .entry(path)
-                    .or_default()
-                    .push(Superseded {
-                        lock: lock.clone(),
-                        pin,
-                        by: record.clone(),
-                        verb: verb.clone(),
-                        known: false,
-                    });
-            }
+            history.locks.insert(commit, (order, held));
         }
         Ok(history)
     }
 
-    /// Mark each superseded pin whose re-pin `source`, the source's project
-    /// branch, already holds.
-    pub(crate) fn seen_from(
-        mut self,
-        project_vcs: &dyn Vcs,
-        project_dir: &Path,
-        source: &CommitId,
-    ) -> Result<Self, VcsError> {
-        let source = ResolvedRevisionId::from(source.clone());
-        for superseded in self.superseded.values_mut().flatten() {
-            superseded.known = project_vcs.is_ancestor(
-                project_dir,
-                &ResolvedRevisionId::from(superseded.by.clone()),
-                &source,
-            )?;
-        }
-        Ok(self)
+    /// The same history, its re-pins judged known where `source`, the
+    /// source's project branch, already holds them.
+    pub(crate) fn seen_from(mut self, source: &CommitId) -> Self {
+        self.source = Some(source.clone());
+        self
     }
 
     pub(crate) fn of_member(&self, member: &RepoPath) -> BTreeSet<CommitId> {
         self.pins.get(member).cloned().unwrap_or_default()
     }
 
-    pub(crate) fn superseded_of(&self, member: &RepoPath) -> &[Superseded] {
-        self.superseded.get(member).map_or(&[], Vec::as_slice)
+    /// Which of `pins`, pins of `member` in this history, the history moved
+    /// off by name, judged against the member's `clone`: a pin is moved off
+    /// unless some chain of later locks changing the member's pin without a
+    /// record reaches the tip's pin, no pin, or a pin the clone holds that is
+    /// no advance from the one before it.
+    pub(crate) fn superseded(
+        &self,
+        project_vcs: &dyn Vcs,
+        member: &RepoPath,
+        pins: &BTreeSet<CommitId>,
+        clone: &MemberClone<'_>,
+    ) -> Result<Vec<Superseded>, VcsError> {
+        let Some(tip) = self.tip.as_ref().filter(|_| !pins.is_empty()) else {
+            return Ok(Vec::new());
+        };
+        let graph: BTreeMap<CommitId, Vec<CommitId>> =
+            project_vcs.ancestry(&self.dir, tip)?.into_iter().collect();
+        let holder = |at: &CommitId| -> Option<CommitId> {
+            let mut at = at;
+            loop {
+                if self.locks.contains_key(at) {
+                    return Some(at.clone());
+                }
+                at = graph.get(at)?.first()?;
+            }
+        };
+        let pin_at = |lock: &CommitId| self.locks.get(lock)?.1.get(member).cloned();
+        let mut exits: BTreeMap<CommitId, Vec<Exit>> = BTreeMap::new();
+        for (at, (_, held)) in &self.locks {
+            let to = held.get(member);
+            for parent in graph.get(at).into_iter().flatten() {
+                let Some(parent_lock) = holder(parent) else {
+                    continue;
+                };
+                let Some(from) = pin_at(&parent_lock) else {
+                    continue;
+                };
+                if Some(&from) != to {
+                    exits.entry(from).or_default().push(Exit {
+                        at: at.clone(),
+                        holder: parent_lock,
+                        to: to.cloned(),
+                    });
+                }
+            }
+        }
+        let tip_pin = holder(tip).and_then(|lock| pin_at(&lock));
+        let mut records: BTreeMap<CommitId, Vec<crate::repin::Repin>> = BTreeMap::new();
+        let mut chains: BTreeMap<CommitId, Chain> = BTreeMap::new();
+        let mut children = None;
+        let mut pending: Vec<CommitId> = pins.iter().cloned().collect();
+        while let Some(pin) = pending.pop() {
+            if chains.contains_key(&pin) {
+                continue;
+            }
+            let mut chain = Chain {
+                off: tip_pin.as_ref() == Some(&pin) || !exits.contains_key(&pin),
+                ..Chain::default()
+            };
+            let mut from_held = None;
+            for exit in exits.get(&pin).into_iter().flatten() {
+                let Some(to) = &exit.to else {
+                    chain.off = true;
+                    continue;
+                };
+                if !records.contains_key(&exit.at) {
+                    let read = crate::repin::recorded(project_vcs, &self.dir, &exit.at)?;
+                    records.insert(exit.at.clone(), read);
+                }
+                if let Some(record) = records[&exit.at].iter().find(|record| {
+                    &record.member == member
+                        && record.from.as_ref() == Some(&pin)
+                        && &record.to == to
+                }) {
+                    let order = self.locks[&exit.at].0;
+                    if chain.recorded.as_ref().is_none_or(|(o, ..)| order > *o) {
+                        chain.recorded = Some((
+                            order,
+                            exit.at.clone(),
+                            exit.holder.clone(),
+                            record.verb.clone(),
+                        ));
+                    }
+                    continue;
+                }
+                let advance = if clone.lacks(to) {
+                    true
+                } else {
+                    let from = from_held.get_or_insert_with(|| clone.held(&pin));
+                    match (from.as_ref(), clone.held(to)) {
+                        (Some(from), Some(to)) => clone.advances(from, &to)?,
+                        _ => false,
+                    }
+                };
+                if advance {
+                    chain.advances.push((to.clone(), exit.holder.clone()));
+                    pending.push(to.clone());
+                    continue;
+                }
+                let waiver = if graph.get(&exit.at).is_some_and(|parents| parents.len() > 1) {
+                    let children = children.get_or_insert_with(|| {
+                        let mut children: BTreeMap<&CommitId, Vec<&CommitId>> = BTreeMap::new();
+                        for (commit, parents) in &graph {
+                            for parent in parents {
+                                children.entry(parent).or_default().push(commit);
+                            }
+                        }
+                        children
+                    });
+                    let mut after = vec![&exit.at];
+                    let mut seen = BTreeSet::new();
+                    let mut found: Option<(usize, CommitId, String)> = None;
+                    while let Some(at) = after.pop() {
+                        if !seen.insert(at) {
+                            continue;
+                        }
+                        after.extend(children.get(at).into_iter().flatten().copied());
+                        let Some((order, held)) = self.locks.get(at) else {
+                            continue;
+                        };
+                        if found.as_ref().is_some_and(|(o, ..)| o >= order) {
+                            continue;
+                        }
+                        if !records.contains_key(at) {
+                            let read = crate::repin::recorded(project_vcs, &self.dir, at)?;
+                            records.insert(at.clone(), read);
+                        }
+                        for record in records[at].iter().filter(|r| &r.member == member) {
+                            let trusted = held.get(member) == Some(&record.to)
+                                && graph.get(at).into_iter().flatten().any(|parent| {
+                                    holder(parent).and_then(|lock| pin_at(&lock)) == record.from
+                                });
+                            let Some(from) = record.from.as_ref().filter(|_| trusted) else {
+                                continue;
+                            };
+                            let (Some(from), Some(back)) =
+                                (clone.held(from), clone.held(&record.to))
+                            else {
+                                continue;
+                            };
+                            let abandons = match from_held.get_or_insert_with(|| clone.held(&pin)) {
+                                Some(pin) => !clone.advances(pin, &back)?,
+                                None => true,
+                            };
+                            if abandons && !clone.advances(&from, &back)? {
+                                found = Some((*order, at.clone(), record.verb.clone()));
+                            }
+                        }
+                    }
+                    found
+                } else {
+                    None
+                };
+                match waiver {
+                    Some((order, by, verb)) => {
+                        if chain.recorded.as_ref().is_none_or(|(o, ..)| order > *o) {
+                            chain.recorded = Some((order, by, exit.holder.clone(), verb));
+                        }
+                    }
+                    None => chain.off = true,
+                }
+            }
+            chains.insert(pin, chain);
+        }
+        loop {
+            let off: BTreeSet<CommitId> = chains
+                .iter()
+                .filter(|(_, chain)| chain.off)
+                .map(|(pin, _)| pin.clone())
+                .collect();
+            let mut changed = false;
+            for chain in chains.values_mut().filter(|chain| !chain.off) {
+                if chain.advances.iter().any(|(to, _)| off.contains(to)) {
+                    chain.off = true;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut reached: BTreeMap<CommitId, (usize, CommitId, CommitId, String)> = chains
+            .iter()
+            .filter(|(_, chain)| !chain.off)
+            .filter_map(|(pin, chain)| Some((pin.clone(), chain.recorded.clone()?)))
+            .collect();
+        loop {
+            let mut changed = false;
+            for (pin, chain) in chains.iter().filter(|(_, chain)| !chain.off) {
+                for (to, holder) in &chain.advances {
+                    let Some((order, by, _, verb)) = reached.get(to).cloned() else {
+                        continue;
+                    };
+                    if reached.get(pin).is_none_or(|(o, ..)| order > *o) {
+                        reached.insert(pin.clone(), (order, by, holder.clone(), verb));
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        let mut found = Vec::new();
+        for pin in pins {
+            let Some((_, by, lock, verb)) = reached.get(pin) else {
+                continue;
+            };
+            let known = match &self.source {
+                Some(source) => project_vcs.is_ancestor(
+                    &self.dir,
+                    &ResolvedRevisionId::from(by.clone()),
+                    &ResolvedRevisionId::from(source.clone()),
+                )?,
+                None => false,
+            };
+            found.push(Superseded {
+                lock: lock.clone(),
+                pin: pin.clone(),
+                by: by.clone(),
+                verb: verb.clone(),
+                known,
+            });
+        }
+        Ok(found)
     }
 }
 
@@ -261,13 +486,14 @@ pub(crate) fn base_of(
 }
 
 /// Judge `work` against `receiving` by the pins the target's history held,
-/// less those this clone lacks that `superseded` holds.
+/// less those this clone lacks that `supersede` finds the history moved off
+/// by name; it is asked only of pins this clone lacks.
 pub(crate) fn judge(
     vcs: &dyn Vcs,
     dir: &Path,
     work: &CommitId,
     pins: &BTreeSet<CommitId>,
-    superseded: &[Superseded],
+    supersede: impl FnOnce(&BTreeSet<CommitId>) -> Result<Vec<Superseded>, VcsError>,
     receiving: &CommitId,
 ) -> Result<Lineage, VcsError> {
     if pins.is_empty() {
@@ -277,6 +503,11 @@ pub(crate) fn judge(
         });
     }
     let (present, absent) = split_present(vcs, dir, pins);
+    let superseded = if absent.is_empty() {
+        Vec::new()
+    } else {
+        supersede(&absent.iter().cloned().collect())?
+    };
     let (skipped, absent): (Vec<CommitId>, Vec<CommitId>) = absent
         .into_iter()
         .partition(|pin| superseded.iter().any(|s| &s.pin == pin));
@@ -294,9 +525,8 @@ pub(crate) fn judge(
     }
     let skipped = if lands {
         superseded
-            .iter()
+            .into_iter()
             .filter(|s| skipped.contains(&s.pin))
-            .cloned()
             .collect()
     } else {
         Vec::new()
@@ -373,7 +603,15 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let u = commit(&dir, "b");
         assert_eq!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin]), &[], &u).unwrap(),
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&pin]),
+                |_| Ok(Vec::new()),
+                &u
+            )
+            .unwrap(),
             Lineage::Passes {
                 base: Some(pin),
                 skipped: vec![]
@@ -397,7 +635,7 @@ mod tests {
                 &dir,
                 &work,
                 &pins(&[&root, &old_pin]),
-                &[],
+                |_| Ok(Vec::new()),
                 &u
             )
             .unwrap(),
@@ -424,7 +662,7 @@ mod tests {
                 &dir,
                 &work,
                 &pins(&[&pin, &other_pin]),
-                &[],
+                |_| Ok(Vec::new()),
                 &u
             )
             .unwrap(),
@@ -449,7 +687,15 @@ mod tests {
         git(&dir, &["checkout", "-q", "main"]);
         let u = commit(&dir, "b");
         assert!(matches!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin]), &[], &u).unwrap(),
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&pin]),
+                |_| Ok(Vec::new()),
+                &u
+            )
+            .unwrap(),
             Lineage::Passes { .. }
         ));
     }
@@ -465,7 +711,15 @@ mod tests {
         let u = commit(&dir, "b");
         let absent = CommitId::parse(&"ab".repeat(20)).unwrap();
         assert_eq!(
-            judge(vcs.as_ref(), &dir, &work, &pins(&[&pin, &absent]), &[], &u).unwrap(),
+            judge(
+                vcs.as_ref(),
+                &dir,
+                &work,
+                &pins(&[&pin, &absent]),
+                |_| Ok(Vec::new()),
+                &u
+            )
+            .unwrap(),
             Lineage::Unreachable {
                 absent: vec![absent]
             }
@@ -498,15 +752,23 @@ mod tests {
         CommitId::parse(&fill.to_string().repeat(40)).unwrap()
     }
 
-    fn superseded_pins(dir: &Path) -> BTreeSet<CommitId> {
+    fn superseded_in(dir: &Path) -> Vec<Superseded> {
         let vcs = crate::git::git_vcs();
         let tip = CommitId::parse(&git(dir, &["rev-parse", "HEAD"])).unwrap();
         let history = PinHistory::of(vcs.as_ref(), dir, &tip).unwrap();
+        let member = RepoPath::new("m").unwrap();
         history
-            .superseded_of(&RepoPath::new("m").unwrap())
-            .iter()
-            .map(|s| s.pin.clone())
-            .collect()
+            .superseded(
+                vcs.as_ref(),
+                &member,
+                &history.of_member(&member),
+                &MemberClone::probed(vcs.as_ref(), dir),
+            )
+            .unwrap()
+    }
+
+    fn superseded_pins(dir: &Path) -> BTreeSet<CommitId> {
+        superseded_in(dir).into_iter().map(|s| s.pin).collect()
     }
 
     #[test]
@@ -520,7 +782,36 @@ mod tests {
     }
 
     #[test]
-    fn a_merge_re_pinning_by_name_supersedes_the_pins_of_the_range_it_merges() {
+    fn the_fact_names_the_record_that_moved_the_pin_off_not_a_later_one() {
+        let (_tmp, dir) = repo();
+        let (p1, p2, p3) = (fake('1'), fake('2'), fake('3'));
+        let held = lock_commit(&dir, &p1, None);
+        let first = lock_commit(&dir, &p2, Some((&p1, "member pin")));
+        lock_commit(&dir, &p3, Some((&p2, "member pin")));
+        let of_p1 = superseded_in(&dir)
+            .into_iter()
+            .find(|s| s.pin == p1)
+            .unwrap();
+        assert_eq!((of_p1.lock, of_p1.by), (held, first));
+    }
+
+    #[test]
+    fn a_merge_landing_whose_record_moves_the_features_last_pin_supersedes_its_earlier_pins() {
+        let (_tmp, dir) = repo();
+        let (n, p1, p2, q) = (fake('a'), fake('b'), fake('c'), fake('d'));
+        lock_commit(&dir, &n, None);
+        git(&dir, &["checkout", "-q", "-b", "side"]);
+        lock_commit(&dir, &p1, None);
+        lock_commit(&dir, &p2, None);
+        git(&dir, &["checkout", "-q", "main"]);
+        commit(&dir, "other");
+        git(&dir, &["merge", "-q", "--no-commit", "-s", "ours", "side"]);
+        lock_commit(&dir, &q, Some((&p2, "land")));
+        assert_eq!(superseded_pins(&dir), pins(&[&p1, &p2]));
+    }
+
+    #[test]
+    fn a_merge_recording_one_parents_pin_leaves_the_other_sides_unrecorded_jump_deciding() {
         let (_tmp, dir) = repo();
         let (n, p, q) = (fake('a'), fake('b'), fake('c'));
         lock_commit(&dir, &n, None);
@@ -530,7 +821,7 @@ mod tests {
         commit(&dir, "other");
         git(&dir, &["merge", "-q", "--no-commit", "-s", "ours", "side"]);
         lock_commit(&dir, &q, Some((&n, "land")));
-        assert_eq!(superseded_pins(&dir), pins(&[&n, &p]));
+        assert!(superseded_pins(&dir).is_empty());
     }
 
     fn merge_of_side(dir: &Path, n: &CommitId, p: &CommitId) {
@@ -548,7 +839,7 @@ mod tests {
         let (n, p, q) = (fake('a'), fake('b'), fake('c'));
         merge_of_side(&dir, &n, &p);
         lock_commit(&dir, &q, Some((&p, "land")));
-        assert_eq!(superseded_pins(&dir), pins(&[&n, &p]));
+        assert_eq!(superseded_pins(&dir), pins(&[&p]));
     }
 
     #[test]
@@ -570,6 +861,24 @@ mod tests {
     }
 
     #[test]
+    fn a_record_whose_new_pin_is_not_its_commits_supersedes_nothing() {
+        let (_tmp, dir) = repo();
+        let (p1, p2, stale) = (fake('1'), fake('2'), fake('8'));
+        lock_commit(&dir, &p1, None);
+        let text = format!(
+            "\n\nRwv-Repin: \"m\" {} {} member pin",
+            p1.as_str(),
+            stale.as_str()
+        );
+        lock_commit(&dir, &p2, None);
+        git(
+            &dir,
+            &["commit", "-q", "--amend", "-m", &format!("lock{text}")],
+        );
+        assert!(superseded_pins(&dir).is_empty());
+    }
+
+    #[test]
     fn a_pin_a_later_lock_holds_again_is_not_superseded() {
         let (_tmp, dir) = repo();
         let (p1, p2) = (fake('1'), fake('2'));
@@ -577,6 +886,75 @@ mod tests {
         lock_commit(&dir, &p2, Some((&p1, "member pin")));
         lock_commit(&dir, &p1, None);
         assert!(superseded_pins(&dir).is_empty());
+    }
+
+    #[test]
+    fn absent_pins_advancing_to_an_absent_pin_moved_off_by_name_are_superseded() {
+        let (_tmp, dir) = repo();
+        let (p1, p2, p3) = (fake('1'), fake('2'), fake('3'));
+        lock_commit(&dir, &p1, None);
+        lock_commit(&dir, &p2, None);
+        lock_commit(&dir, &p3, Some((&p2, "land")));
+        assert_eq!(superseded_pins(&dir), pins(&[&p1, &p2]));
+    }
+
+    #[test]
+    fn an_absent_pin_followed_by_a_held_pin_with_no_record_refuses() {
+        let (_tmp, dir) = repo();
+        let vcs = crate::git::git_vcs();
+        let gone = fake('1');
+        let base = commit(&dir, "a");
+        lock_commit(&dir, &gone, None);
+        lock_commit(&dir, &base, None);
+        lock_commit(&dir, &fake('3'), Some((&base, "member pin")));
+        assert_eq!(superseded_pins(&dir), pins(&[&base]));
+        let tip = CommitId::parse(&git(&dir, &["rev-parse", "HEAD"])).unwrap();
+        let history = PinHistory::of(vcs.as_ref(), &dir, &tip).unwrap();
+        let member = RepoPath::new("m").unwrap();
+        git(&dir, &["checkout", "-q", "-b", "feat", base.as_str()]);
+        let work = commit(&dir, "f");
+        let pins = history.of_member(&member);
+        let judged = judge(
+            vcs.as_ref(),
+            &dir,
+            &work,
+            &pins,
+            |absent| {
+                history.superseded(
+                    vcs.as_ref(),
+                    &member,
+                    absent,
+                    &MemberClone::lacking(vcs.as_ref(), &dir, absent),
+                )
+            },
+            &base,
+        )
+        .unwrap();
+        assert!(
+            matches!(&judged, Lineage::Unreachable { absent } if absent.contains(&gone)),
+            "{judged:?}"
+        );
+    }
+
+    #[test]
+    fn a_held_pin_is_superseded_through_an_advance_and_not_through_a_jump() {
+        let (_tmp, dir) = repo();
+        let a = commit(&dir, "a");
+        let b = commit(&dir, "b");
+        lock_commit(&dir, &a, None);
+        lock_commit(&dir, &b, None);
+        lock_commit(&dir, &fake('3'), Some((&b, "land")));
+        assert_eq!(superseded_pins(&dir), pins(&[&a, &b]));
+
+        let (_tmp, dir) = repo();
+        let root = commit(&dir, "r");
+        let a = commit(&dir, "a");
+        git(&dir, &["checkout", "-q", "-b", "other", root.as_str()]);
+        let b = commit(&dir, "b");
+        lock_commit(&dir, &a, None);
+        lock_commit(&dir, &b, None);
+        lock_commit(&dir, &fake('3'), Some((&b, "land")));
+        assert_eq!(superseded_pins(&dir), pins(&[&b]));
     }
 
     #[test]
@@ -602,7 +980,7 @@ mod tests {
                 &dir,
                 &work,
                 &pins(&[&pin, &gone]),
-                &superseded,
+                |_| Ok(superseded.clone()),
                 &u
             )
             .unwrap(),
@@ -617,7 +995,7 @@ mod tests {
                 &dir,
                 &work,
                 &pins(&[&pin, &gone, &other]),
-                &superseded,
+                |_| Ok(superseded.clone()),
                 &u
             )
             .unwrap(),

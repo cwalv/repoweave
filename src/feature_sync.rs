@@ -734,7 +734,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     let base_commit = vcs.merge_bases(dir, &head, &source)?.into_iter().next();
     let base_manifest = base_commit.as_ref().and_then(|b| manifest_at(vcs, dir, b));
     let history = match &sync.from {
-        SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?.seen_from(vcs, dir, &head)?,
+        SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?.seen_from(&head),
         SyncFrom::From(_) => PinHistory::default(),
     };
 
@@ -1344,8 +1344,15 @@ fn plan_member(
         }
     };
     if !follows || (inputs.dependents && !contained) {
-        let superseded = inputs.history.superseded_of(path);
-        match crate::lineage::judge(mvcs, &mdir, &head, &pins, superseded, &source)? {
+        let supersede = |absent: &BTreeSet<CommitId>| {
+            inputs.history.superseded(
+                crate::vcs::project_vcs().as_ref(),
+                path,
+                absent,
+                &crate::lineage::MemberClone::lacking(mvcs, &mdir, absent),
+            )
+        };
+        match crate::lineage::judge(mvcs, &mdir, &head, &pins, supersede, &source)? {
             Lineage::Passes { skipped, .. } => {
                 member.skipped = skipped.into_iter().filter(|s| !s.known).collect();
             }
@@ -2461,7 +2468,7 @@ pub(crate) fn reset_offer(
 pub(crate) struct FeatureLineage {
     target: String,
     as_mode: Mode,
-    pins: PinHistory,
+    pins: Box<PinHistory>,
     theirs: Option<Manifest>,
 }
 
@@ -2495,7 +2502,7 @@ pub(crate) fn feature_lineage(
     Ok(Some(FeatureLineage {
         target: target.to_string(),
         as_mode,
-        pins: PinHistory::of(vcs.as_ref(), &dir, tip.id())?,
+        pins: Box::new(PinHistory::of(vcs.as_ref(), &dir, tip.id())?),
         theirs: manifest_at(vcs.as_ref(), &dir, tip.id()),
     }))
 }
@@ -2558,9 +2565,8 @@ impl FeatureLineage {
         by: MergeUpstreamBy,
     ) -> anyhow::Result<Option<Judged>> {
         let pins = self.pins.of_member(path);
-        let superseded = self.pins.superseded_of(path);
         let Lineage::Off { base } =
-            crate::lineage::judge(vcs, dir, local, &pins, superseded, upstream)?
+            crate::lineage::judge(vcs, dir, local, &pins, |_| Ok(Vec::new()), upstream)?
         else {
             return Ok(None);
         };

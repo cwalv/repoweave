@@ -967,7 +967,7 @@ fn report_pins_held_by_no_branch(
         &pushed.tip,
         project_url_remote,
     )?;
-    let history = crate::lineage::PinHistory::of(pvcs, &pushed.project_dir, pushed.tip.id())?;
+    let mut history = None;
     for member in members {
         if !member.acting
             || !member.dir.exists()
@@ -976,7 +976,6 @@ fn report_pins_held_by_no_branch(
             continue;
         }
         let vcs = member.vcs.as_ref();
-        let superseded = history.superseded_of(&member.path);
         let mut pinned_by: BTreeMap<crate::vcs::CommitId, Vec<crate::vcs::CommitId>> =
             BTreeMap::new();
         for (project_commit, lock) in &range {
@@ -1027,8 +1026,26 @@ fn report_pins_held_by_no_branch(
                 .filter(|listed| listed.held.iter().any(|commit| commit.id == pin))
                 .map(|listed| listed.backup.name.to_string())
                 .collect();
-            if holding.is_empty() && superseded.iter().any(|s| s.pin == pin) {
-                continue;
+            if holding.is_empty() {
+                let history = match &mut history {
+                    Some(read) => read,
+                    None => history.insert(crate::lineage::PinHistory::of(
+                        pvcs,
+                        &pushed.project_dir,
+                        pushed.tip.id(),
+                    )?),
+                };
+                if !history
+                    .superseded(
+                        pvcs,
+                        &member.path,
+                        &std::collections::BTreeSet::from([pin.clone()]),
+                        &crate::lineage::MemberClone::probed(vcs, &member.dir),
+                    )?
+                    .is_empty()
+                {
+                    continue;
+                }
             }
             listing.push(match holding.as_slice() {
                 [] => "held by no backup".to_owned(),

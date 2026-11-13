@@ -640,7 +640,7 @@ impl Sides {
             our_lock: lock_at(vcs, dir, head),
             their_lock: lock_at(vcs, dir, target_tip),
             base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, dir, b)),
-            history: PinHistory::of(vcs, dir, target_tip)?.seen_from(vcs, dir, head)?,
+            history: PinHistory::of(vcs, dir, target_tip)?.seen_from(head),
         })
     }
 
@@ -1300,7 +1300,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         our_lock: None,
         their_lock: None,
         base_lock: None,
-        history: PinHistory::of(vcs, &dir, resumed.target_tip)?.seen_from(vcs, &dir, &head)?,
+        history: PinHistory::of(vcs, &dir, resumed.target_tip)?.seen_from(&head),
     };
     let changes = entry_changes(resumed.project, &sides, source_root, None);
     if let Some(refused) = inapplicable(resumed.added, &changes, resumed.target) {
@@ -1958,8 +1958,15 @@ fn judge_moved(
 ) -> anyhow::Result<()> {
     let Member { path, dir, vcs, .. } = *member;
     let pins = sides.history.of_member(path);
-    let superseded = sides.history.superseded_of(path);
-    match crate::lineage::judge(vcs, dir, head, &pins, superseded, tip)? {
+    let supersede = |absent: &BTreeSet<CommitId>| {
+        sides.history.superseded(
+            crate::vcs::project_vcs().as_ref(),
+            path,
+            absent,
+            &crate::lineage::MemberClone::lacking(vcs, dir, absent),
+        )
+    };
+    match crate::lineage::judge(vcs, dir, head, &pins, supersede, tip)? {
         Lineage::Passes { skipped, .. } => {
             plan.skipped_pins
                 .extend(skipped.into_iter().filter(|s| !s.known).map(|s| {
