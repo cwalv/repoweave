@@ -901,6 +901,7 @@ pub(crate) const NO_MANIFEST_STAGED: &str = "no rwv.toml is staged";
 pub(crate) enum Produced {
     Merge,
     Replay,
+    ReplayDiffers,
     /// An edit of the working file over a staged one that parses.
     WorkingEdit,
 }
@@ -915,6 +916,11 @@ impl Produced {
             Self::Replay => {
                 "the replay finished and the replayed tip's rwv.toml does not parse; a staged \
                  rwv.toml that parses becomes part of that commit"
+            }
+            Self::ReplayDiffers => {
+                "the replay finished and the replayed tip's rwv.toml parses, but differs from \
+                 the merge of the values of the merge base, the commit replayed onto and the \
+                 branch's tip before the replay"
             }
             Self::WorkingEdit => {
                 "the staged rwv.toml parses, but the working rwv.toml differs from the staged \
@@ -946,9 +952,14 @@ fn unparseable_result_saying(
     error: &dyn std::fmt::Display,
     lines: &[String],
 ) -> anyhow::Error {
+    use crate::diagnosis::ChoiceId as C;
     let file = dir.join(Manifest::FILE_NAME).display().to_string();
     let parse_error = format!("{error:#}");
-    crate::diagnosis::State::UnparseableProjectMidOperation
+    let settled_by = match produced {
+        Produced::ReplayDiffers => [C::StageParsingManifest, C::ResumeWithManifest],
+        _ => [C::WriteValueMerge, C::KeepTextMerge],
+    };
+    let judging = crate::diagnosis::State::UnparseableProjectMidOperation
         .of(repo)
         .project_repo()
         .subject(file)
@@ -961,8 +972,13 @@ fn unparseable_result_saying(
         .bind_list("<resume>", resume.split_whitespace())
         .bind_list("<abort>", ["rwv", "abort"])
         .checkout(dir)
-        .judge(vcs)
-        .refused()
+        .without(&settled_by);
+    match produced {
+        Produced::ReplayDiffers => judging,
+        _ => judging.without(&[C::StageOwnManifest]),
+    }
+    .judge(vcs)
+    .refused()
 }
 
 /// Refuse to start, in the checkout at `dir`, the merge of `incoming`
@@ -1042,9 +1058,18 @@ pub(crate) fn settle_replayed_manifest(
     verb: op_state::OpVerb,
 ) -> anyhow::Result<Option<String>> {
     let head = vcs.head_revision(dir)?;
-    let Some(at_head_error) = unparseable_at(vcs, dir, head.id()) else {
-        return Ok(None);
+    let at_head = manifest_text_at(vcs, dir, head.id());
+    let unparsed = unparseable_at(vcs, dir, head.id());
+    let differs = match unparsed {
+        Some(_) => None,
+        None => replayed_tip_differs(vcs, dir, workspace)?.map(|(_, differs)| differs),
     };
+    let staged = vcs
+        .staged_file(dir, Manifest::FILE_NAME)?
+        .filter(|staged| Some(staged) != at_head.as_ref());
+    if unparsed.is_none() && differs.is_none() && !(staged.is_some() && tip_settled(workspace)?) {
+        return Ok(None);
+    }
     let rebase = journaled_project_rebase(dir, workspace, head.id())?;
     let replayed = vcs.replayed(dir, &rebase.base, &rebase.from, &rebase.onto, head.id())?;
     let replayed_tip = replayed.as_ref().and_then(|replayed| {
@@ -1054,7 +1079,7 @@ pub(crate) fn settle_replayed_manifest(
             .rev()
             .find_map(|(_, image)| image.clone())
     });
-    let mut lines = Vec::new();
+    let mut lines = differs.map(|differs| differs.lines).unwrap_or_default();
     let earlier = replayed.as_ref().map_or(0, |replayed| {
         replayed
             .written
@@ -1076,14 +1101,15 @@ pub(crate) fn settle_replayed_manifest(
         ));
     }
     let resume = op_state::resume_command(verb);
-    let stop = |error: &dyn std::fmt::Display, lines: &[String]| {
-        unparseable_result_saying(vcs, &repo, dir, (&resume, Produced::Replay), error, lines)
+    let (produced, cause) = match &unparsed {
+        Some((error, _)) => (Produced::Replay, format!("{error:#}")),
+        None => (Produced::ReplayDiffers, String::new()),
     };
-    let fix = match vcs
-        .staged_file(dir, Manifest::FILE_NAME)?
-        .filter(|staged| *staged != at_head_error.1)
-    {
-        None => return Err(stop(&at_head_error.0, &lines)),
+    let stop = |error: &dyn std::fmt::Display, lines: &[String]| {
+        unparseable_result_saying(vcs, &repo, dir, (&resume, produced), error, lines)
+    };
+    let fix = match staged {
+        None => return Err(stop(&cause, &lines)),
         Some(fix) => match Manifest::from_toml_str(&fix) {
             Ok(_) => fix,
             Err(error) => return Err(stop(&error, &lines)),
@@ -1130,9 +1156,90 @@ pub(crate) fn settle_replayed_manifest(
     };
     if let Some(line) = in_the_way {
         lines.insert(0, line);
-        return Err(stop(&at_head_error.0, &lines));
+        return Err(stop(&cause, &lines));
     }
     Ok(Some(fix))
+}
+
+/// The project replay journaled in `workspace` whose tip, `HEAD` in `dir`
+/// with no merge or replay in flight there, holds an `rwv.toml` that parses
+/// and differs from the merge of the values, and that nobody settled.
+pub(crate) fn replayed_tip_differs(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    workspace: &Path,
+) -> anyhow::Result<Option<(op_state::Rebasing, crate::manifest_conflict::TipDiffers)>> {
+    let Some(take_in) = op_state::read_owner(workspace)?.and_then(|owner| owner.take_in) else {
+        return Ok(None);
+    };
+    let Some(rebase) = take_in
+        .rebases
+        .iter()
+        .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
+    else {
+        return Ok(None);
+    };
+    if take_in.tip_settled.as_ref() == Some(rebase) || vcs.mid_op(dir).is_some() {
+        return Ok(None);
+    }
+    let head = vcs.head_revision(dir)?;
+    let Some(tip) = manifest_text_at(vcs, dir, head.id()) else {
+        return Ok(None);
+    };
+    let base = vcs
+        .merge_bases(dir, &rebase.from, &rebase.onto)?
+        .into_iter()
+        .next();
+    let sides =
+        crate::manifest_conflict::sides_at(vcs, dir, base.as_ref(), &rebase.onto, &rebase.from);
+    Ok(crate::manifest_conflict::check_tip(&sides, &tip)?.map(|differs| (rebase.clone(), differs)))
+}
+
+/// Where the project replay journaled in `workspace` stopped in `dir` with
+/// `rwv.toml` unmerged, journal its tip settled: the operator resolves
+/// `rwv.toml` there, and what they make of it is not judged again.
+pub(crate) fn settled_by_hand(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<()> {
+    if vcs.rebase_in_flight(dir)?.is_none()
+        || !vcs
+            .unmerged_paths(dir)?
+            .iter()
+            .any(|path| path == Manifest::FILE_NAME)
+    {
+        return Ok(());
+    }
+    let rebase = op_state::read_owner(workspace)?
+        .and_then(|owner| owner.take_in)
+        .and_then(|take_in| {
+            take_in
+                .rebases
+                .into_iter()
+                .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
+        });
+    match rebase {
+        Some(rebase) => op_state::journal_tip_settled(workspace, rebase),
+        None => Ok(()),
+    }
+}
+
+/// Whether the operator settled the replayed tip of the operation journaled
+/// in `workspace`.
+fn tip_settled(workspace: &Path) -> anyhow::Result<bool> {
+    Ok(op_state::read_owner(workspace)?
+        .and_then(|owner| owner.take_in)
+        .is_some_and(|take_in| {
+            take_in
+                .tip_settled
+                .is_some_and(|settled| take_in.rebases.contains(&settled))
+        }))
+}
+
+fn manifest_text_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<String> {
+    vcs.read_file_at_revision(
+        dir,
+        &ResolvedRevisionId::from(commit.clone()),
+        Path::new(Manifest::FILE_NAME),
+    )
+    .ok()
 }
 
 /// The parser's error for the `rwv.toml` at `commit` in `dir`, and the file,

@@ -591,6 +591,11 @@ pub struct TakeInRecord {
     /// be read back from the commits once it ends, by this process or by hand.
     #[serde(default)]
     pub rebases: Vec<Rebasing>,
+    /// The project rebase whose replayed tip's `rwv.toml` the operator
+    /// settled at the stop where it differed from the merge of the values:
+    /// that tip is not judged again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip_settled: Option<Rebasing>,
     /// Each dependent's branch the op carries onto its target's new tip,
     /// written before its replay starts, with the tip the replay composed
     /// once it ends; the branch itself moves only once every carry composed.
@@ -1898,6 +1903,22 @@ pub fn journal_rebasing(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::Res
             .rebases
             .retain(|r| !(r.repo == rebasing.repo && r.branch == rebasing.branch));
         take_in.rebases.push(rebasing);
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal that the operator settled the `rwv.toml` of the tip `rebasing`
+/// replayed, on the op at `workspace_dir`.
+pub fn journal_tip_settled(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        take_in.tip_settled = Some(rebasing);
     }
     write_owner(workspace_dir, &record)
 }

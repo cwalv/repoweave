@@ -11,12 +11,14 @@ use crate::vcs::{CommitId, ConflictSides, ResolvedRevisionId, Vcs, VcsAction};
 use anyhow::Context;
 use std::path::Path;
 
-/// The side `--continue --keep` takes for every entry in conflict: the
-/// branch checked out, or the side it takes in.
+/// What `--continue --keep` keeps: for every entry in conflict the branch
+/// checked out's side or the side it takes in, or, where the check stopped a
+/// text merge that differs from the merge of the values, that text merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum Side {
     Yours,
     Incoming,
+    TextMerge,
 }
 
 impl Side {
@@ -24,6 +26,7 @@ impl Side {
         match self {
             Self::Yours => "yours",
             Self::Incoming => "incoming",
+            Self::TextMerge => "text-merge",
         }
     }
 
@@ -36,6 +39,13 @@ impl Side {
 
 /// Top-level tables whose keys are each one entry.
 const KEYED_TABLES: [&str; 2] = ["repositories", "integrations"];
+
+const BY_HAND: &str = "edit rwv.toml into what you mean, then stage it";
+
+pub(crate) const WRITE_VALUES: &str =
+    "write the merge of both sides' values in place of the text merge";
+pub(crate) const KEEP_TEXT_MERGE: &str = "keep the text merge as the VCS made it";
+pub(crate) const STAGE_OWN: &str = "edit rwv.toml into what you mean and stage it, then continue";
 
 const TEXT_MERGE_MARK: &str = "<<<<<<< the VCS's text merge of rwv.toml";
 const VALUES_MARK: &str = ">>>>>>> the merge of both sides' values";
@@ -244,15 +254,20 @@ fn text_merge_left(dir: &Path, sides: &Sides) -> anyhow::Result<Vec<String>> {
     let Ok(working) = std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) else {
         return Ok(Vec::new());
     };
-    let Some(text_merge) = working
+    let Some(text_merge) = text_merge_written(&working) else {
+        return Ok(Vec::new());
+    };
+    differences(text_merge, sides)
+}
+
+/// The text merge a check wrote into `working`, above the merge of the
+/// values.
+fn text_merge_written(working: &str) -> Option<&str> {
+    working
         .strip_prefix(TEXT_MERGE_MARK)
         .and_then(|rest| rest.strip_prefix('\n'))
         .and_then(|rest| rest.split_once("=======\n"))
         .map(|(text_merge, _)| text_merge)
-    else {
-        return Ok(Vec::new());
-    };
-    differences(text_merge, sides)
 }
 
 /// How `text_merge`, a text merge of `rwv.toml`, differs from the merge of
@@ -267,17 +282,30 @@ fn differences(text_merge: &str, sides: &Sides) -> anyhow::Result<Vec<String>> {
     if conflicts.is_empty() && text_merge.declares_same(&merged) {
         return Ok(Vec::new());
     }
-    let (text_merge, values) = (text_merge.declared()?, merged.declared()?);
+    let mut lines = listing(&text_merge.declared()?, &merged.declared()?, &conflicts);
+    if !conflicts.is_empty() {
+        lines.push("  and both sides changed the entries below differently".to_owned());
+    }
+    Ok(lines)
+}
+
+/// The lines naming each entry, outside `conflicts`, where `text_merge` and
+/// `values` differ.
+fn listing(
+    text_merge: &toml::Table,
+    values: &toml::Table,
+    conflicts: &[EntryConflict],
+) -> Vec<String> {
     let mut lines = vec![
         "rwv.toml: the VCS merged its text with no conflict, into a manifest that differs from \
          the merge of both sides' values:"
             .to_owned(),
     ];
-    for path in entries(&[&text_merge, &values]) {
+    for path in entries(&[text_merge, values]) {
         if conflicts.iter().any(|c| path.starts_with(&c.path)) {
             continue;
         }
-        let (t, v) = (at(&text_merge, &path), at(&values, &path));
+        let (t, v) = (at(text_merge, &path), at(values, &path));
         if t != v {
             lines.push(format!(
                 "  {}: {} in the text merge, {} in the merge of the values",
@@ -287,10 +315,59 @@ fn differences(text_merge: &str, sides: &Sides) -> anyhow::Result<Vec<String>> {
             ));
         }
     }
-    if !conflicts.is_empty() {
-        lines.push("  and both sides changed the entries below differently".to_owned());
+    lines
+}
+
+/// The sides of `sides`, read, where `text_merge` differs from the merge of
+/// their values and both sides changed `rwv.toml`.
+fn differing(sides: &ConflictSides, text_merge: &str) -> anyhow::Result<Option<Sides>> {
+    if sides.ours == sides.base || sides.theirs == sides.base {
+        return Ok(None);
     }
-    Ok(lines)
+    let Ok(read) = read(sides) else {
+        return Ok(None);
+    };
+    Ok((!differences(text_merge, &read)?.is_empty()).then_some(read))
+}
+
+/// How the replayed tip's `rwv.toml`, `tip`, differs from the merge of the
+/// values of `sides`: the merge base, the commit replayed onto, and the
+/// branch's tip before the replay.
+pub(crate) struct TipDiffers {
+    pub(crate) lines: Vec<String>,
+    /// The merge of the values written as an edit of `tip`.
+    pub(crate) values: String,
+}
+
+/// Judge `tip` against the merge of the values of `sides`. An entry both
+/// sides changed differently was settled where the replay stopped on it, so
+/// the tip's value stands for it; a tip that does not parse is not judged.
+pub(crate) fn check_tip(sides: &ConflictSides, tip: &str) -> anyhow::Result<Option<TipDiffers>> {
+    if sides.ours == sides.base || sides.theirs == sides.base {
+        return Ok(None);
+    }
+    let (Ok(read), Ok(at_tip)) = (read(sides), Manifest::from_toml_str(tip)) else {
+        return Ok(None);
+    };
+    let at_tip = at_tip.declared()?;
+    let mut values = read.merged(false)?.declared()?;
+    for conflict in read.conflicts()? {
+        put(
+            &mut values,
+            &conflict.path,
+            at(&at_tip, &conflict.path).cloned(),
+        );
+    }
+    let merged = Manifest::from_toml_str(
+        &toml::to_string(&values).context("failed to serialize the merged rwv.toml")?,
+    )?;
+    if Manifest::from_toml_str(tip)?.declares_same(&merged) {
+        return Ok(None);
+    }
+    Ok(Some(TipDiffers {
+        lines: listing(&at_tip, &merged.declared()?, &[]),
+        values: Manifest::edit_text(tip, |m| *m = merged)?.0,
+    }))
 }
 
 /// Check `text_merge`, the text the VCS merged `rwv.toml` into in `dir` with
@@ -303,15 +380,9 @@ pub(crate) fn check_text_merge(
     sides: &ConflictSides,
     text_merge: &str,
 ) -> anyhow::Result<bool> {
-    if sides.ours == sides.base || sides.theirs == sides.base {
-        return Ok(false);
-    }
-    let Ok(read) = read(sides) else {
+    let Some(read) = differing(sides, text_merge)? else {
         return Ok(false);
     };
-    if differences(text_merge, &read)?.is_empty() {
-        return Ok(false);
-    }
     let values = read.text(read.merged(false)?)?;
     let newline = |text: &str| if text.ends_with('\n') { "" } else { "\n" };
     let working = format!(
@@ -352,13 +423,7 @@ pub(crate) fn sides_at(
 /// Whether `text_merge`, the text the VCS merged `rwv.toml` into with no
 /// conflict, differs from the merge of the values of `sides`.
 pub(crate) fn text_merge_differs(sides: &ConflictSides, text_merge: &str) -> anyhow::Result<bool> {
-    if sides.ours == sides.base || sides.theirs == sides.base {
-        return Ok(false);
-    }
-    match read(sides) {
-        Ok(read) => Ok(!differences(text_merge, &read)?.is_empty()),
-        Err(_) => Ok(false),
-    }
+    Ok(differing(sides, text_merge)?.is_some())
 }
 
 /// Check the merge in flight in `dir`, where it left `rwv.toml` merged,
@@ -448,13 +513,31 @@ pub(crate) fn continue_at_stop(
     };
     let path = dir.join(Manifest::FILE_NAME);
     let working = std::fs::read_to_string(&path).ok();
+    let done = crate::op_state::resume_command(typed);
     let Some(recorded) = vcs.conflict_sides(&dir, Manifest::FILE_NAME)? else {
-        if let (Some(side), true) = (keep, record.verb == typed) {
-            eprintln!(
-                "{}: rwv.toml is not unmerged, so `--keep {}` takes nothing",
-                crate::op_state::resume_command(typed),
+        if record.verb != typed {
+            return Ok(());
+        }
+        if let Some((rebase, differs)) =
+            crate::project_merge::replayed_tip_differs(vcs, &dir, workspace)?
+        {
+            return settle_tip(vcs, &dir, workspace, (rebase, differs), keep, &done);
+        }
+        match keep {
+            Some(Side::TextMerge) => {
+                return Err(refused(
+                    "no text merge of rwv.toml is stopped for a check here",
+                    vec![format!(
+                        "`--keep text-merge` keeps a text merge the check stopped; run \
+                         `{resume}` without it"
+                    )],
+                ))
+            }
+            Some(side) => eprintln!(
+                "{done}: rwv.toml is not unmerged, so `--keep {}` takes nothing",
                 side.word()
-            );
+            ),
+            None => {}
         }
         return Ok(());
     };
@@ -488,9 +571,27 @@ pub(crate) fn continue_at_stop(
             )],
         ));
     }
+    if keep == Some(Side::TextMerge) {
+        let Some(text_merge) = working.as_deref().and_then(text_merge_written) else {
+            return Err(refused(
+                "rwv.toml is in conflict in the VCS's own text merge, so there is no text merge \
+                 to keep",
+                vec![
+                    format!(
+                    "take a side with `{resume} --keep yours` or `--keep incoming`, or {BY_HAND}:"
+                ),
+                    format!("  {}", mark_resolved(vcs, &dir)),
+                ],
+            ));
+        };
+        crate::durable_file::replace(&path, text_merge.as_bytes())
+            .context("failed to write rwv.toml")?;
+        vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+        eprintln!("{done}: kept and staged the text merge of rwv.toml as the VCS made it");
+        return Ok(());
+    }
     let replaying = vcs.rebase_in_flight(&dir)?.is_some();
     let merged = sides.merged(keep.is_some_and(|side| side.is_recorded_theirs(replaying)))?;
-    let done = crate::op_state::resume_command(typed);
     if let Some(working) = working
         .as_deref()
         .and_then(|text| Manifest::from_toml_str(text).ok())
@@ -508,7 +609,10 @@ pub(crate) fn continue_at_stop(
             ],
         ));
     }
-    let text = sides.text(merged)?;
+    let text = match working.as_deref().and_then(text_merge_written) {
+        Some(text_merge) => Manifest::edit_text(text_merge, |m| *m = merged)?.0,
+        None => sides.text(merged)?,
+    };
     let kept = vcs.backup_edits(&dir)?;
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
     vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
@@ -525,6 +629,53 @@ pub(crate) fn continue_at_stop(
         eprintln!("{line}");
     }
     Ok(())
+}
+
+/// At the stop where the replayed tip's `rwv.toml` in `dir` differs from the
+/// merge of the values: a staged `rwv.toml` is the operator's and is taken
+/// whole; `--keep text-merge` keeps the tip as the VCS made it; otherwise
+/// the merge of the values is written and staged, the file as it stood kept
+/// in a backup first. Each settles the tip for the rest of the operation.
+fn settle_tip(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    workspace: &Path,
+    (rebase, differs): (crate::op_state::Rebasing, TipDiffers),
+    keep: Option<Side>,
+    done: &str,
+) -> anyhow::Result<()> {
+    let head = vcs.head_revision(dir)?;
+    let committed = vcs
+        .read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME))
+        .ok();
+    let staged = vcs.staged_file(dir, Manifest::FILE_NAME)?;
+    match keep {
+        _ if staged != committed => {}
+        Some(Side::TextMerge) => {
+            eprintln!("{done}: kept the replayed tip's rwv.toml as the VCS merged it");
+        }
+        Some(side) => {
+            eprintln!(
+                "{done}: no entry of rwv.toml is in conflict, so `--keep {}` takes nothing",
+                side.word()
+            );
+            return Ok(());
+        }
+        None => {
+            let kept = vcs.backup_edits(dir)?;
+            crate::durable_file::replace(&dir.join(Manifest::FILE_NAME), differs.values.as_bytes())
+                .context("failed to write rwv.toml")?;
+            vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
+            eprintln!(
+                "{done}: wrote and staged the merge of both sides' values in place of the text \
+                 merge of rwv.toml"
+            );
+            for line in kept.iter().flat_map(|kept| kept_lines(vcs, dir, kept)) {
+                eprintln!("{line}");
+            }
+        }
+    }
+    crate::op_state::journal_tip_settled(workspace, rebase)
 }
 
 /// Whether the merge or replay in flight in `dir` takes in a commit the
@@ -602,7 +753,7 @@ pub(crate) fn reading_lines(
     reading: &Reading,
     resume: Option<&str>,
 ) -> Vec<String> {
-    let by_hand = "edit rwv.toml into what you mean, then stage it";
+    let by_hand = BY_HAND;
     let replaying = matches!(vcs.rebase_in_flight(dir), Ok(Some(_)));
     let label = |side: &str| match (side, replaying) {
         ("ours", false) | ("theirs", true) => "yours",
@@ -669,6 +820,13 @@ pub(crate) fn reading_lines(
                 ));
             }
             match resume {
+                Some(resume) if conflicts.is_empty() && !text_merge.is_empty() => lines.extend([
+                    format!("to {WRITE_VALUES}:"),
+                    format!("  {resume}"),
+                    format!("to {KEEP_TEXT_MERGE}:"),
+                    format!("  {resume} --keep text-merge"),
+                    format!("or {STAGE_OWN}:"),
+                ]),
                 Some(resume) if conflicts.is_empty() => lines.extend([
                     format!(
                         "rwv.toml: no entry is in conflict; `{resume}` writes and stages the \

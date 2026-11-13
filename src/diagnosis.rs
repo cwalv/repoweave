@@ -1246,12 +1246,19 @@ impl State {
                         holds the file; continuing makes the staged file part of that \
                         commit, which the replay wrote and nothing has published. A staged \
                         file that parses under a working file that differs and does not parse \
-                        stops here too, before anything is committed",
+                        stops here too, before anything is committed. Under linear history the \
+                        replayed tip whose `rwv.toml` parses stops here too where it differs \
+                        from the merge of the values of the merge base, the commit replayed \
+                        onto and the branch's tip before the replay, each entry that differs \
+                        listed; an entry both sides changed differently keeps the tip's value",
                 refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
                              first read what the merge or replay produced, and their \
                              `--continue` while the staged `rwv.toml` does not parse; `rwv \
                              abort` runs",
                 offers: &[
+                    Form::WriteValueMerge,
+                    Form::KeepTextMerge,
+                    Form::StageOwnManifest,
                     Form::StageParsingManifest,
                     Form::ResumeWithManifest,
                     Form::AbortOperation,
@@ -2004,6 +2011,9 @@ pub enum ChoiceId {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
+    WriteValueMerge,
+    KeepTextMerge,
+    StageOwnManifest,
     RefreshAgain,
     MergeEditedDrift,
     SetEditsAside,
@@ -2282,6 +2292,23 @@ impl ChoiceId {
                 phrase: "let the operation go on with the staged rwv.toml",
                 keeps_work: "a merge commits it in the merge; a replay makes it part of the \
                              replayed tip; it stops again while the staged file does not parse",
+            },
+            Self::WriteValueMerge => &ChoiceRow {
+                id: None,
+                phrase: crate::manifest_conflict::WRITE_VALUES,
+                keeps_work: "written as an edit of the text merge, whose comments and layout \
+                             stay; the file as it stood is kept in a backup first",
+            },
+            Self::KeepTextMerge => &ChoiceRow {
+                id: None,
+                phrase: crate::manifest_conflict::KEEP_TEXT_MERGE,
+                keeps_work: "writes nothing; the text merge is not judged again in this \
+                             operation",
+            },
+            Self::StageOwnManifest => &ChoiceRow {
+                id: None,
+                phrase: crate::manifest_conflict::STAGE_OWN,
+                keeps_work: "the staged file is taken whole and not judged again",
             },
             Self::MergeEditedDrift => &ChoiceRow {
                 id: None,
@@ -2593,6 +2620,9 @@ pub enum Form {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
+    WriteValueMerge,
+    KeepTextMerge,
+    StageOwnManifest,
     DriftRefreshAgain,
     MergeEditedDrift,
     SetEditsAside,
@@ -2634,7 +2664,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 115] = [
+    pub const ALL: [Form; 118] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2736,6 +2766,9 @@ impl Form {
         Self::AbortOperation,
         Self::StageParsingManifest,
         Self::ResumeWithManifest,
+        Self::WriteValueMerge,
+        Self::KeepTextMerge,
+        Self::StageOwnManifest,
         Self::DriftRefreshAgain,
         Self::MergeEditedDrift,
         Self::SetEditsAside,
@@ -3426,6 +3459,24 @@ impl Form {
                 choice: C::ResumeWithManifest,
                 steps: &[Step::Recorded("<resume>")],
                 at: W::Here,
+                shipped: true,
+            },
+            Self::WriteValueMerge => &FormRow {
+                choice: C::WriteValueMerge,
+                steps: &[Step::Recorded("<resume>")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::KeepTextMerge => &FormRow {
+                choice: C::KeepTextMerge,
+                steps: &[Step::Recorded("<resume> --keep text-merge")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::StageOwnManifest => &FormRow {
+                choice: C::StageOwnManifest,
+                steps: &[Vcs(A::MarkResolved), Step::Recorded("<resume>")],
+                at: W::Checkout,
                 shipped: true,
             },
             Self::DriftRefreshAgain => &FormRow {

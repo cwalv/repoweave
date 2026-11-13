@@ -988,6 +988,49 @@ every_scenario!(
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
     check_a_text_merge(scenarios::TextMerge::SettingMovedByHand),
+    check_a_text_merge(scenarios::TextMerge::SettingMovedKeepTextMerge),
+    check_a_text_merge(scenarios::TextMerge::SettingMovedKeepsAComment),
+    check_a_text_merge(scenarios::TextMerge::KeepTextMergeAtAConflict),
+    check_a_text_merge(scenarios::TextMerge::KeepTextMergeNothingChecked),
+    check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::Values),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KeepTextMerge
+    ),
+    check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::ByHand),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::StagedUnchanged
+    ),
+    check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::Amended),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KilledThenContinued
+    ),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KilledThenAborted
+    ),
+    check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::KeepYours),
+    check_a_replayed_tip(scenarios::TipVerb::Land, scenarios::TipSettle::Values),
+    check_a_replayed_tip(scenarios::TipVerb::Land, scenarios::TipSettle::ByHand),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Land,
+        scenarios::TipSettle::StagedUnchanged
+    ),
+    check_a_replayed_tip(scenarios::TipVerb::Land, scenarios::TipSettle::Amended),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Land,
+        scenarios::TipSettle::KilledThenContinued
+    ),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Land,
+        scenarios::TipSettle::KilledThenAborted
+    ),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Land,
+        scenarios::TipSettle::ThenMemberConflict
+    ),
     sync_continue_merges_a_repo_the_stop_diverged,
     land_continue_composes_a_merge_the_stop_left,
     abort_after_a_landing_merge_stops,
@@ -7247,6 +7290,131 @@ fn text_merge_setting_moved_pull() {
 fn text_merge_setting_moved_by_hand() {
     runner::run(scenarios::check_a_text_merge(
         scenarios::TextMerge::SettingMovedByHand,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn replayed_tip_values() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::check_a_replayed_tip(
+            verb,
+            scenarios::TipSettle::Values,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn replayed_tip_keep_text_merge() {
+    runner::run(scenarios::check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KeepTextMerge,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn replayed_tip_by_hand() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::check_a_replayed_tip(
+            verb,
+            scenarios::TipSettle::ByHand,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn replayed_tip_staged_unchanged() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::check_a_replayed_tip(
+            verb,
+            scenarios::TipSettle::StagedUnchanged,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn replayed_tip_amended() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::check_a_replayed_tip(
+            verb,
+            scenarios::TipSettle::Amended,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn replayed_tip_killed_then_continued() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::check_a_replayed_tip(
+            verb,
+            scenarios::TipSettle::KilledThenContinued,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn replayed_tip_killed_then_aborted() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::check_a_replayed_tip(
+            verb,
+            scenarios::TipSettle::KilledThenAborted,
+        ))
+        .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn text_merge_setting_moved_keep_text_merge() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::SettingMovedKeepTextMerge,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn text_merge_keep_text_merge_at_a_conflict() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::KeepTextMergeAtAConflict,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn text_merge_keep_text_merge_nothing_checked() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::KeepTextMergeNothingChecked,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn text_merge_setting_moved_keeps_a_comment() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::SettingMovedKeepsAComment,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn replayed_tip_then_member_conflict() {
+    runner::run(scenarios::check_a_replayed_tip(
+        scenarios::TipVerb::Land,
+        scenarios::TipSettle::ThenMemberConflict,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn replayed_tip_keep_yours() {
+    runner::run(scenarios::check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KeepYours,
     ))
     .assert_fully_decided_green();
 }

@@ -19299,6 +19299,17 @@ pub enum TextMerge {
     SettingMovedPull,
     /// [`TextMerge::SettingMoved`] settled by a staged hand edit.
     SettingMovedByHand,
+    /// [`TextMerge::SettingMoved`] settled by the printed `--keep text-merge`.
+    SettingMovedKeepTextMerge,
+    /// [`TextMerge::SettingMoved`] with a comment `main` added: the
+    /// continue's merge of the values keeps it.
+    SettingMovedKeepsAComment,
+    /// `--keep text-merge` typed where the VCS's own text merge of
+    /// `rwv.toml` conflicted: there is no text merge to keep.
+    KeepTextMergeAtAConflict,
+    /// `--keep text-merge` typed at a stop on a member's conflict, where
+    /// nothing was checked.
+    KeepTextMergeNothingChecked,
 }
 
 pub fn check_a_text_merge(how: TextMerge) -> Scenario {
@@ -19343,7 +19354,15 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .claim(Claim::OutputContains(
                         "local/remotes/docs history: \"merge\" in the text merge, absent in the merge of the values",
                     ))
-                    .claim(Claim::OutputContains("`rwv sync --continue` writes and stages")),
+                    .claim(Claim::OutputContains(
+                        "to write the merge of both sides' values in place of the text merge:",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "to keep the text merge as the VCS made it:",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "or edit rwv.toml into what you mean and stage it, then continue:",
+                    )),
                 Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),
@@ -19419,6 +19438,364 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                 "a text merge of rwv.toml the check stopped is settled by a staged hand edit",
                 steps,
             )
+        }
+        T::SettingMovedKeepTextMerge => {
+            let mut steps = moved();
+            steps.extend([
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs)),
+                Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep text-merge")
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("kept and staged the text merge")),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("role = \"fork\"\n\n"))
+                    .claim(Claim::OutputContains("history = \"merge\"")),
+            ]);
+            (
+                "a text merge of rwv.toml the check stopped is kept by --keep text-merge",
+                steps,
+            )
+        }
+        T::SettingMovedKeepsAComment => {
+            let mut steps = moved();
+            steps.extend([
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[repositories]\n",
+                    "# MAIN-NOTE\n[repositories]\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "note"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs)),
+                Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+                app_history(&ww("w")),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("# MAIN-NOTE")),
+            ]);
+            (
+                "the merge of the values written at a check stop keeps a comment the side taken in added",
+                steps,
+            )
+        }
+        T::KeepTextMergeAtAConflict => {
+            let steps = vec![
+                create("w"),
+                Step::rwv(&a(), &["branch", "set-history", "merge", "--repo", LIB])
+                    .expect(Exit::Succeeds),
+                Step::rwv(
+                    &ww("w"),
+                    &["branch", "set-history", "linear", "--repo", LIB],
+                )
+                .expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputLacks("--keep text-merge")),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "text-merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("there is no text merge to keep"))
+                    .claim(Claim::OutputContains("--keep yours")),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
+            ];
+            (
+                "--keep text-merge at a conflict the VCS left in rwv.toml refuses",
+                steps,
+            )
+        }
+        T::KeepTextMergeNothingChecked => {
+            let steps = vec![
+                create("w"),
+                Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+                Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+                Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+                Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "text-merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(
+                        "no text merge of rwv.toml is stopped for a check here",
+                    )),
+            ];
+            ("--keep text-merge where nothing was checked refuses", steps)
+        }
+    };
+    scenario(name, steps)
+}
+
+/// Who takes in `main` under linear history in [`check_a_replayed_tip`].
+#[derive(Debug, Clone, Copy)]
+pub enum TipVerb {
+    Sync,
+    Land,
+}
+
+/// What the operator does at the stop where the replayed tip's `rwv.toml`
+/// differs from the merge of the values.
+#[derive(Debug, Clone, Copy)]
+pub enum TipSettle {
+    /// The printed bare continue: the merge of the values.
+    Values,
+    /// The printed `--keep text-merge`.
+    KeepTextMerge,
+    /// A hand edit, staged with the printed line, then the printed continue.
+    ByHand,
+    /// The tip's own text staged unchanged: nothing staged, so the continue
+    /// writes the merge of the values.
+    StagedUnchanged,
+    /// A `git commit --amend` of the tip: the stop names the commit made
+    /// after the replay.
+    Amended,
+    /// The continue killed once it settled the tip, before the re-map
+    /// carried it, then continued.
+    KilledThenContinued,
+    /// The same, then aborted.
+    KilledThenAborted,
+    /// `--keep yours`: no entry is in conflict, so it takes nothing and the
+    /// stop stands.
+    KeepYours,
+    /// The printed bare continue, then a conflict in a member the landing
+    /// replays after the project, resolved and continued.
+    ThenMemberConflict,
+}
+
+/// `main` sets `app`'s role and adds `docs` in two commits; the workweave
+/// sets `app`'s `recurse-submodules`. Replayed onto `main`, git merges the
+/// text with no conflict and puts the setting under `docs`: the replayed tip
+/// stops, and `settle` leaves the stop.
+pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
+    let (start, resume, at): (&[&str], &[&str], Place) = match verb {
+        TipVerb::Sync => (
+            &["sync", "--history", "linear"],
+            &["sync", "--continue"],
+            ww("w"),
+        ),
+        TipVerb::Land => (
+            &["land", "--history", "linear", "--allow-member-change", APP],
+            &["land", "--continue"],
+            a(),
+        ),
+    };
+    let bare = match verb {
+        TipVerb::Sync => "rwv sync --continue",
+        TipVerb::Land => "rwv land --continue",
+    };
+    let moved = "local/remotes/app recurse-submodules: absent in the text merge, false in the \
+                 merge of the values";
+    let stop = || {
+        Step::rwv(&ww("w"), start)
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains(moved))
+            .claim(Claim::OutputContains("--keep text-merge"))
+            .claim(Claim::OutputLacks("--keep yours"))
+            .claim(Claim::OutputLacks("until it parses"))
+    };
+    let settled = |at: &Place| {
+        Step::git(at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "role = \"fork\"\nrecurse-submodules = false",
+            ))
+            .claim(Claim::OutputContains(
+                "[repositories.\"local/remotes/docs\"]",
+            ))
+    };
+    let once = |at: &Place| {
+        Step::git(
+            at,
+            Repo::Proj,
+            &["grep", "-c", "recurse-submodules", "HEAD", "--", "rwv.toml"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("rwv.toml:1"))
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        create("w"),
+        Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w"),
+            &["member", "set-recurse-submodules", APP, "false"],
+        )
+        .expect(Exit::Succeeds),
+    ];
+    if matches!(settle, TipSettle::ThenMemberConflict) {
+        steps.extend([
+            Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        ]);
+    }
+    steps.push(match settle {
+        TipSettle::ThenMemberConflict => stop().may_rewind(&[Repo::App]),
+        _ => stop(),
+    });
+    let name = match settle {
+        TipSettle::ThenMemberConflict => {
+            steps.extend([
+                Step::rwv_printed_exactly(&ww("w"), bare)
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .may_rewind(&[Repo::App])
+                    .claim(Claim::OutputContains("hit a conflict")),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::App,
+                    "README",
+                    "app on main\n",
+                    "resolved by hand\n",
+                ),
+                Step::git(&ww("w"), Repo::App, &["add", "README"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), resume)
+                    .expect(Exit::Succeeds)
+                    .resolved_by_hand(&[Repo::App, Repo::Proj])
+                    .claim(Claim::OutputLacks(moved)),
+                settled(&at),
+                once(&at),
+            ]);
+            "a settled replayed tip is not judged again at a later stop of the same landing"
+        }
+        TipSettle::Values => {
+            steps.extend([
+                Step::rwv_printed_exactly(&ww("w"), bare)
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj])
+                    .claim(Claim::OutputContains(
+                        "wrote and staged the merge of both sides' values",
+                    )),
+                settled(&at),
+                once(&at),
+            ]);
+            "the replayed tip whose rwv.toml differs takes the merge of the values"
+        }
+        TipSettle::KeepTextMerge => {
+            steps.extend([
+                Step::rwv_printed_holding(&ww("w"), bare, "--keep text-merge")
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj])
+                    .claim(Claim::OutputContains("kept the replayed tip's rwv.toml")),
+                Step::git(&at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains(
+                        "[repositories.\"local/remotes/docs\"]\ntype = \"git\"",
+                    ))
+                    .claim(Claim::OutputContains(
+                        "role = \"owned\"\nrecurse-submodules = false",
+                    )),
+            ]);
+            "the replayed tip whose rwv.toml differs keeps the text merge on --keep text-merge"
+        }
+        TipSettle::ByHand => {
+            steps.extend([
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "recurse-submodules = false\n",
+                    "",
+                ),
+                Step::rwv_printed_holding(&ww("w"), "git -C ", "add -- rwv.toml")
+                    .expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), resume)
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj]),
+                Step::git(&at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("recurse-submodules")),
+            ]);
+            "the replayed tip whose rwv.toml differs takes a staged hand edit whole"
+        }
+        TipSettle::StagedUnchanged => {
+            steps.extend([
+                Step::git(&ww("w"), Repo::Proj, &["add", "--", "rwv.toml"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), resume)
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj])
+                    .claim(Claim::OutputContains(
+                        "wrote and staged the merge of both sides' values",
+                    )),
+                settled(&at),
+            ]);
+            "the replayed tip's own rwv.toml staged unchanged reads as nothing staged"
+        }
+        TipSettle::Amended => {
+            steps.extend([
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "recurse-submodules = false\n",
+                    "recurse-submodules = false\n# by hand\n",
+                ),
+                Step::git(
+                    &ww("w"),
+                    Repo::Proj,
+                    &["commit", "-qa", "--amend", "--no-edit"],
+                )
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj]),
+                Step::rwv(&ww("w"), resume)
+                    .expect(Exit::refuses(
+                        Repo::Proj,
+                        State::UnparseableProjectMidOperation,
+                    ))
+                    .claim(Claim::OutputContains("not the tip the replay wrote")),
+            ]);
+            "a hand amend of the replayed tip meets the guard"
+        }
+        TipSettle::KilledThenContinued | TipSettle::KilledThenAborted => {
+            steps.extend([
+                Step::rwv_paused(&ww("w"), resume, "remap-recorded", "carrying"),
+                Step::kill("carrying"),
+            ]);
+            if matches!(settle, TipSettle::KilledThenContinued) {
+                steps.extend([
+                    Step::rwv(&ww("w"), resume)
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj])
+                        .claim(Claim::OutputLacks(moved)),
+                    settled(&at),
+                ]);
+                "a continue killed after it settled the replayed tip is continued"
+            } else {
+                steps.extend([
+                    Step::rwv(&ww("w"), &["abort"])
+                        .expect(Exit::Succeeds)
+                        .may_rewind(&[Repo::Proj])
+                        .may_restore(&[Repo::Proj]),
+                    Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputLacks("local/remotes/docs")),
+                ]);
+                "a continue killed after it settled the replayed tip is aborted"
+            }
+        }
+        TipSettle::KeepYours => {
+            steps.extend([
+                Step::rwv(&ww("w"), &[resume[0], resume[1], "--keep", "yours"])
+                    .expect(Exit::refuses(
+                        Repo::Proj,
+                        State::UnparseableProjectMidOperation,
+                    ))
+                    .claim(Claim::OutputContains("`--keep yours` takes nothing"))
+                    .claim(Claim::OutputContains(moved)),
+            ]);
+            "--keep yours at the replayed tip's stop takes nothing and the stop stands"
         }
     };
     scenario(name, steps)
