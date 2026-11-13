@@ -345,6 +345,9 @@ src/workweave.rs	(untokened:hook-input)	-	4
 src/workweave.rs	(untokened:owed)	-	1
 src/workweave.rs	(untokened:tally)	-	2
 src/workweave.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	1
+src/workweave.rs	edits drift left in place	tests/sync/land_drift_test.rs	1
+src/workweave.rs	edits moved and edited	tests/sync/land_drift_test.rs	1
+src/workweave.rs	edits set back	tests/sync/land_drift_test.rs	1
 src/workweave.rs	health-floor-too-low	-	1
 src/workweave.rs	missing-canonical-clone	-	1
 src/workweave.rs	name exists	-	1
