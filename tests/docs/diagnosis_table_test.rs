@@ -55,6 +55,7 @@ fn samples() -> BTreeMap<&'static str, &'static str> {
         ("<ignored>", "build.log"),
         ("<assumed>", "local.cfg"),
         ("<skipped>", "skip.cfg"),
+        ("<stash>", "0123456789abcdef0123456789abcdef01234567"),
     ])
 }
 
