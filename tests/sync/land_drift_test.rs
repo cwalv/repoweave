@@ -2648,11 +2648,7 @@ fn a_member_added_by_a_move_of_the_project_branch_is_not_removed_by_lock_commit(
 /// in the project repo is written.
 #[test]
 fn pull_update_remote_and_cherry_pick_hold_a_moved_and_edited_project_manifest() {
-    let verbs: [&[&str]; 3] = [
-        &["pull"],
-        &["update", "--remote"],
-        &["cherry-pick", "HEAD"],
-    ];
+    let verbs: [&[&str]; 3] = [&["pull"], &["update", "--remote"], &["cherry-pick", "HEAD"]];
     for verb in verbs {
         let f = fixture();
         let moved = f.move_project_manifest();
@@ -3137,6 +3133,76 @@ fn an_ignored_file_where_the_move_adds_one_is_moved_aside_then_merged() {
         Some("theirs log\n")
     );
     assert_eq!(read(&f.scratch.join("x.log")).as_deref(), Some("my log\n"));
+}
+
+/// `rwv` run in `dir` with a `git` first on `PATH` that fails every listing
+/// of ignored files and passes every other call to the real one.
+#[cfg(unix)]
+fn run_with_ignored_listing_failing(f: &Fixture, args: &[&str], dir: &Path) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = f.scratch.join("failing-git");
+    std::fs::create_dir_all(&bin).unwrap();
+    let real = String::from_utf8(
+        std::process::Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let wrapper = bin.join("git");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" --others --ignored --exclude-standard \"*) \
+             echo 'fatal: the listing failed' >&2; exit 128;; esac\nexec {} \"$@\"\n",
+            real.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+    let out = common::rwv_std()
+        .args(args)
+        .current_dir(dir)
+        .env("PATH", path)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "{}", common::cli::describe(&out));
+    common::cli::describe(&out)
+}
+
+/// The files the VCS does not compare cannot be listed: the merge holds the
+/// checkout on its first run and on a rerun from set back, writing nothing,
+/// and says why; once the listing works the merge finishes.
+#[cfg(unix)]
+#[test]
+fn a_failed_listing_of_uncompared_files_holds_the_merge_first_and_on_a_rerun() {
+    let f = fixture();
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    let head = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+
+    let said = run_with_ignored_listing_failing(&f, &MERGE, &f.ww);
+
+    assert!(said.contains("edits moved and edited"), "{said}");
+    assert!(said.contains("could not be listed"), "{said}");
+    assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), head);
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
+
+    drop(held_at(&f, &f.ww, &MERGE, "drift-merge-carry"));
+    assert!(!on_branch(&f.ww_lib));
+    let back = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+
+    let said = run_with_ignored_listing_failing(&f, &MERGE, &f.ww);
+
+    assert!(said.contains("edits set back"), "{said}");
+    assert!(said.contains("could not be listed"), "{said}");
+    assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), back);
+    assert!(!on_branch(&f.ww_lib), "{said}");
+    let out = common::cli::run(&MERGE, &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(on_branch(&f.ww_lib), "{said}");
 }
 
 fn on_branch(repo: &Path) -> bool {
