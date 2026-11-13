@@ -219,23 +219,42 @@ pub(crate) fn rebase_jumps(
         let (Some(was), Some(now)) = (from.get(member), to.get(member)) else {
             continue;
         };
-        let Some(entry) = manifest.get_entry(member).filter(|_| was != now) else {
-            continue;
-        };
-        let Some(image) = replays.iter().find_map(|replay| replay.image_of(was)) else {
+        let Some(entry) = manifest.get_entry(member) else {
             continue;
         };
         let checkout = root.join(member.as_path());
-        if image == *now || vcs_for(entry.vcs_type).on_first_parents(&checkout, now, &image)? {
-            jumps.push(crate::repin::Repin {
-                member: member.clone(),
-                from: Some(was.clone()),
-                to: now.clone(),
-                verb: REBASE_VERB.to_owned(),
-            });
-        }
+        let vcs = vcs_for(entry.vcs_type);
+        jumps.extend(jump(member, replays, was, now, |image| {
+            Ok(vcs.on_first_parents(&checkout, now, image)?)
+        })?);
     }
     Ok(jumps)
+}
+
+/// The re-pin of `member` from `was` to `now` where `replays` maps `was` to
+/// `now`, or to a commit `on_chain` finds on `now`'s first-parent chain.
+fn jump(
+    member: &RepoPath,
+    replays: &[MemberReplay],
+    was: &CommitId,
+    now: &CommitId,
+    on_chain: impl FnOnce(&CommitId) -> anyhow::Result<bool>,
+) -> anyhow::Result<Option<crate::repin::Repin>> {
+    if was == now {
+        return Ok(None);
+    }
+    let Some(image) = replays.iter().find_map(|replay| replay.image_of(was)) else {
+        return Ok(None);
+    };
+    if image != *now && !on_chain(&image)? {
+        return Ok(None);
+    }
+    Ok(Some(crate::repin::Repin {
+        member: member.clone(),
+        from: Some(was.clone()),
+        to: now.clone(),
+        verb: REBASE_VERB.to_owned(),
+    }))
 }
 
 /// A pin a dropped commit's re-map moved, by the project commit that pinned
@@ -544,6 +563,26 @@ mod tests {
         );
         assert_eq!(replay().image(&commit(2)), Some(Image::Dropped(commit(11))));
         assert_eq!(replay().image(&commit(4)), None);
+    }
+
+    #[test]
+    fn a_rebase_jump_is_recorded_only_to_the_image_or_a_commit_built_on_it() {
+        let member = RepoPath::new("m").unwrap();
+        let replays = [replay()];
+        let jump_to = |now: u8, on_chain: bool| {
+            jump(&member, &replays, &commit(1), &commit(now), |_| {
+                Ok(on_chain)
+            })
+            .unwrap()
+            .map(|repin| repin.to)
+        };
+        assert_eq!(jump_to(11, false), Some(commit(11)));
+        assert_eq!(jump_to(12, true), Some(commit(12)));
+        assert_eq!(jump_to(12, false), None);
+        assert_eq!(
+            jump(&member, &replays, &commit(4), &commit(11), |_| Ok(true)).unwrap(),
+            None
+        );
     }
 
     #[test]

@@ -6871,6 +6871,54 @@ pub fn a_sync_reports_a_skipped_history_pin_in_json() -> Scenario {
     )
 }
 
+/// A seat locks `app`, whose `main` then moves upstream with nothing locking it, so
+/// the project lands by fast-forward while `app` is rebased: the landing's
+/// relock records the rebase's move of `app` by name, and machine B, which
+/// never held the commit the seat locked, lands in `app`.
+pub fn a_fast_forward_landing_records_a_member_it_rebased() -> Scenario {
+    scenario(
+        "a fast-forward landing records a member it rebased",
+        vec![
+            Step::new_machine(Machine::B),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "forge-app",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &[
+                    "log",
+                    "-1",
+                    "--format=%(trailers:key=Rwv-Repin,valueonly)",
+                    "main",
+                ],
+            )
+            .claim(Claim::OutputContains(" rebase")),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("held by no branch")),
+            Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+        ],
+    )
+}
+
 /// Which verb replays the seat's project commits onto a `main` that moved,
 /// in [`a_re_pin_follows_its_lock_through_a_replay`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7052,10 +7100,11 @@ pub fn sync_rebased_members_in_a_merged_project_on_a_second_machine(
 /// before the relock: no record says which commit became which, so the
 /// landing writes no re-pin on the operator's behalf and stops before its
 /// project commit.
-pub fn a_landing_records_no_rebase_jump_the_replay_did_not_record() -> Scenario {
+pub fn a_landing_stops_before_its_project_commit_where_no_record_describes_a_member_rebase(
+) -> Scenario {
     let app = Repo::App.rel_path();
     scenario(
-        "a landing records no rebase jump the replay did not record",
+        "a landing stops where no record describes a member rebase",
         vec![
             Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
             Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", &app])

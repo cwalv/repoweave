@@ -1165,10 +1165,11 @@ every_scenario!(
     a_re_pin_follows_its_lock_through_a_replay(scenarios::Replays::SyncFirst),
     a_history_pin_not_repinned_still_refuses,
     a_sync_reports_a_skipped_history_pin_in_json,
+    a_fast_forward_landing_records_a_member_it_rebased,
     merged_project_with_rebased_members_on_a_second_machine,
     sync_rebased_members_in_a_merged_project_on_a_second_machine("linear"),
     sync_rebased_members_in_a_merged_project_on_a_second_machine("ff-only"),
-    a_landing_records_no_rebase_jump_the_replay_did_not_record,
+    a_landing_stops_before_its_project_commit_where_no_record_describes_a_member_rebase,
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::FastForward),
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Rebase),
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Merge),
@@ -5222,6 +5223,12 @@ fn a_re_pin_record_replayed_by_a_linear_sync_lands_on_a_second_machine() {
 }
 
 #[test]
+fn a_fast_forward_landing_records_a_member_it_rebased() {
+    runner::run(scenarios::a_fast_forward_landing_records_a_member_it_rebased())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_sync_reports_a_skipped_history_pin_in_json() {
     runner::run(scenarios::a_sync_reports_a_skipped_history_pin_in_json())
         .assert_fully_decided_green();
@@ -5250,8 +5257,8 @@ fn members_sync_rebased_in_a_merged_project_land_on_a_second_machine() {
 }
 
 #[test]
-fn a_landing_records_no_rebase_jump_the_replay_did_not_record() {
-    runner::run(scenarios::a_landing_records_no_rebase_jump_the_replay_did_not_record())
+fn a_landing_stops_before_its_project_commit_where_no_record_describes_a_member_rebase() {
+    runner::run(scenarios::a_landing_stops_before_its_project_commit_where_no_record_describes_a_member_rebase())
         .assert_fully_decided_green();
 }
 
