@@ -1157,6 +1157,7 @@ every_scenario!(
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Rebase),
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Merge),
     a_refused_landing_leaves_a_lock_behind_as_it_stood,
+    a_landing_records_the_tip_of_a_member_it_does_not_move,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
     drift_staged_return_after_a_hand_refresh,
@@ -5183,6 +5184,12 @@ fn a_landing_writes_no_relock_of_its_own() {
         runner::run(scenarios::landing_writes_no_relock_of_its_own(how))
             .assert_fully_decided_green();
     }
+}
+
+#[test]
+fn a_landing_records_the_tip_of_a_member_it_does_not_move() {
+    runner::run(scenarios::a_landing_records_the_tip_of_a_member_it_does_not_move())
+        .assert_fully_decided_green();
 }
 
 #[test]

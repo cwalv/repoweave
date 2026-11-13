@@ -6992,6 +6992,38 @@ pub fn landing_writes_no_relock_of_its_own(how: ProjectLands) -> Scenario {
     scenario("a landing writes no relock of its own", steps)
 }
 
+/// A seat's `lib` takes, by hand, a commit its declared branch's upstream
+/// already holds, and nothing relocks it: `lib` holds no unlanded work, so the
+/// landing does not move it, yet the tip it found when it began is what the
+/// landed lock pins.
+pub fn a_landing_records_the_tip_of_a_member_it_does_not_move() -> Scenario {
+    scenario(
+        "a landing records the tip of a member it does not move",
+        vec![
+            create("w"),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "forge-lib",
+            }),
+            Step::git(&ww("w"), Repo::Lib, &["fetch", "-q", "origin"]),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["merge", "-q", "--ff-only", "origin/main"],
+            ),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::PinContains {
+                    site: main_lock(),
+                    member: Repo::Lib,
+                    mark: "forge-lib",
+                }),
+        ],
+    )
+}
+
 /// A landing refused at its preconditions, with the seat's lock behind its
 /// members and an uncommitted `rwv.lock` beside it, leaves the seat exactly
 /// as it stood: no relock was written or committed.
