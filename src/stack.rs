@@ -446,6 +446,27 @@ impl Carrier<'_> {
         )
     }
 
+    fn failed(
+        &self,
+        repo: &RepoKey,
+        dependent: &str,
+        dir: &Path,
+        error: &VcsError,
+    ) -> anyhow::Error {
+        crate::refusal::refusal(
+            RefusalKind::OpParked,
+            format!(
+                "rwv {verb}: carrying '{dependent}' along in {repo} failed at {}: {error:#}\n\
+                 Nothing moved; fix the cause, then run `{}`, or `rwv abort` to put everything \
+                 back as it was",
+                dir.display(),
+                crate::op_state::resume_command(self.verb),
+                verb = self.verb,
+                repo = self.repos.label(repo),
+            ),
+        )
+    }
+
     /// Finish a carry a stop left in a checkout: drive its replay on, or
     /// take the tip the operator's own continue left, and put the checkout
     /// back on `w`'s branch. Run before anything reads the checkouts.
@@ -466,8 +487,11 @@ impl Carrier<'_> {
             let vcs = self.repos.vcs(&carrying.repo);
             if matches!(vcs.mid_op(&dir), Some(ConflictOp::Rebase)) {
                 vcs.rebase_continue(&dir, policy(&carrying.repo))
-                    .map_err(|_| {
-                        self.stopped(&carrying.repo, &carrying.branch, &dir, vcs.as_ref())
+                    .map_err(|e| match e {
+                        VcsError::RebaseConflict { .. } => {
+                            self.stopped(&carrying.repo, &carrying.branch, &dir, vcs.as_ref())
+                        }
+                        e => self.failed(&carrying.repo, &carrying.branch, &dir, &e),
                     })?;
             }
             if matches!(
@@ -765,19 +789,7 @@ impl Carrier<'_> {
             Err(e) => {
                 vcs.cancel_in_flight_op(&dir);
                 self.back_on(&carrying)?;
-                return Err(crate::refusal::refusal(
-                    RefusalKind::OpParked,
-                    format!(
-                        "rwv {verb}: carrying '{dependent}' along in {repo} failed at {}: {e:#}\n\
-                         Nothing moved; fix the cause, then run `{}`, or `rwv abort` to put \
-                         everything back as it was",
-                        dir.display(),
-                        crate::op_state::resume_command(self.verb),
-                        verb = self.verb,
-                        dependent = carry.dependent,
-                        repo = self.repos.label(repo),
-                    ),
-                ));
+                return Err(self.failed(repo, carry.dependent.as_str(), &dir, &e));
             }
         }
         let head = vcs.head_revision(&dir)?.id().clone();

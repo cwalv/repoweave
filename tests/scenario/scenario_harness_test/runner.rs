@@ -950,6 +950,20 @@ impl Step {
         self
     }
 
+    /// The step continues a carry or replay whose conflict the operator
+    /// resolved by hand: the commit the resolution replaced has no patch
+    /// equivalent, so no ref reaches it or one like it.
+    pub fn resolved_by_hand(self, repos: &[Repo]) -> Step {
+        self.may_strand(repos)
+    }
+
+    /// The step aborts a carry whose replay the operator finished with their
+    /// own `git rebase --continue`: abort puts the branch back and keeps no
+    /// backup of the commits that finish wrote.
+    pub fn discards_a_hand_finished_replay(self, repos: &[Repo]) -> Step {
+        self.may_strand(repos)
+    }
+
     pub fn may_restore(mut self, repos: &[Repo]) -> Step {
         self.allow.may_restore.extend_from_slice(repos);
         self

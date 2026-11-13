@@ -1696,6 +1696,28 @@ fn conflict_refusal(
     )
 }
 
+fn rebase_refusal(
+    sync: &Sync<'_>,
+    repo: &str,
+    dir: &Path,
+    vcs: &dyn Vcs,
+    error: VcsError,
+) -> anyhow::Error {
+    if matches!(error, VcsError::RebaseConflict { .. }) {
+        return conflict_refusal(sync, repo, dir, vcs, ConflictOp::Rebase);
+    }
+    crate::refusal::refusal(
+        RefusalKind::OpParked,
+        format!(
+            "rwv sync: the rebase of {repo} onto {} failed at {}: {error:#}\nfix the cause, then \
+             run `{}`, or `rwv abort` to put everything back as it was",
+            sync.source_name(),
+            dir.display(),
+            crate::op_state::resume_command(OpVerb::Sync),
+        ),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn take_member(
     sync: &Sync<'_>,
@@ -1712,7 +1734,7 @@ fn take_member(
     let workspace = &op.workspace;
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
         vcs.rebase_continue(dir, DerivedContentPolicy::keep_target_side())
-            .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
+            .map_err(|e| rebase_refusal(sync, path.as_str(), dir, vcs, e))?;
         if let Some(replayed) = vcs.resolve_savepoint(dir, &SavepointKey::Op(op.id.clone())) {
             report_dropped_derived(path.as_str(), dir, vcs, &rev(source), &replayed);
         }
@@ -1882,7 +1904,7 @@ fn take_member(
         None,
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::keep_target_side())
-        .map_err(|_| conflict_refusal(sync, path.as_str(), dir, vcs, ConflictOp::Rebase))?;
+        .map_err(|e| rebase_refusal(sync, path.as_str(), dir, vcs, e))?;
     report_dropped_derived(path.as_str(), dir, vcs, &src, &head);
     let tip = vcs.head_revision(dir)?.id().clone();
     journal(&tip)?;
@@ -2023,7 +2045,7 @@ fn take_project(
     let label = sync.label();
     if matches!(vcs.mid_op(dir), Some(ConflictOp::Rebase)) {
         vcs.rebase_continue(dir, DerivedContentPolicy::rewritten_after())
-            .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
+            .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
         return Ok(());
     }
     let attached = match vcs.head_attachment(dir)? {
@@ -2098,7 +2120,7 @@ fn take_project(
         None,
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
-        .map_err(|_| conflict_refusal(sync, &label, dir, vcs, ConflictOp::Rebase))?;
+        .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
     say(output, &format!("{label}: rebased onto {}", source.short()));
     Ok(())
 }

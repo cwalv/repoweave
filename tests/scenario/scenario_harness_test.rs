@@ -838,6 +838,7 @@ every_scenario!(
     a_sync_continued_after_its_relock_keeps_it,
     a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry,
     a_sync_killed_after_journaling_a_composed_carry_continues,
+    a_rebase_that_stops_without_a_conflict_is_not_reported_as_one,
     a_verb_killed_after_its_relock_commit_then_stopped("land", "relock-committed"),
     a_verb_killed_after_its_relock_commit_then_stopped("sync", "sync-relock-committed"),
     a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues,
@@ -5802,6 +5803,12 @@ fn a_sync_killed_after_its_relock_commit_then_stopped_aborts() {
 #[test]
 fn sync_continue_refuses_a_tip_amended_during_a_stop() {
     runner::run(scenarios::sync_continue_refuses_a_tip_amended_during_a_stop())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_rebase_that_stops_without_a_conflict_is_not_reported_as_one() {
+    runner::run(scenarios::a_rebase_that_stops_without_a_conflict_is_not_reported_as_one())
         .assert_fully_decided_green();
 }
 

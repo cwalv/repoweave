@@ -17291,7 +17291,7 @@ pub fn stack_carry_conflict(then: AfterHandContinue) -> Scenario {
             Step::git(&ww("w1"), Repo::App, &["add", "README"]),
             Step::rwv(&ww("w1"), &["sync", "--continue"])
                 .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App])
+                .resolved_by_hand(&[Repo::App])
                 .may_rewind(&[Repo::App])
                 .claim(Claim::OutputContains("carried 'w2' along"))
                 .claim(Claim::OnBranch {
@@ -17381,7 +17381,7 @@ pub fn a_carry_stopped_in_the_project_continues() -> Scenario {
         Step::git(&ww("w1"), Repo::Proj, &["add", "notes.txt"]),
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::Proj])
+            .resolved_by_hand(&[Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::OnBranch {
                 at: ww("w1"),
@@ -17462,7 +17462,7 @@ pub fn a_landing_whose_carry_stopped_in_the_project_continues() -> Scenario {
         )),
         Step::rwv(&ww("w1"), &["land", "--continue"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::Proj])
+            .resolved_by_hand(&[Repo::Proj])
             .claim(Claim::OutputContains("carried 'w2' along"))
             .claim(Claim::OutputLacks("member change")),
         Step::git(
@@ -17519,7 +17519,7 @@ pub fn a_sync_continued_after_its_relock_keeps_it() -> Scenario {
         Step::git(&ww("w1"), Repo::App, &["add", "README"]),
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App])
+            .resolved_by_hand(&[Repo::App])
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("carried 'w3' along")),
         Step::git(
@@ -17583,7 +17583,7 @@ pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry
         Step::git(&ww("w1"), Repo::App, &["add", "README"]),
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App])
+            .resolved_by_hand(&[Repo::App])
             .may_rewind(&[Repo::App]),
         Step::git(
             &ww("w1"),
@@ -17754,7 +17754,9 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     }
     let w1_app = if unpinned { "w1-unpinned" } else { "w1-app" };
     let abort = match before {
-        BeforeTheCarry::FinishedByHand => Step::rwv(&ww("w1"), &["abort"]).may_strand(&[Repo::App]),
+        BeforeTheCarry::FinishedByHand => {
+            Step::rwv(&ww("w1"), &["abort"]).discards_a_hand_finished_replay(&[Repo::App])
+        }
         _ => Step::rwv(&ww("w1"), &["abort"]),
     };
     steps.extend([
@@ -17981,7 +17983,6 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
         ),
         CarriedBlocked::Gone => (
             Step::git(&ww("w1"), Repo::App, &["branch", "-q", "-D", "w2"])
-                .may_strand(&[Repo::App])
                 .may_leave_unresolved(&[Repo::App]),
             "put 'w2' back where this operation carried it",
             Step::rwv_printed_holding(&ww("w1"), "git -C ", "branch w2 ").expect(Exit::Succeeds),
@@ -18237,14 +18238,14 @@ pub fn a_project_carry_follows_its_member_recomposed_across_a_stop() -> Scenario
         Step::git(&ww("w1"), Repo::App, &["add", "README"]),
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .may_strand(&[Repo::App])
+            .resolved_by_hand(&[Repo::App])
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("carrying 'w2' along")),
         Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
         Step::git(&ww("w1"), Repo::App, &["add", "README"]),
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App])
+            .resolved_by_hand(&[Repo::App])
             .may_rewind(&[Repo::App])
             .claim(Claim::PinsReplayed {
                 at: ww("w1"),
@@ -18406,7 +18407,7 @@ pub fn a_landing_into_a_dependent_waits_on_its_stopped_carry(ends: StoppedCarryE
             .claim(Claim::OutputLacks("foreign")),
         StoppedCarryEnds::Continue => Step::rwv_printed_exactly(&ww("w1"), "rwv sync --continue")
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App])
+            .resolved_by_hand(&[Repo::App])
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("carried 'w2' along")),
     });
@@ -18568,12 +18569,37 @@ pub fn a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_b
         ),
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App])
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("carried 'w2' along")),
     ]);
     scenario(
         "stack: a carry replay that fails without a conflict leaves the checkout on its branch",
+        steps,
+    )
+}
+
+/// `stack-carried`, with a signer that fails under `commit.gpgSign`: `w1`'s
+/// rebase stops with no conflict in the checkout, and the sync says it
+/// failed rather than that it stopped on a conflict; the printed `rwv abort`
+/// puts everything back.
+pub fn a_rebase_that_stops_without_a_conflict_is_not_reported_as_one() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::git(&ww("w1"), Repo::App, &["config", "commit.gpgsign", "true"]),
+        Step::git(&ww("w1"), Repo::App, &["config", "gpg.program", "false"]),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("failed at"))
+            .claim(Claim::OutputLacks("conflict"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj]),
+    ]);
+    scenario(
+        "stack: a rebase that stops without a conflict is not reported as one",
         steps,
     )
 }
@@ -18689,7 +18715,7 @@ pub fn a_stopped_carry_continued_meets_a_dependent_checked_out(
             Step::rwv_printed(&a(), "rwv workweave delete w3").expect(Exit::Code(3)),
             Step::rwv(&ww("w1"), &["sync", "--continue"])
                 .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App])
+                .resolved_by_hand(&[Repo::App])
                 .may_rewind(&[Repo::App])
                 .claim(Claim::OutputContains("carried 'w2' along")),
         ]),
@@ -18697,7 +18723,7 @@ pub fn a_stopped_carry_continued_meets_a_dependent_checked_out(
             Step::rwv_printed(&ww("w1"), "rwv branch set-mode w3 ").expect(Exit::Succeeds),
             Step::rwv(&ww("w1"), &["sync", "--continue"])
                 .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App])
+                .resolved_by_hand(&[Repo::App])
                 .may_rewind(&[Repo::App])
                 .claim(Claim::OutputContains("carried 'w2' along")),
         ]),

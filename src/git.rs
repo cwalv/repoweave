@@ -3072,7 +3072,9 @@ impl Vcs for GitVcs {
 
         // Non-zero exit. If the repo is in mid-rebase, this is a conflict;
         // otherwise it's some other rebase error (bad refs, etc.).
-        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase)) {
+        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase))
+            && !Self::unmerged(repo)?.is_empty()
+        {
             return Err(VcsError::RebaseConflict {
                 repo: repo.to_path_buf(),
                 op: ConflictOp::Rebase,
@@ -3182,7 +3184,9 @@ impl Vcs for GitVcs {
         // on a further genuine conflict OR the operator's resolution left
         // conflict markers unstaged. Both surface as the same operator
         // signal: resolve → stage → resume.
-        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase)) {
+        if Self::mid_op_state(repo) == Some(MidOperation::Conflict(ConflictOp::Rebase))
+            && !Self::unmerged(repo)?.is_empty()
+        {
             return Err(VcsError::RebaseConflict {
                 repo: repo.to_path_buf(),
                 op: ConflictOp::Rebase,
