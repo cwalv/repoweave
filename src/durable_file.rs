@@ -179,7 +179,7 @@ pub(crate) fn after_release<T>(
 /// `rename(2)` is atomic within a filesystem, so a concurrent reader sees
 /// either the old file or the new one, never a splice of the two.
 pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    replace_with(Publisher::native(), path, bytes)
+    replace_with(Publisher::native_at(path), path, bytes)
 }
 
 fn replace_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
@@ -250,7 +250,41 @@ fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
 /// because a writer killed between the two leaves an empty file that every
 /// reader of an op record or a claim refuses.
 pub(crate) fn create_new(path: &Path, bytes: &[u8]) -> Result<(), CreateNewError> {
-    create_new_with(Publisher::native(), path, bytes)
+    create_new_with(Publisher::native_at(path), path, bytes)
+}
+
+const PROBE: &str = ".rwv-publish-probe";
+
+/// Refuse, as a publish there would, where `dir` makes neither publish mode:
+/// what an operation runs before its first write, for each directory it knows
+/// it will publish in, so the refusal comes before anything is written.
+///
+/// The probe publishes one temp onto another temp's name and removes both:
+/// a probe killed midway leaves only names a sweep removes, never a file at
+/// a published name. Any failure but the refusal is left to the publish it
+/// stands for, which reports it in context.
+pub(crate) fn refuse_without_exclusive_publish(dir: &Path) -> anyhow::Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let path = dir.join(PROBE);
+    let publisher = Publisher::native_at(&path);
+    sweep_abandoned_temps(&path);
+    let Ok(mut staged) = staged_temp(&path, b"", publisher.lock) else {
+        return Ok(());
+    };
+    let serial = TMP_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let target = dir.join(temp_name(PROBE, serial));
+    let tmp = staged.let_go_where_held_would_refuse();
+    let published = publisher.publish(tmp, &target);
+    let _ = std::fs::remove_file(tmp);
+    let _ = std::fs::remove_file(&target);
+    match published {
+        Err(Published::Unsupported { link, rename }) => {
+            Err(no_exclusive_publish(&path, &link, &rename))
+        }
+        _ => Ok(()),
+    }
 }
 
 fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<(), CreateNewError> {
@@ -300,14 +334,19 @@ enum Published {
 }
 
 impl Publisher {
+    #[cfg(test)]
     fn native() -> Self {
+        Self::native_at(Path::new(""))
+    }
+
+    fn native_at(path: &Path) -> Self {
         Self {
-            link: if crate::test_pause::withheld("hard-link") {
+            link: if crate::test_pause::withheld_at("hard-link", path) {
                 |_, _| Err(no_hard_links_error())
             } else {
                 |from, to| std::fs::hard_link(from, to)
             },
-            rename_no_replace: if crate::test_pause::withheld("no-replace-rename") {
+            rename_no_replace: if crate::test_pause::withheld_at("no-replace-rename", path) {
                 |_, _| Err(no_rename_no_replace_error())
             } else {
                 rename_no_replace
@@ -486,9 +525,10 @@ fn no_exclusive_publish(
         format!(
             "cannot publish {path} exclusively: {dir} is on {fs}, which makes neither a hard \
              link ({link}) nor a rename that refuses an occupied target ({rename}). rwv \
-             records its operations and claims through one of the two, and writes nothing \
-             else first. Move this workspace to a filesystem that makes hard links (ext4, \
-             XFS, Btrfs, APFS, NTFS) or a no-replace rename, then rerun.",
+             records its operations and claims through one of the two. Anything this \
+             operation wrote before this is taken back. Move what holds {dir} (a workspace, \
+             or the project clone whose store it is) to a filesystem that makes hard links \
+             (ext4, XFS, Btrfs, APFS, NTFS) or a no-replace rename, then rerun.",
             path = path.display(),
             dir = dir.display(),
             fs = filesystem_of(dir),
@@ -648,6 +688,10 @@ impl Staged {
     /// share deletion would refuse the publish itself.
     fn ready_to_publish(&mut self) -> &Path {
         crate::test_pause::point("durable-file-staged");
+        self.let_go_where_held_would_refuse()
+    }
+
+    fn let_go_where_held_would_refuse(&mut self) -> &Path {
         if cfg!(not(unix)) {
             self.held = None;
         }
@@ -737,6 +781,7 @@ fn open_held(
         .write(true)
         .create_new(true)
         .open(tmp)?;
+    crate::test_pause::point("durable-file-created");
     let _ = lock(&f);
     Ok(f)
 }

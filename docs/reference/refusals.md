@@ -629,11 +629,19 @@ nothing or the whole file. rwv publishes by hard link, and where the
 filesystem makes none (FAT and exFAT on Linux, some FUSE and SMB mounts), by a
 rename that does not replace. Creating the file and then writing it would be
 exclusive but not whole: a process killed between the two leaves an empty
-record that every later operation refuses. An operation refused here has
-written nothing.
+record that every later operation refuses.
 
-**Exits.** Move the workspace to a filesystem that makes hard links (ext4,
-XFS, Btrfs, APFS, NTFS) or a no-replace rename, then re-run.
+Before its first write an operation tries both modes in each directory it
+already knows it will write to: the workspaces it records and leases, the
+project clone's store for a landing, and for `rwv workweave create` the store
+and the directory the workweave goes in. Refused there, it has written
+nothing. A workspace it learns of only later, such as a landing's target or a
+workspace it moves in place, is refused when it is leased, and whatever the
+operation wrote before that is taken back.
+
+**Exits.** Move what holds the directory the refusal names (a workspace, or
+the project clone whose store it is) to a filesystem that makes hard links
+(ext4, XFS, Btrfs, APFS, NTFS) or a no-replace rename, then re-run.
 
 ### `foreign-clone-at-placement`
 

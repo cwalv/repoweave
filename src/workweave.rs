@@ -1924,6 +1924,10 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         Placement::Basedir(basedir) => basedir.join(&flat),
         Placement::DefaultBasedir => workweave_basedir(primary_root, project)?.join(&flat),
     };
+    workweave_index::refuse_without_exclusive_publish(primary_root, project)?;
+    if let Some(existing) = workweave_dir.ancestors().find(|dir| dir.is_dir()) {
+        crate::durable_file::refuse_without_exclusive_publish(existing)?;
+    }
 
     // Name uniqueness is checked against the workweave INDEX, not just the
     // container directory: the directory check below sees only the slot this

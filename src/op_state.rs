@@ -2272,6 +2272,11 @@ pub fn acquire_op(
         }
     }
 
+    crate::durable_file::refuse_without_exclusive_publish(owner_workspace_dir)?;
+    for ws in lease_workspaces {
+        crate::durable_file::refuse_without_exclusive_publish(ws)?;
+    }
+
     // Owner first, then leases.
     let owner_path = OwnerRecord::path_in(owner_workspace_dir);
     let owner_json = serde_json::to_string_pretty(owner_record)

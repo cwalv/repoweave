@@ -16,17 +16,24 @@ pub(crate) fn point(name: &str) {
     let _ = name;
 }
 
-/// Whether a test withholds the filesystem capability `capability` from this
-/// process, as if the filesystem it writes to lacked it: `RWV_TEST_WITHHOLD`
-/// lists the withheld ones, comma-separated. Always false unless the crate is
-/// built with the `test-pause` feature.
-pub(crate) fn withheld(capability: &str) -> bool {
+/// Whether a test withholds the filesystem capability `capability` from the
+/// publish of `path`, as if the filesystem it writes to lacked it:
+/// `RWV_TEST_WITHHOLD` lists the withheld ones, comma-separated, and
+/// `RWV_TEST_WITHHOLD_UNDER`, where set, narrows them to the paths that begin
+/// with it, so a test can withhold a capability from one directory and leave
+/// it to every other. Always false unless the crate is built with the
+/// `test-pause` feature.
+pub(crate) fn withheld_at(capability: &str, path: &std::path::Path) -> bool {
     #[cfg(feature = "test-pause")]
     return std::env::var("RWV_TEST_WITHHOLD")
-        .is_ok_and(|listed| listed.split(',').any(|named| named == capability));
+        .is_ok_and(|listed| listed.split(',').any(|named| named == capability))
+        && std::env::var_os("RWV_TEST_WITHHOLD_UNDER").is_none_or(|under| {
+            path.to_string_lossy()
+                .starts_with(under.to_string_lossy().as_ref())
+        });
     #[cfg(not(feature = "test-pause"))]
     {
-        let _ = capability;
+        let _ = (capability, path);
         false
     }
 }

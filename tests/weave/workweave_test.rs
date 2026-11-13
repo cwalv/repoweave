@@ -160,6 +160,58 @@ fn workweave_create_makes_directory_under_weaveroot() {
     );
 }
 
+/// A workweave whose directory makes neither exclusive publish mode is refused
+/// before anything is built: no worktree, no branch, no directory.
+#[test]
+fn workweave_create_on_a_filesystem_without_exclusive_publish_refuses_first() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+    let branches = || common::git_in(ws.join("projects").join("web-app"), &["branch", "--list"]);
+    let before = branches();
+
+    let out = rwv()
+        .args(["workweave", "create", "--project", "web-app", "hotfix"])
+        .current_dir(&ws)
+        .env("RWV_TEST_WITHHOLD", "hard-link,no-replace-rename")
+        .env("RWV_TEST_WITHHOLD_UNDER", &weaveroot)
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(
+        &out,
+        repoweave::refusal::RefusalKind::FilesystemWithoutExclusivePublish,
+    );
+    assert!(
+        stderr.contains(&weaveroot.display().to_string()),
+        "{stderr}"
+    );
+    assert_eq!(std::fs::read_dir(&weaveroot).unwrap().count(), 0);
+    assert_eq!(branches(), before);
+}
+
+/// The refusal comes before the first file `workweave create` stages: armed
+/// there, it never reaches it.
+#[cfg(feature = "test-pause")]
+#[test]
+fn workweave_create_on_a_filesystem_without_exclusive_publish_stages_nothing_first() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+    let mut cmd = common::rwv_std();
+    cmd.args(["workweave", "create", "--project", "web-app", "hotfix"])
+        .current_dir(&ws)
+        .env("RWV_TEST_WITHHOLD", "hard-link,no-replace-rename")
+        .env("RWV_TEST_WITHHOLD_UNDER", &weaveroot);
+    if let Ok(held) =
+        common::pause::Paused::spawn(cmd, "durable-file-staged", &tmp.path().join("pause"))
+    {
+        drop(held);
+        panic!("workweave create staged a file before the refusal");
+    }
+}
+
 #[test]
 fn workweave_create_worktrees_on_ephemeral_branches() {
     let tmp = common::tempdir().unwrap();

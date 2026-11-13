@@ -133,6 +133,19 @@ pub fn legacy_index_path(primary_root: &Path, project: &ProjectName) -> StatePat
 /// A project directory that is not itself a repository resolves to no store:
 /// the VCS answers for an enclosing repository, and the index of one project
 /// must not land in another's.
+/// Refuse where the store holding the workweave index of `project` makes
+/// neither exclusive publish mode: what `rwv workweave create` runs before it
+/// builds anything.
+pub(crate) fn refuse_without_exclusive_publish(
+    primary_root: &Path,
+    project: &ProjectName,
+) -> anyhow::Result<()> {
+    match store_dir(primary_root, project) {
+        Some(store) => crate::durable_file::refuse_without_exclusive_publish(&store),
+        None => Ok(()),
+    }
+}
+
 fn store_dir(primary_root: &Path, project: &ProjectName) -> Option<PathBuf> {
     let dir = project_dir(primary_root, project);
     let vcs = project_vcs();

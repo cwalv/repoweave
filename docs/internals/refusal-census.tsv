@@ -110,7 +110,7 @@ src/deletion.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/diagnosis.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
 src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	unparseable-project here	-	1
-src/durable_file.rs	filesystem-without-exclusive-publish	-	1
+src/durable_file.rs	filesystem-without-exclusive-publish	tests/weave/workweave_test.rs	1
 src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
 src/feature_sync.rs	(untokened:environment-passthrough)	-	6

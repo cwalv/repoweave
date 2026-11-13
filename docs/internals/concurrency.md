@@ -68,8 +68,22 @@ Where the rename is not made either, the publish refuses
 reports it (`statfs` on Linux and macOS, `GetVolumeInformationW` on Windows).
 An exclusive create followed by a write is never a fallback: a writer killed
 between the two leaves an empty file that every reader of an op record or a
-claim refuses, and no verb clears it. The first publish of an operation is
-its record, so an operation refused here has written nothing.
+claim refuses, and no verb clears it.
+
+The refusal comes before an operation's first write wherever the directories
+it will publish in are known then: `durable_file::refuse_without_exclusive_publish`
+publishes a temp onto another temp-shaped name and removes both (a probe
+killed midway leaves only names the sweep removes), and it runs for the owner
+and lease workspaces in `acquire_op`, the project store in a landing's
+`guard_and_mark` before the record, and the index store and the new
+workweave's nearest existing directory in `workweave create`. A directory
+known only later (a landing's target, a workspace moved in place, a takeover
+guard) refuses at its own publish, and the caller's arm takes back what was
+written before: each such arm is reached by a test in
+`tests/process/exclusive_publish_test.rs` through `RWV_TEST_WITHHOLD_UNDER`,
+which narrows the withheld modes to one path prefix. `rwv activate` run alone
+is not probed: its ledger claim follows the generator's write, which is in the
+workspace the claim is in and is regenerated on the next run.
 
 Which errors select the rename is a list of raw codes, never an
 `ErrorKind`, because `PermissionDenied` covers both a filesystem without links

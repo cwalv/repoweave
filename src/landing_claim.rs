@@ -300,6 +300,16 @@ fn claim_dirs(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
     Ok(dirs)
 }
 
+/// Refuse where the store of `project_dir`, which holds the landing claims,
+/// makes neither exclusive publish mode: what a landing runs before it records
+/// its op.
+pub fn refuse_without_exclusive_publish(vcs: &dyn Vcs, project_dir: &Path) -> anyhow::Result<()> {
+    match vcs.store_of(project_dir) {
+        Some(store) => crate::durable_file::refuse_without_exclusive_publish(&store),
+        None => Ok(()),
+    }
+}
+
 /// A claim whose owner workspace is not here to read, as `rwv doctor` reports
 /// it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -488,7 +498,13 @@ fn take_within(
                     anyhow::Error::new(e).context(format!("failed to claim '{target}' at {path}"))
                 )
             }
-            Err(CreateNewError::NoExclusivePublish(e)) => return Err(e),
+            Err(CreateNewError::NoExclusivePublish(e)) => {
+                let _ = std::fs::remove_dir(path.dir());
+                if let Some(claims) = path.dir().parent() {
+                    let _ = std::fs::remove_dir(claims);
+                }
+                return Err(e);
+            }
             Err(CreateNewError::AlreadyExists) => {}
         }
         let (seen, judged) = match path.read() {

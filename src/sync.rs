@@ -4015,6 +4015,10 @@ fn guard_and_mark<'a>(
             .collect(),
         ..op_state::TakeInRecord::default()
     });
+    crate::landing_claim::refuse_without_exclusive_publish(
+        project_vcs().as_ref(),
+        &cwd_project_dir,
+    )?;
     let owned = match &resumes {
         None => op_state::acquire_op(
             &op_state::TouchedWorkspaces::of(initial_record.verb, &owner_workspace_dir, None),
