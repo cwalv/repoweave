@@ -1193,4 +1193,84 @@ repositories."github/a/lib".history = "merge"
         let (unset, _) = Manifest::edit_text(&set, |m| m.history = None).unwrap();
         assert_eq!(unset, SORTED);
     }
+
+    #[test]
+    fn an_edit_that_declares_something_else_is_refused_not_written() {
+        let mut before = Manifest::from_toml_str(SORTED).unwrap();
+        change_entry(LIB, |e| e.role = Role::Fork)(&mut before);
+        let mut after = before.clone();
+        change_entry(LIB, |e| e.history = Some(History::Linear))(&mut after);
+        let err = edit(SORTED, &before, &after).unwrap_err();
+        assert!(
+            format!("{err:#}").contains("does not declare the change"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn a_key_added_to_a_table_whose_keys_are_out_of_order_goes_at_its_end() {
+        let text = SORTED.replace(
+            "type = \"git\"\nurl = \"https://example.com/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\nhistory = \"merge\"\n",
+            "history = \"merge\"\ntype = \"git\"\nurl = \"https://example.com/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
+        );
+        let (edited, _) = Manifest::edit_text(
+            &text,
+            change_entry(LIB, |e| e.recurse_submodules = SubmoduleRecursion::Skip),
+        )
+        .unwrap();
+        assert_eq!(
+            edited,
+            text.replace(
+                "role = \"owned\"\n\n[integrations]",
+                "role = \"owned\"\nrecurse-submodules = false\n\n[integrations]"
+            )
+        );
+    }
+
+    #[test]
+    fn a_new_member_among_inline_members_is_written_inline() {
+        let (edited, _) = Manifest::edit_text(INLINE, |m| {
+            m.insert_repo(path("github/a/zed"), entry("zed"));
+        })
+        .unwrap();
+        assert_eq!(
+            edited,
+            format!(
+                "{INLINE}\"github/a/zed\" = {{ type = \"git\", url = \"https://example.com/zed.git\", branch = \"main\", role = \"owned\" }}\n"
+            )
+        );
+    }
+
+    #[test]
+    fn a_file_without_a_final_newline_keeps_none_when_its_last_line_is_the_changed_one() {
+        let text = SORTED
+            .trim_end()
+            .trim_end_matches("[integrations]")
+            .to_owned();
+        let text = text.trim_end().to_owned();
+        assert!(text.ends_with("history = \"merge\""), "{text}");
+        let (edited, _) = Manifest::edit_text(
+            &text,
+            change_entry(LIB, |e| e.history = Some(History::Linear)),
+        )
+        .unwrap();
+        assert_eq!(edited, text.replace("\"merge\"", "\"linear\""));
+        for crlf in [false, true] {
+            let text = if crlf {
+                text.replace('\n', "\r\n")
+            } else {
+                text.clone()
+            };
+            let (edited, _) = Manifest::edit_text(
+                &text,
+                change_entry(LIB, |e| e.history = Some(History::Linear)),
+            )
+            .unwrap();
+            assert_eq!(
+                edited,
+                text.replace("\"merge\"", "\"linear\""),
+                "crlf {crlf}"
+            );
+        }
+    }
 }

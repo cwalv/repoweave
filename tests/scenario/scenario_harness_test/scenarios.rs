@@ -11000,6 +11000,57 @@ pub fn cherry_pick_port() -> Scenario {
     }
 }
 
+/// A project commit on `main` changes `[integrations.vscode-workspace]`; the
+/// feature's `stable` holds a hand-ordered, commented `rwv.toml`. The port
+/// takes the integration change in as an edit of that file, so the order and
+/// the comment stay.
+pub fn cherry_pick_port_edits_a_hand_ordered_manifest_in_place() -> Scenario {
+    let integration = "[integrations.vscode-workspace]\nenabled = ";
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &format!("{integration}false"),
+            &format!("{integration}true"),
+        ),
+        Step::git(&a(), Repo::Proj, &["add", "rwv.toml"]),
+        Step::commit(&a(), Repo::Proj, "port-integration"),
+        Step::rwv(&a(), &["switch", "stable"]).expect(Exit::Succeeds),
+        Step::reorder_manifest(&a(), &[Repo::Lib, Repo::App, Repo::Docs]),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            integration,
+            &format!("# kept by hand\n{integration}"),
+        ),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["commit", "-qam", "hand: lay out rwv.toml"],
+        ),
+        create("p"),
+        Step::rwv(&ww("p"), &["cherry-pick", "main"]).expect(Exit::Succeeds),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains("# kept by hand\n"))
+            .claim(Claim::OutputContains(
+                "[integrations.vscode-workspace]\nenabled = true",
+            ))
+            .claim(Claim::OutputInOrder(&[
+                "local/remotes/lib",
+                "local/remotes/app",
+                "local/remotes/docs",
+            ])),
+    ]);
+    Scenario {
+        name: "cherry-pick port edits a hand-ordered manifest in place",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}
+
 /// `cherry-pick-port` under a `merge` setting: a landing into `main` made by
 /// merge commits writes one project merge carrying the relock, which pins
 /// each member's landing merge. That merge ports whole with `-m 1`: each

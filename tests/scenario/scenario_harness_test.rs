@@ -1253,6 +1253,7 @@ every_scenario!(
     worktree_add_force_on_weave_branch,
     cherry_pick_onto_stable,
     cherry_pick_port,
+    cherry_pick_port_edits_a_hand_ordered_manifest_in_place,
     cherry_pick_port_landing_merge,
     cherry_pick_conflict,
     cherry_pick_conflict_aborts,
@@ -5469,6 +5470,12 @@ fn land_refuses_a_target_checkout_diverged_from_its_pin_scenario() {
 #[test]
 fn cherry_pick_port_copies_member_ranges_carries_dependencies_and_reports_entries_not_ported() {
     runner::run(scenarios::cherry_pick_port()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_port_edits_a_hand_ordered_manifest_in_place() {
+    runner::run(scenarios::cherry_pick_port_edits_a_hand_ordered_manifest_in_place())
+        .assert_fully_decided_green();
 }
 
 #[test]
