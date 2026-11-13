@@ -248,7 +248,7 @@ with its op record kept (`op-parked`): resolve it in the checkout named, then
 Op-state is written to this workspace and the target's before anything moves.
 The owner record (`.rwv-op`) here holds the landing's plan — the target, its tip
 and each receiving branch's tip it composes onto, and this workspace's project
-tip after the op-start relock — and the current phase (replay → relock →
+tip, and the tip of each member its lock was behind, read once before anything moved — and the current phase (replay → relock →
 advance-target → retire); the target's workspace holds a lease (`.rwv-op-lease`)
 pointing back here. A verb that hits a workspace an op holds refuses, naming
 the op and its two exits: `rwv land --continue` from the owning workspace, or
@@ -2415,7 +2415,9 @@ Put everything back after a stopped landing:
 rwv abort
 ```
 
-The auto-relock commit the op-start relock writes reads:
+The landing writes no relock commit of the source's own: where its source's lock is behind a member's tip, it prints
+`<workspace>/<member>: lock behind HEAD by <n> commits — the landing records <tip>`
+and the one project commit it lands records that tip. That commit, where it is not a merge commit, reads:
 
 ```
 lock: auto-relock after sync from <source>
