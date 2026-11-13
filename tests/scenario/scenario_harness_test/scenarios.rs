@@ -15730,6 +15730,49 @@ pub fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() -> Scenario {
     scenario("abort of a landing over a cancel the VCS refuses", steps)
 }
 
+/// Which of a landing's replayed project commits stops on a conflict.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayedCommit {
+    First,
+    Second,
+}
+
+/// A linear landing whose project branch carries two commits, `stop` of
+/// them conflicting with a commit `main` took since: the replay stops there,
+/// and `rwv abort` puts both workspaces back as they were.
+pub fn abort_of_a_landing_stopped_in_a_replayed_project_commit(stop: ReplayedCommit) -> Scenario {
+    let (first, second) = match stop {
+        ReplayedCommit::First => ("clash.txt", "calm.txt"),
+        ReplayedCommit::Second => ("calm.txt", "clash.txt"),
+    };
+    scenario(
+        "abort of a landing stopped in a replayed project commit",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_commit(&ww("w"), Repo::Proj, "proj--w", &[(first, "from w\n")]),
+            Step::hand_commit(&ww("w"), Repo::Proj, "proj--w", &[(second, "from w\n")]),
+            Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::hand_commit(&a(), Repo::Proj, "main", &[("clash.txt", "from main\n")]),
+            Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::git(&ww("w"), Repo::Proj, &["status", "--porcelain"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("clash")),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ],
+    )
+}
+
 /// [`landing_merge_stopped`], then `rwv abort`: every merge in flight is
 /// canceled and both workspaces stand as before.
 pub fn abort_after_a_landing_merge_stops() -> Scenario {

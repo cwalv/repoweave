@@ -5418,16 +5418,8 @@ impl GitVcs {
                         onto: o,
                     } if *o == onto => {
                         head == onto
-                            || self
-                                .replayed(repo, base, from, o, &head)
-                                .is_ok_and(|replayed| {
-                                    replayed.is_some_and(|replayed| {
-                                        replayed
-                                            .written
-                                            .iter()
-                                            .all(|written| replayed.original(written).is_some())
-                                    })
-                                })
+                            || Self::replaying_so_far(repo, base, from, o, &head)
+                                .is_ok_and(|so_far| so_far)
                     }
                     _ => false,
                 })

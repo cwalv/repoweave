@@ -213,6 +213,40 @@ impl GitVcs {
         Ok(read_pairs(&pairs, &todo, &olds, onto, &written))
     }
 
+    /// Whether every commit from `onto` to `head` is the replay of one of
+    /// `from..old`, as the record of a rebase still in progress notes it:
+    /// the commits it has yet to replay are no evidence against it.
+    pub(super) fn replaying_so_far(
+        repo: &Path,
+        from: &CommitId,
+        old: &CommitId,
+        onto: &CommitId,
+        head: &CommitId,
+    ) -> Result<bool, VcsError> {
+        let olds = Self::commits_between(repo, from, old)?;
+        let written = Self::commits_between(repo, onto, head)?;
+        let path = Self::record_path(repo, old, onto)?;
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(written.is_empty()),
+            Err(source) => {
+                return Err(VcsError::Io {
+                    ctx: format!("failed to read {}", path.display()),
+                    source,
+                })
+            }
+        };
+        let mut images = Vec::new();
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            let mut ids = line.split_whitespace().map(CommitId::parse);
+            match (ids.next(), ids.next()) {
+                (Some(Ok(was)), Some(Ok(now))) if olds.contains(&was) => images.push(now),
+                _ => return Ok(false),
+            }
+        }
+        Ok(written.iter().all(|commit| images.contains(commit)))
+    }
+
     pub(super) fn remove_replay_records(repo: &Path) -> Result<(), VcsError> {
         let held = Self::run_trimmed(
             [
