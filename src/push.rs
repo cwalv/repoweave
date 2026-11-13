@@ -1027,9 +1027,6 @@ fn report_pins_held_by_no_branch(
             });
         let mut backups = None;
         for (pin, project_commits) in pinned_by {
-            if superseded.iter().any(|s| s.pin == pin) {
-                continue;
-            }
             let at = ResolvedRevisionId::from(pin.clone());
             let unreached =
                 vcs.reached_by_no_branch(&member.dir, &at, crate::vcs::RemoteTracking::Counted)?;
@@ -1056,6 +1053,9 @@ fn report_pins_held_by_no_branch(
                 .filter(|listed| listed.held.iter().any(|commit| commit.id == pin))
                 .map(|listed| listed.backup.name.to_string())
                 .collect();
+            if holding.is_empty() && superseded.iter().any(|s| s.pin == pin) {
+                continue;
+            }
             listing.push(match holding.as_slice() {
                 [] => "held by no backup".to_owned(),
                 names => format!("held by backup {}", names.join(", ")),

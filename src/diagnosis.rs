@@ -1193,7 +1193,7 @@ impl State {
                         no branch or remote-tracking branch reaches, listed with the project \
                         commits pinning it, the backups holding it, and the pushed tip's pin \
                         where that records a copy of it. A pin a later lock of the pushed \
-                        history re-pinned by name is not listed. Only the pushed tip's pins \
+                        history re-pinned by name, which no backup holds, is not listed. Only the pushed tip's pins \
                         must be reached, so the push publishes the range",
                 refused_by: "nothing refuses; `rwv push` reports it",
                 offers: &[Form::C27],
