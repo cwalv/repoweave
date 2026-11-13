@@ -4141,18 +4141,31 @@ pub trait Vcs: Send + Sync {
     /// something in the checkout stops it.
     fn carry_edits_onto(&self, repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError>;
 
+    /// Put `repo` on `branch` as a plain checkout does, carrying the edits
+    /// left in place where the branch's tip does not change their paths; the
+    /// VCS refuses, writing nothing, where it would have to merge one.
+    fn check_out_branch(&self, repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError>;
+
     /// Keep the edits to `paths` against HEAD, index and working copy, as
-    /// the VCS's own set-aside record, and take them out of the checkout;
-    /// the record's id.
+    /// the VCS's own set-aside record named for `branch`, and take them out
+    /// of the checkout; the record's id.
     fn set_edits_aside(
         &self,
         repo: &Path,
         paths: &[String],
+        branch: &str,
     ) -> Result<Refusable<CommitId>, VcsError>;
 
-    /// The newest record [`Vcs::set_edits_aside`] made in `repo` of edits
-    /// against `at`, still kept.
-    fn set_aside_from(&self, repo: &Path, at: &CommitId) -> Result<Option<CommitId>, VcsError>;
+    /// The records [`Vcs::set_edits_aside`] made in `repo` of edits against
+    /// `at` set aside from `branch`, still kept, oldest first. A branch is
+    /// checked out in one workspace at a time, so another workspace's record
+    /// is never among them.
+    fn set_aside_from(
+        &self,
+        repo: &Path,
+        at: &CommitId,
+        branch: &str,
+    ) -> Result<Vec<CommitId>, VcsError>;
 
     /// The paths whose index entry differs from HEAD's, an entry only
     /// intended for adding included.

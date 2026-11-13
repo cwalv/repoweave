@@ -116,6 +116,13 @@ impl Paused {
         self.collect(status)
     }
 
+    /// Kills the process where it stands and returns what it printed.
+    pub fn kill(mut self) -> Output {
+        let _ = self.child.kill();
+        let status = self.child.wait().expect("a killed child's status");
+        self.collect(status)
+    }
+
     fn collect(&mut self, status: ExitStatus) -> Output {
         let join = |pipe: &mut Option<JoinHandle<Vec<u8>>>| {
             pipe.take()

@@ -7727,6 +7727,8 @@ pub enum EditedDriftMerge {
         took_incoming: Vec<String>,
         conflicted: Vec<String>,
         set_aside: Option<CommitId>,
+        /// What an earlier run's set-aside kept, oldest first.
+        earlier: Vec<CommitId>,
     },
 }
 
@@ -7751,6 +7753,7 @@ impl EditedDriftMerge {
             took_incoming,
             conflicted,
             set_aside,
+            earlier,
         } = self
         else {
             return None;
@@ -7760,10 +7763,9 @@ impl EditedDriftMerge {
                 .replace("<checkout>", &dir.display().to_string())
                 .replace("<tip>", backup_tip.as_deref().unwrap_or_default())
                 .replace("<file>", file)
-                .replace(
-                    "<stash>",
-                    set_aside.as_ref().map(CommitId::as_str).unwrap_or_default(),
-                )
+        };
+        let take_back = |stash: &CommitId| {
+            spelled(crate::vcs::VcsAction::TakeBackSetAside, "").replace("<stash>", stash.as_str())
         };
         let mut said = String::new();
         if let Some(backup) = backup {
@@ -7786,24 +7788,31 @@ impl EditedDriftMerge {
             ));
         }
         let mut shown = Vec::new();
-        if let Some(stash) = set_aside {
-            match took_incoming.is_empty() {
-                true => said.push_str(&format!(
-                    "; the edits an earlier set-aside kept are in {}",
-                    stash.short()
-                )),
-                false => said.push_str(&format!(
-                    "; these files' edits were set aside as {}, so each holds {}'s content: {}",
-                    stash.short(),
-                    moved_to.short(),
-                    took_incoming.join(", ")
-                )),
-            }
-            shown.push((
-                "\nthe set-aside edits merge back onto the checkout with:",
-                spelled(crate::vcs::VcsAction::TakeBackSetAside, ""),
+        if !earlier.is_empty() {
+            said.push_str(&format!(
+                "; the edits an earlier set-aside kept are in {}",
+                earlier
+                    .iter()
+                    .map(CommitId::short)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
-        } else if !took_incoming.is_empty() {
+        }
+        if let Some(stash) = set_aside {
+            said.push_str(&format!(
+                "; these files' edits were set aside as {}, so each holds {}'s content: {}",
+                stash.short(),
+                moved_to.short(),
+                took_incoming.join(", ")
+            ));
+        }
+        for stash in earlier.iter().chain(set_aside) {
+            shown.push((
+                "\nthe set-aside edits merge back onto the checkout with, oldest first:",
+                take_back(stash),
+            ));
+        }
+        if set_aside.is_none() && !took_incoming.is_empty() {
             said.push_str(&format!(
                 "; these files now hold {}'s content, a declared derived file's or one whose \
                  edit the move already made, and the version edited here is kept only in {}: {}",
@@ -7896,12 +7905,13 @@ pub fn carry_set_back(
         crate::vcs::EditResolution::Merge => vcs.backup_edits(repo)?,
         crate::vcs::EditResolution::SetAside => None,
     };
-    let earlier = vcs.set_aside_from(repo, &back.at)?;
     let mut carried = carry(vcs, repo, back, resolution, &edits, kept)?;
-    if let EditedDriftMerge::Carried { set_aside, .. } = &mut carried {
-        if set_aside.is_none() {
-            *set_aside = earlier;
-        }
+    if let EditedDriftMerge::Carried {
+        set_aside, earlier, ..
+    } = &mut carried
+    {
+        *earlier = vcs.set_aside_from(repo, &back.at, &back.branch)?;
+        earlier.retain(|stash| Some(stash) != set_aside.as_ref());
     }
     Ok(carried)
 }
@@ -7926,13 +7936,28 @@ fn carry(
     };
     let mut set_aside = None;
     if resolution == crate::vcs::EditResolution::SetAside && !held.is_empty() {
-        match vcs.set_edits_aside(repo, held)? {
-            crate::vcs::Refusable::Done(stash) => set_aside = Some(stash),
+        match vcs.set_edits_aside(repo, held, &back.branch)? {
+            crate::vcs::Refusable::Done(stash) => {
+                eprintln!(
+                    "rwv: {}: the edits are set aside as {}; they merge back onto the checkout \
+                     with:\n    {}",
+                    repo.display(),
+                    stash.short(),
+                    vcs.hint(crate::vcs::VcsAction::TakeBackSetAside)
+                        .replace("<checkout>", &repo.display().to_string())
+                        .replace("<stash>", stash.as_str())
+                );
+                set_aside = Some(stash)
+            }
             crate::vcs::Refusable::Refused(said) => return Ok(refused(said)),
         }
     }
     crate::test_pause::point("drift-merge-carry");
-    if let crate::vcs::Refusable::Refused(said) = vcs.carry_edits_onto(repo, &back.branch)? {
+    let checked_out = match resolution {
+        crate::vcs::EditResolution::Merge => vcs.carry_edits_onto(repo, &back.branch)?,
+        crate::vcs::EditResolution::SetAside => vcs.check_out_branch(repo, &back.branch)?,
+    };
+    if let crate::vcs::Refusable::Refused(said) = checked_out {
         return Ok(refused(said));
     }
     let conflicted = vcs.unmerged_paths(repo)?;
@@ -7952,6 +7977,7 @@ fn carry(
         took_incoming,
         conflicted,
         set_aside,
+        earlier: Vec::new(),
     })
 }
 

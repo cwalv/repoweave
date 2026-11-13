@@ -520,14 +520,18 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git/carry_edits.rs",
         pattern: "\"checkout\"",
-        count: 1,
+        count: 2,
         callers: &[],
         justification: "carry_edits_onto: `git checkout -m <branch>`, never \
             forced, from a checkout set back at the tip its files hold: git \
             merges each local change onto the branch and refuses, writing \
             nothing, where staged changes or an untracked file are in the \
-            way. Reached from the two edited-drift flags of doctor --fix, \
-            each consented to by name.",
+            way. Reached from the merge flag of doctor --fix, consented to by \
+            name. check_out_branch: a plain `git checkout <branch>`, never \
+            forced, run by the set-aside flag once the held edits are \
+            stashed: git carries what is left where the branch does not \
+            change its path and refuses, writing nothing, where it would \
+            have to merge.",
     },
     Allowed {
         file: "git/carry_edits.rs",

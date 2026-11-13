@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 
 const SET_BACK: &str = "rwv: set back to the tip its files hold, from ";
-const SET_ASIDE: &str = "rwv: edits set aside from a moved branch";
+const SET_ASIDE: &str = "rwv: edits set aside from ";
 
 fn git(args: impl Into<Argv>, repo: &Path) -> Result<Output, VcsError> {
     let args = args.into();
@@ -130,16 +130,26 @@ pub(super) fn carry_edits_onto(repo: &Path, branch: &str) -> Result<Refusable<()
     .map(refusable)
 }
 
+/// `git checkout` without `-m`: its fallback resets the files before merging
+/// the edits back, which a stop in between would leave only in an
+/// unreferenced object, and once the edits are stashed nothing is left to
+/// merge.
+pub(super) fn check_out_branch(repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError> {
+    git(["checkout", branch, "--"], repo).map(refusable)
+}
+
 pub(super) fn set_edits_aside(
     repo: &Path,
     paths: &[String],
+    branch: &str,
 ) -> Result<Refusable<CommitId>, VcsError> {
+    let message = format!("{SET_ASIDE}{branch}");
     let mut args = Argv::from([
         "--literal-pathspecs",
         "stash",
         "push",
         "-m",
-        SET_ASIDE,
+        message.as_str(),
         "--",
     ]);
     for path in paths {
@@ -161,7 +171,11 @@ pub(super) fn set_edits_aside(
         })
 }
 
-pub(super) fn set_aside_from(repo: &Path, at: &CommitId) -> Result<Option<CommitId>, VcsError> {
+pub(super) fn set_aside_from(
+    repo: &Path,
+    at: &CommitId,
+    branch: &str,
+) -> Result<Vec<CommitId>, VcsError> {
     let listing = git(
         [
             "log",
@@ -173,19 +187,21 @@ pub(super) fn set_aside_from(repo: &Path, at: &CommitId) -> Result<Option<Commit
         repo,
     )?;
     if !listing.status.success() {
-        return Ok(None);
+        return Ok(Vec::new());
     }
-    for record in String::from_utf8_lossy(&listing.stdout).lines() {
-        let mut fields = record.splitn(3, ' ');
-        let (Some(kept), Some(base)) = (fields.next(), fields.next()) else {
-            continue;
-        };
-        let subject = record.split_once(' ').map_or("", |(_, rest)| rest);
-        if base == at.as_str() && subject.ends_with(SET_ASIDE) {
-            return Ok(CommitId::parse(kept).ok());
-        }
-    }
-    Ok(None)
+    let ours = format!(": {SET_ASIDE}{branch}");
+    let mut kept: Vec<CommitId> = String::from_utf8_lossy(&listing.stdout)
+        .lines()
+        .filter_map(|record| {
+            let mut fields = record.splitn(3, ' ');
+            let (kept, base, subject) = (fields.next()?, fields.next()?, fields.next()?);
+            (base == at.as_str() && subject.ends_with(&ours))
+                .then(|| CommitId::parse(kept).ok())
+                .flatten()
+        })
+        .collect();
+    kept.reverse();
+    Ok(kept)
 }
 
 pub(super) fn staged_against_head(repo: &Path) -> Result<Vec<String>, VcsError> {

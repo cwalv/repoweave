@@ -2322,8 +2322,9 @@ impl ChoiceId {
             },
             Self::TakeBackSetAside => &ChoiceRow {
                 id: None,
-                phrase: "merge back the edits a set-aside kept, named in the subject, once the \
-                         checkout stands on its branch",
+                phrase: "merge back the edits the newest set-aside kept, named last in the \
+                         subject, once the checkout stands on its branch; any earlier one named \
+                         there is taken back the same way, with its own id",
                 keeps_work: "the set-aside record stays until you drop it",
             },
             Self::RemoveLockThenMerge => &ChoiceRow {
@@ -4526,28 +4527,33 @@ pub fn set_back(
     }
     edits.sort();
     let staged = vcs.staged_against_head(dir).unwrap_or_default();
-    let kept = vcs.set_aside_from(dir, &back.at).ok().flatten();
-    if let Some(kept) = &kept {
+    let all_kept = vcs
+        .set_aside_from(dir, &back.at, &back.branch)
+        .unwrap_or_default();
+    if !all_kept.is_empty() {
         subject.push_str(&format!(
             "; edits set aside here are kept as {}",
-            kept.short()
+            all_kept
+                .iter()
+                .map(crate::vcs::CommitId::short)
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
+    let kept = all_kept.last();
     let judging = State::EditsSetBack
         .of(repo)
         .subject(subject)
         .listing(&edits)
         .bind(
             "<stash>",
-            kept.as_ref()
-                .map(crate::vcs::CommitId::as_str)
-                .unwrap_or_default(),
+            kept.map(crate::vcs::CommitId::as_str).unwrap_or_default(),
         );
     let forms = |first: &[Form]| -> Vec<Form> {
         first
             .iter()
             .copied()
-            .chain(kept.as_ref().map(|_| Form::TakeBackSetAside))
+            .chain(kept.map(|_| Form::TakeBackSetAside))
             .collect()
     };
     if lock.is_some() {

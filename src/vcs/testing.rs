@@ -1262,16 +1262,30 @@ impl Vcs for FakeVcs {
         unsupported("carry_edits_onto")
     }
 
+    fn check_out_branch(
+        &self,
+        _repo: &Path,
+        _branch: &str,
+    ) -> Result<crate::vcs::Refusable<()>, VcsError> {
+        unsupported("check_out_branch")
+    }
+
     fn set_edits_aside(
         &self,
         _repo: &Path,
         _paths: &[String],
+        _branch: &str,
     ) -> Result<crate::vcs::Refusable<CommitId>, VcsError> {
         unsupported("set_edits_aside")
     }
 
-    fn set_aside_from(&self, _repo: &Path, _at: &CommitId) -> Result<Option<CommitId>, VcsError> {
-        Ok(None)
+    fn set_aside_from(
+        &self,
+        _repo: &Path,
+        _at: &CommitId,
+        _branch: &str,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        Ok(Vec::new())
     }
 
     fn staged_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {

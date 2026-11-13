@@ -288,10 +288,14 @@ git's to merge.
 
 `rwv doctor --fix --set-aside-edited-drift` is the other way out. It points
 HEAD at the tip the files hold in the same way, has git stash the edits to
-the listed files, then checks the branch out. The stash is based on the tip
-your files held, so it holds your edits and nothing of the move. The report
-prints the `git stash apply <stash>` that merges them back onto the moved
-tip whenever you want them.
+the listed files, then checks the branch out with a plain `git checkout`.
+The stash is based on the tip your files held, so it holds your edits and
+nothing of the move, and its message names the branch it was set aside from.
+The `git stash apply <stash>` that merges them back onto the moved tip is
+printed the moment the stash is made, before the checkout is tried, and again
+in the report; where an earlier run's stash is kept too, the report prints
+each, oldest first. A stash set aside from another branch, or against another
+tip, is never named here.
 
 Where git refuses a step, such as staged changes, an untracked file in the
 way, an intent-to-add entry under the stash, or an index lock a killed git

@@ -2573,3 +2573,144 @@ fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
     let out = common::cli::run(&["lock"], &f.ww);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
+
+// ---------------------------------------------------------------------------
+// The set-aside stash: whose it is, what it holds, and its take-back lines
+// ---------------------------------------------------------------------------
+
+const SET_ASIDE: [&str; 3] = ["doctor", "--fix", "--set-aside-edited-drift"];
+
+fn stashes(repo: &Path) -> Vec<String> {
+    common::git_in(repo, &["stash", "list", "--format=%H"])
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The seat and the primary stand at one tip on different branches. A
+/// set-aside finished in the seat leaves a stash based on that tip; the
+/// primary, set back over the same tip by a merge git refused, neither names
+/// that stash nor prints a line that applies it.
+#[test]
+fn a_set_back_checkout_never_names_another_workspaces_stash() {
+    let f = fixture();
+    common::git_in(&f.ww_lib, &["reset", "-q", "--hard", "HEAD~1"]);
+    let fork = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+    assert_eq!(common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]), fork);
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "seat's\n").unwrap();
+    let out = common::cli::run(&SET_ASIDE, &f.ww);
+    assert!(
+        common::cli::describe(&out).contains("set aside as"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    let seats = stashes(&f.ww_lib);
+    assert_eq!(seats.len(), 1);
+
+    f.move_from_elsewhere("main", "notes.txt", "main moved\n");
+    std::fs::write(f.primary_lib.join("notes.txt"), "primary's\n").unwrap();
+    std::fs::write(f.primary_lib.join("st.txt"), "staged\n").unwrap();
+    common::git_in(&f.primary_lib, &["add", "st.txt"]);
+    let out = common::cli::run(&MERGE, &f.primary);
+    let said = common::cli::describe(&out);
+    common::cli::refused(&out, State::EditsSetBack);
+    assert!(!said.contains(&seats[0][..12]), "{said}");
+    assert!(!said.contains("stash apply"), "{said}");
+
+    let out = common::cli::run(&["lock"], &f.primary);
+    let said = common::cli::describe(&out);
+    common::cli::refused(&out, State::EditsSetBack);
+    assert!(!said.contains(&seats[0][..12]), "{said}");
+}
+
+/// A finished set-aside's stash, kept, and a later merge in the same
+/// workspace set back over a newer tip of the same branch: the judgment names
+/// no stash, since none was made against the tip the files hold now.
+#[test]
+fn a_set_back_checkout_never_names_a_stash_made_against_another_tip() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "first\n").unwrap();
+    let out = common::cli::run(&SET_ASIDE, &f.ww);
+    assert!(common::cli::describe(&out).contains("set aside as"));
+    let first = stashes(&f.ww_lib);
+    assert_eq!(first.len(), 1);
+    f.move_from_elsewhere("ww/project", "notes.txt", "four\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "second\n").unwrap();
+    drop(held_at(&f, &f.ww, &MERGE, "drift-merge-set-back"));
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    common::cli::refused(&out, State::EditsSetBack);
+    assert!(!said.contains(&first[0][..12]), "{said}");
+    assert!(!said.contains("stash apply"), "{said}");
+}
+
+/// The set-aside stashes the listed files alone: an edit to a file the move
+/// did not change stays in the working tree and is not in the stash.
+#[test]
+fn a_set_aside_keeps_an_unrelated_edit_in_place() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(f.ww_lib.join("README.md"), "unrelated\n").unwrap();
+
+    let out = common::cli::run(&SET_ASIDE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("set aside as"), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("unrelated\n"),
+        "{said}"
+    );
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["stash", "show", "--name-only"]),
+        "notes.txt"
+    );
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("three\n")
+    );
+}
+
+/// A set-aside stopped once its stash is made has already printed the line
+/// that takes it back. Edited again and set aside again, the finished report
+/// prints both take-back lines, the earlier first, and each, run as printed,
+/// holds its own edit.
+#[test]
+fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
+    let f = fixture();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "first edit\n").unwrap();
+    let stopped = held_at(&f, &f.ww, &SET_ASIDE, "drift-merge-carry").kill();
+    let first = stashes(&f.ww_lib);
+    assert_eq!(first.len(), 1);
+    let said = common::cli::describe(&stopped);
+    assert!(
+        said.contains(&format!("stash apply {}", first[0])),
+        "the take-back line is printed as the stash is made: {said}"
+    );
+    std::fs::write(f.ww_lib.join("README.md"), "second edit\n").unwrap();
+
+    let out = common::cli::run(&SET_ASIDE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    let all = stashes(&f.ww_lib);
+    assert_eq!(all.len(), 2, "{said}");
+    let (newest, oldest) = (&all[0], &all[1]);
+    assert_eq!(oldest, &first[0]);
+    let at_oldest = said
+        .find(&format!("stash apply {oldest}"))
+        .unwrap_or_else(|| panic!("{said}"));
+    let at_newest = said
+        .rfind(&format!("stash apply {newest}"))
+        .unwrap_or_else(|| panic!("{said}"));
+    assert!(at_oldest < at_newest, "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["symbolic-ref", "--short", "HEAD"]),
+        "ww/project"
+    );
+}

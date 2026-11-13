@@ -4063,16 +4063,30 @@ impl Vcs for GitVcs {
         carry_edits::carry_edits_onto(repo, branch)
     }
 
+    fn check_out_branch(
+        &self,
+        repo: &Path,
+        branch: &str,
+    ) -> Result<crate::vcs::Refusable<()>, VcsError> {
+        carry_edits::check_out_branch(repo, branch)
+    }
+
     fn set_edits_aside(
         &self,
         repo: &Path,
         paths: &[String],
+        branch: &str,
     ) -> Result<crate::vcs::Refusable<CommitId>, VcsError> {
-        carry_edits::set_edits_aside(repo, paths)
+        carry_edits::set_edits_aside(repo, paths, branch)
     }
 
-    fn set_aside_from(&self, repo: &Path, at: &CommitId) -> Result<Option<CommitId>, VcsError> {
-        carry_edits::set_aside_from(repo, at)
+    fn set_aside_from(
+        &self,
+        repo: &Path,
+        at: &CommitId,
+        branch: &str,
+    ) -> Result<Vec<CommitId>, VcsError> {
+        carry_edits::set_aside_from(repo, at, branch)
     }
 
     fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError> {
