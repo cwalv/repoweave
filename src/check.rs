@@ -8354,6 +8354,9 @@ struct HeldDrift {
     refused: crate::diagnosis::Report,
     merge_found: bool,
     unread: bool,
+    /// Whether this run refreshed a checkout's drift, which is where a held
+    /// checkout whose in-the-way paths were moved aside ends up.
+    refreshed: bool,
     homes: Homes,
 }
 
@@ -8828,10 +8831,13 @@ fn apply_finding_repairs(
                     match refreshed {
                         Ok(outcome) => {
                             match &outcome.refreshed {
-                                Some(refreshed) => outln!(
-                                    "[fixed] core: drift in {location}: {}",
-                                    refreshed.describe()
-                                ),
+                                Some(refreshed) => {
+                                    held.refreshed = true;
+                                    outln!(
+                                        "[fixed] core: drift in {location}: {}",
+                                        refreshed.describe()
+                                    )
+                                }
                                 None if outcome.left_in_place.is_none() => outln!(
                                     "[fixed] core: drift in {location}: nothing left to refresh"
                                 ),
@@ -9611,6 +9617,7 @@ pub fn run_check(
         refused: crate::diagnosis::Report::default(),
         merge_found: false,
         unread: false,
+        refreshed: false,
         homes: Homes::default(),
     };
     let fix = repair == Repair::Apply;
@@ -9730,9 +9737,13 @@ pub fn run_check(
     }
 
     held.refused.into_result()?;
-    if let (true, Some(resolution), false, false) =
-        (fix, held.resolving, held.merge_found, held.unread)
-    {
+    if let (true, Some(resolution), false, false, false) = (
+        fix,
+        held.resolving,
+        held.merge_found,
+        held.unread,
+        held.refreshed,
+    ) {
         let flag = match resolution {
             crate::vcs::EditResolution::Merge => "--merge-edited-drift",
             crate::vcs::EditResolution::SetAside => "--set-aside-edited-drift",

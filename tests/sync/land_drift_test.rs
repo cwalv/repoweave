@@ -2035,6 +2035,7 @@ fn untracked_content_where_the_move_adds_a_path_holds_the_checkout_until_moved_a
     let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
     let said = common::cli::describe(&out);
     assert!(said.contains("refreshed drift"), "{said}");
+    assert!(!said.contains("inapplicable-flag"), "{said}");
     assert_eq!(read(&f.ww_lib.join("todo")).as_deref(), Some("theirs\n"));
     assert_eq!(
         read(&f.ww_lib.join("notes.txt")).as_deref(),
