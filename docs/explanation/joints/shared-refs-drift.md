@@ -308,10 +308,17 @@ tip, is never named here.
 Where git refuses a step, such as staged changes, an untracked file in the
 way, an intent-to-add entry under the stash, or an index lock a killed git
 process left, rwv prints git's own words and leaves the checkout `set back`:
-HEAD at the tip its files hold, and nothing else changed. Every verb names
-that state. Its choices are the step git asks for, then the merge or the
-set-aside again, which carries the edits onto wherever the branch is by
-then. Since HEAD names what the files hold there, a commit or stash you make
+HEAD at the tip its files hold. A refusal git makes before it writes leaves
+the files as they stood; one during its write, a permission denied part way
+for one, can leave some files moved, and the backup taken before the merge
+holds the edits either way. Every verb names that state. Its choices are the
+step git asks for (unstage, remove the lock, free the branch from the other
+checkout that holds it, create a deleted branch again, or clear what git
+quotes), then the merge or the set-aside again, which carries the edits onto
+wherever the branch is by then. A rerun first repeats the first run's hold
+over what no backup keeps, against the branch as it is then: an ignored file
+where the branch now puts a file of its own is to be moved out of the way
+first. `rwv update`, `rwv switch` and `rwv status` name the state alone. Since HEAD names what the files hold there, a commit or stash you make
 in that state records your edits alone.
 
 Neither flag acts while a listed file is one git does not compare with

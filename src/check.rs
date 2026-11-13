@@ -7712,7 +7712,9 @@ pub enum EditedDriftMerge {
     /// The checkout holds no file both moved and edited.
     NothingHeld,
     /// The checkout was set back and the VCS refused the next step, in its
-    /// own words; nothing else was written.
+    /// own words. A refusal git makes before its write leaves the files as
+    /// they stood; one during the write can leave some of them moved, and
+    /// the backup taken first holds the edits either way.
     Refused {
         back: crate::vcs::SetBack,
         said: String,
