@@ -8719,10 +8719,10 @@ pub fn abort_at_retire_leases_the_in_place_workspace_again() -> Scenario {
 }
 
 /// `shared-checkout-detached` held just before it moves `docs` in place in
-/// the primary, where an edit then appears: the landing refuses it there,
-/// takes back its journal entry for the move it did not make, and `rwv
-/// abort` restores the rest, leaving the primary's `docs` and its edit as
-/// they stand.
+/// the primary, where an edit then appears: the landing refuses it there and
+/// takes back its journal entry for the move it did not make. The operator
+/// there commits the edit, and `rwv abort` restores the rest, leaving the
+/// primary's `docs` and that commit as they stand.
 pub fn abort_after_a_landing_stopped_at_its_in_place_move() -> Scenario {
     let mut steps = stable_holding_docs_detached();
     steps.extend([
@@ -8734,20 +8734,18 @@ pub fn abort_after_a_landing_stopped_at_its_in_place_move() -> Scenario {
         ),
         Step::hand_edit(&a(), Repo::Docs, "README", "docs", "edited in the primary"),
         Step::release("landing").expect(Exit::refuses(Repo::Docs, State::EditsDirty)),
+        Step::git(&a(), Repo::Docs, &["commit", "-qam", "primary-docs"]),
         Step::rwv(&ww("hotfix"), &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::Docs, Repo::Proj])
             .may_restore(&[Repo::Docs, Repo::Proj])
-            .claim(Claim::OutputLacks(
-                "[target] local/remotes/docs: its uncommitted",
-            ))
             .claim(Claim::OnBranch {
                 at: a(),
                 repo: Repo::Docs,
                 branch: "main",
             }),
-        Step::git(&a(), Repo::Docs, &["diff", "--name-only"]).claim(Claim::OutputLine("README")),
         Step::git(&a(), Repo::Docs, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputContains("primary-docs"))
             .claim(Claim::OutputLacks("hotfix-docs")),
     ]);
     scenario("abort after a landing stopped at its in-place move", steps)
