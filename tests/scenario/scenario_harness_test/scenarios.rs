@@ -21973,6 +21973,38 @@ pub fn a_fix_is_not_carried_off_the_replayed_tip(
     scenario("a fix is not carried off the replayed tip", steps)
 }
 
+/// [`unparseable_merged_manifest`] under linear history where the
+/// workweave's one project commit adds its table and nothing else: the
+/// staged fix that drops the table leaves the replayed tip changing nothing,
+/// so the `--continue` drops it, as a rebase drops a commit it leaves empty,
+/// and says so.
+pub fn a_fix_that_empties_the_replayed_tip_drops_it(taking_in: TakingIn) -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(adds_a_copies(&a()));
+    steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
+    steps.extend(adds_w_copies(&ww("w")));
+    steps.extend([
+        Step::rwv(&ww("w"), &taking_in.args()).expect(Exit::refuses(
+            Repo::Proj,
+            State::UnparseableProjectMidOperation,
+        )),
+        Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", W_COPIES, ""),
+        Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .claim(Claim::OutputContains(
+                "is dropped: with the staged rwv.toml it changes nothing",
+            )),
+        Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-3"])
+            .claim(Claim::OutputLacks("copy w.txt"))
+            .claim(Claim::OutputContains("a-proj")),
+        Step::git(&ww("w"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("rwv.toml")),
+    ]);
+    scenario("a fix that empties the replayed tip drops it", steps)
+}
+
 /// [`unparseable_merged_manifest`] under linear history over a workweave
 /// branch of three project commits, the first adding its table, so every
 /// replayed commit holds an `rwv.toml` that does not parse. The stop says the
