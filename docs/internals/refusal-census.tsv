@@ -115,7 +115,7 @@ src/diagnosis.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
 src/diagnosis.rs	edits drift left in place	tests/sync/land_drift_test.rs	1
 src/diagnosis.rs	edits merge interrupted	-	1
 src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
-src/diagnosis.rs	edits moved and edited	tests/sync/land_drift_test.rs	1
+src/diagnosis.rs	edits moved and edited	tests/sync/land_drift_test.rs	2
 src/diagnosis.rs	edits unresolved	-	1
 src/diagnosis.rs	unparseable-project here	-	1
 src/durable_file.rs	filesystem-without-exclusive-publish	tests/weave/workweave_test.rs	1

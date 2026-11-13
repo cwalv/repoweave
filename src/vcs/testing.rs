@@ -960,6 +960,14 @@ impl Vcs for FakeVcs {
         unsupported("unmerged_paths")
     }
 
+    fn uncompared_paths(
+        &self,
+        _checkout: &Path,
+        _paths: &[String],
+    ) -> Result<crate::vcs::UncomparedPaths, VcsError> {
+        unsupported("uncompared_paths")
+    }
+
     fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {
         unsupported("staged_file")
     }

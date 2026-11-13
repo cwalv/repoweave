@@ -3111,7 +3111,10 @@ impl Vcs for GitVcs {
             VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
             VcsAction::TrackIgnored => "git -C <checkout> add -f -- <ignored>",
             VcsAction::CompareMarked => {
-                "git -C <checkout> update-index --no-assume-unchanged --no-skip-worktree -- <marked>"
+                "git -C <checkout> update-index --no-assume-unchanged -- <marked>"
+            }
+            VcsAction::CompareOutside => {
+                "git -C <checkout> update-index --no-skip-worktree -- <marked>"
             }
             VcsAction::RemoveWorktree => "git -C <checkout> worktree remove <worktree>",
             VcsAction::BranchAt => "git -C <checkout> branch <name> <sha>",
@@ -5375,6 +5378,15 @@ impl Vcs for GitVcs {
 
     fn unmerged_paths(&self, checkout: &Path) -> Result<Vec<String>, VcsError> {
         Self::unmerged(checkout)
+    }
+
+    fn uncompared_paths(
+        &self,
+        checkout: &Path,
+        paths: &[String],
+    ) -> Result<crate::vcs::UncomparedPaths, VcsError> {
+        let (ignored, marked) = working_copy_merge::uncompared(checkout, paths)?;
+        Ok(crate::vcs::UncomparedPaths { ignored, marked })
     }
 
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {

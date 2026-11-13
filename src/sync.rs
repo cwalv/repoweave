@@ -5313,11 +5313,12 @@ fn settle_drift(
         };
         if !outcome.held.is_empty() {
             report.add(
-                elsewhere(
-                    crate::diagnosis::moved_and_edited(&at.repo)
-                        .subject(checkout.reading.moved())
-                        .listing(&outcome.held),
-                )
+                elsewhere(crate::diagnosis::held(
+                    vcs,
+                    &at.repo,
+                    &at.dir,
+                    &checkout.reading,
+                ))
                 .checkout(&at.dir)
                 .judge(vcs),
             );

@@ -423,6 +423,7 @@ pub enum VcsAction {
     ShowStagedFromBackup,
     TrackIgnored,
     CompareMarked,
+    CompareOutside,
     RemoveWorktree,
     BranchAt,
     SwitchTo,
@@ -443,7 +444,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 27] = [
+    pub const ALL: [VcsAction; 28] = [
         Self::Commit,
         Self::Stash,
         Self::StashUntracked,
@@ -454,6 +455,7 @@ impl VcsAction {
         Self::ShowStagedFromBackup,
         Self::TrackIgnored,
         Self::CompareMarked,
+        Self::CompareOutside,
         Self::RemoveWorktree,
         Self::BranchAt,
         Self::SwitchTo,
@@ -2592,6 +2594,20 @@ pub enum BeforeWrite {
 pub struct InterruptedMerge {
     pub backup: Option<String>,
     pub paths: Vec<String>,
+}
+
+/// Paths the VCS does not compare with what it records: `ignored` files its
+/// index lacks, and entries `marked` as unchanged or outside the working copy.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UncomparedPaths {
+    pub ignored: Vec<String>,
+    pub marked: Vec<String>,
+}
+
+impl UncomparedPaths {
+    pub fn is_empty(&self) -> bool {
+        self.ignored.is_empty() && self.marked.is_empty()
+    }
 }
 
 /// One path of a checkout whose index entry or file differs from `HEAD`, or
@@ -5360,6 +5376,14 @@ pub trait Vcs: Send + Sync {
 
     /// The paths of `checkout` a merge left conflicted and nothing has staged.
     fn unmerged_paths(&self, checkout: &Path) -> Result<Vec<String>, VcsError>;
+
+    /// Of `paths` in `checkout`, those the VCS does not compare with what it
+    /// records, so a backup of the working copy would not keep them.
+    fn uncompared_paths(
+        &self,
+        checkout: &Path,
+        paths: &[String],
+    ) -> Result<UncomparedPaths, VcsError>;
 
     /// The staged content of `path` in `checkout`, `None` where nothing is
     /// staged there.

@@ -3213,7 +3213,7 @@ impl Form {
             },
             Self::CompareMarked => &FormRow {
                 choice: C::CompareMarked,
-                steps: &[Vcs(A::CompareMarked)],
+                steps: &[Vcs(A::CompareMarked), Vcs(A::CompareOutside)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -4187,11 +4187,8 @@ pub fn dirty(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path, files: Vec<Stri
         }
     }
     if let Ok(reading) = crate::check::read_drift(vcs, dir) {
-        let held = reading.moved_and_edited();
-        if !held.is_empty() {
-            return moved_and_edited(repo)
-                .subject(reading.moved())
-                .listing(held);
+        if !reading.moved_and_edited().is_empty() {
+            return held(vcs, repo, dir, &reading);
         }
     }
     State::EditsDirty.of(repo).listing(files)
@@ -4291,6 +4288,41 @@ pub fn moved_and_edited(repo: impl fmt::Display) -> Judging {
         ChoiceId::TrackIgnored,
         ChoiceId::CompareMarked,
     ])
+}
+
+/// `dir`'s files both moved and edited, as `reading` found them, judged.
+/// Where the VCS does not compare some of them, so no backup would keep
+/// them, the choices are those that have it compare them.
+pub fn held(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    reading: &crate::check::DriftReading,
+) -> Judging {
+    let held = reading.moved_and_edited();
+    let uncompared = vcs.uncompared_paths(dir, &held).unwrap_or_default();
+    let judging = State::EditsMovedAndEdited
+        .of(repo)
+        .subject(reading.moved())
+        .listing(&held);
+    if uncompared.is_empty() {
+        return judging.without(&[
+            ChoiceId::ReplaceThenMerge,
+            ChoiceId::TrackIgnored,
+            ChoiceId::CompareMarked,
+        ]);
+    }
+    let mut forms = Vec::new();
+    if !uncompared.ignored.is_empty() {
+        forms.push(Form::TrackIgnored);
+    }
+    if !uncompared.marked.is_empty() {
+        forms.push(Form::CompareMarked);
+    }
+    judging
+        .bind_list("<ignored>", &uncompared.ignored)
+        .bind_list("<marked>", &uncompared.marked)
+        .only_forms(&forms)
 }
 
 /// A checkout whose merge of edits onto a moved tip was interrupted, judged.

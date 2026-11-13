@@ -954,6 +954,26 @@ fn landing_and_fix_keep(
         before,
         "{side:?}: the landing replaced what was there:\n{stderr}"
     );
+    let compare: Vec<String> = match state {
+        State::EditsMovedAndEdited => {
+            assert!(
+                !stderr.contains("edited-drift"),
+                "a file the VCS does not compare is offered no merge or set-aside first:\n{stderr}"
+            );
+            stderr
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with("git -C "))
+                .map(str::to_owned)
+                .collect()
+        }
+        _ => Vec::new(),
+    };
+    assert_eq!(
+        compare.is_empty(),
+        state != State::EditsMovedAndEdited,
+        "the compare choice is printed:\n{stderr}"
+    );
 
     let out = fix(&f, side);
 
@@ -980,6 +1000,22 @@ fn landing_and_fix_keep(
             "{side:?}: {flag} replaced what was there:\n{stderr}"
         );
     }
+    for line in &compare {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let ran = std::process::Command::new(words[0])
+            .args(&words[1..])
+            .output()
+            .unwrap();
+        assert!(
+            ran.status.success(),
+            "{line}: {}",
+            common::cli::describe(&ran)
+        );
+    }
+    let out = common::cli::run(&["doctor", "--fix", "--merge-edited-drift"], workspace);
+    let said = common::cli::describe(&out);
+    assert!(said.contains("kept as backup"), "{said}");
+    assert!(!said.contains("so no backup would keep"), "{said}");
 }
 
 /// An untracked file stands where the move puts a directory: git would

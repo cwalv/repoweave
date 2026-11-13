@@ -313,7 +313,10 @@ fn intended(repo: &Path, paths: &[String]) -> Result<Vec<String>, VcsError> {
 /// The paths of `paths` git does not compare with what the index records:
 /// ignored files the index lacks, and entries marked assume-unchanged or
 /// skip-worktree.
-fn uncompared(repo: &Path, paths: &[String]) -> Result<(Vec<String>, Vec<String>), VcsError> {
+pub(super) fn uncompared(
+    repo: &Path,
+    paths: &[String],
+) -> Result<(Vec<String>, Vec<String>), VcsError> {
     let mut flagged = Argv::from(["--literal-pathspecs", "ls-files", "-v", "-z", "--"]);
     let mut ignored = Argv::from([
         "--literal-pathspecs",

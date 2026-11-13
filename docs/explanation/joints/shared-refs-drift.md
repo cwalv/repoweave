@@ -272,8 +272,9 @@ refreshes the rest, so the backup is the only place the edits are held; it
 prints, for each file, the command that shows the version you had, and the
 staged version where that differed. Neither flag writes over a file git does
 not compare with what it records, an ignored one or one marked
-assume-unchanged or skip-worktree, since no backup would keep it: both
-refuse, naming the command that has git compare it.
+assume-unchanged or skip-worktree, since no backup would keep it: a checkout
+holding one is refused with the commands that have git compare it as its
+choices, and both flags refuse it the same way.
 
 ## The shared invariant
 

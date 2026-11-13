@@ -8472,8 +8472,11 @@ fn settle_held_drift(
                 .checkout(repo_abs)
         };
         if held.resolving.is_none() {
-            held.refused
-                .add(judged(moved, reading.moved_and_edited()).judge(vcs));
+            held.refused.add(
+                crate::diagnosis::held(vcs, location, repo_abs, &reading)
+                    .checkout(repo_abs)
+                    .judge(vcs),
+            );
             continue;
         }
         merged_any = true;
