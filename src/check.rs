@@ -8512,7 +8512,11 @@ fn settle_held_drift(
             }
         };
         merged_any |= held.resolving.is_some();
-        let Some(resolution) = held.resolving.filter(|_| elsewhere.is_none()) else {
+        let mut edits = vcs.staged_paths(repo_abs).unwrap_or_default();
+        edits.extend(vcs.unstaged_paths(repo_abs).unwrap_or_default());
+        let carries = !crate::diagnosis::carried_over(vcs, repo_abs, &back, &edits)
+            .is_ok_and(|uncompared| uncompared.is_empty());
+        let Some(resolution) = held.resolving.filter(|_| elsewhere.is_none() && !carries) else {
             held.refused.add(judged().judge(vcs));
             continue;
         };

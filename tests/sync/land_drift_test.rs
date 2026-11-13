@@ -2747,3 +2747,55 @@ fn an_intent_to_add_entry_in_a_set_back_checkout_is_cleared_by_the_printed_unsta
         Some("new work\n")
     );
 }
+
+/// A merge stopped once set back, then a second move of the branch adding a
+/// file where an ignored one of the operator's stands: the rerun holds the
+/// checkout as the first run would, writing nothing over the ignored file,
+/// and its printed choices, run as printed, finish with the file kept.
+#[test]
+fn a_rerun_from_set_back_holds_over_an_ignored_file_the_branch_now_adds() {
+    let f = fixture();
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    drop(held_at(&f, &f.ww, &MERGE, "drift-merge-carry"));
+    f.move_from_elsewhere("ww/project", "x.log", "theirs log\n");
+    let exclude = PathBuf::from(common::git_in(
+        &f.ww_lib,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    ))
+    .join("info/exclude");
+    std::fs::create_dir_all(exclude.parent().unwrap()).unwrap();
+    std::fs::write(&exclude, "x.log\n").unwrap();
+    std::fs::write(f.ww_lib.join("x.log"), "my log\n").unwrap();
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsSetBack);
+    assert!(stderr.contains("move out of the way"), "{stderr}");
+    assert!(
+        listing_under(&stderr, "edits set back").contains(&"x.log".to_owned()),
+        "{stderr}"
+    );
+    assert_eq!(read(&f.ww_lib.join("x.log")).as_deref(), Some("my log\n"));
+    std::fs::create_dir_all(&f.scratch).unwrap();
+    std::fs::rename(f.ww_lib.join("x.log"), f.scratch.join("x.log")).unwrap();
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(on_branch(&f.ww_lib), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("x.log")).as_deref(),
+        Some("theirs log\n")
+    );
+    assert_eq!(read(&f.scratch.join("x.log")).as_deref(), Some("my log\n"));
+}
+
+fn on_branch(repo: &Path) -> bool {
+    common::git()
+        .args(["symbolic-ref", "-q", "HEAD"])
+        .current_dir(repo)
+        .output()
+        .unwrap()
+        .status
+        .success()
+}

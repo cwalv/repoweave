@@ -812,6 +812,8 @@ impl State {
                     Form::UnstageThenMerge,
                     Form::ReplaceThenMerge,
                     Form::RemoveLockThenMerge,
+                    Form::CompareMarked,
+                    Form::CompareSkipped,
                     Form::TakeBackSetAside,
                 ],
                 verb_offers: &[],
@@ -4450,7 +4452,17 @@ pub fn held(
     if !reading.in_the_way(dir).is_empty() {
         return judging.only_forms(&[Form::ReplaceThenMerge]);
     }
-    let uncompared = vcs.uncompared_paths(dir, &held).unwrap_or_default();
+    let uncompared = match vcs.uncompared_paths(dir, &held) {
+        Ok(uncompared) => uncompared,
+        Err(e) => {
+            return judging
+                .subject(format!(
+                    "{}; the files the VCS does not compare could not be listed, so no                      backup is known to keep them: {e:#}",
+                    reading.moved()
+                ))
+                .only_forms(&[])
+        }
+    };
     if uncompared.is_empty() {
         return judging.without(&[
             ChoiceId::ReplaceThenMerge,
@@ -4541,6 +4553,21 @@ pub fn set_back(
         ));
     }
     let kept = all_kept.last();
+    let carried = carried_over(vcs, dir, back, &edits);
+    if let Ok(uncompared) = &carried {
+        if !uncompared.ignored.is_empty() {
+            subject.push_str(&format!(
+                "; ignored files no backup keeps stand where the branch's tip puts its own: {}",
+                uncompared.ignored.join(", ")
+            ));
+        }
+    }
+    if let Err(e) = &carried {
+        subject.push_str(&format!(
+            "; the files the VCS does not compare could not be listed, so no backup is known \
+             to keep them: {e:#}"
+        ));
+    }
     let judging = State::EditsSetBack
         .of(repo)
         .subject(subject)
@@ -4564,10 +4591,52 @@ pub fn set_back(
             .bind_list("<paths>", &staged)
             .only_forms(&forms(&[Form::UnstageThenMerge]));
     }
+    match carried {
+        Err(_) => return judging.only_forms(&forms(&[])),
+        Ok(uncompared) if !uncompared.is_empty() => {
+            let mut held = Vec::new();
+            if !uncompared.ignored.is_empty() {
+                held.push(Form::ReplaceThenMerge);
+            }
+            if !uncompared.assumed.is_empty() {
+                held.push(Form::CompareMarked);
+            }
+            if !uncompared.skipped.is_empty() {
+                held.push(Form::CompareSkipped);
+            }
+            return judging
+                .listing(uncompared.ignored.iter().filter(|p| !edits.contains(p)))
+                .bind_list("<assumed>", &uncompared.assumed)
+                .bind_list("<skipped>", &uncompared.skipped)
+                .only_forms(&forms(&held));
+        }
+        Ok(_) => {}
+    }
     match refused {
         Some(_) => judging.only_forms(&forms(&[Form::ReplaceThenMerge])),
         None => judging.only_forms(&forms(&[Form::MergeEditedDrift, Form::SetEditsAside])),
     }
+}
+
+/// Of the paths a rerun from `back` writes, those the VCS does not compare
+/// with what it records, so no backup would keep them: each the branch's
+/// tip changes from the tip the files hold, and each edit standing there.
+pub fn carried_over(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    back: &crate::vcs::SetBack,
+    edits: &[String],
+) -> Result<crate::vcs::UncomparedPaths, crate::vcs::VcsError> {
+    let tip = vcs.resolve_revision(dir, &back.branch)?;
+    let mut paths = vcs.changed_paths_between(
+        dir,
+        &crate::vcs::ResolvedRevisionId::from(back.at.clone()),
+        &tip,
+    )?;
+    paths.extend(edits.iter().cloned());
+    paths.sort();
+    paths.dedup();
+    vcs.uncompared_paths(dir, &paths)
 }
 
 /// The error a [`Report`] refuses with.
