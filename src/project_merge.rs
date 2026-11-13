@@ -1116,6 +1116,22 @@ pub(crate) fn settle_replayed_manifest(
             .find_map(|(_, image)| image.clone())
     });
     let mut lines = Vec::new();
+    let earlier = replayed.as_ref().map_or(0, |replayed| {
+        replayed
+            .written
+            .iter()
+            .filter(|commit| *commit != head.id() && unparseable_at(vcs, dir, commit).is_some())
+            .count()
+    });
+    if earlier > 0 {
+        lines.push(format!(
+            "{earlier} earlier replayed {} the rwv.toml that does not parse, as the replay \
+             wrote it: only the tip takes the staged fix, and rwv's verbs that read a commit \
+             by name refuse {}",
+            if earlier == 1 { "commit keeps" } else { "commits keep" },
+            if earlier == 1 { "it" } else { "them" },
+        ));
+    }
     let resume = op_state::resume_command(verb);
     let stop = |error: &dyn std::fmt::Display, lines: &[String]| {
         unparseable_result_saying(vcs, &repo, dir, (&resume, Produced::Replay), error, lines)

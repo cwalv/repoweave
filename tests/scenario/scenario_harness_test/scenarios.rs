@@ -21973,6 +21973,45 @@ pub fn a_fix_is_not_carried_off_the_replayed_tip(
     scenario("a fix is not carried off the replayed tip", steps)
 }
 
+/// [`unparseable_merged_manifest`] under linear history over a workweave
+/// branch of three project commits, the first adding its table, so every
+/// replayed commit holds an `rwv.toml` that does not parse. The stop says the
+/// two earlier ones keep it; a staged fix goes into the tip alone, and once
+/// landed `rwv cherry-pick` of an earlier one refuses it by name.
+pub fn earlier_replayed_commits_keep_an_unparseable_rwv_toml(taking_in: TakingIn) -> Scenario {
+    let mut steps = vec![create("p"), create("w")];
+    steps.extend(adds_a_copies(&a()));
+    steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
+    steps.extend(adds_w_copies(&ww("w")));
+    steps.extend([
+        Step::commit(&ww("w"), Repo::Proj, "more"),
+        Step::commit(&ww("w"), Repo::Proj, "w-proj"),
+        stops_unparseable(Step::rwv(&ww("w"), &taking_in.args()), taking_in.says())
+            .claim(Claim::OutputContains("2 earlier replayed commits keep")),
+        Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", W_COPIES, ""),
+        Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+    ]);
+    steps.extend(the_fix_is_in_the_tip(taking_in));
+    steps.push(
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD~1:rwv.toml"])
+            .claim(Claim::OutputContains("w.txt")),
+    );
+    if taking_in.lands() {
+        steps.push(
+            Step::rwv(&ww("p"), &["cherry-pick", "main~1"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectCommit))
+                .claim(Claim::LocalStateUnchanged(ww("p"))),
+        );
+    }
+    scenario(
+        "earlier replayed commits keep an unparseable rwv.toml",
+        steps,
+    )
+}
+
 /// [`unparseable_merged_manifest`] under merge history, with `a` adding a
 /// file the workweave's project repo holds untracked: the merge that would
 /// stop on the unparseable `rwv.toml` is not started over it. The sync
