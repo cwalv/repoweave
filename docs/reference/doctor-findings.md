@@ -1449,10 +1449,11 @@ and nothing is lost. Then re-run.
 
 Where a path both the move and you changed is among them, `--fix` writes
 nothing to the checkout and refuses it as `edits` `moved and edited`:
-`rwv doctor --fix --merge-edited-drift` merges your edit onto the moved tip,
-and `rwv doctor --fix --set-aside-edited-drift` gives the file the moved tip's
-content and keeps your edit only in the backup; each keeps the working copy
-and index as a backup first.
+`rwv doctor --fix --merge-edited-drift` keeps the working copy and index as
+a backup and has git merge your edit onto the moved tip, and
+`rwv doctor --fix --set-aside-edited-drift` has git stash your edit against
+the tip your files held, gives the file the moved tip's content, and prints
+the `git stash apply` that merges it back.
 
 ### `working-tree-drift`
 
@@ -1487,10 +1488,11 @@ committed and nothing is lost. Then re-run.
 
 Where a file both the move and you changed is among them, `--fix` writes
 nothing to the checkout and refuses it as `edits` `moved and edited`:
-`rwv doctor --fix --merge-edited-drift` merges your edit onto the moved tip,
-and `rwv doctor --fix --set-aside-edited-drift` gives the file the moved tip's
-content and keeps your edit only in the backup; each keeps the working copy
-and index as a backup first.
+`rwv doctor --fix --merge-edited-drift` keeps the working copy and index as
+a backup and has git merge your edit onto the moved tip, and
+`rwv doctor --fix --set-aside-edited-drift` has git stash your edit against
+the tip your files held, gives the file the moved tip's content, and prints
+the `git stash apply` that merges it back.
 
 ### `orphaned-savepoint`
 

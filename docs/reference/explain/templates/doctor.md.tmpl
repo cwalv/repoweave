@@ -54,42 +54,36 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   checkout whose pinned revision is in no clone is relinked onto the canonical
   clone's HEAD, and the pin is given up. Named for what it destroys.
 - `--set-aside-edited-drift` (refused without `--fix`) is the other choice for the same checkouts. It
-  takes the same backup, prints its id, then gives each file both moved and
-  edited the moved tip's content, refreshes the move's other files and
-  records the checkout. The edits are then held only by the backup; the
-  report prints, per file, the command that shows the version it held, and
-  its staged version where that differed. It merges nothing, and refuses
-  where the merge flag refuses for links and uncompared files. The two flags
-  conflict.
+  points the checkout's HEAD at the tip its files hold, has the VCS set the
+  listed files' edits aside (for git, `git stash push` of those files), and
+  checks the branch out, so each file holds the moved tip's content and the
+  move's other files are refreshed. The set-aside record is based on the tip
+  the files held, so it holds the edits alone; the report prints the command
+  that merges them back onto the moved tip (`git stash apply <stash>`). The
+  two flags conflict.
 - `--merge-edited-drift` (refused without `--fix`) widens `--fix` for a checkout whose branch moved
-  under it and that holds files both that move and an edit here changed
-  (`edits` `moved and edited`). Without it `--fix` writes nothing to such a
-  checkout and refuses, naming it, as plain `rwv doctor` does and as every
-  verb judging the checkout's edits does; where the checkout is in another
-  workspace, the choice printed names that workspace with `rwv -C`. With it,
-  every merge is computed first;
-  then the checkout's working copy and index are kept as a backup (`rwv
-  backup list`), the move's other files are refreshed, and each such file's
-  edit is merged onto the moved tip against the tip the checkout was at,
-  each written only while it still stands as it was read. A file the merge
-  does not resolve, or one the moved tip's attributes declare unmergeable
-  (`-merge`, `binary`), is left conflicted, holding both versions, and
-  refused as `edits` `unresolved` until it is resolved and marked resolved.
-  A file the moved tip declares derived takes the moved tip's content, and
-  the report names it apart, the edit set aside in the backup. Nothing is
-  written through a symbolic link: a file replaced by a link is left
-  conflicted with the link in place, and a file below a link, or below
-  anything else standing where its directory should, refuses the merge. A
-  file holding two versions of the edit, one staged and another in the
-  working copy, a submodule, and a file naming a merge driver of its own are
-  merged by no rule here: the flag refuses, and `--set-aside-edited-drift`
-  is the choice. A file git does not compare with what it records (ignored,
-  or marked assume-unchanged or skip-worktree) refuses either flag, since no
-  backup would keep it, and the command that has git compare it is printed. A write that fails puts back everything written, naming the
-  backup; a run stopped part way leaves the checkout `edits` `merge
-  interrupted`, and the flag run again first puts each file back as it
-  stood, then merges afresh. Where no checkout holds such a file, the flag
-  refuses (`inapplicable-flag`).
+  under it and that holds files both that move and an edit here changed, or
+  something standing where the move puts a path (`edits` `moved and
+  edited`). Without it `--fix` writes nothing to such a checkout and
+  refuses, naming it, as plain `rwv doctor` does and as every verb judging
+  the checkout's edits does. With it, the checkout's working copy and index
+  are kept as a backup (`rwv backup list`), its HEAD is pointed at the tip
+  its files hold, and the VCS merges every edit onto the branch (for git,
+  `git checkout -m <branch>`), refreshing the move's other files. A file the
+  merge does not resolve is left conflicted and refused as `edits`
+  `unresolved` until it is resolved and marked resolved. A file declared
+  derived takes the moved tip's content, the report naming it apart with the
+  command that shows the edit in the backup. Each flag acts only on
+  checkouts of the workspace it runs in; another workspace's is refused with
+  its `rwv -C <workspace>` line. Neither acts on a checkout holding a file
+  the VCS does not compare with what it records (ignored, or marked
+  assume-unchanged or skip-worktree), or something in the way of the move:
+  the first refusal prints the command that has the VCS compare the file,
+  or the move-aside. Where the VCS refuses the merge or the set-aside, its
+  own words are printed and the checkout is left `edits` `set back`, whose
+  choices are the step it asks for and the flag again, which carries the
+  edits onto wherever the branch is then. Where no checkout holds such a
+  file, the flag refuses (`inapplicable-flag`).
 
 **`--fix` deletes no branch.** Branches are deleted by the deletion rule, run
 by `rwv branch delete`, `rwv workweave delete` and `rwv land --retire`;

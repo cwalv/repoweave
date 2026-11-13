@@ -216,8 +216,9 @@ beside it with no choice of their own until the drift is refreshed.
 
 Every other verb that judges a checkout's edits does the same: it refreshes
 the checkout's drift, says what it replaced, and judges only what is left, so
-the `git commit` and `git stash push` it offers there carry your edits and not
-the move's reverse. Drift it leaves in place refuses it as `edits`
+where the branch moved forward the `git commit` and `git stash push` it offers
+there carry your edits and not the move's reverse. A branch rewritten under
+the checkout shows no move rwv can read (below). Drift it leaves in place refuses it as `edits`
 `drift left in place`, whose one choice is `rwv doctor --fix`; the checkout's
 other edits are judged once that has refreshed it.
 
@@ -253,28 +254,46 @@ content other than the old tip's is an edit and is never replaced.
 
 A file the move changed that you edited too is neither. rwv does not
 refresh that checkout at all, because a partial refresh would erase what
-shows the move: it lists such files as `moved and edited`. `rwv doctor --fix
---merge-edited-drift` merges each such edit onto the moved tip, against the
-tip the checkout was at. It computes every merge before it writes anything,
-keeps the working copy and index as a backup, refreshes the move's other
-files in the same run, and writes each merged file only while it still
-stands as it was read. A file the merge cannot resolve is left conflicted,
-both versions in it, for you to resolve and mark resolved; so is one the
-moved tip's attributes declare unmergeable. A file the moved tip declares
-derived takes that tip's content, and your edit to it stays in the backup.
-The merge writes nothing through a symbolic link, at a file or at any
-directory above it. A write that fails puts every file back as it stood; a
-run stopped part way leaves the checkout `merge interrupted`, which every
-verb names, and running the merge again puts each file back before merging
-afresh, so your edit, never a half-merged file, is what it merges. `rwv doctor --fix --set-aside-edited-drift` is the other way out: it takes
-the same backup, then gives each such file the moved tip's content and
-refreshes the rest, so the backup is the only place the edits are held; it
-prints, for each file, the command that shows the version you had, and the
-staged version where that differed. Neither flag writes over a file git does
-not compare with what it records, an ignored one or one marked
-assume-unchanged or skip-worktree, since no backup would keep it: a checkout
-holding one is refused with the commands that have git compare it as its
-choices, and both flags refuse it the same way.
+shows the move: it lists such files as `moved and edited`. So does
+something standing where the move puts a path of its own: a directory or
+an untracked file at a file's name, or a link or file where its directory
+goes. Its first choice is to move that out of the way.
+
+`rwv doctor --fix --merge-edited-drift` hands the edits to git. It keeps
+the working copy and index as a backup, points the checkout's HEAD at the
+tip its files hold, so that only your edits differ from HEAD, and runs
+`git checkout -m` onto the branch. Git merges each edit onto the moved tip
+as it merges local changes on any checkout, and refreshes the move's other
+files with it. A file it does not resolve is left conflicted, both versions
+in it (`ours` is the moved tip, `theirs` your edit), for you to resolve and
+mark resolved. Git honors the moved tip's attributes: line endings,
+filters, `-merge`, `binary`, `merge=union`. A file declared derived takes
+the moved tip's content, and your edit to it stays in the backup. Links,
+modes, directories that replace files, and files the move renames are all
+git's to merge.
+
+`rwv doctor --fix --set-aside-edited-drift` is the other way out. It points
+HEAD at the tip the files hold in the same way, has git stash the edits to
+the listed files, then checks the branch out. The stash is based on the tip
+your files held, so it holds your edits and nothing of the move. The report
+prints the `git stash apply <stash>` that merges them back onto the moved
+tip whenever you want them.
+
+Where git refuses a step, such as staged changes, an untracked file in the
+way, an intent-to-add entry under the stash, or an index lock a killed git
+process left, rwv prints git's own words and leaves the checkout `set back`:
+HEAD at the tip its files hold, and nothing else changed. Every verb names
+that state. Its choices are the step git asks for, then the merge or the
+set-aside again, which carries the edits onto wherever the branch is by
+then. Since HEAD names what the files hold there, a commit or stash you make
+in that state records your edits alone.
+
+Neither flag acts while a listed file is one git does not compare with
+what it records: an ignored file, or one marked assume-unchanged or
+skip-worktree. No backup would keep it, so such a checkout is refused with
+the command that clears each mark, or tracks the ignored file, as its
+choices. Each flag acts only on checkouts of the workspace it runs in. For
+another workspace's checkout it prints that workspace's `rwv -C` line.
 
 ## The shared invariant
 
