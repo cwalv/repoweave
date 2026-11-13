@@ -273,8 +273,8 @@ longer recorded is taken over by the next landing.
 `rwv abort` restores every ref a landing moved, at any phase. Stopped in its
 retire, the landing has given up the target: abort, from this workspace, first
 takes the claim and the target's workspace back, refusing while another
-operation holds either, then restores. Typed in the target's workspace, `rwv
-abort` takes up only a landing whose retire is recorded as stopped; for any
+operation holds either, then restores. Typed in the target's workspace, or
+in a workspace the landing moved a checkout in place in, `rwv abort` takes up only a landing whose retire is recorded as stopped; for any
 other landing it refuses, printing `rwv -C <workspace> abort` to run from the
 landing's own workspace. The target is restored
 whole or not at all. Where any branch the landing moved there, in a checkout,

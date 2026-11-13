@@ -8200,9 +8200,10 @@ fn apply_project_strategy(
 // rwv abort
 // ---------------------------------------------------------------------------
 
-/// The landing that moved `workspace` as its target and released it at its
-/// retire, which therefore leases it no longer: its record names `workspace`
-/// as its target, in the primary or a workweave the primary records.
+/// The landing that moved `workspace` and released it at its retire, which
+/// therefore leases it no longer: its record names `workspace` as its target
+/// or as a workspace it moved a checkout in place in, in the primary or a
+/// workweave the primary records.
 fn landing_released_into(
     ctx: &WorkspaceContext,
     workspace: &CanonicalPath,
@@ -8219,7 +8220,17 @@ fn landing_released_into(
             continue;
         };
         let header = reading.header();
-        if header.verb == OpVerb::Land && header.target.as_ref() == Some(workspace) {
+        let moved_in_place = match &reading {
+            op_state::OwnerReading::Whole(record) => record.take_in.as_ref().is_some_and(|t| {
+                t.in_place_workspaces()
+                    .iter()
+                    .any(|ws| CanonicalPath::of(ws) == *workspace)
+            }),
+            op_state::OwnerReading::HeaderOnly { .. } => false,
+        };
+        if header.verb == OpVerb::Land
+            && (header.target.as_ref() == Some(workspace) || moved_in_place)
+        {
             released.push((reading, owner));
         }
     }

@@ -8657,6 +8657,37 @@ pub fn abort_restores_as_a_ref_a_branch_its_in_place_checkout_left() -> Scenario
     )
 }
 
+/// `shared-checkout-detached` killed in its retire, which released the
+/// primary, where `docs`' `main` moved in place: `rwv abort` typed in the
+/// primary names the landing and refuses, printing the abort from the
+/// landing's own workspace, which run as printed restores everything.
+pub fn abort_typed_in_a_released_in_place_workspace_names_the_landing() -> Scenario {
+    let mut steps = stable_holding_docs_detached();
+    steps.extend([
+        Step::rwv_paused(
+            &ww("hotfix"),
+            &["land", "--history", "linear", "--retire"],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::rwv(&a(), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::AbortInItsWorkspace))
+            .claim(Claim::OutputContains("proj--hotfix abort"))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv_printed(&a(), "rwv -C ")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Docs, Repo::Proj])
+            .may_restore(&[Repo::Docs, Repo::Proj]),
+        Step::git(&a(), Repo::Docs, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("hotfix-docs")),
+    ]);
+    scenario(
+        "abort typed in a released in-place workspace names the landing",
+        steps,
+    )
+}
+
 /// `removal-is-member-change`: a feature removing a member its target lists
 /// refuses to land until `--allow-member-change` names the member, before
 /// anything lands; the consent, run as the refusal prints it, lands it, and

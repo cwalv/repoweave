@@ -873,6 +873,7 @@ every_scenario!(
     abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase,
     abort_refuses_to_strand_another_projects_pin_on_the_target,
     abort_restores_as_a_ref_a_branch_its_in_place_checkout_left,
+    abort_typed_in_a_released_in_place_workspace_names_the_landing,
     landing_merge_continued_writes_one_project_merge,
     abort_after_a_sync_merge_stops,
     a_project_stop_refuses_every_commit(scenarios::AtAProjectStop::CommitWhileUnmerged),
@@ -6168,6 +6169,12 @@ fn abort_refuses_to_strand_another_projects_pin_on_the_target_scenario() {
 #[test]
 fn abort_restores_as_a_ref_a_branch_its_in_place_checkout_left_scenario() {
     runner::run(scenarios::abort_restores_as_a_ref_a_branch_its_in_place_checkout_left())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_typed_in_a_released_in_place_workspace_names_the_landing_scenario() {
+    runner::run(scenarios::abort_typed_in_a_released_in_place_workspace_names_the_landing())
         .assert_fully_decided_green();
 }
 
