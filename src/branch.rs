@@ -311,9 +311,33 @@ pub(crate) fn recorded_value(
     let written = store
         .write(|_| Ok(Vec::new()))
         .map_err(|e| write_refusal(vcs, &store, project, dir, branch, e))?;
-    match written.view.lookup(branch) {
+    value_of(vcs, &store, project, dir, branch, &written.view)
+}
+
+/// [`recorded_value`] with the merge of the remotes' records computed in
+/// memory and nothing written.
+pub(crate) fn recorded_value_unwritten(
+    vcs: &dyn Vcs,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+) -> anyhow::Result<Record> {
+    let store = Store::open(vcs, dir)?;
+    let view = store.view()?;
+    value_of(vcs, &store, project, dir, branch, &view)
+}
+
+fn value_of(
+    vcs: &dyn Vcs,
+    store: &Store<'_>,
+    project: &ProjectName,
+    dir: &Path,
+    branch: &BranchName,
+    view: &View,
+) -> anyhow::Result<Record> {
+    match view.lookup(branch) {
         Lookup::Value(record) => Ok(record),
-        lookup => Err(judge_lookup(vcs, &store, project, dir, branch, lookup)?.refused()),
+        lookup => Err(judge_lookup(vcs, store, project, dir, branch, lookup)?.refused()),
     }
 }
 

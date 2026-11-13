@@ -290,10 +290,6 @@ pub enum Defect {
     /// `rwv.toml`, conflict markers and all, so it cannot settle the
     /// conflicted entry and stage the file as the conflict stop says it does.
     SettersCannotReadAConflictedManifest,
-    /// `rwv push --dry-run` judges the refs as last fetched and runs no
-    /// fetch of its own, so with no fetch on record it reports a push that
-    /// the real push refuses as `push-branch` `diverged`.
-    DryRunPushJudgesStaleRefs,
 }
 
 impl Defect {
@@ -302,9 +298,6 @@ impl Defect {
             Defect::SettersCannotReadAConflictedManifest => {
                 "a setter cannot read an rwv.toml a merge left conflicted, so it cannot settle \
                  the entry"
-            }
-            Defect::DryRunPushJudgesStaleRefs => {
-                "a dry-run push judges refs as last fetched and reports a push the real push refuses"
             }
         }
     }

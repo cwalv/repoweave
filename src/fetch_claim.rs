@@ -12,7 +12,7 @@ use crate::vcs::{PruningFetch, RemoteHandle, Vcs};
 use anyhow::Context;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const FETCH_CLAIM_FILE: &str = ".rwv-fetch.lock";
 pub(crate) const FETCH_RECORD_FILE: &str = ".rwv-fetched";
@@ -28,29 +28,6 @@ fn read_record(path: &StatePath) -> anyhow::Result<Option<Vec<u8>>> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(anyhow::Error::new(e).context(format!("failed to read {path}"))),
     }
-}
-
-/// How long ago rwv's last pruning fetch of `remote` into the store `repo`
-/// draws from completed, or `None` where none is on record.
-pub(crate) fn last_fetch_age(
-    vcs: &dyn Vcs,
-    repo: &Path,
-    remote: &RemoteHandle,
-) -> anyhow::Result<Option<Duration>> {
-    let Some(store) = vcs.store_of(repo) else {
-        return Ok(None);
-    };
-    let path = StateFile::FetchRecord.in_dir(&store);
-    let Some(bytes) = read_record(&path)? else {
-        return Ok(None);
-    };
-    let record: FetchRecord =
-        serde_json::from_slice(&bytes).with_context(|| format!("failed to parse {path}"))?;
-    Ok(record.get(&remote.to_string()).map(|&at| {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH + Duration::from_secs(at))
-            .unwrap_or_default()
-    }))
 }
 
 /// A held claim on the object store a repo draws from, released when

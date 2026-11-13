@@ -322,19 +322,14 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
         .project_url_remote(&pushed.project_dir)
         .with_context(|| format!("failed to read the remotes of {}", pushed.project))?;
 
-    let mut fetched = Fetched::default();
-    if request.mode == PushMode::Publish {
-        fetched = fetch_all(
-            &request,
-            &pushed,
-            &members,
-            pvcs.as_ref(),
-            project_url_remote.as_ref(),
-        )
-        .map_err(|e| json_refusal(&nothing_reported, e))?;
-    } else {
-        fetched.fill_present(&members);
-    }
+    let fetched = fetch_all(
+        &request,
+        &pushed,
+        &members,
+        pvcs.as_ref(),
+        project_url_remote.as_ref(),
+    )
+    .map_err(|e| json_refusal(&nothing_reported, e))?;
 
     let plan = judge(
         ctx,
@@ -349,18 +344,7 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     .map_err(|(reported, e)| json_refusal(&reported, e))?;
 
     if request.mode == PushMode::DryRun {
-        plan.print_dry_run(
-            &pushed,
-            push_project,
-            &fetch_age_text(
-                pvcs.as_ref(),
-                &pushed.project_dir,
-                plan.project
-                    .as_ref()
-                    .map(|project| &project.target)
-                    .or(project_url_remote.as_ref()),
-            ),
-        );
+        plan.print_dry_run(&pushed, push_project);
         return Ok(());
     }
 
@@ -430,7 +414,10 @@ fn resolve(
             .judge(pvcs)
             .refused());
     }
-    let record = crate::branch::recorded_value(pvcs, &project, &dir, &branch)?;
+    let record = match request.mode {
+        PushMode::Publish => crate::branch::recorded_value(pvcs, &project, &dir, &branch)?,
+        PushMode::DryRun => crate::branch::recorded_value_unwritten(pvcs, &project, &dir, &branch)?,
+    };
     let tip = tip.expect("an attached branch with commits has a tip");
     if checked_out {
         refuse_uncommitted_project_state(pvcs, &dir, &project, request.output)
@@ -584,16 +571,6 @@ struct Fetched {
 }
 
 impl Fetched {
-    fn fill_present(&mut self, members: &[Member]) {
-        for member in members {
-            let present =
-                crate::url_remote::present(member.vcs.as_ref(), &member.dir, &member.entry.url)
-                    .ok()
-                    .flatten();
-            self.url_remotes.insert(member.path.clone(), present);
-        }
-    }
-
     fn url_remote(&self, path: &RepoPath) -> Option<&RemoteHandle> {
         self.url_remotes.get(path).and_then(Option::as_ref)
     }
@@ -769,11 +746,8 @@ struct ProjectPlan {
 }
 
 impl Plan {
-    fn print_dry_run(&self, pushed: &Pushed, push_project: bool, fetch_age: &str) {
-        outln!(
-            "rwv push (dry-run): judged on refs as last fetched{}",
-            fetch_age
-        );
+    fn print_dry_run(&self, pushed: &Pushed, push_project: bool) {
+        outln!("rwv push (dry-run): judged on refs as just fetched");
         for item in &self.items {
             outln!(
                 "  {}: would push {} -> {}",
@@ -1505,32 +1479,6 @@ fn plan_declared_branches(
         }
     }
     Ok(())
-}
-
-/// How long ago rwv last fetched the project repo's `remote`, or that it has
-/// no record of doing so.
-fn fetch_age_text(vcs: &dyn Vcs, repo: &Path, remote: Option<&RemoteHandle>) -> String {
-    let age = match remote {
-        Some(remote) => crate::fetch_claim::last_fetch_age(vcs, repo, remote),
-        None => Ok(None),
-    };
-    match age {
-        Ok(Some(age)) => {
-            let secs = age.as_secs();
-            let (n, unit) = match secs {
-                0..=59 => (secs, "second"),
-                60..=3599 => (secs / 60, "minute"),
-                3600..=86399 => (secs / 3600, "hour"),
-                _ => (secs / 86400, "day"),
-            };
-            format!(
-                " (last fetch {n} {unit}{} ago)",
-                if n == 1 { "" } else { "s" }
-            )
-        }
-        Ok(None) => " (no fetch on record)".to_owned(),
-        Err(e) => format!(" (the fetch record does not read: {e:#})"),
-    }
 }
 
 /// The pin rule for each member overwrite the plan holds: the replaced tip is

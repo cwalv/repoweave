@@ -125,7 +125,7 @@ rwv push [--json] [-j <N>] [--dry-run] [--branch <W>] [--overwrite <repo>]... [-
   run those hooks side by side, and the default push set is already narrowed
   to the writable roles. The project-repo push always runs serially as the
   last step regardless of `-j`.
-- `--dry-run` prints the push plan without fetching or pushing.
+- `--dry-run` runs the same pruning fetch as the push and prints the push plan without pushing; every refusal the push would make is made, and a remote the fetch cannot complete refuses as `push-branch` `unconfirmed`.
 - `--branch <W>` pushes weave branch `W` instead of the checked-out one.
 - `--overwrite <repo>` replaces that repo's diverged push branch, leased and
   backed up, as above; repeat it per repo. The project repo is

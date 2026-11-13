@@ -1237,6 +1237,7 @@ every_scenario!(
     create_diverged_at,
     push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member,
     push_dry_run_refuses_a_project_branch_ahead_and_behind,
+    push_dry_run_on_an_unreachable_remote_is_unconfirmed_not_would_push,
     pull_merge_upstream_brings_a_project_branch_ahead_and_behind_to_pushable,
     pull_merge_upstream_joins_both_sides_moving_the_same_member,
     pull_merge_upstream_takes_in_a_dropped_member_beside_local_lock_commits,
@@ -1371,7 +1372,14 @@ fn push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member() {
 
 #[test]
 fn push_dry_run_refuses_a_project_branch_ahead_and_behind() {
-    runner::run(scenarios::push_dry_run_refuses_a_project_branch_ahead_and_behind()).assert_green();
+    runner::run(scenarios::push_dry_run_refuses_a_project_branch_ahead_and_behind())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn push_dry_run_on_an_unreachable_remote_is_unconfirmed_not_would_push() {
+    runner::run(scenarios::push_dry_run_on_an_unreachable_remote_is_unconfirmed_not_would_push())
+        .assert_fully_decided_green();
 }
 
 #[test]

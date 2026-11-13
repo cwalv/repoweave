@@ -18324,12 +18324,13 @@ pub fn push_dry_run_refuses_a_project_branch_ahead_and_behind() -> Scenario {
     let mut steps = project_ahead_and_behind(MovedOnA::App, false, true);
     steps.extend([
         Step::rwv(&a(), &["push", "--dry-run"])
-            .expect(Exit::Defect(Defect::DryRunPushJudgesStaleRefs))
+            .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+            .claim(Claim::OutputContains("rwv pull --merge-upstream"))
             .claim(Claim::LocalStateUnchanged(a())),
         Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["push", "--dry-run"])
             .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
-            .claim(Claim::OutputContains("rwv pull --merge-upstream")),
+            .claim(Claim::LocalStateUnchanged(a())),
     ]);
     scenario(
         "push --dry-run refuses a project branch ahead and behind",
@@ -18460,6 +18461,27 @@ pub fn pull_merge_upstream_takes_in_a_dropped_member_beside_local_lock_commits()
     );
     scenario(
         "pull --merge-upstream takes in a dropped member beside local lock commits",
+        steps,
+    )
+}
+
+pub fn push_dry_run_on_an_unreachable_remote_is_unconfirmed_not_would_push() -> Scenario {
+    let mut steps = project_ahead_and_behind(MovedOnA::App, true, false);
+    steps.extend([
+        Step::unreachable(Remote::origin(Repo::Proj)),
+        Step::rwv(&a(), &["push", "--dry-run"])
+            .expect(Exit::refuses(Repo::Proj, State::PushBranchUnconfirmed))
+            .claim(Claim::OutputLacks("would push"))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::refuses(Repo::Proj, State::PushBranchUnconfirmed))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::reachable(Remote::origin(Repo::Proj)),
+        Step::rwv(&a(), &["push", "--dry-run"])
+            .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged)),
+    ]);
+    scenario(
+        "push --dry-run on an unreachable remote is unconfirmed, not would push",
         steps,
     )
 }
