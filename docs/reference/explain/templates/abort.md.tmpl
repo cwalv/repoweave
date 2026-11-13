@@ -77,6 +77,12 @@ when all repos restored without a foreign-tip violation.
 - **Side effects outside the git history** — integration-generated files,
   `node_modules/`, `.venv/`, etc. are not snapshotted and are not rolled back.
 
+### Abort is planned whole, then executed
+
+Before it writes anything, abort plans every step on both sides: each checkout's restore, each branch moved as a ref, each branch moved in place in a workspace since gone, each created branch it would delete, each ref an update moved. What it cannot read blocks the plan, naming what could not be read. A cancel the VCS would refuse (a file the stopped operation staged and the working tree changed since) blocks it too. Any blocked step, or a landing's target judged moved as a unit, refuses the whole abort with one report: nothing of either side is restored, the op record is kept and `--continue` stays open.
+
+Once the plan is clear abort takes the claims it needs, plans again under them, and only then begins. From that point `--continue` is closed. The target's project branch is written first. Each write checks, just before it writes, the state the plan judged; a repo that moved in between makes that one write refuse, and abort stops there: what was restored stays, nothing after it is done, and `rwv abort` run again completes the rest.
+
 ### When `abort` refuses
 
 `abort` returns an error with `no operation in progress` when no `.rwv-op`
@@ -88,9 +94,13 @@ This can happen if:
 - The op-state was removed manually.
 - A prior `rwv abort` completed cleanly and cleared op-state.
 
-`abort` also refuses per-repo (foreign-tip violation) when a repo's current tip
-cannot be attributed to the op. In that case op-state is retained so the
-operator can re-run after reconciling.
+`abort` also refuses, as `foreign-tip`, when its plan is blocked: a repo's current
+tip cannot be attributed to the op, a branch is gone or checked out elsewhere,
+uncommitted edits would be discarded in a workspace abort was not run in, or
+something could not be read. The refusal says nothing is restored (for a landing,
+"nothing of either side is restored"), keeps op-state and leaves `--continue`
+open, and prints the choices below. After abort has begun, the refusal says
+"nothing more is restored" and `--continue` is closed.
 
 ### A landing's target is restored whole or not at all
 
@@ -160,11 +170,17 @@ drops; nothing reads a tombstone as a backup before then.
 ```
 rwv abort
 rwv abort --abandon-foreign-tip <repo> [--abandon-foreign-tip <repo> ...]
+rwv abort --leave-target [--abandon-foreign-tip <repo> ...]
 ```
 
-`abort` reads everything else it needs from `.rwv-op`. The one flag is the
-per-repo waiver described above; without it `abort` never moves a branch off
-commits it cannot attribute to the op.
+`abort` reads everything else it needs from `.rwv-op`. `--abandon-foreign-tip` is
+the per-repo waiver described above; without it `abort` never moves a branch off
+commits it cannot attribute to the op. `--leave-target` ends a landing whose
+target something else moved: the source is restored and the target is left as it
+stands, each tip the landing wrote there kept as a backup first where no branch
+reaches it. It is refused, before anything moves, where abort can restore the
+target, for an operation that is not a landing, and where the source's own
+restore is blocked. The target is given up only after the source was restored.
 
 Run `rwv abort --help` for the full clap surface.
 
@@ -204,8 +220,13 @@ with a count of any remainder). Each foreign-tip block also notes whether the
 tip is strictly ahead of or diverged from the savepoint.
 
 The recovery-options block is printed exactly once at the end (to stderr)
-when at least one repo refused. It lists each refused repo with the choices
-that clear it, each command on a line of its own:
+when the plan was blocked. It lists each refused repo with the choices
+that clear it, each command on a line of its own, then the command that ends the
+operation for each way it can end (rerun `rwv abort` once the fixes are made;
+`rwv abort --abandon-foreign-tip <repo> ...` naming every repo that can be given
+up; `rwv land --continue` where a landing's retire stopped; `rwv abort
+--leave-target` where the target is not restored). Every such command carries the
+`--abandon-foreign-tip` consent the invocation already gave. The choices:
 
 - a foreign tip: `rwv abort --abandon-foreign-tip <repo>`; the commits are
   kept as an `abandoned` backup.
@@ -213,12 +234,22 @@ that clear it, each command on a line of its own:
   or checked out elsewhere: the VCS command that puts the branch back at the
   savepoint, or freeing the other checkout, then `rwv abort`.
 - an operation in progress abort may not cancel: finish or abandon it there
-  (the VCS's status command names how), then `rwv abort`; or `rwv abort
-  --abandon-foreign-tip <repo>`, which keeps its edits and commits as
-  backups before canceling it.
+  (the VCS's status command names how), then `rwv abort`; or, where the give-up
+  would be accepted, `rwv abort --abandon-foreign-tip <repo>`, which keeps its
+  edits and commits as a backup before canceling it. Where it would be
+  accepted only from the other workspace of a landing, the line is
+  `rwv -C <workspace> abort [--abandon-foreign-tip <repo>]`; where it is
+  accepted nowhere, no give-up line is printed.
+- uncommitted edits in a workspace abort was not run in: set them aside there with
+  the printed stash (untracked files included, ignored files too where one is in
+  the way), or the status line where an operation or unresolved paths are in the
+  way; then `rwv abort`.
+- a plan that could not be read (a broken manifest, a branch savepoint): make it
+  readable and rerun; for a landing, `rwv abort --leave-target` ends it without
+  reading the target.
 
-On failure for any repo, `abort` continues to the next repo before exiting
-non-zero.
+A refused abort writes nothing. An abort that began and found a write no longer
+doing what the plan named stops at that write and exits non-zero.
 
 Once `abort` begins it marks the operation's record, so an abort that refuses
 or is interrupted leaves an operation only `rwv abort` takes up: `--continue`
@@ -280,8 +311,9 @@ flag, so the tip abort sees is one it can attribute to the op.
 - *`--abandon-foreign-tip` names the repo of project `<other>`* — the flag took
   `projects/<other>`, but the operation belongs to another project. Name its
   project repo as the message says.
-- *verified restore failed* — abort could not complete one repo's restore; the
-  cause follows. When it is the backup under `--abandon-foreign-tip` that could
-  not be written, abort did not reset: information-preservation is the first
-  obligation, and the repo is left where it was. The other repos are still
-  attempted, op-state is retained, and `rwv abort` can be retried.
+- *abort completed with failures* — a write the plan named could not be made
+  (the repo moved after abort judged it, or the backup under
+  `--abandon-foreign-tip` could not be written, in which case abort did not
+  reset: information-preservation is the first obligation). Abort stopped at that
+  step: what it restored stays, nothing after it was done, op-state is
+  retained, and `rwv abort` can be retried.

@@ -36,7 +36,7 @@ If the operation paused on a conflict, stage the resolved files in the conflicte
 
 A branch the landing moved without a checkout is put back once every checkout is restored, only from the tip the landing wrote and only while nothing has it checked out; one the landing created is deleted.
 
-Every commit `rwv abort` resets off is one the operation made, so the commits it discards are the operation's own output. Uncommitted edits made during the stop are kept: before any reset that would discard them in the workspace you run it in, `rwv abort` keeps them as a backup and prints its name (`rwv backup list` shows it). Edits in a checkout of the other workspace of a landing refuse the abort instead: it names the command that sets them aside there, or run `rwv abort` in that workspace, which keeps them as a backup. Canceling the operation's own stopped rebase or merge is the one step it takes as the VCS's own abort would. A refusal moves and writes nothing.
+Every commit `rwv abort` resets off is one the operation made, so the commits it discards are the operation's own output. Uncommitted edits made during the stop are kept: before any reset that would discard them in the workspace you run it in, `rwv abort` keeps them as a backup and prints its name (`rwv backup list` shows it). Edits in a checkout of the other workspace of a landing refuse the abort instead: it names the command that sets them aside there, or run `rwv abort` in that workspace, which keeps them as a backup. Canceling the operation's own stopped rebase or merge is the one step it takes as the VCS's own abort would. A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a foreign tip, a branch that is gone or checked out elsewhere, edits in the other workspace of a landing, a manifest it cannot read) refuses the whole abort, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
 
 ### Handling a `foreign-tip` refusal
 
@@ -48,7 +48,16 @@ If a commit was made in a repository after the sync paused, `rwv abort` refuses 
   ```
   The abandoned commits are first kept as a backup marked `abandoned`, named for the branch they were on, and abort prints its name. `rwv backup list` shows it with the commits only it holds, and `rwv backup drop github/foo/bar <name>` drops it once they are not wanted. If the foreign agent kept committing between two runs, the rerun keeps the tip as it then stands.
 
-Once `rwv abort` has begun, the operation can only be aborted: `--continue` refuses it, so rerun `rwv abort` after clearing what it refused.
+The refusal ends with the commands that end the operation, one per way it can end, each already carrying every `--abandon-foreign-tip` you gave, so run a printed command as printed:
+
+- `rwv abort` again, once the fixes it printed are made;
+- `rwv abort --abandon-foreign-tip <repo> ...`, naming each repository that can be given up;
+- `rwv land --continue`, where a landing stopped in its retire and can finish;
+- `rwv abort --leave-target`, for a landing whose target something else moved: the source is restored, the target is left as it stands, and each tip the landing wrote there is kept as a backup first where no branch reaches it.
+
+Edits in the other workspace of a landing are set aside there with the stash the refusal prints (`git -C <checkout> stash push --include-untracked`, or `--all` where an ignored file is in the way), or the abort is run in that workspace (`rwv -C <workspace> abort`) where the refusal prints that line.
+
+Once `rwv abort` has begun, the operation can only be aborted: `--continue` refuses it. A write that finds a repository moved since abort judged it stops there, saying `abort stopped there`; what was restored stays, nothing after it is done, and `rwv abort` run again completes the rest.
 
 A repository refused because it is stopped in an operation abort did not start prints its own choices: finish or abandon that operation there, then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip <repo>`, which keeps its edits and commits as backups before canceling it.
 

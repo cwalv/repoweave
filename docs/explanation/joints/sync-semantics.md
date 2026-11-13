@@ -147,6 +147,15 @@ off. The consent applies to the tip abort finds when it runs, so a foreign
 agent that kept committing between two runs has the tip as it then stands
 kept. `rwv backup list` shows the backup and `rwv backup drop` drops it.
 
+**Planned whole.** Abort plans every write on both sides before it makes any. One
+blocked step (a foreign tip, a branch gone or checked out elsewhere, edits in a
+workspace abort was not run in, something unreadable) refuses the whole abort:
+nothing of either side is restored and `--continue` stays open. After it begins,
+`--continue` is closed, and a write that finds a repo moved since the plan stops
+there; a rerun of `rwv abort` completes the rest. `--leave-target` ends a landing
+whose target abort cannot restore, restoring the source first and giving up the
+target only after that.
+
 ## Snapshot reads
 
 A `land` reads its target once, at the start of the operation (T₀): its
