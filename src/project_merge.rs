@@ -971,7 +971,7 @@ impl Produced {
     fn says(self) -> &'static str {
         match self {
             Self::Merge => {
-                "the merge is in progress and its staged rwv.toml does not parse; a staged \
+                "the merge is in progress and stages no rwv.toml that parses; a staged \
                  rwv.toml that parses is committed in the merge"
             }
             Self::Replay => {
