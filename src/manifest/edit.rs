@@ -1215,7 +1215,7 @@ repositories."github/a/lib".history = "merge"
     }
 
     #[test]
-    fn layouts_whose_spelling_is_normalised_still_declare_what_the_change_made() {
+    fn layouts_whose_spelling_is_normalized_still_declare_what_the_change_made() {
         let member = |name: &str| {
             [
                 ("type", "\"git\"".to_owned()),
