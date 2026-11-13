@@ -8560,8 +8560,7 @@ fn settle_held_drift(
         let carries = !reading.in_the_way(repo_abs).is_empty()
             || !vcs
                 .uncompared_paths(repo_abs, &reading.moved_and_edited())
-                .unwrap_or_default()
-                .is_empty();
+                .is_ok_and(|uncompared| uncompared.is_empty());
         merged_any |= held.resolving.is_some();
         let Some(resolution) = held.resolving.filter(|_| elsewhere.is_none() && !carries) else {
             held.refused.add(place(judging).judge(vcs));
