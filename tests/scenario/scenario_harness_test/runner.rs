@@ -730,8 +730,8 @@ impl Step {
         )
     }
 
-    /// Moves the member tables of the project's `rwv.toml` at `at` into
-    /// `order`, where the first of them stood, as a hand edit would; leaves the
+    /// Lays the project's `rwv.toml` at `at` out as a serializer would, its
+    /// member tables first and in `order`, the other tables after; leaves the
     /// change uncommitted.
     pub fn reorder_manifest(at: &Place, order: &[Repo]) -> Step {
         let names: Vec<&str> = order.iter().map(|r| r.name()).collect();
@@ -1435,44 +1435,42 @@ impl Run<'_> {
             Action::ReorderManifest { at, order } => {
                 let manifest_path = sb.checkout(at, Repo::Proj).join("rwv.toml");
                 let text = std::fs::read_to_string(&manifest_path).unwrap();
-                let mut blocks: Vec<(Option<Repo>, String)> = vec![(None, String::new())];
-                for line in text.split_inclusive('\n') {
+                let mut blocks: Vec<(String, String)> = Vec::new();
+                for line in text.lines() {
                     if line.starts_with('[') {
-                        let member = order.iter().copied().find(|m| {
-                            line.trim_end() == format!("[repositories.\"{}\"]", m.rel_path())
-                        });
-                        blocks.push((member, String::new()));
+                        blocks.push((line.to_owned(), String::new()));
                     }
-                    blocks.last_mut().unwrap().1.push_str(line);
-                }
-                let moved: Vec<String> = order
-                    .iter()
-                    .filter_map(|m| {
-                        blocks
-                            .iter()
-                            .find(|(b, _)| *b == Some(*m))
-                            .map(|(_, t)| t.clone())
-                    })
-                    .collect();
-                if moved.len() != order.len() {
-                    return (
-                        false,
-                        format!("{} lacks a table of {order:?}", manifest_path.display()),
-                    );
-                }
-                let mut out = String::new();
-                let mut placed = false;
-                for (member, block) in &blocks {
-                    match member {
-                        None => out.push_str(block),
-                        Some(_) if !placed => {
-                            placed = true;
-                            moved.iter().for_each(|b| out.push_str(b));
+                    if let Some((_, body)) = blocks.last_mut() {
+                        if !line.is_empty() {
+                            body.push_str(line);
+                            body.push('\n');
                         }
-                        Some(_) => {}
                     }
                 }
-                std::fs::write(&manifest_path, out).unwrap();
+                let mut tables: Vec<String> = Vec::new();
+                for member in order {
+                    let header = format!("[repositories.\"{}\"]", member.rel_path());
+                    match blocks.iter().find(|(h, _)| *h == header) {
+                        Some((_, body)) => tables.push(body.clone()),
+                        None => {
+                            return (
+                                false,
+                                format!(
+                                    "{} has no table for {}",
+                                    manifest_path.display(),
+                                    member.name()
+                                ),
+                            )
+                        }
+                    }
+                }
+                tables.extend(
+                    blocks
+                        .iter()
+                        .filter(|(h, _)| !h.starts_with("[repositories"))
+                        .map(|(_, body)| body.clone()),
+                );
+                std::fs::write(&manifest_path, tables.join("\n")).unwrap();
                 (true, String::new())
             }
             Action::DropManifestEntry {
