@@ -1630,45 +1630,213 @@ fn a_declined_file_write_leaves_the_index_entries_and_records_nothing() {
     );
 }
 
-/// The refresh writes its files before any index entry, and a landing
-/// killed between the two leaves every index entry at the old tip beside
-/// files holding HEAD's content, which still reads as drift: the next verb
-/// resets the entries.
-#[test]
-fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
-    let f = fixture();
+/// A move of every shape: two files changed, one of them already holding
+/// the new content here, a file and a file under a new directory added, a
+/// file deleted, a file turned into a directory, a directory turned into a
+/// file, and, where links exist, a link added.
+fn move_of_every_shape(f: &Fixture) {
+    std::fs::create_dir_all(f.ww_lib.join("dir")).unwrap();
+    commit_file(&f.ww_lib, "dir/inner.txt", "inner\n", "dir");
     f.move_with("ww/project", |elsewhere| {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
         std::fs::write(elsewhere.join("spare.txt"), "spare moved\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+        std::fs::create_dir_all(elsewhere.join("pkg")).unwrap();
+        std::fs::write(elsewhere.join("pkg/mod.rs"), "mod\n").unwrap();
+        std::fs::remove_file(elsewhere.join("README.md")).unwrap();
+        std::fs::remove_file(elsewhere.join("feature.txt")).unwrap();
+        std::fs::create_dir_all(elsewhere.join("feature.txt")).unwrap();
+        std::fs::write(elsewhere.join("feature.txt/x"), "x\n").unwrap();
+        std::fs::remove_dir_all(elsewhere.join("dir")).unwrap();
+        std::fs::write(elsewhere.join("dir"), "dir as a file\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("notes.txt", elsewhere.join("link")).unwrap();
     });
     std::fs::write(f.ww_lib.join("spare.txt"), "spare moved\n").unwrap();
+}
+
+/// Every file [`move_of_every_shape`] writes holds the moved tip's content.
+fn holds_every_shape(f: &Fixture) -> bool {
+    let link = {
+        #[cfg(unix)]
+        {
+            std::fs::read_link(f.ww_lib.join("link")).ok() == Some(PathBuf::from("notes.txt"))
+        }
+        #[cfg(not(unix))]
+        {
+            true
+        }
+    };
+    read(&f.ww_lib.join("notes.txt")).as_deref() == Some("three\n")
+        && read(&f.ww_lib.join("new.txt")).as_deref() == Some("new\n")
+        && read(&f.ww_lib.join("pkg/mod.rs")).as_deref() == Some("mod\n")
+        && !f.ww_lib.join("README.md").exists()
+        && read(&f.ww_lib.join("feature.txt/x")).as_deref() == Some("x\n")
+        && read(&f.ww_lib.join("dir")).as_deref() == Some("dir as a file\n")
+        && link
+}
+
+/// The refresh writes its files before any index entry, and a landing
+/// killed between the two leaves every index entry at the old tip beside
+/// files holding HEAD's content, which still reads as drift whatever the
+/// move did to each path: the next verb writes the entries.
+#[test]
+fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
+    let f = fixture();
+    move_of_every_shape(&f);
     let held = held_landing(&f, "drift-write-index");
     drop(held);
+    assert!(holds_every_shape(&f), "the files were written first");
     assert_eq!(
-        read(&f.ww_lib.join("notes.txt")).as_deref(),
-        Some("three\n"),
-        "the files were written first"
-    );
-    assert_eq!(
-        common::git_in(&f.ww_lib, &["diff", "--cached", "--name-only", "HEAD"]),
-        "notes.txt\nspare.txt",
+        common::git_in(&f.ww_lib, &["ls-files", "--", "new.txt", "README.md"]),
+        "README.md",
         "no index entry was written"
     );
 
     let out = common::cli::run(&["lock"], &f.ww);
 
     let said = common::cli::describe(&out);
-    assert!(!said.contains("commit your edits"), "{said}");
-    assert_eq!(
-        read(&f.ww_lib.join("notes.txt")).as_deref(),
-        Some("three\n"),
-        "{said}"
-    );
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("refreshed drift"), "{said}");
+    assert!(holds_every_shape(&f), "{said}");
     assert_eq!(
         common::git_in(&f.ww_lib, &["status", "--porcelain"]),
         "",
         "{said}"
     );
+}
+
+/// A file write git declines part way, after it wrote the files the move
+/// adds: once what stopped it is cleared, the printed choice finishes the
+/// refresh, nothing having been edited.
+#[cfg(unix)]
+#[test]
+fn a_file_write_declined_part_way_is_finished_by_the_printed_choice() {
+    let f = fixture();
+    std::fs::create_dir_all(f.ww_lib.join("ro")).unwrap();
+    commit_file(&f.ww_lib, "ro/x.txt", "x\n", "ro");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("ro/x.txt"), "x2\n").unwrap();
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+    set_writable(&f.ww_lib.join("ro"), false);
+    let out = common::cli::run(&["lock"], &f.ww);
+    set_writable(&f.ww_lib.join("ro"), true);
+    let said = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert_eq!(
+        read(&f.ww_lib.join("new.txt")).as_deref(),
+        Some("new\n"),
+        "git wrote the added file before it stopped:\n{said}"
+    );
+
+    let commands: Vec<String> = choice_lines(&said)
+        .into_iter()
+        .filter(|l| l.starts_with("rwv ") || l.starts_with("git "))
+        .collect();
+    assert_eq!(commands, vec!["rwv doctor --fix".to_owned()], "{said}");
+    let words: Vec<&str> = commands[0].split_whitespace().collect();
+
+    let out = common::cli::run(&words[1..], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("[fixed] core: drift in"), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+    assert_eq!(read(&f.ww_lib.join("ro/x.txt")).as_deref(), Some("x2\n"));
+    let out = common::cli::run(&["lock"], &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+}
+
+/// Another process taking the index between the refresh's two writes: the
+/// index write fails, the files the move adds stand written, and once the
+/// index is free the next verb finishes the refresh.
+#[test]
+fn an_index_lock_taken_between_the_writes_reads_as_drift() {
+    let f = fixture();
+    move_of_every_shape(&f);
+    let lock = common::git_in(
+        &f.ww_lib,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "index.lock",
+        ],
+    );
+    let held = held_landing(&f, "drift-write-index");
+    std::fs::write(&lock, "").unwrap();
+
+    let out = held.release();
+
+    let said = left_in_place(&out, "the write failed");
+    assert!(holds_every_shape(&f), "{said}");
+    std::fs::remove_file(&lock).unwrap();
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+}
+
+/// The operator stages an edit of one moved file between the refresh's two
+/// writes: that file alone is held as moved and edited; every path the move
+/// added, deleted or swapped still reads as drift.
+#[test]
+fn an_edit_staged_between_the_writes_is_the_only_one_held() {
+    let f = fixture();
+    move_of_every_shape(&f);
+    let held = held_landing(&f, "drift-write-index");
+    std::fs::write(f.ww_lib.join("notes.txt"), "operator staged this\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "notes.txt"]);
+
+    let out = held.release();
+    common::cli::refused(&out, State::EditsDriftLeftInPlace);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::refused(&out, State::EditsMovedAndEdited);
+    assert_eq!(
+        listing_under(&said, "edits moved and edited"),
+        vec!["notes.txt".to_owned()],
+        "{said}"
+    );
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("operator staged this\n")
+    );
+}
+
+/// A second verb run while the first stands between its two writes reads
+/// the checkout as drift and finishes the refresh; the first then finishes
+/// too.
+#[test]
+fn a_verb_run_between_another_refreshs_writes_finishes_it() {
+    let f = fixture();
+    move_of_every_shape(&f);
+    let held = held_landing(&f, "drift-write-index");
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+        "",
+        "{said}"
+    );
+    let out = held.release();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+    assert!(holds_every_shape(&f));
 }
 
 /// An edit refused beside drift whose refresh was declined is listed with no

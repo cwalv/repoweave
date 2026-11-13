@@ -1076,8 +1076,11 @@ fn unwatched_entries(repo: &Path) -> Result<BTreeSet<String>, VcsError> {
 /// file git does not compare with its index entry and that differs from it.
 /// `diff-index` also reports a file whose stat data no longer matches its
 /// index entry as changed without reading it, so the stat data is refreshed
-/// first, as `git status` does, and a file the move changed that still
-/// differs from its old-tip entry is hashed against `HEAD`.
+/// first, as `git status` does. A path the move changed whose index entry is
+/// the old tip's and whose file or link differs from it, or stands where the
+/// index has no entry, is compared with `HEAD`'s entry: a refresh stopped
+/// between its file write and its index write leaves exactly that, at every
+/// path the move added, changed or turned into another kind of entry.
 ///
 /// A submodule's checkout is never written by a refresh, which writes its
 /// entry alone: a moved submodule whose checkout stands where the old tip put
@@ -1180,28 +1183,64 @@ fn path_standings(repo: &Path, left: Option<&CommitId>) -> Result<Vec<PathStandi
             standing.file = Holds::Other;
         }
     }
-    let holding_head = {
-        let candidates: Vec<(&str, &str)> = standings
-            .iter()
-            .filter(|s| s.moved && s.index == Holds::LeftTip && s.file == Holds::Other)
-            .filter(|s| !unwatched.contains(&s.path))
-            .filter_map(|s| {
-                let change = file_vs_head.get(&s.path)?;
-                let regular = matches!(change.rev_mode.as_str(), "100644" | "100755")
-                    && change.other_mode == change.rev_mode
-                    && change.status == "M"
-                    && std::fs::symlink_metadata(repo.join(&s.path)).is_ok_and(|m| m.is_file());
-                regular.then_some((s.path.as_str(), change.rev_object.as_str()))
-            })
-            .collect();
-        files_holding(repo, &candidates)
-    };
+    let candidates: Vec<(&str, &RawChange)> = standings
+        .iter()
+        .filter(|s| s.moved && s.index == Holds::LeftTip && s.file == Holds::Other)
+        .filter(|s| !unwatched.contains(&s.path) && standing_at_its_own_name(repo, &s.path))
+        .filter_map(|s| Some((s.path.as_str(), file_vs_head.get(&s.path)?)))
+        .filter(|(_, change)| change.rev_mode != "000000" && change.rev_mode != GITLINK)
+        .collect();
+    let holding_head = standing_as_entries(repo, &candidates);
     for standing in &mut standings {
         if holding_head.contains(&standing.path) {
             standing.file = Holds::Head;
         }
     }
     Ok(standings)
+}
+
+/// Of `candidates`, each a path paired with how `HEAD` records it, those
+/// whose file or link on disk is exactly that entry: a regular file of its
+/// content and exec bit, or a link to its target. Where the checkout does
+/// not make links, git writes a link's target as a regular file.
+fn standing_as_entries(repo: &Path, candidates: &[(&str, &RawChange)]) -> BTreeSet<String> {
+    let mut regular = Vec::new();
+    let mut matching = BTreeSet::new();
+    let mut makes_links = None;
+    for (path, entry) in candidates {
+        let Ok(meta) = std::fs::symlink_metadata(repo.join(path)) else {
+            continue;
+        };
+        let object = entry.rev_object.as_str();
+        match entry.rev_mode.as_str() {
+            "100644" | "100755"
+                if meta.is_file() && exec_bit_matches(repo, path, &entry.rev_mode) =>
+            {
+                regular.push((*path, object))
+            }
+            "120000" if meta.is_symlink() => {
+                let target = std::fs::read_link(repo.join(path)).ok();
+                let recorded = GitVcs::run_bytes_in(&["cat-file", "blob", object], repo, &[], &[]);
+                if let (Some(target), Ok(recorded)) = (target, recorded) {
+                    if target.as_os_str().as_encoded_bytes() == recorded.as_slice() {
+                        matching.insert((*path).to_owned());
+                    }
+                }
+            }
+            "120000" if meta.is_file() => {
+                let links = *makes_links.get_or_insert_with(|| {
+                    GitVcs::run_trimmed(["config", "--type=bool", "core.symlinks"], repo)
+                        .map_or(true, |v| v != "false")
+                });
+                if !links {
+                    regular.push((*path, object));
+                }
+            }
+            _ => {}
+        }
+    }
+    matching.extend(files_holding(repo, &regular));
+    matching
 }
 
 /// Whether a file or link stands at `path` itself, below directories only.
@@ -1259,8 +1298,9 @@ fn refresh_stat_data(repo: &Path) {
 ///
 /// The files are written through a copy of the index, which git checks them
 /// against and then updates, so the checkout's own index keeps `left`'s
-/// entries: a write stopped there leaves each path's index entry at `left`
-/// beside a file holding `head`'s content, which reads as drift again.
+/// entries: a write stopped there leaves each path's index entry at `left`,
+/// absent where `left` lacks the path, beside what `head` puts on disk there,
+/// which reads as drift again.
 ///
 /// Git's check passes two things a person can lose: an ignored file or
 /// directory where `head` adds a path, which the merge treats as expendable,

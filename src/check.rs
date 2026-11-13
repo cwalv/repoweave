@@ -7569,7 +7569,8 @@ impl DriftRefresh {
 /// left, record that the checkout stands at its HEAD. The files are written
 /// first and every index entry after them in one write, so a run stopped or
 /// declined between the two leaves each path's index entry at the moved-from
-/// tip beside a file holding HEAD's content, which reads as drift again.
+/// tip, absent where that tip lacks the path, beside what HEAD puts on disk
+/// there, which reads as drift again.
 pub fn refresh_drift(
     vcs: &dyn crate::vcs::Vcs,
     repo: &Path,
