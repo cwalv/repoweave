@@ -19222,6 +19222,10 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains("rwv.toml")),
                 Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
                     .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation)),
+                Step::rwv(&ww("w"), &["cherry-pick", "--continue"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("workweave changed on both sides"))
+                    .claim(Claim::OutputLacks("set-history")),
                 Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
                 head_manifest().claim(Claim::OutputContains("history = \"linear\"")),
             ]);
