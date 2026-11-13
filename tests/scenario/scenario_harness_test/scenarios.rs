@@ -19302,6 +19302,9 @@ pub enum TextMerge {
     DuplicateKey(ManifestStopHistory),
     /// [`TextMerge::DuplicateKey`] at a landing.
     DuplicateKeyLand(ManifestStopHistory),
+    /// [`TextMerge::DuplicateKey`] replayed and settled by a staged hand
+    /// edit, after git's own continue refused while it was unmerged.
+    DuplicateKeyByHand,
     /// [`TextMerge::DuplicateKey`] replayed, with a second workweave commit
     /// changing `rwv.toml`: the continue writes the first, and the replay is
     /// killed at the next pause and `then` exits it.
@@ -19515,6 +19518,29 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                         "a landing's replay whose text merge of rwv.toml holds a key twice stops"
                     }
                 },
+                steps,
+            )
+        }
+        T::DuplicateKeyByHand => {
+            let mut steps = duplicated(H::Linear);
+            steps.extend([
+                Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("into a file that does not parse")),
+                Step::git(&ww("w"), Repo::Proj, &["rebase", "--continue"]).expect(Exit::Code(1)),
+                Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"])
+                    .expect(Exit::Succeeds),
+                Step::git(&ww("w"), Repo::Proj, &["add", "--", "rwv.toml"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["sync", "--continue"])
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj]),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLacks("fork")),
+                one(&ww("w"), "history"),
+            ]);
+            (
+                "a replayed commit the check stopped is settled by a staged hand edit",
                 steps,
             )
         }
