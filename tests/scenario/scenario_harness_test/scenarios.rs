@@ -22135,7 +22135,12 @@ pub fn a_removed_rwv_toml_stops_as_unparseable(taking_in: TakingIn) -> Scenario 
                 Repo::Proj,
                 State::UnparseableProjectMidOperation,
             ))
-            .claim(Claim::LocalStateUnchanged(ww("w"))),
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(if taking_in.linear() {
+                Claim::OutputContains("the replayed tip's rwv.toml does not parse")
+            } else {
+                Claim::OutputLacks("rwv.toml does not parse")
+            }),
     ]);
     steps.extend(aborted_from(Step::rwv(&ww("w"), &["abort"]), &ww("w"), &[]));
     scenario("a removed rwv.toml stops as unparseable", steps)
