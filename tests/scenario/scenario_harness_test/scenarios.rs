@@ -8335,6 +8335,84 @@ pub fn moved_and_edited_unresolved_then_moved_again() -> Scenario {
     )
 }
 
+/// A seat holds a file both moved and edited beside an edit to a file the
+/// move did not touch: the landing lists that edit with no choice of its
+/// own. The branch then moves again while the merge waits to write: nothing
+/// is backed up or written, and running it again merges onto the newest tip.
+pub fn moved_and_edited_moved_again_before_the_write() -> Scenario {
+    let me = ww("me");
+    scenario(
+        "moved and edited, moved again before the write",
+        vec![
+            create("me"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nthree\nfour\nfive\n"),
+                    ("stale.txt", "s\n"),
+                    ("other.txt", "o\n"),
+                ],
+            ),
+            Step::git(&me, Repo::Lib, &["reset", "-q", "--hard"]),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nthree\nfour\nFIVE\n"),
+                    ("stale.txt", "s2\n"),
+                ],
+            ),
+            Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_edit(&me, Repo::Lib, "edited.txt", "one", "ONE"),
+            Step::hand_edit(&me, Repo::Lib, "other.txt", "o", "mine"),
+            Step::rwv(&me, &["land"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains("    other.txt"))
+                .claim(Claim::OutputLacks("commit your edits")),
+            Step::rwv_paused(
+                &me,
+                &["doctor", "--fix", "--merge-edited-drift"],
+                "drift-merge-write",
+                "merging",
+            ),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--me",
+                &[
+                    ("edited.txt", "one\ntwo\nthree\nfour\nFIVE\nsix\n"),
+                    ("stale.txt", "s3\n"),
+                ],
+            ),
+            Step::release("merging")
+                .expect(Exit::refuses(Repo::Lib, State::EditsMovedAndEdited))
+                .claim(Claim::OutputContains("moved again"))
+                .claim(Claim::OutputLacks("kept as backup")),
+            Step::git(
+                &me,
+                Repo::Lib,
+                &["grep", "-q", "-e", "^s$", "--", "stale.txt"],
+            ),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "ONE", "--", "edited.txt"]),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "five", "--", "edited.txt"]),
+            Step::rwv(&me, &["lock", "--dirty", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&me, &["doctor", "--fix", "--merge-edited-drift"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("were merged onto")),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "six", "--", "edited.txt"]),
+            Step::git(&me, Repo::Lib, &["grep", "-q", "ONE", "--", "edited.txt"]),
+            Step::git(
+                &me,
+                Repo::Lib,
+                &["grep", "-q", "-e", "^s3$", "--", "stale.txt"],
+            ),
+        ],
+    )
+}
+
 /// Where `moved_and_edited_interrupted` stops the merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MergeKilledAt {

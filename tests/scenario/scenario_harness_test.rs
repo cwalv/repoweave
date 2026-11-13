@@ -1282,6 +1282,7 @@ every_scenario!(
     moved_and_edited(scenarios::MovedAndEditedEnd::TwoEdits),
     moved_and_edited_doctor,
     moved_and_edited_second_reading,
+    moved_and_edited_moved_again_before_the_write,
     moved_and_edited_unresolved_then_moved_again,
     moved_and_edited_in_the_target,
     moved_and_edited_judged_by(scenarios::HeldVerb::Lock),
@@ -5592,6 +5593,12 @@ fn a_file_moved_and_edited_in_the_target_is_merged_by_the_choice_printed_from_th
 #[test]
 fn a_conflict_left_by_a_merge_is_judged_unresolved_first_even_once_the_branch_moves_again() {
     runner::run(scenarios::moved_and_edited_unresolved_then_moved_again())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_branch_moved_again_before_the_merge_writes_leaves_everything_and_the_next_run_merges() {
+    runner::run(scenarios::moved_and_edited_moved_again_before_the_write())
         .assert_fully_decided_green();
 }
 
