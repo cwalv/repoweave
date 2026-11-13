@@ -245,8 +245,7 @@ if run_stage no-test-pause; then
     header "cargo test --no-fail-fast --test test_pause_build -- --include-ignored (built as releases build it: without test-pause)"
     # No feature flags, as releases build. Debug, not the test stages' release
     # profile: whether the pause is compiled in turns on the features, never
-    # on the profile, and the debug library is one drift's generator build
-    # compiles anyway.
+    # on the profile, and the debug build compiles faster.
     with_symlinked_tmpdir cargo test --no-fail-fast --test test_pause_build -- --include-ignored
 fi
 
@@ -283,7 +282,9 @@ if run_stage drift; then
     # currently produces from current inputs — nothing about a hand edit
     # anywhere else, and nothing about one made inside them, since
     # regeneration already overwrote it before this diff ran.
-    cargo run --quiet --example generate-explain
+    # Release with the test stages' features, so the generator reuses the
+    # build they made rather than compiling the library a second time.
+    cargo run --release --features test-pause --quiet --example generate-explain
     git diff --exit-code -- docs/reference/explain/ docs/reference/schemas/ docs/reference/prime/ docs/reference/refusals.md docs/reference/doctor-findings.md docs/internals/refusal-census.tsv || {
         status=$?
         printf 'explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, docs/reference/prime, docs/reference/refusals.md, docs/reference/doctor-findings.md and docs/internals/refusal-census.tsv against the index; it does not inspect files the generator does not write; an entry of doctor-findings.md that the state-to-choices table generates is changed in the table, not in the page)\n' >&2

@@ -367,8 +367,13 @@ fn generator_produces_no_drift_against_committed_artifacts() {
         .collect();
 
     // Re-run the generator.
-    let status = Command::new("cargo")
-        .args(["run", "--quiet", "--example", "generate-explain"])
+    let mut generator = Command::new("cargo");
+    generator.args(["run", "--release", "--quiet"]);
+    if cfg!(feature = "test-pause") {
+        generator.args(["--features", "test-pause"]);
+    }
+    let status = generator
+        .args(["--example", "generate-explain"])
         .current_dir(&manifest_dir)
         .status()
         .expect("spawn generator");

@@ -331,7 +331,7 @@ fn stages_flag_drift_only_skips_every_other_stage() {
         assert!(!stdout.contains(h), "unexpected header {h:?} in:\n{stdout}");
     }
     assert_eq!(stdout.matches("STUB_CARGO:").count(), 1);
-    assert!(stdout.contains("STUB_CARGO: run --quiet --example generate-explain"));
+    assert!(stdout.contains("STUB_CARGO: run --release --features test-pause --quiet --example generate-explain"));
     assert!(
         stdout
             .trim_end()
