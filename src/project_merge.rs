@@ -1169,16 +1169,7 @@ fn amend_replayed_tip(
             tip.short()
         )
     })?;
-    let amended = vcs.copy_replayed(
-        dir,
-        tip,
-        &parent,
-        &[crate::vcs::FileChange {
-            path: Manifest::FILE_NAME.to_owned(),
-            content: Some(fix.into_bytes()),
-        }],
-        None,
-    )?;
+    let amended = crate::repin::copy_with_manifest(vcs, dir, tip, &parent, fix.into_bytes())?;
     let became = |commit: &CommitId| {
         if commit == tip {
             amended.clone()
