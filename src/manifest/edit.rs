@@ -57,12 +57,11 @@ pub(super) fn edit(text: &str, before: &Manifest, after: &Manifest) -> anyhow::R
             "the serialized manifest does not parse: {e:#}"
         )
     })?;
-    let mut doc: DocumentMut = text
+    let (header, rest) = split_header(text.strip_prefix('\u{feff}').unwrap_or(text));
+    let mut doc: DocumentMut = format!("\n{rest}")
         .parse()
         .map_err(|e| crate::untokened!(InternalInvariant, "rwv.toml does not parse: {e:#}"))?;
 
-    let first_before = first_element(&doc);
-    let lead = first_before.as_ref().and_then(|id| prefix_of(&mut doc, id));
     let mut plan = Plan::default();
     edit_table(
         Tbl::Std(doc.as_table_mut()),
@@ -74,11 +73,11 @@ pub(super) fn edit(text: &str, before: &Manifest, after: &Manifest) -> anyhow::R
         None,
     );
     plan.renumber(doc.as_table_mut());
-    if let (Some(first_before), Some(lead)) = (first_before, lead) {
-        keep_leading_decor(&mut doc, &first_before, lead);
-    }
 
-    let edited = in_the_form_of(text, doc.to_string());
+    let edited = in_the_form_of(
+        text,
+        format!("{header}{}", doc.to_string().trim_start_matches('\n')),
+    );
     let reread = Manifest::from_toml_str(&edited).map_err(|e| {
         crate::untokened!(
             InternalInvariant,
@@ -555,78 +554,22 @@ fn insert_ordered(table: &mut Table, key: &Key, item: Item, canon: &Table) {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum First {
-    RootKey(String),
-    Table(Vec<Seg>),
-}
-
-fn first_element(doc: &DocumentMut) -> Option<First> {
-    if let Some((key, _)) = doc.as_table().iter().find(|(_, item)| item.is_value()) {
-        return Some(First::RootKey(key.to_owned()));
-    }
-    let mut first: Option<(usize, Vec<Seg>)> = None;
-    visit_tables(doc.as_table(), &mut Vec::new(), &mut |path, table| {
-        if let Some(pos) = table.position() {
-            if first.as_ref().is_none_or(|(lo, _)| pos < *lo) {
-                first = Some((pos, path.to_vec()));
-            }
+/// The comments and blank lines at the top of `text` up to its last blank
+/// line, which are the file's header, and the rest. A comment with no blank
+/// line between it and what follows belongs to what follows.
+fn split_header(text: &str) -> (&str, &str) {
+    let (mut seen, mut end) = (0, 0);
+    for line in text.split_inclusive('\n') {
+        let blank = line.trim().is_empty();
+        if !blank && !line.trim_start().starts_with('#') {
+            break;
         }
-    });
-    first.map(|(_, path)| First::Table(path))
-}
-
-fn prefix_of(doc: &mut DocumentMut, id: &First) -> Option<String> {
-    let decor = match id {
-        First::RootKey(key) => doc.as_table().key(key).map(Key::leaf_decor),
-        First::Table(path) => table_at(doc.as_table_mut(), path).map(|t| &*t.decor_mut()),
-    }?;
-    Some(
-        decor
-            .prefix()
-            .and_then(|p| p.as_str())
-            .unwrap_or_default()
-            .to_owned(),
-    )
-}
-
-fn set_prefix(doc: &mut DocumentMut, id: &First, prefix: String) {
-    match id {
-        First::RootKey(key) => {
-            if let Some(mut key) = doc.as_table_mut().key_mut(key) {
-                key.leaf_decor_mut().set_prefix(prefix);
-            }
-        }
-        First::Table(path) => {
-            if let Some(table) = table_at(doc.as_table_mut(), path) {
-                table.decor_mut().set_prefix(prefix);
-            }
+        seen += line.len();
+        if blank && line.ends_with('\n') {
+            end = seen;
         }
     }
-}
-
-/// What stood at the top of the file before the edit stays there: a new first
-/// element takes over the old one's leading comments, and the old one is set
-/// off by a blank line; when the first element is removed, its successor
-/// takes them over.
-fn keep_leading_decor(doc: &mut DocumentMut, first_before: &First, lead: String) {
-    let Some(first_after) = first_element(doc) else {
-        return;
-    };
-    if &first_after == first_before {
-        return;
-    }
-    if prefix_of(doc, first_before).is_some() {
-        set_prefix(doc, first_before, "\n".to_owned());
-        set_prefix(doc, &first_after, lead);
-    } else {
-        let own = prefix_of(doc, &first_after).unwrap_or_default();
-        let kept = own
-            .split_inclusive('\n')
-            .skip_while(|line| line.trim().is_empty())
-            .collect::<String>();
-        set_prefix(doc, &first_after, format!("{lead}{kept}"));
-    }
+    text.split_at(end)
 }
 
 fn in_the_form_of(original: &str, mut edited: String) -> String {
@@ -1071,7 +1014,7 @@ repositories."github/a/lib".history = "merge"
         let (edited, _) = Manifest::edit_text(HAND, |m| m.retain_repos(|_, _| false)).unwrap();
         assert_eq!(
             edited,
-            "# The members.\n[repositories]\n\n[integrations.static-files]\nenabled = false\n# end of file"
+            "[repositories]\n\n[integrations.static-files]\nenabled = false\n# end of file"
         );
     }
 
@@ -1115,15 +1058,9 @@ repositories."github/a/lib".history = "merge"
     }
 
     #[test]
-    fn a_top_level_key_goes_above_the_tables_and_leaves_the_leading_comment_on_top() {
+    fn a_top_level_key_goes_above_the_tables_and_leaves_a_comment_touching_the_first_table_on_it() {
         let (set, _) = Manifest::edit_text(HAND, |m| m.history = Some(History::Merge)).unwrap();
-        assert_eq!(
-            set,
-            HAND.replace(
-                "# The members.\n",
-                "# The members.\nhistory = \"merge\"\n\n"
-            )
-        );
+        assert_eq!(set, format!("history = \"merge\"\n\n{HAND}"));
         let (unset, _) = Manifest::edit_text(&set, |m| m.history = None).unwrap();
         assert_eq!(unset, HAND);
         let (set, _) = Manifest::edit_text(SORTED, |m| m.history = Some(History::Merge)).unwrap();
@@ -1229,5 +1166,51 @@ repositories."github/a/lib".history = "merge"
                 "{edited:?}"
             );
         }
+    }
+
+    const HEADED: &str = "# Our weave.\n\n# lib: vendored\n[repositories.\"github/a/lib\"]\ntype = \"git\"\nurl = \"https://example.com/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[repositories.\"github/a/app\"]\ntype = \"git\"\nurl = \"https://example.com/app.git\"\nbranch = \"main\"\nrole = \"owned\"\n";
+
+    #[test]
+    fn a_comment_above_a_blank_line_is_the_files_header_and_one_below_it_belongs_to_the_first_table(
+    ) {
+        let (set, _) = Manifest::edit_text(HEADED, |m| m.history = Some(History::Merge)).unwrap();
+        assert_eq!(
+            set,
+            HEADED.replace(
+                "# Our weave.\n\n",
+                "# Our weave.\n\nhistory = \"merge\"\n\n"
+            )
+        );
+        let (unset, _) = Manifest::edit_text(&set, |m| m.history = None).unwrap();
+        assert_eq!(unset, HEADED);
+
+        let (removed, _) = Manifest::edit_text(HEADED, |m| {
+            m.remove_repo(&path(LIB));
+        })
+        .unwrap();
+        assert_eq!(
+            removed,
+            "# Our weave.\n\n[repositories.\"github/a/app\"]\ntype = \"git\"\nurl = \"https://example.com/app.git\"\nbranch = \"main\"\nrole = \"owned\"\n"
+        );
+    }
+
+    #[test]
+    fn a_top_level_keys_own_comment_goes_with_it() {
+        let text = HEADED.replace(
+            "# lib: vendored\n",
+            "# the default\nhistory = \"merge\"\n\n# lib: vendored\n",
+        );
+        let (unset, _) = Manifest::edit_text(&text, |m| m.history = None).unwrap();
+        assert_eq!(unset, HEADED);
+    }
+
+    #[test]
+    fn a_top_level_key_on_root_dotted_members_goes_below_the_header() {
+        let text = format!("# Our weave.\n\n{ROOT_DOTTED}");
+        let (set, _) = Manifest::edit_text(&text, |m| m.history = Some(History::Merge)).unwrap();
+        assert!(
+            set.starts_with("# Our weave.\n\n"),
+            "the header stays on top:\n{set}"
+        );
     }
 }
