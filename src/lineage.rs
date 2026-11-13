@@ -957,6 +957,86 @@ mod tests {
         assert_eq!(superseded_pins(&dir), pins(&[&b]));
     }
 
+    fn merge_keeping(dir: &Path, kept: &CommitId, lost: &CommitId) {
+        lock_commit(dir, &fake('a'), None);
+        git(dir, &["checkout", "-q", "-b", "side"]);
+        lock_commit(dir, lost, None);
+        git(dir, &["checkout", "-q", "main"]);
+        lock_commit(dir, kept, None);
+        git(dir, &["merge", "-q", "--no-commit", "-s", "ours", "side"]);
+        git(
+            dir,
+            &["commit", "-q", "-m", "merge keeps the first parent's pin"],
+        );
+    }
+
+    #[test]
+    fn a_pin_a_merge_left_is_waived_by_a_later_trusted_backward_re_pin() {
+        let (_tmp, dir) = repo();
+        let kept = commit(&dir, "n");
+        let later = commit(&dir, "n2");
+        let lost = fake('1');
+        merge_keeping(&dir, &kept, &lost);
+        lock_commit(&dir, &later, None);
+        lock_commit(&dir, &kept, Some((&later, "member pin")));
+        assert!(superseded_pins(&dir).contains(&lost));
+    }
+
+    #[test]
+    fn a_jump_off_a_pin_outside_a_merge_is_waived_by_no_later_re_pin() {
+        let (_tmp, dir) = repo();
+        let kept = commit(&dir, "n");
+        let later = commit(&dir, "n2");
+        let lost = fake('1');
+        lock_commit(&dir, &lost, None);
+        lock_commit(&dir, &kept, None);
+        lock_commit(&dir, &later, None);
+        lock_commit(&dir, &kept, Some((&later, "member pin")));
+        assert!(!superseded_pins(&dir).contains(&lost));
+    }
+
+    #[test]
+    fn a_forward_re_pin_by_name_waives_no_pin_a_merge_left() {
+        let (_tmp, dir) = repo();
+        let earlier = commit(&dir, "n0");
+        let kept = commit(&dir, "n");
+        let lost = fake('1');
+        merge_keeping(&dir, &kept, &lost);
+        lock_commit(&dir, &earlier, None);
+        lock_commit(&dir, &kept, Some((&earlier, "member pin")));
+        assert!(!superseded_pins(&dir).contains(&lost));
+    }
+
+    #[test]
+    fn a_re_pin_from_a_pin_its_parent_does_not_hold_waives_no_pin_a_merge_left() {
+        let (_tmp, dir) = repo();
+        let kept = commit(&dir, "n");
+        let later = commit(&dir, "n2");
+        let elsewhere = commit(&dir, "n3");
+        let lost = fake('1');
+        merge_keeping(&dir, &kept, &lost);
+        lock_commit(&dir, &later, None);
+        lock_commit(&dir, &kept, Some((&elsewhere, "member pin")));
+        assert!(!superseded_pins(&dir).contains(&lost));
+    }
+
+    #[test]
+    fn a_pin_with_two_recorded_exits_names_the_older_record() {
+        let (_tmp, dir) = repo();
+        let held = commit(&dir, "z");
+        let (gone, between) = (fake('1'), fake('2'));
+        lock_commit(&dir, &gone, None);
+        let older = lock_commit(&dir, &between, Some((&gone, "member pin")));
+        lock_commit(&dir, &gone, None);
+        let newer = lock_commit(&dir, &held, Some((&gone, "member pin")));
+        let of_gone = superseded_in(&dir)
+            .into_iter()
+            .find(|s| s.pin == gone)
+            .unwrap();
+        assert_eq!(of_gone.by, older);
+        assert_ne!(of_gone.by, newer);
+    }
+
     #[test]
     fn an_absent_pin_a_later_lock_re_pinned_is_skipped_and_reported_and_any_other_refuses() {
         let (_tmp, dir) = repo();
