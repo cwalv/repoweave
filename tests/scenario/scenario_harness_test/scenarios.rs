@@ -18958,6 +18958,19 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
                         .claim(Claim::OutputContains(resume_line))
                 },
+                Step::rwv(
+                    &ww("w"),
+                    if land {
+                        &["sync", "--continue"]
+                    } else {
+                        &["land", "--continue"]
+                    },
+                )
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(resume_line)),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
                 replayed(
                     Step::rwv(&ww("w"), resume)
                         .expect(Exit::Succeeds)
