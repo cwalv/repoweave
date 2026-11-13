@@ -4026,9 +4026,10 @@ pub fn judge_edits(
         Some(op) => State::EditsMidOperation.of(repo).subject(op.operation()),
         None if dirty.is_empty() => return None,
         None => match vcs.unmerged_paths(dir) {
-            Ok(conflicted) if !conflicted.is_empty() => {
-                State::EditsUnresolved.of(repo).listing(conflicted)
-            }
+            Ok(conflicted) if !conflicted.is_empty() => State::EditsUnresolved
+                .of(repo)
+                .bind_list("<paths>", &conflicted)
+                .listing(conflicted),
             _ => State::EditsDirty.of(repo).listing(dirty),
         },
     };

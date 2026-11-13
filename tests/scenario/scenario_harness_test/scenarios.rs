@@ -7804,7 +7804,7 @@ pub fn dc11_drift_before_dirt() -> Scenario {
                 .claim(Claim::OutputContains("left conflicted")),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::EditsUnresolved))
-                .claim(Claim::OutputContains("add <file>")),
+                .claim(Claim::OutputContains("add -- moved-again.txt")),
             Step::git(
                 &ww("w"),
                 Repo::Lib,

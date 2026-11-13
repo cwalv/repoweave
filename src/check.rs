@@ -7756,7 +7756,8 @@ impl EditedDriftMerge {
                         "; these did not merge and are left conflicted, holding both versions: \
                          resolve each, then `{}`: {}",
                         vcs.hint(crate::vcs::VcsAction::MarkResolved)
-                            .replace("<checkout>", &dir.display().to_string()),
+                            .replace("<checkout>", &dir.display().to_string())
+                            .replace("<paths>", &conflicted.join(" ")),
                         conflicted.join(", ")
                     ));
                 }
