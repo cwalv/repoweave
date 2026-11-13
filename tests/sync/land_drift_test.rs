@@ -2239,3 +2239,243 @@ fn a_commit_made_where_the_set_back_mark_is_gone_records_the_edit_alone() {
         "{said}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// The project repo's own drift, before a verb commits there
+// ---------------------------------------------------------------------------
+
+const MOVED_NOTE: &str = "# moved note\n";
+
+impl Fixture {
+    fn ww_project(&self) -> PathBuf {
+        self.ww.join("projects").join(PROJECT)
+    }
+
+    /// Moves the workweave's project branch forward by one commit that
+    /// `change` makes in a checkout of its own.
+    fn move_project_with(&self, change: impl FnOnce(&Path)) -> String {
+        let elsewhere = self.scratch.join("project-elsewhere");
+        common::git_in(
+            &self.primary_project,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                elsewhere.to_str().unwrap(),
+                "ww/project",
+            ],
+        );
+        change(&elsewhere);
+        common::git_in(&elsewhere, &["add", "-A"]);
+        common::git_in(&elsewhere, &["commit", "-q", "-m", "moved elsewhere"]);
+        let moved = common::git_in(&elsewhere, &["rev-parse", "HEAD"]);
+        common::git_in(&elsewhere, &["update-ref", "refs/heads/ww/project", &moved]);
+        common::git_in(
+            &self.primary_project,
+            &["worktree", "remove", elsewhere.to_str().unwrap()],
+        );
+        moved
+    }
+
+    /// The project branch moves under the workweave, appending a note to
+    /// `rwv.toml` and adding `NOTES.md`.
+    fn move_project_manifest(&self) -> String {
+        self.move_project_with(|elsewhere| {
+            let manifest = elsewhere.join("rwv.toml");
+            let mut text = std::fs::read_to_string(&manifest).unwrap();
+            text.push_str(MOVED_NOTE);
+            std::fs::write(&manifest, text).unwrap();
+            std::fs::write(elsewhere.join("NOTES.md"), "notes\n").unwrap();
+        })
+    }
+}
+
+fn committed_manifest(project: &Path) -> String {
+    common::git_in(project, &["show", "HEAD:rwv.toml"])
+}
+
+/// `rwv lock --commit` over a project repo whose branch moved under it, with
+/// no edit there: the drift is refreshed before the manifest is read, and
+/// the commit carries the lock alone, the move's lines kept.
+#[test]
+fn lock_commit_over_a_moved_project_branch_refreshes_it_and_commits_the_lock_alone() {
+    let f = fixture();
+    let moved = f.move_project_manifest();
+    let project = f.ww_project();
+
+    let out = common::cli::run(&["lock", "--commit"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("refreshed drift"), "{said}");
+    assert_eq!(
+        common::git_in(&project, &["rev-parse", "HEAD^"]),
+        moved,
+        "{said}"
+    );
+    assert_eq!(
+        common::git_in(&project, &["diff", "--name-only", "HEAD^", "HEAD"]),
+        "rwv.lock",
+        "{said}"
+    );
+    assert!(
+        committed_manifest(&project).contains(MOVED_NOTE.trim()),
+        "{said}"
+    );
+    assert_eq!(read(&project.join("NOTES.md")).as_deref(), Some("notes\n"));
+    assert_eq!(common::git_in(&project, &["status", "--porcelain"]), "");
+}
+
+/// Plain `rwv lock` refreshes the project repo's drift too.
+#[test]
+fn lock_over_a_moved_project_branch_refreshes_it() {
+    let f = fixture();
+    f.move_project_manifest();
+    let project = f.ww_project();
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("refreshed drift"), "{said}");
+    assert!(
+        read(&project.join("rwv.toml"))
+            .unwrap()
+            .contains(MOVED_NOTE.trim()),
+        "{said}"
+    );
+    assert_eq!(
+        common::git_in(
+            &project,
+            &["status", "--porcelain", "--", "rwv.toml", "NOTES.md"]
+        ),
+        "",
+        "{said}"
+    );
+}
+
+/// An edit of the operator's own in a `rwv.toml` the move also changed: both
+/// lock verbs refuse it as moved and edited, commit nothing, and the printed
+/// merge brings the edit onto the moved tip, after which the commit keeps
+/// both.
+#[test]
+fn a_project_manifest_moved_and_edited_is_held_until_merged() {
+    let f = fixture();
+    let moved = f.move_project_manifest();
+    let project = f.ww_project();
+    let manifest = project.join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("# mine\n{text}")).unwrap();
+
+    for verb in [&["lock"][..], &["lock", "--commit"]] {
+        let out = common::cli::run(verb, &f.ww);
+        let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
+        assert!(
+            listing_under(&stderr, "edits moved and edited").contains(&"rwv.toml".to_owned()),
+            "{verb:?}:\n{stderr}"
+        );
+        assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
+        assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), moved);
+    }
+    let out = common::cli::run(&["lock", "--commit"], &f.ww);
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(
+        said.contains("drift in projects/app") && said.contains("merged onto"),
+        "{said}"
+    );
+
+    let out = common::cli::run(&["lock", "--commit"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    let committed = committed_manifest(&project);
+    assert!(
+        committed.contains("# mine") && committed.contains(MOVED_NOTE.trim()),
+        "{committed}\n{said}"
+    );
+    assert!(
+        common::git_in(&project, &["ls-files", "--", "NOTES.md"]) == "NOTES.md"
+            && common::git_in(&project, &["status", "--porcelain", "--", "NOTES.md"]).is_empty(),
+        "{said}"
+    );
+}
+
+/// The move is another workspace's member add: the manifest and lock gain an
+/// entry. `rwv lock --commit` here never commits the entry's removal.
+#[test]
+fn a_member_added_by_a_move_of_the_project_branch_is_not_removed_by_lock_commit() {
+    let f = fixture();
+    let url = common::file_url(&f.primary_lib);
+    let added = "github/acme/other";
+    f.move_project_with(|elsewhere| {
+        let manifest = elsewhere.join("rwv.toml");
+        let mut text = std::fs::read_to_string(&manifest).unwrap();
+        text.push_str(&format!(
+            "\n[repositories.\"{added}\"]\ntype = \"git\"\nurl = \"{url}\"\nbranch = \"main\"\n\
+             role = \"reference\"\n"
+        ));
+        std::fs::write(&manifest, text).unwrap();
+    });
+    let project = f.ww_project();
+
+    let out = common::cli::run(&["lock", "--commit"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(committed_manifest(&project).contains(added), "{said}");
+    assert!(
+        read(&project.join("rwv.toml")).unwrap().contains(added),
+        "{said}"
+    );
+}
+
+/// Every verb that commits in the project repo settles its drift first: run
+/// over a project branch moved under the workweave, none commits the move's
+/// reverse or leaves it standing beside its commit, whether it proceeds or
+/// refuses.
+#[test]
+fn no_verb_commits_the_reverse_of_a_project_branch_move() {
+    let verbs: Vec<Vec<String>> = vec![
+        vec!["member", "set-role", LIB, "fork"],
+        vec!["member", "set-recurse-submodules", LIB, "true"],
+        vec!["member", "pin", LIB, "HEAD"],
+        vec!["member", "set-branch", LIB, "main"],
+        vec!["member", "remove", LIB],
+        vec!["member", "add", "<other>"],
+        vec!["branch", "set-history", "merge"],
+        vec!["lock", "--commit"],
+        vec!["land"],
+        vec!["sync"],
+    ]
+    .into_iter()
+    .map(|v| v.into_iter().map(str::to_owned).collect())
+    .collect();
+    let mut reversed = Vec::new();
+    for verb in &verbs {
+        let f = fixture();
+        let other = f.scratch.join("other");
+        init_repo(&other);
+        commit_file(&other, "o.txt", "o\n", "o");
+        let other_url = common::file_url(&other);
+        f.move_project_manifest();
+        let project = f.ww_project();
+        let args: Vec<&str> = verb
+            .iter()
+            .map(|a| match a.as_str() {
+                "<other>" => other_url.as_str(),
+                a => a,
+            })
+            .collect();
+
+        let out = common::cli::run(&args, &f.ww);
+
+        let notes = common::git_in(&project, &["ls-tree", "--name-only", "HEAD", "NOTES.md"]);
+        let standing = common::git_in(&project, &["status", "--porcelain", "--", "NOTES.md"]);
+        if notes != "NOTES.md" || !standing.is_empty() {
+            reversed.push(format!("{args:?}:\n{}", common::cli::describe(&out)));
+        }
+    }
+    assert!(reversed.is_empty(), "{}", reversed.join("\n"));
+}

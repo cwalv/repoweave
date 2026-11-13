@@ -66,6 +66,7 @@ pub fn run_set_role(
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let (project, project_dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &project_dir)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let repo_path = RepoPath::new(repo)?;
     let mut manifest = Manifest::from_path(&manifest_path)
@@ -178,6 +179,7 @@ pub fn run_set_recurse_submodules(
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let (project, project_dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &project_dir)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let repo_path = RepoPath::new(repo)?;
     let mut manifest = Manifest::from_path(&manifest_path)

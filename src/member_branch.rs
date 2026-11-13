@@ -100,6 +100,7 @@ impl Loaded {
         crate::branch::require_recorded(ctx)?;
         let (project, workweave_dir) = crate::lock::scope(ctx)?;
         let project_dir = project_dir(ctx.active_path(), &project);
+        crate::diagnosis::settle_project_drift(&project, &project_dir)?;
         let Project { manifest, .. } =
             Project::from_dir_skip_lock(&project_dir, project.clone())
                 .with_context(|| format!("failed to load project '{project}'"))?;

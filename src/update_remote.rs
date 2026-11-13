@@ -367,6 +367,7 @@ fn update_for_project(
     let active_root = ctx.active_path();
     let primary_root = ctx.primary_path();
     let project_dir = crate::workspace::project_dir(active_root, project_name);
+    crate::diagnosis::settle_project_drift(project_name, &project_dir)?;
     let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
     crate::branch::require_recorded(ctx)?;

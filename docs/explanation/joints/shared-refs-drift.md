@@ -100,6 +100,16 @@ them; every other verb that refuses on a checkout's edits or writes to it
 before judging what is left; and the end of `rwv sync`, for each checkout
 the sync took in. `rwv doctor` without `--fix` only reports it, as drift. The interesting question is *what counts as drift*.
 
+The project repo is judged the same way. Every verb that writes or commits
+there (`rwv lock`, `rwv member` and its setters, `rwv branch set-history`,
+`rwv update --remote`, `rwv sync`, `rwv land`, `rwv pull`,
+`rwv cherry-pick`) refreshes the project repo's drift before it reads
+`rwv.toml`, so its commit never carries the move's reverse of `rwv.toml` or
+`rwv.lock`. Where the move changed a file you edited there too, the verb is
+refused as `moved and edited` and commits nothing. `rwv doctor` reports the
+project repo's drift where its branch moved under it, and both
+`rwv doctor --fix` and its two flags act on it as on a member.
+
 A checkout that differs from its HEAD is not evidence that its branch
 moved. A deleted file, a file returned to an earlier version, a staged
 `git revert --no-commit`, one file copied over another and a mode change

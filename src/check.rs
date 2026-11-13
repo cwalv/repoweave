@@ -10314,6 +10314,26 @@ fn collect_doctor_violations(
             }
         }
     }
+    let mut project_repos: std::collections::HashSet<std::path::PathBuf> =
+        std::collections::HashSet::new();
+    for project in &input.projects {
+        let project_rel = project_rel_path(&project.name);
+        let Ok(project_repo_path) = RepoPath::new(project_rel.clone()) else {
+            continue;
+        };
+        let homes = std::iter::once((None, workspace_dir.clone())).chain(
+            workweave_dirs
+                .iter()
+                .map(|(ww, dir)| (Some(ww.clone()), dir.clone())),
+        );
+        for (ww, dir) in homes {
+            let abs = dir.join(&project_rel);
+            if abs.is_dir() && scan_seen.insert((ww.clone(), abs.clone())) {
+                project_repos.insert(abs.clone());
+                index_scan.push((ww, abs, project_repo_path.clone()));
+            }
+        }
+    }
     drop(scan_seen);
 
     let this_workweave = workweaves_in_scope(ctx, None)
@@ -10351,7 +10371,10 @@ fn collect_doctor_violations(
         if crate::git::repo_is_dirty(repo_abs) == Some(false) {
             continue;
         }
+        let project_repo = project_repos.contains(repo_abs);
         let (index_kinds, working_tree_kinds) = match read_drift(vcs, repo_abs) {
+            Ok(reading) if reading.left.is_none() && project_repo => continue,
+            Err(_) if project_repo => continue,
             Ok(reading) => drift_findings(&reading),
             Err(_) => (Vec::new(), vec![WorkingTreeDriftKind::LiveEdits]),
         };
@@ -10371,10 +10394,7 @@ fn collect_doctor_violations(
         }
     }
 
-    // State hygiene widens the drift enumeration by the project repos:
-    // `projects/<name>/` is itself a git repo and carries savepoints, but is
-    // not a `repositories:` entry so the manifest walk above misses it.
-    let mut hygiene_targets: Vec<StateHygieneScanTarget> = index_scan
+    let hygiene_targets: Vec<StateHygieneScanTarget> = index_scan
         .iter()
         .map(|(ww, abs, repo)| StateHygieneScanTarget {
             workweave: ww.clone(),
@@ -10382,39 +10402,6 @@ fn collect_doctor_violations(
             repo: repo.clone(),
         })
         .collect();
-    let mut hygiene_seen: std::collections::HashSet<(Option<WorkweaveId>, std::path::PathBuf)> =
-        index_scan
-            .iter()
-            .map(|(ww, abs, _)| (ww.clone(), abs.clone()))
-            .collect();
-    for project in &input.projects {
-        let project_rel = project_rel_path(&project.name);
-        let project_repo_path = match RepoPath::new(project_rel.clone()) {
-            Ok(rp) => rp,
-            Err(_) => continue,
-        };
-        let project_abs = workspace_dir.join(&project_rel);
-        if project_abs.is_dir() && hygiene_seen.insert((None, project_abs.clone())) {
-            hygiene_targets.push(StateHygieneScanTarget {
-                workweave: None,
-                abs: project_abs,
-                repo: project_repo_path.clone(),
-            });
-        }
-        for (ww, ww_dir) in workweave_dirs.iter() {
-            let ww_project_abs = ww_dir.join(&project_rel);
-            if ww_project_abs.is_dir()
-                && hygiene_seen.insert((Some(ww.clone()), ww_project_abs.clone()))
-            {
-                hygiene_targets.push(StateHygieneScanTarget {
-                    workweave: Some(ww.clone()),
-                    abs: ww_project_abs,
-                    repo: project_repo_path.clone(),
-                });
-            }
-        }
-    }
-    drop(hygiene_seen);
 
     let mut hygiene_op_state_targets: Vec<StateHygieneOpStateTarget> =
         vec![StateHygieneOpStateTarget {

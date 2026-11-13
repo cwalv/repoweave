@@ -334,6 +334,7 @@ pub fn run_add(
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &project_dir)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     // Load and check existing manifest.
@@ -777,6 +778,7 @@ pub fn run_add_adopt(
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &project_dir)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let (repo_path, candidate) = adopt_placement(vcs.as_ref(), ctx, path)?;
     if !vcs.is_repo(&candidate) {
@@ -1306,6 +1308,7 @@ pub fn run_remove(
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
     let (project, project_dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &project_dir)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
 
     let repo_path = RepoPath::new(path)?;
@@ -1714,6 +1717,7 @@ pub fn run_add_new(
     let vcs_type = VcsType::Git;
     let vcs = vcs_for(vcs_type);
     let (project, project_dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &project_dir)?;
     let manifest_path = project_dir.join(Manifest::FILE_NAME);
     let CreationRequest {
         address,

@@ -211,6 +211,12 @@ pub fn run_pull(
         Checkout::Workweave { project, .. } => project.clone(),
     };
     crate::branch::require_recorded(ctx)?;
+    if resumed.is_none() {
+        crate::diagnosis::settle_project_drift(
+            &project_name,
+            &crate::workspace::project_dir(ctx.active_path(), &project_name),
+        )?;
+    }
     let how = match (&take, resumed) {
         (Take::Fresh(flags), None) => How {
             flags: flags.clone(),

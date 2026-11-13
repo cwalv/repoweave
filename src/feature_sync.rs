@@ -249,6 +249,7 @@ fn take(
     let vcs = project_vcs();
     if let Run::Fresh(_) = run {
         crate::workweave::refuse_symlinked_members(ctx.active_path(), &project)?;
+        crate::diagnosis::settle_project_drift(&project, &dir)?;
     }
     let held = match run {
         Run::Fresh(_) => None,

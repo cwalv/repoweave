@@ -4345,6 +4345,34 @@ pub fn dirty_beside_drift(
     (!left.is_empty()).then(|| dirty(vcs, repo, dir, left))
 }
 
+/// The project repo at `dir` given [`dirty_beside_drift`]'s judgement before a
+/// verb reads its manifest or stages anything there: drift its branch's move
+/// left is refreshed, and the verb is refused where that move's content cannot
+/// be told from what the verb would commit. Edits of the operator's own are
+/// the verb's to handle.
+pub fn settle_project_drift(
+    project: &crate::manifest::ProjectName,
+    dir: &Path,
+) -> anyhow::Result<()> {
+    let vcs = crate::vcs::project_vcs();
+    if !vcs.is_repo(dir) || vcs.head_revision(dir).is_err() {
+        return Ok(());
+    }
+    let files = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
+    let repo = crate::workspace::project_rel_path(project);
+    let Some(judging) = dirty_beside_drift(vcs.as_ref(), &repo, dir, files).filter(|judging| {
+        matches!(
+            judging.judged_state(),
+            State::EditsMovedAndEdited | State::EditsDriftLeftInPlace | State::EditsSetBack
+        )
+    }) else {
+        return Ok(());
+    };
+    let mut report = Report::default();
+    report.add(judging.project_repo().checkout(dir).judge(vcs.as_ref()));
+    report.into_result()
+}
+
 /// A checkout whose drift could not be read: nothing it holds is judged an
 /// edit, since any of it may be the move's reverse, and no choice is offered.
 pub fn drift_unread(repo: impl fmt::Display, e: &crate::vcs::VcsError) -> Judging {

@@ -429,6 +429,11 @@ pub fn lock(
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
     crate::branch::require_record(ctx)?;
+    let (project, _) = scope(ctx)?;
+    crate::diagnosis::settle_project_drift(
+        &project,
+        &crate::workspace::project_dir(ctx.active_path(), &project),
+    )?;
     let relocking = Relocking {
         verb: "lock",
         acting,

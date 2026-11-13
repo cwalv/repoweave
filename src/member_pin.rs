@@ -77,6 +77,7 @@ pub fn run_pin(
     }
     let (project_name, workweave_dir) = lock::scope(ctx)?;
     let dir_of_project = project_dir(ctx.active_path(), &project_name);
+    crate::diagnosis::settle_project_drift(&project_name, &dir_of_project)?;
     let project = Project::from_dir_skip_lock(&dir_of_project, project_name.clone())
         .with_context(|| format!("failed to load project '{project_name}'"))?;
     let path = RepoPath::new(repo)?;
