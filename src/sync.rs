@@ -9013,6 +9013,8 @@ pub(crate) enum AbortStep {
         key: SavepointKey,
         branch: crate::vcs::RawRefName,
         plan: InPlaceRefPlan,
+        /// The workspace stands, its checkout moved off the branch.
+        checkout_left: bool,
     },
     /// A checkout of the target's workspace the landing made.
     RemoveMade {
@@ -9565,9 +9567,26 @@ fn plan_in_place(
             if !vcs.is_repo(&dir) {
                 if let Some(wrote) = wrote {
                     plan_in_place_as_ref(
-                        plan, vcs, stores, path, receiving, wrote, &key, label, named,
+                        plan, vcs, stores, path, receiving, wrote, &key, label, named, None,
                     );
                 }
+                continue;
+            }
+            if let Some(wrote) = wrote.filter(|wrote| {
+                left_off_its_branch(vcs.as_ref(), &dir, &receiving.branch, wrote, &key)
+            }) {
+                plan_in_place_as_ref(
+                    plan,
+                    vcs,
+                    stores,
+                    path,
+                    receiving,
+                    wrote,
+                    &key,
+                    label,
+                    named,
+                    Some(dir),
+                );
                 continue;
             }
             let at = RepoAt {
@@ -9666,8 +9685,37 @@ fn made_holds(vcs: &dyn Vcs, dir: &Path) -> Result<Option<InTheWay>, VcsError> {
     })
 }
 
-/// Plan putting back as a ref a branch a landing fast-forwarded in place in
-/// a workspace that has since gone, through any checkout left of its store.
+/// Whether the checkout at `dir` a landing moved `branch` in, writing
+/// `wrote`, stands off that branch at a tip neither the landing wrote nor it
+/// was saved at, and in no operation: its operator moved it there.
+fn left_off_its_branch(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    branch: &str,
+    wrote: &CommitId,
+    key: &SavepointKey,
+) -> bool {
+    if vcs.mid_op(dir).is_some() {
+        return false;
+    }
+    let on_branch = matches!(
+        vcs.observe_head(dir),
+        Ok(crate::vcs::HeadObservation::Attached { name }) if name.as_str() == branch
+    );
+    let Ok(head) = vcs.head_revision(dir) else {
+        return false;
+    };
+    !on_branch
+        && head.id() != wrote
+        && vcs
+            .resolve_savepoint(dir, key)
+            .is_none_or(|saved| saved.id() != head.id())
+}
+
+/// Plan putting back as a ref a branch a landing fast-forwarded in place:
+/// in a workspace that has since gone, through any checkout left of its
+/// store, or through `left`, the checkout there its operator moved off the
+/// branch, which stays as it stands.
 #[allow(clippy::too_many_arguments)]
 fn plan_in_place_as_ref(
     plan: &mut AbortPlan,
@@ -9679,8 +9727,10 @@ fn plan_in_place_as_ref(
     key: &SavepointKey,
     label: String,
     named: RepoOperand,
+    left: Option<PathBuf>,
 ) {
-    let Some(store) = stores.dir(vcs.as_ref(), path) else {
+    let checkout_left = left.is_some();
+    let Some(store) = left.or_else(|| stores.dir(vcs.as_ref(), path)) else {
         plan.unread(
             true,
             label,
@@ -9716,6 +9766,7 @@ fn plan_in_place_as_ref(
         key: key.clone(),
         branch,
         plan: in_place,
+        checkout_left,
     });
 }
 
@@ -11138,8 +11189,14 @@ fn run_step(
             key,
             branch,
             plan,
+            checkout_left,
         } => {
             let label = &at.label;
+            let checkout = if checkout_left {
+                "its checkout is on another branch"
+            } else {
+                "its checkout is gone"
+            };
             match plan {
                 InPlaceRefPlan::Untouched => tally.noise.untouched += 1,
                 InPlaceRefPlan::Restore { from, to } => {
@@ -11148,10 +11205,18 @@ fn run_step(
                         tally.any_failure = true;
                         return;
                     }
-                    outln!(
-                        "  {label}: its checkout is gone; '{branch}' restored to {} as a ref",
-                        to.short()
-                    );
+                    if checkout_left {
+                        outln!(
+                            "  {label}: '{branch}' restored to {} as a ref, its checkout left on \
+                             another branch",
+                            to.short()
+                        );
+                    } else {
+                        outln!(
+                            "  {label}: its checkout is gone; '{branch}' restored to {} as a ref",
+                            to.short()
+                        );
+                    }
                 }
                 InPlaceRefPlan::Moved { now, wrote } => {
                     eprintln!(
@@ -11164,8 +11229,8 @@ fn run_step(
                 }
                 InPlaceRefPlan::Held(held) => {
                     eprintln!(
-                        "  {label}: its checkout is gone, and '{branch}' is checked out at {}, \
-                             so it is left where this landing put it",
+                        "  {label}: {checkout}, and '{branch}' is checked out at {}, so it is \
+                         left where this landing put it",
                         held.iter()
                             .map(|p| p.display().to_string())
                             .collect::<Vec<_>>()
@@ -12756,6 +12821,7 @@ mod tests {
             key: SavepointKey::Op("1779769917405921588".parse().unwrap()),
             branch: crate::vcs::RawRefName::new("main"),
             plan,
+            checkout_left: false,
         };
         let passing = || InPlaceRefPlan::Restore {
             from: a_tip(),

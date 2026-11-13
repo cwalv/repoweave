@@ -8617,6 +8617,46 @@ pub fn abort_restores_a_member_moved_in_the_target_and_in_place() -> Scenario {
     )
 }
 
+/// `shared-checkout-detached` stopped once the landing landed; the operator
+/// of the primary, where `docs`' `main` moved in place, then switches that
+/// checkout onto a branch of its own and commits. `rwv abort` puts `main`
+/// back as a ref and leaves the checkout where its operator put it.
+pub fn abort_restores_as_a_ref_a_branch_its_in_place_checkout_left() -> Scenario {
+    let mut steps = stable_holding_docs_detached();
+    steps.extend([
+        Step::rwv_paused(
+            &ww("hotfix"),
+            &["land", "--history", "linear"],
+            "landed",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::git(&a(), Repo::Docs, &["switch", "-q", "-c", "side"]),
+        Step::commit(&a(), Repo::Docs, "side-docs"),
+        Step::rwv(&ww("hotfix"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Docs, Repo::Proj])
+            .may_restore(&[Repo::Docs, Repo::Proj])
+            .claim(Claim::OutputContains("restored to "))
+            .claim(Claim::OutputContains(
+                "as a ref, its checkout left on another branch",
+            ))
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Docs,
+                branch: "side",
+            }),
+        Step::git(&a(), Repo::Docs, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("hotfix-docs")),
+        Step::git(&a(), Repo::Docs, &["log", "-1", "--format=%s", "HEAD"])
+            .claim(Claim::OutputLine("side-docs")),
+    ]);
+    scenario(
+        "abort restores as a ref a branch its in-place checkout left",
+        steps,
+    )
+}
+
 /// `removal-is-member-change`: a feature removing a member its target lists
 /// refuses to land until `--allow-member-change` names the member, before
 /// anything lands; the consent, run as the refusal prints it, lands it, and

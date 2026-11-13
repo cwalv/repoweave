@@ -67,7 +67,9 @@ nothing could be landed into. Then, under an op record:
    presents, fast-forwards in place in that checkout, which must be clean
    (`edits`); the landing leases that workspace until it releases the target,
    and `rwv abort`, run in the landing's own workspace or in a workspace the
-   landing leases, puts that checkout back with the rest: it rolls the landing
+   landing leases, puts that checkout back with the rest (one its operator
+   has since moved off the branch onto a tip the landing did not write is
+   left as it stands, the branch put back as a ref): it rolls the landing
    back whole, or refuses before anything moves, naming what is in the way and
    the command that ends it. A
    receiving branch checked out anywhere else refuses (`checkout`). For a

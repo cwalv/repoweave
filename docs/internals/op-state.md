@@ -120,7 +120,9 @@ operation, the checkout's branch and HEAD against its savepoint, the
 uncommitted edits a move would discard, who holds the branch it switches
 back to), each branch moved as a ref (`Vcs::plan_ref_restore`, held as the
 plan leaves the checkouts), each branch moved in place in a workspace since
-gone, each created branch it deletes (judged against the branches as the
+gone or in a checkout its operator since moved off it
+(`left_off_its_branch`; the branch goes back as a ref and the checkout
+stays), each created branch it deletes (judged against the branches as the
 restore leaves them: one no other branch would then reach blocks), and each
 ref an update moved. What the plan cannot read (a checkout, a branch
 savepoint, the other workspace's project) is a blocked step naming what
