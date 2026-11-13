@@ -8376,6 +8376,26 @@ pub fn run_abort(
     aborted
 }
 
+/// The project an abort enumerates. Where a merge or replay stopped in the
+/// project repo left the working `rwv.toml` holding something no manifest
+/// parses, conflict markers included, its manifest is read at the checked-out
+/// commit instead.
+fn project_to_abort(dir: &Path, name: ProjectName) -> anyhow::Result<Project> {
+    let working = Project::from_dir_skip_lock(dir, name.clone());
+    let vcs = project_vcs();
+    if working.is_ok() || !vcs.is_repo(dir) || vcs.mid_operation(dir).is_none() {
+        return working;
+    }
+    let head = vcs.head_revision(dir)?;
+    let text = vcs.read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME))?;
+    Ok(Project {
+        dir: dir.to_path_buf(),
+        name,
+        manifest: Manifest::from_toml_str(&text)?,
+        lock: None,
+    })
+}
+
 fn abort_op(
     ctx: &WorkspaceContext,
     abandon: &crate::cli::consent::AbandonForeignTipConsent,
@@ -8457,7 +8477,7 @@ fn abort_op(
     // out". rwv.lock may contain git conflict markers from the half-completed
     // rebase, so we must not try to parse it. The abort path only needs the
     // manifest (to enumerate repo paths); it never reads lock contents.
-    let cwd_project = Project::from_dir_skip_lock(&cwd_project_dir, op_project_name.clone())
+    let cwd_project = project_to_abort(&cwd_project_dir, op_project_name.clone())
         .context("failed to load CWD project")?;
     refuse_symlinked_members(&workspace_dir, &op_project_name)?;
     if let Some(other) = &other_workspace {
