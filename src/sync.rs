@@ -10434,6 +10434,19 @@ fn refuse_abort(
     } else {
         if unit_abandonable {
             lines.extend(closing("rwv abort", &[&source, &target], &unit_moved));
+        } else if unit.is_some_and(|u| u.moved.is_empty()) {
+            let named: std::collections::BTreeSet<&RepoOperand> = [&source, &target]
+                .iter()
+                .flat_map(|t| t.abandonable.iter().chain(&t.named_after_fix))
+                .chain(&given)
+                .collect();
+            lines.push(format!(
+                "  once each fix above is made, rerun:\n\trwv abort{}",
+                named
+                    .iter()
+                    .map(|named| format!(" --abandon-foreign-tip {named}"))
+                    .collect::<String>()
+            ));
         }
         if let Some(record) = record.filter(|r| {
             r.phase == op_state::OpPhase::Retire && !begun && !source_blocked && built_on.is_none()

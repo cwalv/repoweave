@@ -13289,15 +13289,20 @@ pub fn abort_after_an_entered_branch_moved(then: EnteredThen, end: EnteredEnd) -
             &["worktree", "add", "-q", "../docs-held", "docs-next"],
         )),
     }
-    steps.push(
-        Step::rwv(&ww("w1"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::OutputContains("rwv abort --leave-target"))
-            .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
-            .claim(Claim::LocalStateUnchanged(a()))
-            .claim(Claim::LocalStateUnchanged(ww("w1"))),
-    );
+    let refused = Step::rwv(&ww("w1"), &["abort"])
+        .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+        .claim(Claim::OutputLacks("abort stopped there"))
+        .claim(Claim::OutputContains("rwv abort --leave-target"))
+        .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
+        .claim(Claim::LocalStateUnchanged(a()))
+        .claim(Claim::LocalStateUnchanged(ww("w1")));
+    steps.push(if then == EnteredThen::CheckedOut {
+        refused.claim(Claim::OutputContains(
+            "once each fix above is made, rerun:\n\trwv abort\n",
+        ))
+    } else {
+        refused
+    });
     match end {
         EnteredEnd::LeaveTarget => steps.push(
             Step::rwv_printed_holding(&ww("w1"), "rwv abort ", "--leave-target")
