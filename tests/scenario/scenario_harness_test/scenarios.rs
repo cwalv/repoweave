@@ -13417,57 +13417,67 @@ pub fn abort_after_another_landing_built_on_the_target(
     scenario("abort after another landing built on the target", steps)
 }
 
-/// A landing stopped in its retire, and the target's `rwv.toml` mid-edit so
-/// that it does not parse: abort cannot plan the target's restore, so it
-/// restores nothing of either side and names what it could not read; once
-/// the file parses, the abort it printed ends the landing.
-pub fn abort_refuses_while_the_target_cannot_be_read() -> Scenario {
+/// A landing stopped once it moved the target, before it aligns it, and the target's
+/// `rwv.toml` mid-edit so that it does not parse, and `rwv abort` typed
+/// `from` either workspace:
+/// abort reads the target's members from its `rwv.toml` at the landing's
+/// savepoint, as it reads the source's, and the edit is judged as any
+/// uncommitted edit is. Typed in the target it is kept as a backup; typed in
+/// the source it refuses, restoring nothing, until the edit is set aside as
+/// it prints, and the printed `rwv abort` then ends the landing.
+pub fn abort_past_a_target_whose_rwv_toml_does_not_parse(from: AbortFrom) -> Scenario {
     let broken = format!("{}\n[[[", declared_branch_text(Repo::Lib, "main"));
-    scenario(
-        "abort refuses while the target cannot be read",
-        vec![
-            create("w1"),
-            Step::commit(&ww("w1"), Repo::App, "w1-app"),
-            Step::rwv_paused(
-                &ww("w1"),
-                &["land", "--history", "linear", "--retire"],
-                "retire",
-                "landing",
-            ),
-            Step::kill("landing"),
-            Step::hand_edit(
-                &a(),
-                Repo::Proj,
-                "rwv.toml",
-                &declared_branch_text(Repo::Lib, "main"),
-                &broken,
-            ),
+    let restores = |step: Step| {
+        step.expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj])
+    };
+    let abort = match from {
+        AbortFrom::Target => {
+            vec![
+                restores(Step::rwv(&a(), &["abort"])).claim(Claim::OutputContains(
+                    "uncommitted edits are kept as backup",
+                )),
+            ]
+        }
+        AbortFrom::Source => vec![
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputLacks("abort stopped there"))
-                .claim(Claim::OutputContains("could not be read"))
-                .claim(Claim::OutputContains("rwv abort --leave-target"))
+                .claim(Claim::OutputContains("holds uncommitted edits"))
                 .claim(Claim::LocalStateUnchanged(a()))
                 .claim(Claim::LocalStateUnchanged(ww("w1"))),
-            Step::hand_edit(
-                &a(),
-                Repo::Proj,
-                "rwv.toml",
-                &broken,
-                &declared_branch_text(Repo::Lib, "main"),
-            ),
-            Step::rwv_printed_exactly(&ww("w1"), "rwv abort")
-                .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App, Repo::Proj])
-                .may_rewind(&[Repo::App, Repo::Proj])
-                .may_restore(&[Repo::App, Repo::Proj]),
-            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputLacks("w1-app")),
-            Step::rwv(&ww("w1"), &["status"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("in progress")),
+            Step::rwv_printed(&ww("w1"), "git -C ").expect(Exit::Succeeds),
+            restores(Step::rwv(&ww("w1"), &["abort"])),
         ],
-    )
+    };
+    let mut steps = vec![
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["land", "--history", "linear"],
+            "aligning-target",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Lib, "main"),
+            &broken,
+        ),
+    ];
+    steps.extend(abort);
+    steps.extend([
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("w1-app")),
+        Step::rwv(&ww("w1"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    ]);
+    scenario("abort past a target whose rwv.toml does not parse", steps)
 }
 
 /// A landing stopped in its retire, an edit in the target's `app`, and

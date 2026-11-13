@@ -960,7 +960,7 @@ every_scenario!(
     abort_stops_at_the_first_write_that_fails,
     abort_judges_again_once_it_holds_the_target,
     leave_target_gives_up_the_target_only_after_the_source_is_restored,
-    abort_refuses_while_the_target_cannot_be_read,
+    abort_past_a_target_whose_rwv_toml_does_not_parse(scenarios::AbortFrom::Target),
     abort_of_a_landing_over_a_cancel_the_vcs_refuses,
     abort_of_a_landing_stopped_in_a_replayed_project_commit(scenarios::ReplayedCommit::First),
     abort_of_a_landing_stopped_in_a_replayed_project_commit(scenarios::ReplayedCommit::Second),
@@ -3261,9 +3261,11 @@ fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() {
 }
 
 #[test]
-fn abort_refuses_while_the_target_cannot_be_read() {
-    runner::run(scenarios::abort_refuses_while_the_target_cannot_be_read())
-        .assert_fully_decided_green();
+fn abort_past_a_target_whose_rwv_toml_does_not_parse() {
+    for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
+        runner::run(scenarios::abort_past_a_target_whose_rwv_toml_does_not_parse(from))
+            .assert_fully_decided_green();
+    }
 }
 
 #[test]

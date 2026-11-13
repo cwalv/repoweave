@@ -8557,18 +8557,16 @@ fn abort_op(
         &cwd_project.manifest,
     )?;
     if let Some(other) = &other_workspace {
-        match AbortSide::of(other, &header) {
-            AbortSide::Replay => crate::workweave::refuse_symlinked_members_named(
+        if let Ok(other_project) = project_to_abort(
+            &project_dir(other.as_path(), &op_project_name),
+            op_project_name.clone(),
+            &AbortSide::of(other, &header).savepoint_key(&op_id),
+        ) {
+            crate::workweave::refuse_symlinked_members_named(
                 other.as_path(),
                 &op_project_name,
-                &project_to_abort(
-                    &project_dir(other.as_path(), &op_project_name),
-                    op_project_name.clone(),
-                    &AbortSide::Replay.savepoint_key(&op_id),
-                )?
-                .manifest,
-            )?,
-            AbortSide::LandTarget => refuse_symlinked_members(other.as_path(), &op_project_name)?,
+                &other_project.manifest,
+            )?;
         }
     }
     let stores = MemberStores {
@@ -8643,17 +8641,11 @@ fn abort_op(
                     let dir = other_ctx.active_path().to_path_buf();
                     let other_project_dir = project_dir(&dir, &op_project_name);
                     let side = AbortSide::of(other_ctx.active_root(), &header);
-                    let other_project = match side {
-                        AbortSide::Replay => project_to_abort(
-                            &other_project_dir,
-                            op_project_name.clone(),
-                            &side.savepoint_key(&op_id),
-                        ),
-                        AbortSide::LandTarget => {
-                            Project::from_dir_skip_lock(&other_project_dir, op_project_name.clone())
-                        }
-                    };
-                    match other_project {
+                    match project_to_abort(
+                        &other_project_dir,
+                        op_project_name.clone(),
+                        &side.savepoint_key(&op_id),
+                    ) {
                         Ok(other_project) => {
                             members.take_project(
                                 &other_project_dir,
