@@ -21821,3 +21821,27 @@ pub fn an_untracked_file_in_the_way_of_the_merge_is_named() -> Scenario {
     steps.extend(aborted_to_the_workweaves_own(&ww("w"), &[]));
     scenario("an untracked file in the way of the merge is named", steps)
 }
+
+/// [`unparseable_merged_manifest`] stopped by `taking_in`, and `rwv.toml`
+/// removed from the project repo with `git rm`: `--continue` stops in the
+/// same state, and the printed `rwv abort` puts the workweave back.
+pub fn a_removed_rwv_toml_stops_as_unparseable(taking_in: TakingIn) -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(adds_a_copies(&a()));
+    steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
+    steps.extend(adds_w_copies(&ww("w")));
+    steps.push(Step::commit(&ww("w"), Repo::Proj, "w-proj"));
+    steps.extend([
+        stops_unparseable(Step::rwv(&ww("w"), &taking_in.args()), taking_in.says()),
+        Step::git(&ww("w"), Repo::Proj, &["rm", "-q", "--cached", "rwv.toml"]),
+        Step::git(&ww("w"), Repo::Proj, &["clean", "-fq", "--", "rwv.toml"]),
+        Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+    ]);
+    steps.extend(aborted_from(Step::rwv(&ww("w"), &["abort"]), &ww("w"), &[]));
+    scenario("a removed rwv.toml stops as unparseable", steps)
+}

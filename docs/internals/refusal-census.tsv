@@ -231,6 +231,7 @@ src/project_merge.rs	(untokened:internal-invariant)	-	4
 src/project_merge.rs	(untokened:owed)	-	1
 src/project_merge.rs	op-parked	-	1
 src/project_merge.rs	unparseable-project mid-operation	-	1
+src/project_merge.rs	untracked-collision	-	1
 src/pull.rs	(untokened:owed)	-	1
 src/pull.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/pull.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1

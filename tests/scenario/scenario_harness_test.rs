@@ -814,6 +814,7 @@ every_scenario!(
     abort_ignores_a_half_finished_manifest_fix,
     an_unparseable_intermediate_manifest_is_replayed,
     an_untracked_file_in_the_way_of_the_merge_is_named,
+    a_removed_rwv_toml_stops_as_unparseable(scenarios::TakingIn::LandLinear),
     a_replay_in_flight_is_not_judged_on_its_rwv_toml(
         scenarios::TakingIn::LandLinear,
         scenarios::ReplayedManifest::BrokenByTheBranch
@@ -6536,6 +6537,22 @@ holding_rwv! {
                     .assert_fully_decided_green();
             }
         }
+    }
+}
+
+#[test]
+fn a_removed_rwv_toml_stops_as_unparseable() {
+    use scenarios::TakingIn;
+    for taking_in in [
+        TakingIn::SyncLinear,
+        TakingIn::SyncMerge,
+        TakingIn::LandLinear,
+        TakingIn::LandMerge,
+    ] {
+        runner::run(scenarios::a_removed_rwv_toml_stops_as_unparseable(
+            taking_in,
+        ))
+        .assert_fully_decided_green();
     }
 }
 

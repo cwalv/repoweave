@@ -1297,7 +1297,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
     let ours = match vcs.staged_file(&dir, Manifest::FILE_NAME)? {
         Some(staged) => match Manifest::from_toml_str(&staged) {
             Ok(ours) => ours,
-            Err(_) if vcs.rebase_in_flight(&dir)?.is_some() => return Ok(Rejudged::Replaying),
+            Err(_) if vcs.rebase_in_flight(&dir)?.is_some() => return Ok(Rejudged::Deferred),
             Err(error) => {
                 let produced = if vcs.merge_in_flight(&dir)?.is_some() {
                     crate::project_merge::Produced::Merge
@@ -1313,7 +1313,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
                 ));
             }
         },
-        None => Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
+        None => return Ok(Rejudged::Deferred),
     };
     let sides = Sides {
         ours,
@@ -1358,9 +1358,10 @@ pub enum Rejudged {
     /// The project repo still holds an unresolved conflict, which the resume
     /// itself stops on.
     Unresolved,
-    /// The replay is still in flight and the `rwv.toml` it has replayed so
-    /// far does not parse: its result is judged once it finishes.
-    Replaying,
+    /// No `rwv.toml` is staged, or the replay is still in flight and the
+    /// `rwv.toml` it has replayed so far does not parse: the operation's
+    /// result is judged once it is read.
+    Deferred,
     /// Every change is consented to: those that land.
     Lands(Vec<crate::op_state::LandingReport>),
     /// A change no consent covers, judged.

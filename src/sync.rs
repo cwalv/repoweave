@@ -1800,21 +1800,25 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
     let dir = &ctx.cwd_project_dir;
     let repo = crate::workspace::project_rel_path(&ctx.cwd_project_name);
     if vcs.merge_in_flight(dir)?.is_some() {
-        if let Some(staged) = vcs.staged_file(dir, Manifest::FILE_NAME)? {
-            let resume = op_state::resume_command(ctx.verb);
-            if let Err(error) = Manifest::from_toml_str(&staged) {
-                return Err(crate::project_merge::unparseable_result(
-                    vcs,
-                    &repo,
-                    dir,
-                    (&resume, crate::project_merge::Produced::Merge),
-                    &error,
-                ));
-            }
-            crate::project_merge::refuse_unparseable_working_manifest(
-                vcs, &repo, dir, &resume, &staged,
-            )?;
+        let resume = op_state::resume_command(ctx.verb);
+        let stop = |error: &dyn std::fmt::Display| {
+            crate::project_merge::unparseable_result(
+                vcs,
+                &repo,
+                dir,
+                (&resume, crate::project_merge::Produced::Merge),
+                error,
+            )
+        };
+        let Some(staged) = vcs.staged_file(dir, Manifest::FILE_NAME)? else {
+            return Err(stop(&crate::project_merge::NO_MANIFEST_STAGED));
+        };
+        if let Err(error) = Manifest::from_toml_str(&staged) {
+            return Err(stop(&error));
         }
+        crate::project_merge::refuse_unparseable_working_manifest(
+            vcs, &repo, dir, &resume, &staged,
+        )?;
     } else {
         crate::project_merge::settle_replayed_manifest(
             vcs,
@@ -4887,7 +4891,7 @@ fn rejudge_entries(
         verb: record.verb,
     };
     match crate::land::rejudge_resolved(&resumed, owner_workspace_dir)? {
-        crate::land::Rejudged::Unresolved | crate::land::Rejudged::Replaying => return Ok(()),
+        crate::land::Rejudged::Unresolved | crate::land::Rejudged::Deferred => return Ok(()),
         crate::land::Rejudged::Refused(mut report) => {
             report.note(parked_note(record.verb));
             report.into_result()?;
@@ -8427,7 +8431,8 @@ pub fn run_abort(
 /// parse, conflict markers or a merge or replay's unparseable result
 /// included, its manifest is read at the checked-out commit while the
 /// project repo is stopped in a VCS operation, else at the savepoint `key`,
-/// which parsed when the operation began.
+/// which parsed when the operation began. It never reads `rwv.lock`, which a
+/// stopped replay may leave holding conflict markers.
 fn project_to_abort(dir: &Path, name: ProjectName, key: &SavepointKey) -> anyhow::Result<Project> {
     let working = Project::from_dir_skip_lock(dir, name.clone());
     let vcs = project_vcs();
@@ -8542,10 +8547,6 @@ fn abort_op(
         );
     }
     let cwd_project_dir = project_dir(&workspace_dir, &op_project_name);
-    // Use the lockless loader: abort's contract is "the state is bad, get me
-    // out". rwv.lock may contain git conflict markers from the half-completed
-    // rebase, so we must not try to parse it. The abort path only needs the
-    // manifest (to enumerate repo paths); it never reads lock contents.
     let cwd_project = project_to_abort(
         &cwd_project_dir,
         op_project_name.clone(),

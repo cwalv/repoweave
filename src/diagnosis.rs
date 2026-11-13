@@ -1162,9 +1162,9 @@ impl State {
                 axis: Axis::UnparseableProject,
                 name: "mid-operation",
                 means: "the `rwv.toml` the operation's merge or replay of the project repo \
-                        produced does not parse, listed with the parser's error. The two sides \
-                        merged as text without a conflict, into a file that is not a manifest. \
-                        Under merge history the merge is in progress and the merged file is \
+                        produced does not parse, listed with the parser's error: the two sides \
+                        merged as text without a conflict into a file that is not a manifest, \
+                        or a conflict in it was resolved into one. Under merge history the merge is in progress and the merged file is \
                         staged in the working tree; continuing commits the staged file in the \
                         merge. Under linear history the replay finished and the replayed tip \
                         holds the file; continuing makes the staged file part of that \

@@ -568,9 +568,15 @@ impl ProjectMerge<'_> {
             .into_iter()
             .next();
         let merged = self.read_merged(vcs, &dir, sides, &repo, base.as_ref())?;
-        let text = merged
-            .file(vcs, &dir, Manifest::FILE_NAME)?
-            .context("the merged project holds no rwv.toml")?;
+        let Some(text) = merged.file(vcs, &dir, Manifest::FILE_NAME)? else {
+            return Err(unparseable_result(
+                vcs,
+                &repo,
+                &dir,
+                (&self.resume, Produced::Merge),
+                &NO_MANIFEST_STAGED,
+            ));
+        };
         let manifest = match Manifest::from_toml_str(&text) {
             Ok(manifest) => manifest,
             Err(error) => {
@@ -949,6 +955,9 @@ fn read_manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Mani
     Manifest::from_toml_str(&text).ok()
 }
 
+/// Why a merge or replay whose `rwv.toml` was removed stops.
+pub(crate) const NO_MANIFEST_STAGED: &str = "no rwv.toml is staged";
+
 /// What left the project repo's unparseable `rwv.toml`.
 #[derive(Clone, Copy)]
 pub(crate) enum Produced {
@@ -962,8 +971,8 @@ impl Produced {
     fn says(self) -> &'static str {
         match self {
             Self::Merge => {
-                "the merge is in progress, its rwv.toml staged as the two sides merged it as \
-                 text; a staged rwv.toml that parses is committed in the merge"
+                "the merge is in progress and its staged rwv.toml does not parse; a staged \
+                 rwv.toml that parses is committed in the merge"
             }
             Self::Replay => {
                 "the replay finished and the replayed tip's rwv.toml does not parse; a staged \
@@ -985,7 +994,7 @@ pub(crate) fn unparseable_result(
     repo: impl std::fmt::Display,
     dir: &Path,
     (resume, produced): (&str, Produced),
-    error: &anyhow::Error,
+    error: &dyn std::fmt::Display,
 ) -> anyhow::Error {
     let file = dir.join(Manifest::FILE_NAME).display().to_string();
     let parse_error = format!("{error:#}");
