@@ -17087,7 +17087,8 @@ pub fn a_carry_stopped_in_the_project_continues() -> Scenario {
 /// A landing of `w1` whose carry of `w2` stops in the project repo, `w2`'s
 /// project commit also changing `app`'s entry: `rwv land --continue` judges
 /// the landing's own entries, not the `rwv.toml` the stopped carry left in
-/// the checkout, and completes with `w2` carried.
+/// the checkout, says so to a consent named for them, and completes with `w2`
+/// carried.
 pub fn a_landing_whose_carry_stopped_in_the_project_continues() -> Scenario {
     let declared = declared_branch_text(Repo::App, "main");
     let edited = format!("{declared}\nrecurse-submodules = false");
@@ -17123,6 +17124,19 @@ pub fn a_landing_whose_carry_stopped_in_the_project_continues() -> Scenario {
             &["checkout", "--theirs", "notes.txt"],
         ),
         Step::git(&ww("w1"), Repo::Proj, &["add", "notes.txt"]),
+        Step::rwv(
+            &ww("w1"),
+            &[
+                "land",
+                "--continue",
+                "--allow-member-change",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+        .claim(Claim::OutputContains(
+            "judged again once the carry is continued",
+        )),
         Step::rwv(&ww("w1"), &["land", "--continue"])
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj])
