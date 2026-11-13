@@ -838,6 +838,8 @@ every_scenario!(
     a_sync_continued_after_its_relock_keeps_it,
     a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry,
     a_sync_killed_after_journaling_a_composed_carry_continues,
+    a_verb_killed_after_its_relock_commit_then_stopped("land", "relock-committed"),
+    a_verb_killed_after_its_relock_commit_then_stopped("sync", "sync-relock-committed"),
     a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues,
     a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues,
     a_landing_whose_carry_stopped_in_the_project_continues,
@@ -5763,12 +5765,37 @@ fn a_sync_killed_after_journaling_a_composed_carry_continues() {
 
 #[test]
 fn a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues() {
-    runner::run(scenarios::a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues()).assert_fully_decided_green();
+    runner::run(
+        scenarios::a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues(),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]
 fn a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues() {
-    runner::run(scenarios::a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues()).assert_fully_decided_green();
+    runner::run(
+        scenarios::a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues(),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_killed_after_its_relock_commit_then_stopped_aborts() {
+    runner::run(
+        scenarios::a_verb_killed_after_its_relock_commit_then_stopped("land", "relock-committed"),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_sync_killed_after_its_relock_commit_then_stopped_aborts() {
+    runner::run(
+        scenarios::a_verb_killed_after_its_relock_commit_then_stopped(
+            "sync",
+            "sync-relock-committed",
+        ),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]

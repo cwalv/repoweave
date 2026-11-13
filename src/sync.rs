@@ -6690,21 +6690,21 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         }
         return Ok(());
     }
-    if !crate::lock::commit_lock_file_annotated(
+    let committed = crate::lock::commit_lock_file_annotated(
         vcs,
         dir,
         &auto_relock_commit_message(&ctx.source_workspace_name),
         &named,
         rebased,
-    )? {
-        return Ok(());
-    }
-    op_state::journal_tip(
-        &ctx.owner_workspace_dir,
-        RepoKey::Project,
-        vcs.head_revision(dir)?.id(),
     )?;
-    if ctx.handler.emit_text() {
+    if committed {
+        crate::test_pause::point("relock-committed");
+    }
+    let head = vcs.head_revision(dir)?;
+    if head.id() != source {
+        op_state::journal_tip(&ctx.owner_workspace_dir, RepoKey::Project, head.id())?;
+    }
+    if committed && ctx.handler.emit_text() {
         eprintln!(
             "  {}: re-locked after composing onto {}",
             RepoKey::Project,

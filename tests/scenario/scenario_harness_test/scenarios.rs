@@ -17557,6 +17557,55 @@ pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry
     )
 }
 
+/// A sync or a landing whose relock commit was made and killed before its
+/// tip was journaled, then continued into a stop on the carry of `w2` in
+/// `app`: the printed `rwv abort` puts back what the verb moved, the relock
+/// commit included.
+pub fn a_verb_killed_after_its_relock_commit_then_stopped(
+    verb: &'static str,
+    point: &'static str,
+) -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-unpinned"),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge", "--ff-only", "-q", "proj--w1"],
+        ),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w2-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(&ww("w1"), &[verb], point, "relocking"),
+        Step::kill("relocking"),
+        Step::rwv(&ww("w1"), &[verb, "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "carrying 'w2' along in local/remotes/app",
+            )),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("foreign")),
+        Step::git(&ww("w1"), Repo::Proj, &["log", "--format=%s", "proj--w1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("relock after")),
+    ];
+    scenario(
+        "stack: a verb killed after its relock commit, then stopped",
+        steps,
+    )
+}
+
 /// `stack-carried`, killed after the carry of `w2` in `app` journaled what
 /// it composed and before the checkout went back on its branch: the
 /// checkout is on no branch, and the printed `rwv sync --continue` puts it
