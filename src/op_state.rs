@@ -1850,7 +1850,9 @@ pub fn journal_rebasing(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::Res
 }
 
 /// Journal `carrying` on the op at `workspace_dir`, replacing the record of
-/// the same branch of the same repo.
+/// the same branch of the same repo. A member's carry makes the same
+/// branch's project carry, composed over the member tips it pinned, one to
+/// compose again, unless that carry already moved its branch.
 pub fn journal_carrying(workspace_dir: &Path, carrying: Carrying) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
         crate::untokened!(
@@ -1860,6 +1862,20 @@ pub fn journal_carrying(workspace_dir: &Path, carrying: Carrying) -> anyhow::Res
         )
     })?;
     if let Some(take_in) = record.take_in.as_mut() {
+        if carrying.repo != RepoKey::Project {
+            let moves = &take_in.ref_moves;
+            for project in take_in.carries.iter_mut().filter(|c| {
+                c.repo == RepoKey::Project
+                    && c.branch == carrying.branch
+                    && !moves.iter().any(|m| {
+                        m.repo == RepoKey::Project
+                            && m.branch == c.branch
+                            && Some(&m.to) == c.composed.as_ref()
+                    })
+            }) {
+                project.composed = None;
+            }
+        }
         match take_in
             .carries
             .iter_mut()

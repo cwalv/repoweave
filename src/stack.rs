@@ -528,7 +528,6 @@ impl Carrier<'_> {
         for carry in &stack.carried {
             let mut tips = carry.tips.clone();
             tips.sort_by_key(|(repo, _)| *repo == RepoKey::Project);
-            let mut member_composed = false;
             for (repo, from) in &tips {
                 let moved = record.carries.iter().find_map(|c| {
                     let to = c.composed.as_ref()?;
@@ -562,20 +561,15 @@ impl Carrier<'_> {
                     .carries
                     .into_iter()
                     .find(|c| &c.repo == repo && c.branch == carry.dependent.as_str());
-                let pins_composed_members = *repo == RepoKey::Project && member_composed;
                 let tip = match journaled.and_then(|c| c.composed.clone().map(|t| (c, t))) {
                     Some((c, tip))
                         if (c.from == *from || c.composed.as_ref() == Some(from))
                             && c.base == base
-                            && c.onto == onto
-                            && !pins_composed_members =>
+                            && c.onto == onto =>
                     {
                         tip
                     }
-                    _ => {
-                        member_composed |= *repo != RepoKey::Project;
-                        self.compose(repo, carry, from, &base, &onto, &record.rebases)?
-                    }
+                    _ => self.compose(repo, carry, from, &base, &onto, &record.rebases)?,
                 };
                 new_tips.insert(
                     (carry.dependent.as_str().to_owned(), repo.clone()),

@@ -16973,6 +16973,61 @@ pub fn a_carry_left_by_a_quit_is_unrecorded() -> Scenario {
     scenario("stack: a carry left by a quit is unrecorded", steps)
 }
 
+/// `w2` and `w3` both land into `w1`; `w1`'s sync carries `w2` whole and
+/// stops on `w3`'s `app`. Meanwhile `w2` gains a commit in `app` that
+/// conflicts with `main`, so the resumed carry composes `w2`'s `app` again
+/// and stops there. Once that stop is resolved and continued, `w2`'s
+/// project branch pins the `app` commit `w2` moves to, not the composition
+/// the first stop left behind.
+pub fn a_project_carry_follows_its_member_recomposed_across_a_stop() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w3", "proj--w1"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "gamma"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w3-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("carrying 'w3' along")),
+        Step::hand_commit(&ww("w1"), Repo::App, "w2", &[("README", "delta\n")]),
+        Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("carrying 'w2' along")),
+        Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::PinsReplayed {
+                at: ww("w1"),
+                rev: "w2",
+                member: Repo::App,
+                subject: "w2-app",
+                reached_from: "w2",
+            }),
+    ];
+    scenario(
+        "stack: a project carry follows its member recomposed across a stop",
+        steps,
+    )
+}
+
 /// How the carry a landing into its dependent waits on ends.
 #[derive(Debug, Clone, Copy)]
 pub enum StoppedCarryEnds {
