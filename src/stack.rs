@@ -726,7 +726,23 @@ impl Carrier<'_> {
             Err(VcsError::RebaseConflict { .. }) => {
                 return Err(self.stopped(repo, carry.dependent.as_str(), &dir, vcs.as_ref()))
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => {
+                vcs.cancel_in_flight_op(&dir);
+                self.back_on(&carrying)?;
+                return Err(crate::refusal::refusal(
+                    RefusalKind::OpParked,
+                    format!(
+                        "rwv {verb}: carrying '{dependent}' along in {repo} failed at {}: {e}\n\
+                         Nothing moved; fix the cause, then run `{}`, or `rwv abort` to put \
+                         everything back as it was",
+                        dir.display(),
+                        crate::op_state::resume_command(self.verb),
+                        verb = self.verb,
+                        dependent = carry.dependent,
+                        repo = self.repos.label(repo),
+                    ),
+                ));
+            }
         }
         let head = vcs.head_revision(&dir)?.id().clone();
         let tip = self.composed(&carrying, head, rebases)?;

@@ -17762,6 +17762,47 @@ pub fn a_carry_refuses_to_write_over_an_ignored_file() -> Scenario {
     )
 }
 
+/// `stack-carried` under a `pre-rebase` hook that refuses the replay of
+/// `w2`'s commits: the carry's replay fails with no conflict, the sync
+/// refuses naming `rwv sync --continue` and `rwv abort`, the checkout is back
+/// on `w1`'s branch with no rebase in progress, and once the hook is gone
+/// `--continue` carries `w2`.
+pub fn a_carry_replay_that_fails_without_a_conflict_leaves_the_checkout_on_its_branch() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &[
+                "-c",
+                "alias.plant=!d=\"$(git rev-parse --git-path hooks)\"; mkdir -p \"$d\"; printf '#!/bin/sh\\n[ \"$(git log -1 --format=%%s)\" = w2-app ] && exit 1\\nexit 0\\n' > \"$d/pre-rebase\"; chmod +x \"$d/pre-rebase\"",
+                "plant",
+            ],
+        ),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("rwv sync --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&ww("w1"), Repo::App, &["symbolic-ref", "--short", "HEAD"])
+            .claim(Claim::OutputLine("proj--w1")),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["-c", "alias.nohook=!rm -f \"$(git rev-parse --git-path hooks)/pre-rebase\"", "nohook"],
+        ),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("carried 'w2' along")),
+    ]);
+    scenario(
+        "stack: a carry replay that fails without a conflict leaves the checkout on its branch",
+        steps,
+    )
+}
+
 /// How the refusal of a continued carry, met a dependent checked out
 /// elsewhere, is cleared.
 #[derive(Debug, Clone, Copy)]

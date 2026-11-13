@@ -267,7 +267,7 @@ src/set_history.rs	history unset	-	1
 src/set_history.rs	repo-not-in-manifest	tests/weave/branch_set_history_test.rs	1
 src/setup.rs	claude-settings-missing	-	1
 src/stack.rs	(untokened:environment-passthrough)	-	1
-src/stack.rs	op-parked	-	1
+src/stack.rs	op-parked	-	2
 src/stack.rs	target dependent checked out elsewhere	-	1
 src/stack.rs	target dependent lacks the tip	-	1
 src/stack.rs	target dependent moved mid-operation	-	1
