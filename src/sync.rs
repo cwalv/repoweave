@@ -8540,13 +8540,6 @@ fn abort_op(
         op_state::OwnerReading::Whole(record) => record.operates_in(),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
-    let source_tip = match &reading {
-        op_state::OwnerReading::Whole(record) => record
-            .take_in
-            .as_ref()
-            .and_then(|take_in| take_in.source_tip.as_ref()),
-        op_state::OwnerReading::HeaderOnly { .. } => None,
-    };
     let own_steps = match &reading {
         op_state::OwnerReading::Whole(record) => record.own_steps(),
         op_state::OwnerReading::HeaderOnly { .. } => Default::default(),
@@ -8579,7 +8572,6 @@ fn abort_op(
             moved_in_target,
             wrote_in_target,
             operates_in.as_ref(),
-            source_tip,
             &rebases,
             &carries,
             &own_steps,
@@ -8613,7 +8605,6 @@ fn abort_op(
                                 moved_in_target,
                                 wrote_in_target,
                                 operates_in.as_ref(),
-                                source_tip,
                                 &rebases,
                                 &carries,
                                 &own_steps,
@@ -9323,7 +9314,6 @@ fn plan_abort_workspace(
     moved_in_target: Option<&[RepoKey]>,
     wrote_in_target: &std::collections::BTreeMap<RepoKey, CommitId>,
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
-    source_tip: Option<&CommitId>,
     rebases: &[op_state::Rebasing],
     carries: &[op_state::Carrying],
     own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
@@ -9443,10 +9433,7 @@ fn plan_abort_workspace(
                 Some(*by_hand) != converged_tips.get(&repo_key)
                     && Some(*by_hand) != advanced_tips.get(&repo_key)
             }),
-            started_from: match (side, &repo_key) {
-                (AbortSide::Replay, RepoKey::Project) => source_tip,
-                _ => stopped_carry.as_ref(),
-            },
+            started_from: stopped_carry.as_ref(),
             integrates,
             own_steps: match side {
                 AbortSide::Replay => own_steps.get(&repo_key).map_or(&[], Vec::as_slice),

@@ -1062,7 +1062,7 @@ pub struct Attribution<'a> {
     pub intent: Option<&'a CommitId>,
     /// The tip the op converged it on.
     pub converged: Option<&'a CommitId>,
-    /// The tip the op committed before it began composing here.
+    /// The tip a carry stopped here began from.
     pub started_from: Option<&'a CommitId>,
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
@@ -3864,7 +3864,7 @@ pub trait Vcs: Send + Sync {
     /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`].
     /// - the tip the op's replay last wrote →
     ///   [`VerifiedRestoreOutcome::RestoredFromIntent`]; the tip it
-    ///   converged on, or the one it committed before composing →
+    ///   converged on, or the one a carry stopped here began from →
     ///   [`VerifiedRestoreOutcome::RestoredFromConverged`]. Exact match only.
     /// - **anything else** → [`VerifiedRestoreOutcome::ForeignTip`], HEAD
     ///   untouched.

@@ -482,9 +482,9 @@ attributes a tip and what it prints.
 
 The destructive `reset --hard` to the savepoint is gated on the repo's
 current tip being **attributable to the op**. The attributable set is
-`{savepoint, advanced_tips[repo], converged_tips[repo]}`, and for the
-source's project repo `take_in.source_tip` (`Attribution`), which is
-its savepoint: a landing writes no commit there before composing.
+`{savepoint, advanced_tips[repo], converged_tips[repo]}` (`Attribution`);
+a landing writes no commit in the source's project repo before composing,
+so the tip it composes from there is its savepoint.
 A repo with no savepoint for the op is `NoSavepoint` and skipped. The
 classification of the rest:
 
