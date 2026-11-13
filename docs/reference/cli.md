@@ -586,7 +586,7 @@ List, drop or prune the backups rwv keeps. A **backup** is a ref an rwv verb mak
 
 ### `rwv backup list [--json]`
 
-List each repo's backups, one line each: the name, the commit it holds, `[abandoned]` or `[rebased]` where the backup says so, and `[redundant]` where a branch or remote-tracking branch reaches everything it holds. Under each, the commits no branch reaches, newest first (20 at most in text; `--json` carries them all). A repo with no backup is left out. Reads refs as last fetched and contacts no remote.
+List each repo's backups, one line each: the name, the commit it holds, `[abandoned]` or `[rebased]` where the backup says so, and `[redundant]` where a branch or remote-tracking branch reaches everything it holds. Under each, the commits no branch reaches, newest first (20 at most in text; `--json` carries them all). A repo with no backup is left out. The repos are the project repo and the members `rwv.toml` declares; while a merge or replay has left `rwv.toml` unmerged, the members its checked-out commit declares. Reads refs as last fetched and contacts no remote.
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each repo record has `path` (as `rwv backup drop` names the repo) and `backups`; each backup has `name`, `tip`, `mark` (`rebased` or `abandoned`, absent otherwise), `redundant` and `held` (`sha`, `short`, `subject`). See [JSON envelope convention](#--json-envelope-convention).
 

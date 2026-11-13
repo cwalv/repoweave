@@ -39,9 +39,29 @@ struct BackupRepo {
     url: Option<crate::registry::CloneUrl>,
 }
 
+/// The manifest naming the members on disk: while a merge or replay has
+/// left `rwv.toml` unmerged, the one the checked-out commit holds.
+fn members_manifest(project_dir: &std::path::Path) -> anyhow::Result<Manifest> {
+    let vcs = project_vcs();
+    let unmerged = vcs.is_repo(project_dir)
+        && vcs
+            .unmerged_paths(project_dir)?
+            .iter()
+            .any(|path| path == Manifest::FILE_NAME);
+    if !unmerged {
+        return Manifest::from_path(&project_dir.join(Manifest::FILE_NAME));
+    }
+    let head = vcs.head_revision(project_dir)?;
+    Manifest::from_toml_str(&vcs.read_file_at_revision(
+        project_dir,
+        &head,
+        std::path::Path::new(Manifest::FILE_NAME),
+    )?)
+}
+
 fn repos_of_project(ctx: &WorkspaceContext) -> anyhow::Result<(ProjectName, Vec<BackupRepo>)> {
     let (project, active_dir) = find_project(ctx)?;
-    let manifest = Manifest::from_path(&active_dir.join(Manifest::FILE_NAME))
+    let manifest = members_manifest(&active_dir)
         .with_context(|| format!("failed to load the manifest of project `{project}`"))?;
     let primary = ctx.primary_path();
     let mut repos = vec![BackupRepo {

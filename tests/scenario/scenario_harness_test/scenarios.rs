@@ -18906,6 +18906,10 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("# half-way through"))
                     .claim(Claim::OutputContains("<<<<<<<")),
+                Step::rwv(&ww("w"), &["backup", "list"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("projects/proj"))
+                    .claim(Claim::OutputContains("rwv backup of uncommitted edits")),
                 settles(&["branch", "set-history", "linear", "--repo", LIB], None),
                 continues(),
                 head_manifest().claim(Claim::OutputLacks("half-way through")),
