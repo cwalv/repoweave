@@ -29,8 +29,12 @@ pub(crate) enum Standing {
     },
     Even,
     Ahead,
-    Behind,
+    Behind {
+        behind: usize,
+    },
     Diverged {
+        ahead: usize,
+        behind: usize,
         unpushed: Vec<CommitSummary>,
         /// Everything the branch holds beyond the push branch is reached
         /// only by a superseded tip of it: the remote's copy was rewritten.
@@ -96,8 +100,12 @@ pub(crate) fn standing_of_branch(
             match vcs.relation(repo, &tip, &pushed.tip)? {
                 Relation::Even => Standing::Even,
                 Relation::Ahead => Standing::Ahead,
-                Relation::Behind => Standing::Behind,
+                Relation::Behind => Standing::Behind {
+                    behind: vcs.count_commits_in_range(repo, &tip, &pushed.tip)?,
+                },
                 Relation::Diverged => Standing::Diverged {
+                    ahead: vcs.count_commits_in_range(repo, &pushed.tip, &tip)?,
+                    behind: vcs.count_commits_in_range(repo, &tip, &pushed.tip)?,
                     unpushed: unpushed()?,
                     rewritten: vcs
                         .commits_excluding(repo, &tip, std::slice::from_ref(pushed.tip.id()), true)?
@@ -120,7 +128,7 @@ impl Standing {
             Standing::Gone { unpushed } if !unpushed.is_empty() => Some(State::PushBranchGone),
             Standing::Gone { .. } => None,
             Standing::Ahead => Some(State::PushBranchAhead),
-            Standing::Behind => Some(State::PushBranchBehind),
+            Standing::Behind { .. } => Some(State::PushBranchBehind),
             Standing::Diverged { .. } => Some(State::PushBranchDiverged),
             Standing::Even | Standing::Unpublished => None,
         }
@@ -203,10 +211,27 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
     }
     let nothing_to_settle = matches!(
         standing,
-        Standing::Diverged { unpushed, rewritten: false } if unpushed.is_empty()
+        Standing::Diverged { unpushed, rewritten: false, .. } if unpushed.is_empty()
     );
     if nothing_to_settle {
         judging = judging.only(&[]);
+    }
+    if let Standing::Diverged { ahead, behind, .. } = standing {
+        judging = judging
+            .fact(crate::diagnosis::Fact {
+                kind: crate::diagnosis::FactKind::Ahead,
+                about: Some(ahead.to_string()),
+            })
+            .fact(crate::diagnosis::Fact {
+                kind: crate::diagnosis::FactKind::Behind,
+                about: Some(behind.to_string()),
+            });
+    }
+    if let Standing::Behind { behind } = standing {
+        judging = judging.fact(crate::diagnosis::Fact {
+            kind: crate::diagnosis::FactKind::Behind,
+            about: Some(behind.to_string()),
+        });
     }
     if let Standing::Diverged {
         rewritten: true, ..

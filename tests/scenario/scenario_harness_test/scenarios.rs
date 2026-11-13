@@ -18312,6 +18312,8 @@ pub fn push_refuses_a_project_branch_ahead_and_behind_before_publishing_a_member
     let mut steps = project_ahead_and_behind(MovedOnA::App, false, true);
     steps.extend([Step::rwv(&a(), &["push"])
         .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+        .claim(Claim::OutputContains("ahead: 1"))
+        .claim(Claim::OutputContains("behind: 1"))
         .claim(Claim::OutputContains("rwv pull --merge-upstream"))
         .claim(Claim::LocalStateUnchanged(a()))]);
     scenario(
@@ -18391,7 +18393,9 @@ fn settle_by_the_printed_merge_then_push(b_moved_lib: bool) -> Vec<Step> {
         });
     }
     vec![
-        Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged)),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::refuses(Repo::Proj, State::PushBranchDiverged))
+            .claim(Claim::OutputContains("behind: 2")),
         merge,
         push,
     ]

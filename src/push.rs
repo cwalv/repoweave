@@ -1209,7 +1209,7 @@ fn judge_member(
             };
             Replace::Leased(lease)
         }
-        Standing::Behind | Standing::Diverged { .. } => {
+        Standing::Behind { .. } | Standing::Diverged { .. } => {
             reported.extend(judged);
             plan.state_skipped.push(path.clone());
             return Ok(());
@@ -1631,7 +1631,7 @@ fn judge_project(
                 }
             }
         }
-        Standing::Behind | Standing::Diverged { .. } => {
+        Standing::Behind { .. } | Standing::Diverged { .. } => {
             reported.extend(judged);
             false
         }

@@ -3102,6 +3102,10 @@ pub enum FactKind {
     /// The unlanded commits carry changes equivalent to commits where they
     /// land.
     PatchEquivalent,
+    /// How many commits the branch holds that its push branch lacks.
+    Ahead,
+    /// How many commits the push branch holds that the branch lacks.
+    Behind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
