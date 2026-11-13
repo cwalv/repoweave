@@ -47,7 +47,17 @@ If you step through a multi-commit rebase manually with `git rebase --continue`,
 
 ## Common conflict cases
 
-- **Project repo (`projects/<name>/`) conflict:** Two workspaces edited the same non-lock file in the project repo. (`rwv.lock` itself is recorded again once every repo has taken in.) Resolve the file in `projects/<name>/`, run `git add`, and resume with `--continue`. Until the operation ends, no verb that commits the project repo runs there — the `rwv member` and `rwv branch` setters, `rwv lock --commit`, and a new `rwv sync`, `rwv land`, `rwv pull` or `rwv cherry-pick` refuse with `edits` `commit mid-operation`, even once every path is staged, since their commit would become the merge's. The operation's own `--continue` writes that commit from what you staged; make the setting change after it, or `rwv abort`.
+- **Project repo (`projects/<name>/`) conflict:** Two workspaces edited the same non-lock file in the project repo. (`rwv.lock` itself is recorded again once every repo has taken in.) Resolve the file in `projects/<name>/`, run `git add`, and resume with `--continue`. Until the operation ends, no verb that commits the project repo runs there — the `rwv member` and `rwv branch` setters, `rwv lock --commit`, and a new `rwv sync`, `rwv land`, `rwv pull` or `rwv cherry-pick` refuse with `edits` `commit mid-operation`, even once every path is staged, since their commit would become the merge's. The operation's own `--continue` writes that commit from what you staged; make the setting change after it, or `rwv abort`. The one exception is a setter for an entry of a conflicted `rwv.toml`, which settles that entry instead (next item).
+- **`rwv.toml` conflict:** Both sides changed the same entry of `rwv.toml` differently — one member's table, one integration's table, or one other top-level key such as `history` or `[workweave]`. The stop lists each entry in conflict with the value on each side (`ours` is the side checked out, `theirs` the side coming in, as git's own words for them) and the setter that keeps each:
+
+  ```text
+  rwv.toml entry github/chatly/server is in conflict:
+    branch: "feat-a" in ours, "feat-b" in theirs
+      keep ours: rwv member set-branch github/chatly/server feat-a
+      keep theirs: rwv member set-branch github/chatly/server feat-b
+  ```
+
+  Run the setter you choose from the weave root. At this stop it settles that entry on both sides and commits nothing: while another entry is still in conflict, `rwv.toml` stays conflicted and is rewritten from both sides with only what is left between conflict markers; once none is, the merged `rwv.toml` is staged. `--continue` refuses while `rwv.toml` is in conflict and lists what is left. An entry no verb sets (`[workweave]`, an integration's table) is named with the hand edit that settles it: edit `rwv.toml`, then `git add -- rwv.toml`. A hand edit staged with `git add` settles the whole file at any point. A setter replaces an edit of the conflicted `rwv.toml` you have not staged.
 - **Member repo conflict:** A member repo's branch has a textual conflict against the incoming target revision. Resolve the conflicted files in that member checkout, run `git add`, and resume with `--continue`.
 - **`rwv land --retire` conflict:** When `--retire` hits a conflict, the workweave is preserved so you can resolve it. After staging fixes, run bare `rwv land --continue` — `--retire` is remembered in op-state and runs automatically once the sync finishes.
 

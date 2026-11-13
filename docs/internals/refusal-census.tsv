@@ -186,6 +186,7 @@ src/log.rs	name no-such-branch	-	2
 src/manifest.rs	legacy-manifest-format	tests/docs/refusal_arrival_test.rs	1
 src/manifest/edit.rs	(untokened:internal-invariant)	-	6
 src/manifest_commit.rs	(untokened:owed)	-	1
+src/manifest_conflict.rs	op-parked	-	1
 src/member_branch.rs	(untokened:owed)	-	2
 src/member_branch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	5
 src/member_branch.rs	name a revision	-	2
