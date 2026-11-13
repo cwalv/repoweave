@@ -1198,6 +1198,7 @@ every_scenario!(
     sync_rebased_members_in_a_merged_project_on_a_second_machine("linear"),
     sync_rebased_members_in_a_merged_project_on_a_second_machine("ff-only"),
     sync_refuses_a_pin_its_member_no_longer_holds("merge"),
+    a_sync_relock_records_a_member_it_rebased,
     sync_refuses_a_pin_its_member_no_longer_holds("linear"),
     a_landing_stops_before_its_project_commit_where_no_record_describes_a_member_rebase,
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::FastForward),
@@ -5297,6 +5298,12 @@ fn a_waived_history_pin_lands_on_a_second_machine() {
 #[test]
 fn a_merged_project_with_rebased_members_lands_on_a_second_machine() {
     runner::run(scenarios::merged_project_with_rebased_members_on_a_second_machine())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_sync_relock_records_a_member_it_rebased() {
+    runner::run(scenarios::a_sync_relock_records_a_member_it_rebased())
         .assert_fully_decided_green();
 }
 

@@ -7037,6 +7037,46 @@ pub fn merged_project_with_rebased_members_on_a_second_machine() -> Scenario {
     )
 }
 
+/// A sync with nothing to merge in the project rebases `app` onto work the
+/// target's remote gained: its relock records the move by name, so machine B,
+/// which never held the seat's pre-rebase commit, lands after A's push.
+pub fn a_sync_relock_records_a_member_it_rebased() -> Scenario {
+    scenario(
+        "a sync relock records a member it rebased",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "forge-app",
+            }),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+            Step::git(&ww("w"), Repo::Proj, &["log", "-1", "--format=%s%n%b"])
+                .claim(Claim::OutputContains("lock: relock after sync from main"))
+                .claim(Claim::OutputContains("Rwv-Repin: \"local/remotes/app\"")),
+            Step::rwv(&ww("w"), &["land", "--retire", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::new_machine(Machine::B),
+            Step::rwv(&b(), &["workweave", "create", "--project", "proj", "w2"])
+                .expect(Exit::Succeeds),
+            Step::commit(&b_ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&b_ww("w2"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App]),
+        ],
+    )
+}
+
 /// A seat whose locked `app` commit was amended away with no re-pin by name:
 /// `rwv sync` refuses it before anything moves, as `rwv land` does, and the
 /// printed re-pin by name clears it. The sync then rebases `app` onto the
