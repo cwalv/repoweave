@@ -16,7 +16,6 @@ follow-up actions.
 
 ```
 rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
-           [--kind <kind>]...
            [--merge-edited-drift | --set-aside-edited-drift] [--kind <kind>]...
 ```
 
@@ -54,7 +53,7 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
 - `--abandon-lost-pins` (refused without `--fix`) widens `--fix` by exactly one arm: a workweave
   checkout whose pinned revision is in no clone is relinked onto the canonical
   clone's HEAD, and the pin is given up. Named for what it destroys.
-- `--set-aside-edited-drift` is the other choice for the same checkouts. It
+- `--set-aside-edited-drift` (refused without `--fix`) is the other choice for the same checkouts. It
   takes the same backup, prints its id, then gives each file both moved and
   edited the moved tip's content, refreshes the move's other files and
   records the checkout. The edits are then held only by the backup; the
@@ -62,7 +61,7 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   its staged version where that differed. It merges nothing, and refuses
   where the merge flag refuses for links and uncompared files. The two flags
   conflict.
-- `--merge-edited-drift` widens `--fix` for a checkout whose branch moved
+- `--merge-edited-drift` (refused without `--fix`) widens `--fix` for a checkout whose branch moved
   under it and that holds files both that move and an edit here changed
   (`edits` `moved and edited`). Without it `--fix` writes nothing to such a
   checkout and refuses, naming it, as plain `rwv doctor` does and as every

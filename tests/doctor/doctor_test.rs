@@ -2534,6 +2534,8 @@ fn a_consent_flag_is_refused_without_fix() {
         "--release-unreadable-claims",
         "--release-unreadable-claims-on=main",
         "--abandon-lost-pins",
+        "--merge-edited-drift",
+        "--set-aside-edited-drift",
     ] {
         let out = rwv_cmd()
             .args(["doctor", flag])
