@@ -17211,6 +17211,56 @@ pub fn a_sync_continued_after_its_relock_keeps_it() -> Scenario {
     scenario("stack: a sync continued after its relock keeps it", steps)
 }
 
+/// `a-sync-continued-after-its-relock-keeps-it`, with a commit made in
+/// `w1`'s project repo during the stop: the project branch `w2` was composed
+/// on before the stop no longer sits on `w1`'s project tip, so the continued
+/// carry composes it again and `w2` holds the commit.
+pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-unpinned"),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge", "--ff-only", "-q", "proj--w1"],
+        ),
+        Step::commit(&ww("w1"), Repo::App, "w2-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w3", "w2"),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w1"), Repo::App, &["commit", "-qam", "w3-app"]),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("carrying 'w3' along")),
+        Step::commit(&ww("w1"), Repo::Proj, "w1-later"),
+        Step::git(&ww("w1"), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("w1"), Repo::App, &["add", "README"]),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::Contains {
+                at: ww("w1"),
+                repo: Repo::Proj,
+                rev: "w2",
+                mark: "w1-later",
+            }),
+    ];
+    scenario(
+        "stack: a sync continued after its project tip moved recomposes the project carry",
+        steps,
+    )
+}
+
 /// What wrote `w1`'s project tip before its carry of `w2` stopped.
 #[derive(Debug, Clone, Copy)]
 pub enum BeforeTheCarry {

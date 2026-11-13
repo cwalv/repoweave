@@ -836,6 +836,7 @@ every_scenario!(
     a_carry_stopped_in_the_project_continues,
     sync_continue_judges_dependents_before_a_rejudged_rebase,
     a_sync_continued_after_its_relock_keeps_it,
+    a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry,
     a_landing_whose_carry_stopped_in_the_project_continues,
     abort_refuses_a_tip_amended_during_a_stop,
     vcs_continue_mid_rebase(
@@ -5706,6 +5707,14 @@ fn a_landing_whose_carry_stopped_in_the_project_continues() {
 fn a_sync_continued_after_its_relock_keeps_it() {
     runner::run(scenarios::a_sync_continued_after_its_relock_keeps_it())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry() {
+    runner::run(
+        scenarios::a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry(),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]
