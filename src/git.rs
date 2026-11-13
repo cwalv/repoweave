@@ -5797,12 +5797,28 @@ impl GitVcs {
             repo,
         ) {
             Ok(_) => {}
-            Err(VcsError::CommandFailed { args, repo, stderr })
-                if stderr.contains("index.lock") =>
-            {
-                return Err(VcsError::CommandFailed { args, repo, stderr });
+            Err(VcsError::CommandFailed { args, stderr, .. }) => {
+                let lock = PathBuf::from(
+                    Self::run(
+                        vec![
+                            "rev-parse",
+                            "--path-format=absolute",
+                            "--git-path",
+                            "index.lock",
+                        ],
+                        repo,
+                    )?
+                    .trim_end(),
+                );
+                if lock.exists() {
+                    return Err(VcsError::CommandFailed {
+                        args,
+                        repo: repo.to_path_buf(),
+                        stderr: format!("{} is held by another process: {stderr}", lock.display()),
+                    });
+                }
+                return Ok(true);
             }
-            Err(VcsError::CommandFailed { .. }) => return Ok(true),
             Err(other) => return Err(other),
         }
         let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
