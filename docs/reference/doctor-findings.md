@@ -1452,7 +1452,10 @@ at least one file the move changed, with its index entry, still holds the old
 tip's content, which a commit reachable from HEAD keeps.
 
 **What to do:** `rwv doctor --fix` gives those files HEAD's content, and
-reports each one.
+reports each one. What it replaces is the old tip's content, which that tip
+holds. A staged return to the old tip made after a refresh by hand cannot be
+told from this drift, and is refreshed the same way; commit such a return
+first to keep it.
 
 #### `live-edits`
 

@@ -18075,84 +18075,134 @@ pub fn stack_remote_dependent() -> Scenario {
 /// git command that writes no reflog entry, then a staged return of every
 /// path the move changed: three returns, each after three hand refreshes.
 /// The index, files and reflog are then those of a seat never refreshed, so
-/// nothing git records tells the staged return from drift. Whether a landing
-/// refreshes it (today) or keeps it is the operator's open ruling Q3; each
-/// landing's outcome is undecided until it lands.
+/// nothing git records tells the staged return from drift. The landing
+/// refreshes it and names each file; what it replaces is the moved-from tip's
+/// content, which history holds.
 pub fn drift_staged_return_after_a_hand_refresh() -> Scenario {
+    struct Seat {
+        name: &'static str,
+        added: Option<&'static str>,
+        changed: Option<&'static str>,
+    }
     let refreshes: [&[&str]; 3] = [
         &["checkout", "HEAD", "--", "."],
         &["restore", "--staged", "--worktree", "--source=HEAD", "."],
         &["read-tree", "-m", "-u", "HEAD"],
     ];
-    let seats: [[&'static str; 3]; 3] = [
-        ["q3-add-1", "q3-add-2", "q3-add-3"],
-        ["q3-change-1", "q3-change-2", "q3-change-3"],
-        ["q3-two-1", "q3-two-2", "q3-two-3"],
+    let seat = |name, added, changed| Seat {
+        name,
+        added,
+        changed,
+    };
+    let seats: [[Seat; 3]; 3] = [
+        [
+            seat("q3-add-1", Some("q3-add-1-new.txt"), None),
+            seat("q3-add-2", Some("q3-add-2-new.txt"), None),
+            seat("q3-add-3", Some("q3-add-3-new.txt"), None),
+        ],
+        [
+            seat("q3-change-1", None, Some("q3-change-1.txt")),
+            seat("q3-change-2", None, Some("q3-change-2.txt")),
+            seat("q3-change-3", None, Some("q3-change-3.txt")),
+        ],
+        [
+            seat("q3-two-1", Some("q3-two-1-new.txt"), Some("q3-two-1.txt")),
+            seat("q3-two-2", Some("q3-two-2-new.txt"), Some("q3-two-2.txt")),
+            seat("q3-two-3", Some("q3-two-3-new.txt"), Some("q3-two-3.txt")),
+        ],
     ];
     let mut steps = Vec::new();
-    for (variant, names) in seats.iter().enumerate() {
-        for (refresh, seat) in refreshes.iter().zip(names) {
-            let branch = format!("proj--{seat}");
-            steps.push(create(seat));
-            match variant {
-                0 => {
-                    steps.push(Step::hand_commit(
-                        &a(),
-                        Repo::Lib,
-                        &branch,
-                        &[("new.txt", "new\n")],
-                    ));
-                    steps.push(Step::git(&ww(seat), Repo::Lib, refresh));
-                    steps.push(Step::git(&ww(seat), Repo::Lib, &["rm", "-q", "new.txt"]));
-                }
-                1 => {
-                    steps.push(Step::commit(&ww(seat), Repo::Lib, seat));
-                    let file = format!("{seat}.txt");
-                    steps.push(Step::hand_commit(
-                        &a(),
-                        Repo::Lib,
-                        &branch,
-                        &[(&file, "moved\n")],
-                    ));
-                    steps.push(Step::git(&ww(seat), Repo::Lib, refresh));
+    for variant in &seats {
+        for (refresh, seat) in refreshes.iter().zip(variant) {
+            let at = ww(seat.name);
+            let branch = format!("proj--{}", seat.name);
+            steps.push(create(seat.name));
+            if seat.changed.is_some() {
+                steps.push(Step::commit(&at, Repo::Lib, seat.name));
+            }
+            let moved: Vec<(&str, &str)> = seat
+                .changed
+                .map(|file| (file, "moved\n"))
+                .into_iter()
+                .chain(seat.added.map(|file| (file, "new\n")))
+                .collect();
+            steps.push(Step::hand_commit(&a(), Repo::Lib, &branch, &moved));
+            steps.push(Step::git(&at, Repo::Lib, refresh));
+            match (seat.added, seat.changed) {
+                (Some(_), Some(_)) => {
                     steps.push(Step::git(
-                        &ww(seat),
-                        Repo::Lib,
-                        &["checkout", "HEAD~1", "--", &file],
-                    ));
-                }
-                _ => {
-                    steps.push(Step::commit(&ww(seat), Repo::Lib, seat));
-                    let file = format!("{seat}.txt");
-                    steps.push(Step::hand_commit(
-                        &a(),
-                        Repo::Lib,
-                        &branch,
-                        &[(&file, "moved\n"), ("new.txt", "new\n")],
-                    ));
-                    steps.push(Step::git(&ww(seat), Repo::Lib, refresh));
-                    steps.push(Step::git(
-                        &ww(seat),
+                        &at,
                         Repo::Lib,
                         &["revert", "--no-commit", "HEAD"],
                     ));
-                    steps.push(Step::git(&ww(seat), Repo::Lib, &["revert", "--quit"]));
+                    steps.push(Step::git(&at, Repo::Lib, &["revert", "--quit"]));
                 }
+                (Some(added), None) => {
+                    steps.push(Step::git(&at, Repo::Lib, &["rm", "-q", added]));
+                }
+                (None, Some(changed)) => {
+                    steps.push(Step::git(
+                        &at,
+                        Repo::Lib,
+                        &["checkout", "HEAD~1", "--", changed],
+                    ));
+                }
+                (None, None) => unreachable!("every seat's move changes a path"),
             }
             steps.push(
-                Step::git(
-                    &ww(seat),
-                    Repo::Lib,
-                    &["diff", "--cached", "--quiet", "HEAD"],
-                )
-                .expect(Exit::Code(1)),
+                Step::git(&at, Repo::Lib, &["diff", "--cached", "--quiet", "HEAD"])
+                    .expect(Exit::Code(1)),
             );
             steps.push(
-                Step::rwv(&ww(seat), &["land", "--history", "linear"]).expect(Exit::Undecided),
+                Step::git(&at, Repo::Lib, &["diff", "--cached", "--quiet", "HEAD~1"])
+                    .expect(Exit::Succeeds),
             );
+            steps.push(
+                Step::git(&at, Repo::Lib, &["diff", "--quiet", "HEAD~1"]).expect(Exit::Succeeds),
+            );
+            let mut land = Step::rwv(&at, &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("refreshed drift"));
+            for file in seat.added.into_iter().chain(seat.changed) {
+                land = land.claim(Claim::OutputContains(file));
+            }
+            steps.push(land);
         }
     }
     scenario("drift staged return after a hand refresh", steps)
+}
+
+/// A staged return after a hand refresh, one of whose files then gets content
+/// no commit holds: that file is an edit and is never replaced, and the
+/// landing refuses it.
+pub fn drift_staged_return_with_an_edit_is_kept() -> Scenario {
+    let at = ww("q3-edit");
+    scenario(
+        "drift staged return with an edit is kept",
+        vec![
+            create("q3-edit"),
+            Step::commit(&at, Repo::Lib, "q3-edit"),
+            Step::hand_commit(
+                &a(),
+                Repo::Lib,
+                "proj--q3-edit",
+                &[("q3-edit.txt", "moved\n")],
+            ),
+            Step::git(&at, Repo::Lib, &["checkout", "HEAD", "--", "."]),
+            Step::git(&at, Repo::Lib, &["checkout", "HEAD~1", "--", "q3-edit.txt"]),
+            Step::hand_edit(&at, Repo::Lib, "q3-edit.txt", "q3-edit", "mine"),
+            Step::git(&at, Repo::Lib, &["add", "q3-edit.txt"]),
+            Step::rwv(&at, &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsDirty))
+                .claim(Claim::OutputLacks("refreshed drift")),
+            Step::git(
+                &at,
+                Repo::Lib,
+                &["grep", "-q", "--cached", "mine", "--", "q3-edit.txt"],
+            ),
+            Step::git(&at, Repo::Lib, &["grep", "-q", "mine", "--", "q3-edit.txt"]),
+        ],
+    )
 }
 
 /// What machine B has of `w2` beyond what it landed into `w1`.

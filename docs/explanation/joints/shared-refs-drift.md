@@ -234,10 +234,12 @@ writes no reflog entry (`git checkout HEAD -- .`, `git restore --staged
 --worktree .`, `git read-tree -m -u HEAD`), a staged return of every path the
 move changed (a `git rm` of the one file it added, `git checkout <old> --` the
 one file it changed, a staged revert of the move) leaves the index, files and
-reflog exactly as a checkout never refreshed. Today rwv refreshes it, writing
-HEAD's content back over the staged return; nothing is lost that a commit
-does not hold, and the refresh is reported. Whether rwv should instead keep
-it as an edit is not yet decided.
+reflog exactly as a checkout never refreshed. rwv cannot tell it from drift,
+and refreshes it: HEAD's content goes back over the staged return, and the
+refresh names each file it replaced. What it replaces is the moved-from tip's
+content, which that tip holds, so nothing is lost that history does not hold.
+To keep such a return, commit it before rwv next reads the checkout. A path holding
+content other than the old tip's is an edit and is never replaced.
 
 ## The shared invariant
 
@@ -245,9 +247,11 @@ it as an edit is not yet decided.
 > checkout, two readings agree that the path still holds exactly what the
 > moved-from tip held, a commit reachable from HEAD, and git's own write
 > refuses unless it still does. Where the evidence is not conclusive, every
-> difference is an edit. No uncommitted edit is replaced or deleted, save a
-> change made in the instant before git writes, and the staged return of a
-> whole move after a refresh by hand, which reads as drift (above).
+> difference is an edit. No content that the checkout's history does not
+> hold is replaced or deleted, save a change made in the instant before git
+> writes. A staged return of a whole move after a refresh by hand reads as
+> drift (above): it is refreshed, and what that replaces is the moved-from
+> tip's content, which history holds.
 
 The classifier is one function that `rwv doctor --fix`, `rwv land` and
 `rwv sync` share. Each path makes its own decision; the stale ones are
