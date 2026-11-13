@@ -623,17 +623,22 @@ pub(crate) fn record_typed_from(dir: &Path) {
     let _ = TYPED_FROM.set(dir.to_path_buf());
 }
 
-/// `rwv <args>` as a line for the operator to run against `workspace`:
-/// carrying `-C <workspace>` where the invocation was typed outside it.
+/// `rwv <args>` as a line for the operator to run against `workspace`.
 pub(crate) fn rwv_line(workspace: &Path, args: &str) -> String {
+    addressed(workspace, &format!("rwv {args}"))
+}
+
+/// `command`, an `rwv` command line, carrying `-C <workspace>` where the
+/// invocation was typed outside `workspace`.
+pub(crate) fn addressed(workspace: &Path, command: &str) -> String {
     let typed_in = TYPED_FROM
         .get()
         .map(|dir| dir.ancestors().find(|dir| is_workspace_root(dir)));
-    match typed_in {
-        Some(root) if root != Some(workspace) => {
+    match (typed_in, command.strip_prefix("rwv ")) {
+        (Some(root), Some(args)) if root != Some(workspace) => {
             format!("rwv -C {} {args}", workspace.display())
         }
-        _ => format!("rwv {args}"),
+        _ => command.to_owned(),
     }
 }
 

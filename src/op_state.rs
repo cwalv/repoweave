@@ -281,21 +281,17 @@ impl FromStr for SavepointKey {
 /// field ([`OpVerb`]) so the string is derived from op-state, not from a guess
 /// made where the message is written.
 pub fn resume_command(verb: OpVerb) -> String {
-    format!("rwv {}", resume_args(verb))
-}
-
-fn resume_args(verb: OpVerb) -> String {
     let words = match verb {
         OpVerb::UpdateRemote => "update --remote".to_owned(),
         other => other.to_string(),
     };
-    format!("{words} --continue")
+    format!("rwv {words} --continue")
 }
 
 /// [`resume_command`] as a line to run against `workspace`, the one the
 /// operation is owned by.
 pub(crate) fn resume_command_at(verb: OpVerb, workspace: &std::path::Path) -> String {
-    crate::workspace::rwv_line(workspace, &resume_args(verb))
+    crate::workspace::addressed(workspace, &resume_command(verb))
 }
 
 /// `rwv abort` as a line to run against `workspace`.
