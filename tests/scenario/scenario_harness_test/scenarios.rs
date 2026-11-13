@@ -18993,6 +18993,39 @@ pub fn a_carry_refuses_to_write_over_an_ignored_file() -> Scenario {
     )
 }
 
+/// `stack-carried` with another project branch declaring `w2`'s `app`
+/// branch: the carry would rewrite a declared branch, so `w1`'s sync refuses
+/// before anything moves, as a landing into it would.
+pub fn a_carry_refuses_a_dependent_member_branch_another_branch_declares() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["switch", "-qc", "line"]),
+        Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::App, "main"),
+            &declared_branch_text(Repo::App, "w2"),
+        ),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "declare"]),
+        Step::git(&a(), Repo::Proj, &["switch", "-q", "main"]),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses(Repo::App, State::ProtectedDeclared))
+            .claim(Claim::OutputContains("line (projects/proj)"))
+            .claim(Claim::OutputContains("rwv branch set-mode w2 declared"))
+            .claim(Claim::LocalStateUnchanged(ww("w1"))),
+        Step::rwv(&ww("w1"), &["branch", "set-mode", "w2", "declared"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("carried 'w2'")),
+    ]);
+    scenario(
+        "stack: a carry refuses a dependent's member branch another branch declares",
+        steps,
+    )
+}
+
 /// `stack-carried` under a `pre-rebase` hook that refuses the replay of
 /// `w2`'s commits: the carry's replay fails with no conflict, the sync
 /// refuses naming `rwv sync --continue` and `rwv abort`, the checkout is back

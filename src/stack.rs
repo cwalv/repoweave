@@ -2,7 +2,7 @@
 //! replayed from its target's old tip onto its new one, parents first, all
 //! composed before any of their branches moves.
 
-use crate::diagnosis::{Report, State};
+use crate::diagnosis::{ChoiceId, Report, State};
 use crate::manifest::{Manifest, ProjectName, RepoKey};
 use crate::op_state::{Carrying, OpVerb, Rebasing, RefMove};
 use crate::records::BranchName;
@@ -21,6 +21,7 @@ fn rev(commit: &CommitId) -> ResolvedRevisionId {
 /// The repos of one workspace a stack is carried in.
 pub(crate) struct Repos<'a> {
     pub(crate) root: &'a Path,
+    pub(crate) primary: &'a Path,
     pub(crate) project: &'a ProjectName,
     pub(crate) manifest: &'a Manifest,
 }
@@ -289,7 +290,7 @@ pub(crate) fn judge(
     verb: &'static str,
     held: Option<&[&str]>,
     report: &mut Report,
-) {
+) -> anyhow::Result<()> {
     let project_dir = repos.dir(&RepoKey::Project);
     let vcs = repos.vcs(&RepoKey::Project);
     let label = repos.label(&RepoKey::Project);
@@ -310,7 +311,7 @@ pub(crate) fn judge(
             .bind("<project>", repos.project)
             .checkout(&project_dir)
             .by_verb(verb);
-        use crate::diagnosis::ChoiceId as Choice;
+        use ChoiceId as Choice;
         match held {
             None => judging = judging.without(&[Choice::LostRace]),
             Some(claimed) => {
@@ -342,6 +343,52 @@ pub(crate) fn judge(
         };
         report.add(judging.judge(vcs.as_ref()));
     }
+    judge_protection(stack, repos, t, verb, report)
+}
+
+/// One `declared` protection state per member branch a carry would rewrite
+/// that a live weave branch declares.
+fn judge_protection(
+    stack: &Stack,
+    repos: &Repos<'_>,
+    t: &str,
+    verb: &'static str,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let members: Vec<_> = stack
+        .carried
+        .iter()
+        .flat_map(|carry| {
+            carry.tips.iter().filter_map(move |(repo, _)| match repo {
+                RepoKey::Member(path) => Some((path, &carry.dependent)),
+                RepoKey::Project => None,
+            })
+        })
+        .collect();
+    if members.is_empty() {
+        return Ok(());
+    }
+    let accounting = crate::alignment::Accounting::scan(repos.primary)?;
+    for (path, dependent) in members {
+        let declarers = accounting.declarers(path, dependent.as_str());
+        if declarers.is_empty() {
+            continue;
+        }
+        report.add(
+            State::ProtectedDeclared
+                .of(path)
+                .member()
+                .subject(dependent.as_str())
+                .listing(declarers)
+                .bind("<m>", path)
+                .bind("<W>", dependent.as_str())
+                .bind("<T>", t)
+                .only(&[ChoiceId::C12])
+                .by_verb(verb)
+                .judge(repos.vcs(&RepoKey::Project).as_ref()),
+        );
+    }
+    Ok(())
 }
 
 /// Refuse where a carry would write over something a checkout holds that no
@@ -625,7 +672,7 @@ impl Carrier<'_> {
             verb,
             Some(&claimed),
             &mut report,
-        );
+        )?;
         report.into_result()?;
         refuse_in_the_way(&stack, &self.repos, self.verb)?;
         let project_dir = self.repos.dir(&RepoKey::Project);
@@ -900,7 +947,7 @@ impl Carrier<'_> {
                 verb,
                 Some(&claimed),
                 &mut report,
-            );
+            )?;
             report.into_result()?;
         }
         if !raced.is_empty() {

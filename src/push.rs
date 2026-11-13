@@ -552,6 +552,7 @@ fn validate_overwrites(
                         .subject(&expected)
                         .listing(declarers)
                         .bind("<m>", &member.path)
+                        .without(&[ChoiceId::C12])
                         .by_verb("push")
                         .judge(project_vcs().as_ref())
                         .refused());

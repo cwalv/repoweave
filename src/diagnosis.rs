@@ -1495,8 +1495,10 @@ impl State {
                              delete` and `rwv workweave delete` with `--delete-remote` or \
                              `--delete-remote-unlanded`, for a member branch of the deleted \
                              name; `rwv sync` where the target's `history` rebases a member \
-                             on the branch that has commits to replay",
-                offers: &[Form::C2UpdateRemote],
+                             on the branch that has commits to replay; `rwv sync` and `rwv \
+                             land` where carrying a dependent along would rewrite its member \
+                             branch",
+                offers: &[Form::C2UpdateRemote, Form::C12Declared],
                 verb_offers: &[],
             },
             Self::ProtectedDeclaredMode => &StateRow {

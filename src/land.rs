@@ -880,6 +880,7 @@ pub fn judge(
     if !retire {
         let repos = crate::stack::Repos {
             root: source_root,
+            primary: &landing.primary,
             project: &landing.project,
             manifest: &sides.ours,
         };
@@ -891,7 +892,7 @@ pub fn judge(
             "land",
             None,
             report,
-        );
+        )?;
     }
     match inapplicable {
         Some(refused) => Err(refused),

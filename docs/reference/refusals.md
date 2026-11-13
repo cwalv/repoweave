@@ -387,7 +387,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `declared` | a member's branch that some live weave branch declares, listed with the weave branches declaring it; rwv never rewrites, renames or deletes it | `rwv push --overwrite`, for a member; `rwv branch delete` and `rwv workweave delete` with `--delete-remote` or `--delete-remote-unlanded`, for a member branch of the deleted name; `rwv sync` where the target's `history` rebases a member on the branch that has commits to replay |
+| `declared` | a member's branch that some live weave branch declares, listed with the weave branches declaring it; rwv never rewrites, renames or deletes it | `rwv push --overwrite`, for a member; `rwv branch delete` and `rwv workweave delete` with `--delete-remote` or `--delete-remote-unlanded`, for a member branch of the deleted name; `rwv sync` where the target's `history` rebases a member on the branch that has commits to replay; `rwv sync` and `rwv land` where carrying a dependent along would rewrite its member branch |
 | `declared mode` | a project branch whose record is `declared`; rwv never rewrites it, and never deletes its unlanded push branch. Renaming it, and deleting its push branch once landed, run | `rwv push --overwrite`; `rwv branch delete --delete-remote-unlanded`, for the project repo |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -395,6 +395,7 @@ The others follow.
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `declared` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
+| `declared` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `declared mode` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Destructive operations](../explanation/destructive-operations.md).

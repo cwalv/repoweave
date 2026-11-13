@@ -2935,6 +2935,7 @@ impl OpContext<'_> {
             let manifest = pre_op_manifest(self)?;
             let repos = crate::stack::Repos {
                 root: &self.cwd_workspace_dir,
+                primary: self.cwd_ctx.primary_path(),
                 project: &self.cwd_project_name,
                 manifest: &manifest,
             };
@@ -2945,7 +2946,7 @@ impl OpContext<'_> {
                 &[],
             )?;
             let mut report = Report::default();
-            crate::stack::judge(&stack, &repos, &target, "land", None, &mut report);
+            crate::stack::judge(&stack, &repos, &target, "land", None, &mut report)?;
             report.into_result()?;
         }
         if let Some(merge) = merged {
@@ -6379,6 +6380,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let carrier = crate::stack::Carrier {
         repos: crate::stack::Repos {
             root: &ctx.cwd_workspace_dir,
+            primary: ctx.cwd_ctx.primary_path(),
             project: &ctx.cwd_project_name,
             manifest: &pre_op,
         },

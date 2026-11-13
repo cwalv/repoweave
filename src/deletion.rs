@@ -499,6 +499,7 @@ impl<'a> Rule<'a> {
                             .subject(&self.request.branch)
                             .listing(declarers.iter().map(ToString::to_string))
                             .bind("<m>", &path)
+                            .without(&[crate::diagnosis::ChoiceId::C12])
                             .by_verb(self.request.verb)
                             .judge(repo.vcs.as_ref()),
                     );

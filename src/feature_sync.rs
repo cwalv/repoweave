@@ -832,6 +832,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
                             .subject(&on)
                             .listing(declarers)
                             .bind("<m>", path)
+                            .without(&[ChoiceId::C12])
                             .by_verb("sync")
                             .judge(member.vcs.as_ref()),
                     );
@@ -935,6 +936,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         let manifest = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
         let repos = crate::stack::Repos {
             root: sync.ctx.active_path(),
+            primary: sync.ctx.primary_path(),
             project: &sync.project,
             manifest: &manifest,
         };
@@ -948,7 +950,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
             "sync",
             None,
             &mut report,
-        );
+        )?;
     }
     report.into_result()?;
     Ok(Planned {
@@ -1528,6 +1530,7 @@ fn act(
     let carrier = crate::stack::Carrier {
         repos: crate::stack::Repos {
             root: sync.ctx.active_path(),
+            primary: sync.ctx.primary_path(),
             project: &sync.project,
             manifest: &pre_manifest,
         },
@@ -2021,6 +2024,7 @@ fn integration_now(
                 scoped(State::ProtectedDeclared)
                     .subject(&on)
                     .listing(declarers)
+                    .without(&[ChoiceId::C12])
                     .judge(vcs),
             );
         }
@@ -2028,6 +2032,7 @@ fn integration_now(
     let manifest = Manifest::from_path(&sync.dir.join(Manifest::FILE_NAME))?;
     let repos = crate::stack::Repos {
         root: sync.ctx.active_path(),
+        primary: sync.ctx.primary_path(),
         project: &sync.project,
         manifest: &manifest,
     };
@@ -2042,7 +2047,7 @@ fn integration_now(
         "sync",
         None,
         &mut report,
-    );
+    )?;
     report.into_result()?;
     Ok((how, merged))
 }
