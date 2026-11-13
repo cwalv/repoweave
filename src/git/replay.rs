@@ -14,6 +14,12 @@ fn record_name(old: &CommitId, onto: &CommitId) -> String {
     format!("{RECORD_PREFIX}{}-{}", old.as_str(), onto.as_str())
 }
 
+/// The name of the record of what rwv made of that replay by rewriting it,
+/// kept beside the replay's own so that either tip is described.
+fn rewritten_record_name(old: &CommitId, onto: &CommitId) -> String {
+    format!("{}.rewritten", record_name(old, onto))
+}
+
 /// The name of the copy of the todo git built for the same replay.
 fn todo_name(old: &CommitId, onto: &CommitId) -> String {
     format!("{}.todo", record_name(old, onto))
@@ -96,6 +102,23 @@ impl GitVcs {
         .map(PathBuf::from)
     }
 
+    fn rewritten_record_path(
+        repo: &Path,
+        old: &CommitId,
+        onto: &CommitId,
+    ) -> Result<PathBuf, VcsError> {
+        Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &rewritten_record_name(old, onto),
+            ],
+            repo,
+        )
+        .map(PathBuf::from)
+    }
+
     fn record_path(repo: &Path, old: &CommitId, onto: &CommitId) -> Result<PathBuf, VcsError> {
         Self::run_trimmed(
             [
@@ -163,10 +186,28 @@ impl GitVcs {
         onto: &CommitId,
         new: &CommitId,
     ) -> Result<Option<Replayed>, VcsError> {
+        let path = Self::record_path(repo, old, onto)?;
+        if let Some(replayed) = Self::read_replay(repo, from, old, onto, new, &path)? {
+            return Ok(Some(replayed));
+        }
+        let rewritten = Self::rewritten_record_path(repo, old, onto)?;
+        if rewritten.exists() {
+            return Self::read_replay(repo, from, old, onto, new, &rewritten);
+        }
+        Ok(None)
+    }
+
+    fn read_replay(
+        repo: &Path,
+        from: &CommitId,
+        old: &CommitId,
+        onto: &CommitId,
+        new: &CommitId,
+        path: &Path,
+    ) -> Result<Option<Replayed>, VcsError> {
         let olds = Self::commits_between(repo, from, old)?;
         let written = Self::commits_between(repo, onto, new)?;
-        let path = Self::record_path(repo, old, onto)?;
-        let text = match std::fs::read_to_string(&path) {
+        let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(olds.is_empty().then(|| Replayed {
@@ -292,7 +333,7 @@ impl GitVcs {
             }
             text.push_str(&format!("{} {}\n", was.as_str(), last.as_str()));
         }
-        let path = Self::record_path(repo, old, onto)?;
+        let path = Self::rewritten_record_path(repo, old, onto)?;
         std::fs::write(&path, text.as_bytes()).map_err(|source| VcsError::Io {
             ctx: format!("failed to write {}", path.display()),
             source,

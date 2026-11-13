@@ -396,8 +396,9 @@ pub(crate) fn remap_rebased_project(
     let replays = member_replays(root, &manifest, rebases, &[])?;
     let remap = remap_project(project_vcs, project_dir, &replayed, &project.onto, &replays)?;
     if let Some((rewritten, became)) = &remap.rewritten {
-        project_vcs.take_rewritten(&on, &tip, rewritten)?;
         project_vcs.record_replayed(project_dir, &project.from, &project.onto, became)?;
+        crate::test_pause::point("remap-recorded");
+        project_vcs.take_rewritten(&on, &tip, rewritten)?;
     }
     Ok(Some(remap.remapped))
 }

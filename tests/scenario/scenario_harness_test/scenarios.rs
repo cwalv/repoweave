@@ -16530,6 +16530,66 @@ pub fn history_rebase_pin_remap() -> Scenario {
     )
 }
 
+/// `history-rebase-pin-remap`'s sync, killed after the re-map recorded
+/// what it made of the replay and before the branch moved to it: the
+/// printed `rwv sync --continue` finishes the sync, and the project branch
+/// still pins what the `app` rebase made.
+pub fn a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues() -> Scenario {
+    scenario(
+        "history: a sync killed between recording a re-map and moving the branch continues",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app-1"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app-2"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app-1"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv_paused(&ww("w"), &["sync"], "remap-recorded", "remapping")
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App]),
+            Step::kill("remapping"),
+            Step::rwv(&ww("w"), &["sync", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::PinsReplayed {
+                    at: ww("w"),
+                    rev: "HEAD",
+                    member: Repo::App,
+                    subject: "w-app-2",
+                    reached_from: "HEAD",
+                }),
+        ],
+    )
+}
+
+/// `stack-carried`'s project carry, killed after the re-map recorded what it
+/// made of the replay and before the checkout moved to it: the printed
+/// `rwv sync --continue` composes it again.
+pub fn a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["sync"], "carry-recorded", "carrying"),
+        Step::kill("carrying"),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along")),
+        Step::git(&ww("w1"), Repo::Proj, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Succeeds),
+        Step::git(
+            &ww("w1"),
+            Repo::App,
+            &["merge-base", "--is-ancestor", "proj--w1", "w2"],
+        )
+        .expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "stack: a sync killed between recording a carry's re-map and moving to it continues",
+        steps,
+    )
+}
+
 /// Where `vcs-continue-mid-rebase`'s landing stops.
 #[derive(Debug, Clone, Copy)]
 pub enum MidRebase {
@@ -17493,6 +17553,28 @@ pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry
     ];
     scenario(
         "stack: a sync continued after its project tip moved recomposes the project carry",
+        steps,
+    )
+}
+
+/// `stack-carried`, killed after the carry of `w2` in `app` journaled what
+/// it composed and before the checkout went back on its branch: the
+/// checkout is on no branch, and the printed `rwv sync --continue` puts it
+/// back and carries on.
+pub fn a_sync_killed_after_journaling_a_composed_carry_continues() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["sync"], "carry-journaled", "carrying"),
+        Step::kill("carrying"),
+        Step::rwv(&ww("w1"), &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("carried 'w2' along")),
+        Step::git(&ww("w1"), Repo::App, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Succeeds),
+        Step::git(&ww("w1"), Repo::Proj, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "stack: a sync killed after journaling a composed carry continues",
         steps,
     )
 }

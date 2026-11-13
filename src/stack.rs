@@ -451,6 +451,16 @@ impl Carrier<'_> {
     /// back on `w`'s branch. Run before anything reads the checkouts.
     pub(crate) fn finish_stopped(&self) -> anyhow::Result<()> {
         let record = take_in(self.workspace)?;
+        for carrying in record.carries.iter().filter(|c| c.composed.is_some()) {
+            let dir = self.repos.dir(&carrying.repo);
+            let vcs = self.repos.vcs(&carrying.repo);
+            if !matches!(
+                vcs.head_attachment(&dir)?,
+                crate::vcs::HeadAttachment::Attached(_)
+            ) {
+                self.back_on(carrying)?;
+            }
+        }
         for carrying in record.carries.iter().filter(|c| c.composed.is_none()) {
             let dir = self.repos.dir(&carrying.repo);
             let vcs = self.repos.vcs(&carrying.repo);
@@ -525,8 +535,9 @@ impl Carrier<'_> {
                 &replays,
             )?;
             if let Some((rewritten, became)) = remap.rewritten {
-                vcs.set_detached_head(&dir, &rev(&rewritten))?;
                 vcs.record_replayed(&dir, &carrying.from, &carrying.onto, &became)?;
+                crate::test_pause::point("carry-recorded");
+                vcs.set_detached_head(&dir, &rev(&rewritten))?;
                 tip = rewritten;
             }
         }
@@ -537,6 +548,7 @@ impl Carrier<'_> {
                 ..carrying.clone()
             },
         )?;
+        crate::test_pause::point("carry-journaled");
         Ok(tip)
     }
 
