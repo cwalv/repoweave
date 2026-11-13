@@ -78,7 +78,7 @@ pub(super) fn edit(text: &str, before: &Manifest, after: &Manifest) -> anyhow::R
         keep_leading_decor(&mut doc, &first_before, lead);
     }
 
-    let edited = splice(text, &doc.to_string());
+    let edited = in_the_form_of(text, doc.to_string());
     let reread = Manifest::from_toml_str(&edited).map_err(|e| {
         crate::untokened!(
             InternalInvariant,
@@ -629,84 +629,21 @@ fn keep_leading_decor(doc: &mut DocumentMut, first_before: &First, lead: String)
     }
 }
 
-/// `edited`, toml_edit's rendering, laid back over `original` line by line:
-/// every line the edit left keeps its own bytes and line ending, and the byte
-/// order mark stays, neither of which the rendering carries.
-fn splice(original: &str, edited: &str) -> String {
-    let (bom, body) = match original.strip_prefix('\u{feff}') {
-        Some(body) => ("\u{feff}", body),
-        None => ("", original),
+fn in_the_form_of(original: &str, mut edited: String) -> String {
+    if !original.is_empty() && !original.ends_with('\n') && edited.ends_with('\n') {
+        edited.pop();
+    }
+    let crlf = original.matches("\r\n").count();
+    let lf = original.matches('\n').count() - crlf;
+    let body = if crlf > lf {
+        edited.replace("\r\n", "\n").replace('\n', "\r\n")
+    } else {
+        edited
     };
-    let old: Vec<(&str, &str)> = body
-        .split_inclusive('\n')
-        .map(|line| match line.strip_suffix("\r\n") {
-            Some(content) => (content, "\r\n"),
-            None => match line.strip_suffix('\n') {
-                Some(content) => (content, "\n"),
-                None => (line, ""),
-            },
-        })
-        .collect();
-    let new: Vec<&str> = edited.lines().collect();
-    let first_ending = old
-        .iter()
-        .map(|(_, ending)| *ending)
-        .find(|e| !e.is_empty())
-        .unwrap_or("\n");
-    let ends_open = old.last().is_some_and(|(_, ending)| ending.is_empty());
-
-    let matched = common_lines(&old.iter().map(|(c, _)| *c).collect::<Vec<_>>(), &new);
-    let mut out = String::from(bom);
-    let mut ending = first_ending;
-    for (j, line) in new.iter().enumerate() {
-        let last = j + 1 == new.len();
-        match matched[j] {
-            Some(i) => {
-                let (content, own) = old[i];
-                if !own.is_empty() {
-                    ending = own;
-                }
-                out.push_str(content);
-                out.push_str(if last && own.is_empty() { "" } else { ending });
-            }
-            None => {
-                out.push_str(line);
-                out.push_str(if last && ends_open { "" } else { ending });
-            }
-        }
+    match original.starts_with('\u{feff}') {
+        true => format!("\u{feff}{body}"),
+        false => body,
     }
-    out
-}
-
-/// For each line of `new`, the line of `old` it is matched to by a longest
-/// common subsequence.
-fn common_lines(old: &[&str], new: &[&str]) -> Vec<Option<usize>> {
-    let (n, m) = (old.len(), new.len());
-    let mut len = vec![0u32; (n + 1) * (m + 1)];
-    let at = |i: usize, j: usize| i * (m + 1) + j;
-    for i in (0..n).rev() {
-        for j in (0..m).rev() {
-            len[at(i, j)] = if old[i] == new[j] {
-                len[at(i + 1, j + 1)] + 1
-            } else {
-                len[at(i + 1, j)].max(len[at(i, j + 1)])
-            };
-        }
-    }
-    let mut matched = vec![None; m];
-    let (mut i, mut j) = (0, 0);
-    while i < n && j < m {
-        if old[i] == new[j] {
-            matched[j] = Some(i);
-            i += 1;
-            j += 1;
-        } else if len[at(i + 1, j)] >= len[at(i, j + 1)] {
-            i += 1;
-        } else {
-            j += 1;
-        }
-    }
-    matched
 }
 
 #[cfg(test)]
@@ -1270,6 +1207,26 @@ repositories."github/a/lib".history = "merge"
                 edited,
                 text.replace("\"merge\"", "\"linear\""),
                 "crlf {crlf}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_with_mixed_line_endings_is_written_in_the_ending_most_of_its_lines_have() {
+        let mostly_crlf = SORTED.replace('\n', "\r\n").replacen("\r\n", "\n", 3);
+        let mostly_lf = SORTED.replacen("\n", "\r\n", 3);
+        for (text, ending) in [(mostly_crlf, "\r\n"), (mostly_lf, "\n")] {
+            let (edited, after) =
+                Manifest::edit_text(&text, change_entry(APP, |e| e.role = Role::Fork)).unwrap();
+            assert!(after.declares_same(&Manifest::from_toml_str(&edited).unwrap()));
+            assert_eq!(
+                edited.matches("\r\n").count(),
+                if ending == "\n" {
+                    0
+                } else {
+                    edited.matches('\n').count()
+                },
+                "{edited:?}"
             );
         }
     }
