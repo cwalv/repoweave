@@ -898,6 +898,8 @@ every_scenario!(
     rebased_backup_after_abort_offers_no_republish,
     rebased_backup_of_another_branch_offers_no_republish,
     abort_deletes_a_created_receiving_branch,
+    abort_of_a_landing_whose_alignment_made_a_checkout(false),
+    abort_of_a_landing_whose_alignment_made_a_checkout(true),
     abort_stops_at_the_first_write_that_fails,
     abort_judges_again_once_it_holds_the_target,
     leave_target_gives_up_the_target_only_after_the_source_is_restored,
@@ -6171,4 +6173,12 @@ fn cherry_pick_port_landing_merge_scenario() {
 fn land_clones_a_member_its_target_took_in_by_fetch_alone_scenario() {
     runner::run(scenarios::land_clones_a_member_its_target_took_in_by_fetch_alone())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn abort_of_a_landing_whose_alignment_made_a_checkout_removes_it() {
+    for edited in [false, true] {
+        runner::run(scenarios::abort_of_a_landing_whose_alignment_made_a_checkout(edited))
+            .assert_fully_decided_green();
+    }
 }

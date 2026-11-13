@@ -529,6 +529,11 @@ pub struct TakeInRecord {
     /// The tip each checkout `moved_in_target` names is moved to.
     #[serde(default)]
     pub wrote_in_target: BTreeMap<RepoKey, CommitId>,
+    /// Each member checkout of `T`'s workspace a landing makes, by its
+    /// fast-forward or by aligning that workspace, written before it is
+    /// made.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub made_in_target: Vec<crate::manifest::RepoPath>,
     /// Each checkout a landing fast-forwards in place in a third workspace,
     /// written before it moves and taken back where it did not move.
     #[serde(default)]

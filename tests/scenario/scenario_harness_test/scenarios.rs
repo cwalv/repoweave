@@ -13086,6 +13086,88 @@ pub fn abort_of_a_landing_a_member_entered_with() -> Scenario {
     )
 }
 
+/// `docs`, which `main` lacks, enters the workweave `t` with a landing from
+/// `w1`, a workweave of `t`, on `docs-next`, which the landing creates; `t`
+/// has no checkout of `docs`, so aligning `t` makes one. The landing stops
+/// in its retire. Abort puts `t` back whole: the checkout the landing made
+/// is gone with `docs-next`, and a landing into `t` lands again. Where that
+/// checkout holds an edit, abort refuses before anything moves, and the
+/// printed stash, run verbatim, lets the rerun remove it.
+pub fn abort_of_a_landing_whose_alignment_made_a_checkout(edited: bool) -> Scenario {
+    let made = ".workweaves/proj--t/local/remotes/docs";
+    let mut steps = vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        create("t"),
+        Step::rwv(
+            &ww("t"),
+            &["workweave", "create", "--project", "proj", "w1"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::hand_edit(
+            &ww("w1"),
+            Repo::Proj,
+            "rwv.toml",
+            &declared_branch_text(Repo::Docs, "main"),
+            &declared_branch_text(Repo::Docs, "docs-next"),
+        ),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["commit", "-qam", "docs on docs-next"],
+        ),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["land", "--history", "linear", "--retire"],
+            "retire",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::git(&ww("t"), Repo::Docs, &["branch", "--show-current"])
+            .claim(Claim::OutputLine("proj--t"))
+            .claim(Claim::DirStands(Machine::A, made)),
+    ];
+    if edited {
+        steps.extend([
+            Step::hand_edit(&ww("t"), Repo::Docs, "README", "docs", "edited in t"),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains(
+                    "the checkout this landing made holds",
+                ))
+                .claim(Claim::OutputContains("nothing of either side is restored"))
+                .claim(Claim::OutputLacks("abort stopped there"))
+                .claim(Claim::LocalStateUnchanged(ww("t")))
+                .claim(Claim::LocalStateUnchanged(ww("w1"))),
+            Step::rwv_printed(&ww("w1"), "git -C ").expect(Exit::Succeeds),
+        ]);
+    }
+    steps.extend([
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Docs, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Docs, Repo::Proj])
+            .claim(Claim::DirGone(Machine::A, made)),
+        Step::git(&ww("w1"), Repo::Docs, &["branch", "--list", "docs-next"])
+            .claim(Claim::OutputLacks("docs-next")),
+        Step::rwv(&ww("t"), &["status"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
+    ]);
+    if edited {
+        steps.push(
+            Step::git(&ww("w1"), Repo::Docs, &["stash", "list"])
+                .claim(Claim::OutputContains("stash@")),
+        );
+    }
+    scenario(
+        "abort of a landing whose alignment made a checkout in its target",
+        steps,
+    )
+}
+
 /// What happens to `docs-next`, the branch a landing created for `docs` as
 /// `docs` entered `main`, once the landing stopped in its retire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

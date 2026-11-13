@@ -6914,6 +6914,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
         let (branch, cwd_tip) = planned(&key)?;
         if !target_repo.exists() {
+            if matches!(target_ctx.checkout, Checkout::Workweave { .. }) {
+                journal_made(ctx, repo_path)?;
+            }
             match &target_ctx.checkout {
                 Checkout::Workweave {
                     name, dir, project, ..
@@ -7462,6 +7465,14 @@ fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey, to: &CommitId) -> an
     })
 }
 
+fn journal_made(ctx: &OpContext<'_>, path: &RepoPath) -> anyhow::Result<()> {
+    journal(ctx, |take_in| {
+        if !take_in.made_in_target.contains(path) {
+            take_in.made_in_target.push(path.clone());
+        }
+    })
+}
+
 /// Journal each checkout of `T`'s workspace that aligning it may move, with
 /// the pin `T`'s new lock gives it, leaving a checkout the project the
 /// workspace presents shares with it, which aligning does not move. Aligning
@@ -7517,7 +7528,9 @@ fn journal_alignment(
         let dir = dest_workspace_dir.join(path.as_path());
         let key = RepoKey::Member(path.clone());
         let target_savepoint = ctx.target_savepoint_key();
-        if vcs.is_repo(&dir) && vcs.resolve_savepoint(&dir, &target_savepoint).is_none() {
+        if !vcs.is_repo(&dir) {
+            journal_made(ctx, path)?;
+        } else if vcs.resolve_savepoint(&dir, &target_savepoint).is_none() {
             vcs.create_savepoint(&dir, &target_savepoint)?;
         }
         journal_fast_forward(ctx, &key, &pin)?;
@@ -8564,6 +8577,14 @@ fn abort_op(
 
         if let op_state::OwnerReading::Whole(record) = &reading {
             plan_in_place(record, &op_project_name, &stores, abandon, &mut plan);
+            let target_dir = if header.target.as_ref() == Some(workspace) {
+                Some(workspace_dir.as_path())
+            } else {
+                other_ws_dir.as_deref()
+            };
+            if let Some(target_dir) = target_dir.filter(|_| record.verb == OpVerb::Land) {
+                plan_made(record, target_dir, target_label, &mut plan);
+            }
             plan.op_ref_moves(
                 &workspace_dir,
                 &cwd_project_dir,
@@ -8859,6 +8880,19 @@ pub(crate) struct RepoAt {
     on_target: bool,
 }
 
+/// What becomes of a checkout of the target's workspace the landing made.
+pub(crate) enum MadePlan {
+    /// Removed from `store`, its commits left on their branches.
+    Remove {
+        store: PathBuf,
+    },
+    /// Holding what no commit holds, `in_the_way` of removing it.
+    Holds(InTheWay),
+    /// It is the store itself, which holds the repository: left.
+    OwnStore,
+    Unread(String),
+}
+
 /// What a branch a landing moved in place, in a workspace since gone, would
 /// be put back from, read through its store.
 pub(crate) enum InPlaceRefPlan {
@@ -8927,6 +8961,11 @@ pub(crate) enum AbortStep {
         branch: crate::vcs::RawRefName,
         plan: InPlaceRefPlan,
     },
+    /// A checkout of the target's workspace the landing made.
+    RemoveMade {
+        at: RepoAt,
+        plan: MadePlan,
+    },
     Said {
         line: String,
     },
@@ -8990,6 +9029,9 @@ impl AbortStep {
             ),
             Self::OpRefMoves { blocked, .. } | Self::Carried { blocked, .. } => *blocked,
             Self::Unread { .. } => true,
+            Self::RemoveMade { plan, .. } => {
+                matches!(plan, MadePlan::Holds(_) | MadePlan::Unread(_))
+            }
             Self::UndoCreated { left, .. } => !left.is_empty(),
             Self::LeaveCheckout { .. }
             | Self::UnwrittenRef { .. }
@@ -9006,7 +9048,8 @@ impl AbortStep {
             | Self::LeaveCheckout { at, .. }
             | Self::Ref { at, .. }
             | Self::UnwrittenRef { at, .. }
-            | Self::InPlaceRef { at, .. } => at.on_target,
+            | Self::InPlaceRef { at, .. }
+            | Self::RemoveMade { at, .. } => at.on_target,
             Self::UndoCreated { .. } | Self::BeginInPlace | Self::EndInPlace { .. } => true,
             Self::Settle { on_target, .. } | Self::Unread { on_target, .. } => *on_target,
             Self::OpRefMoves { .. } | Self::Carried { .. } | Self::Said { .. } => false,
@@ -9089,6 +9132,23 @@ impl AbortPlan {
                 {
                     Some(at.dir.clone())
                 }
+                AbortStep::RemoveMade { at, plan } if !matches!(plan, MadePlan::OwnStore) => {
+                    Some(at.dir.clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The checkouts the plan removes.
+    fn made_removed(&self) -> Vec<PathBuf> {
+        self.steps
+            .iter()
+            .filter_map(|step| match step {
+                AbortStep::RemoveMade {
+                    at,
+                    plan: MadePlan::Remove { .. },
+                } => Some(at.dir.clone()),
                 _ => None,
             })
             .collect()
@@ -9494,6 +9554,60 @@ fn plan_in_place(
     }
 }
 
+/// Plan the removal of each checkout of the target's workspace, at
+/// `target_dir`, that the landing made: one holding nothing a commit does
+/// not is removed from its store; one holding more blocks.
+fn plan_made(record: &op_state::OwnerRecord, target_dir: &Path, label: &str, plan: &mut AbortPlan) {
+    let Some(take_in) = &record.take_in else {
+        return;
+    };
+    for path in &take_in.made_in_target {
+        let dir = target_dir.join(path.as_path());
+        let vcs = crate::vcs::probe_vcs();
+        if !vcs.is_repo(&dir) {
+            continue;
+        }
+        let made = match made_holds(vcs.as_ref(), &dir) {
+            Err(e) => MadePlan::Unread(format!("{e:#}")),
+            Ok(Some(in_the_way)) => MadePlan::Holds(in_the_way),
+            Ok(None) => {
+                let store = crate::workweave::resolved_worktree_parent(vcs.as_ref(), &dir, &dir);
+                if store == CanonicalPath::of(&dir) {
+                    MadePlan::OwnStore
+                } else {
+                    MadePlan::Remove {
+                        store: store.as_path().to_path_buf(),
+                    }
+                }
+            }
+        };
+        let repo = RepoKey::Member(path.clone());
+        plan.steps.push(AbortStep::RemoveMade {
+            at: RepoAt {
+                label: format!("{label}{path}"),
+                named: RepoOperand::of(&repo, &record.project),
+                dir,
+                vcs,
+                on_target: true,
+            },
+            plan: made,
+        });
+    }
+}
+
+/// What in `dir` no commit holds, which removing the checkout would lose.
+fn made_holds(vcs: &dyn Vcs, dir: &Path) -> Result<Option<InTheWay>, VcsError> {
+    Ok(if vcs.mid_op(dir).is_some() {
+        Some(InTheWay::Unresolved)
+    } else if !vcs.ignored_file_names(dir)?.is_empty() {
+        Some(InTheWay::Ignored)
+    } else if vcs.has_uncommitted_changes(dir)? {
+        Some(InTheWay::Edits)
+    } else {
+        None
+    })
+}
+
 /// Plan putting back as a ref a branch a landing fast-forwarded in place in
 /// a workspace that has since gone, through any checkout left of its store.
 #[allow(clippy::too_many_arguments)]
@@ -9624,9 +9738,15 @@ struct MemberStores {
 
 impl MemberStores {
     fn dir(&self, vcs: &dyn Vcs, path: &RepoPath) -> Option<PathBuf> {
+        self.dir_outside(vcs, path, &[])
+    }
+
+    /// [`MemberStores::dir`], passing over each checkout in `removed`.
+    fn dir_outside(&self, vcs: &dyn Vcs, path: &RepoPath, removed: &[PathBuf]) -> Option<PathBuf> {
         self.workspaces
             .iter()
             .map(|ws| ws.join(path.as_path()))
+            .filter(|dir| !removed.contains(dir))
             .find(|dir| vcs.is_repo(dir))
     }
 }
@@ -10606,13 +10726,15 @@ fn plan_landing_refs(
         .as_ref()
         .map(|take_in| take_in.created_refs.clone())
         .unwrap_or_default();
+    let removed = plan.made_removed();
     let dirs: std::collections::BTreeMap<RepoPath, PathBuf> = created
         .iter()
         .filter_map(|made| match &made.repo {
             RepoKey::Member(path) => stores
-                .dir(
+                .dir_outside(
                     OpMembers::vcs(members.0.get(path).copied().flatten()).as_ref(),
                     path,
+                    &removed,
                 )
                 .map(|dir| (path.clone(), dir)),
             RepoKey::Project => None,
@@ -10842,6 +10964,61 @@ fn run_step(
             }
             at.vcs.drop_savepoint(&at.dir, &key);
         }
+        AbortStep::RemoveMade { at, plan } => match plan {
+            MadePlan::Remove { store } => {
+                if !write {
+                    return;
+                }
+                let removed = match made_holds(at.vcs.as_ref(), &at.dir) {
+                    Ok(None) => at.vcs.remove_worktree(&store, &at.dir).map(|()| {
+                        let _ = at.vcs.worktree_prune(&store);
+                    }),
+                    Ok(Some(_)) => {
+                        eprintln!(
+                            "  {}: the checkout this landing made holds what no commit does \
+                             since abort planned; it is left as it is",
+                            at.label
+                        );
+                        tally.any_failure = true;
+                        return;
+                    }
+                    Err(e) => Err(e),
+                };
+                match removed {
+                    Ok(()) => outln!("  {}: removed the checkout this landing made", at.label),
+                    Err(e) => {
+                        eprintln!(
+                            "  {}: the checkout this landing made could not be removed: {e:#}",
+                            at.label
+                        );
+                        tally.any_failure = true;
+                    }
+                }
+            }
+            MadePlan::OwnStore => outln!(
+                "  {}: the clone this landing made holds the repository, so it is left as it \
+                 stands",
+                at.label
+            ),
+            MadePlan::Holds(in_the_way) => {
+                eprintln!(
+                    "  {}: the checkout this landing made holds what no commit does, which \
+                     removing it would lose; it is left as it is",
+                    at.label
+                );
+                tally.any_foreign = true;
+                tally.blocked.push((
+                    at.named.clone(),
+                    setting_aside(at.vcs.as_ref(), in_the_way, &at.dir, false),
+                    false,
+                ));
+            }
+            MadePlan::Unread(why) => {
+                eprintln!("  {}: could not be read: {why}", at.label);
+                tally.unread.push(at.label.clone());
+                tally.any_failure = true;
+            }
+        },
         AbortStep::Said { line } => outln!("{line}"),
         AbortStep::Unread { what, why, .. } => {
             eprintln!("  {what}: could not be read: {why}");
