@@ -985,22 +985,9 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::ForeignMerge),
     check_a_text_merge(scenarios::TextMerge::SettingMoved),
-    check_a_text_merge(scenarios::TextMerge::DuplicateKeyByHand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
     check_a_text_merge(scenarios::TextMerge::SettingMovedByHand),
-    check_a_text_merge(scenarios::TextMerge::DuplicateKey(
-        scenarios::ManifestStopHistory::Merge
-    )),
-    check_a_text_merge(scenarios::TextMerge::DuplicateKey(
-        scenarios::ManifestStopHistory::Linear
-    )),
-    check_a_text_merge(scenarios::TextMerge::DuplicateKeyLand(
-        scenarios::ManifestStopHistory::Merge
-    )),
-    check_a_text_merge(scenarios::TextMerge::DuplicateKeyLand(
-        scenarios::ManifestStopHistory::Linear
-    )),
     check_a_text_merge(scenarios::TextMerge::KilledAtTheNextPause(
         scenarios::AbortOr::Continue
     )),
@@ -7277,38 +7264,6 @@ fn text_merge_setting_moved_by_hand() {
 }
 
 #[test]
-fn text_merge_duplicate_key_merge() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::DuplicateKey(scenarios::ManifestStopHistory::Merge),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_duplicate_key_linear() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::DuplicateKey(scenarios::ManifestStopHistory::Linear),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_duplicate_key_land_merge() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::DuplicateKeyLand(scenarios::ManifestStopHistory::Merge),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_duplicate_key_land_linear() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::DuplicateKeyLand(scenarios::ManifestStopHistory::Linear),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
 fn text_merge_killed_at_the_next_pause_continued() {
     runner::run(scenarios::check_a_text_merge(
         scenarios::TextMerge::KilledAtTheNextPause(scenarios::AbortOr::Continue),
@@ -7336,14 +7291,6 @@ fn text_merge_killed_before_the_check_continued() {
 fn text_merge_killed_before_the_check_aborted() {
     runner::run(scenarios::check_a_text_merge(
         scenarios::TextMerge::KilledBeforeTheCheck(scenarios::AbortOr::Abort),
-    ))
-    .assert_fully_decided_green();
-}
-
-#[test]
-fn text_merge_duplicate_key_by_hand() {
-    runner::run(scenarios::check_a_text_merge(
-        scenarios::TextMerge::DuplicateKeyByHand,
     ))
     .assert_fully_decided_green();
 }

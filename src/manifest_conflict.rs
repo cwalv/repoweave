@@ -60,9 +60,6 @@ pub(crate) enum Reading {
         side: &'static str,
         why: String,
     },
-    /// Nothing is left unmerged, and the file as it stands does not read as a
-    /// manifest.
-    Unparsed(String),
 }
 
 struct Sides {
@@ -259,12 +256,11 @@ fn text_merge_left(dir: &Path, sides: &Sides) -> anyhow::Result<Vec<String>> {
 }
 
 /// How `text_merge`, a text merge of `rwv.toml`, differs from the merge of
-/// the values of `sides`; nothing where it declares that merge.
+/// the values of `sides`; nothing where it declares that merge, or does not
+/// parse, which the stop for an unparseable result answers.
 fn differences(text_merge: &str, sides: &Sides) -> anyhow::Result<Vec<String>> {
-    let head = "rwv.toml: the VCS merged its text with no conflict, into";
-    let text_merge = match Manifest::from_toml_str(text_merge) {
-        Ok(manifest) => manifest,
-        Err(e) => return Ok(vec![format!("{head} a file that does not parse ({e:#})")]),
+    let Ok(text_merge) = Manifest::from_toml_str(text_merge) else {
+        return Ok(Vec::new());
     };
     let conflicts = sides.conflicts()?;
     let merged = sides.merged(false)?;
@@ -272,9 +268,11 @@ fn differences(text_merge: &str, sides: &Sides) -> anyhow::Result<Vec<String>> {
         return Ok(Vec::new());
     }
     let (text_merge, values) = (text_merge.declared()?, merged.declared()?);
-    let mut lines = vec![format!(
-        "{head} a manifest that differs from the merge of both sides' values:"
-    )];
+    let mut lines = vec![
+        "rwv.toml: the VCS merged its text with no conflict, into a manifest that differs from \
+         the merge of both sides' values:"
+            .to_owned(),
+    ];
     for path in entries(&[&text_merge, &values]) {
         if conflicts.iter().any(|c| path.starts_with(&c.path)) {
             continue;
@@ -574,13 +572,6 @@ pub(crate) fn continue_at_stop(
                 stop_lines(vcs, &dir, &resume),
             ));
         }
-        if let Some(Err(e)) = working.as_deref().map(Manifest::from_toml_str) {
-            let reading = Reading::Unparsed(format!("{e:#}"));
-            return Err(refused(
-                "rwv.toml is still in conflict",
-                reading_lines(vcs, &dir, &reading, Some(&resume)),
-            ));
-        }
         if let (Some(side), true) = (keep, record.verb == typed) {
             eprintln!(
                 "{}: rwv.toml is not unmerged, so `--keep {}` takes nothing",
@@ -746,9 +737,6 @@ pub(crate) fn reading_lines(
         Reading::Unreadable { side, why } => lines.push(format!(
             "rwv.toml's {} side does not read as a manifest ({why}); {by_hand}:",
             label(side)
-        )),
-        Reading::Unparsed(why) => lines.push(format!(
-            "rwv.toml does not read as a manifest ({why}); {by_hand}:"
         )),
         Reading::Entries {
             conflicts,
@@ -1028,6 +1016,6 @@ mod tests {
         assert!(lines.iter().any(|line| line.contains("local/a history")));
         assert!(lines.iter().any(|line| line.contains("local/b history")));
         let duplicated = format!("{right}{}", member("b", "x"));
-        assert!(differences(&duplicated, &sides).unwrap()[0].contains("does not parse"));
+        assert!(differences(&duplicated, &sides).unwrap().is_empty());
     }
 }

@@ -959,6 +959,7 @@ fn unparseable_result_saying(
         )
         .bind_list("<paths>", [Manifest::FILE_NAME])
         .bind_list("<resume>", resume.split_whitespace())
+        .bind_list("<abort>", ["rwv", "abort"])
         .checkout(dir)
         .judge(vcs)
         .refused()

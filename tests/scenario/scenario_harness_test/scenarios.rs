@@ -18829,10 +18829,12 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 set_history(&ww("w"), "linear", LIB),
                 stop(H::Merge),
                 Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]).expect(Exit::Succeeds),
-                parked()
-                    .claim(Claim::OutputContains("does not read as a manifest"))
-                    .claim(Claim::OutputContains("add -- rwv.toml"))
-                    .claim(Claim::OutputLacks("(yours:")),
+                Step::rwv(&ww("w"), &["sync", "--continue"])
+                    .expect(Exit::refuses(
+                        Repo::Proj,
+                        State::UnparseableProjectMidOperation,
+                    ))
+                    .claim(Claim::OutputContains("add -- rwv.toml")),
                 Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
                 head_manifest().claim(Claim::OutputLacks("history = \"merge\"")),
             ]);
@@ -19297,19 +19299,11 @@ pub enum TextMerge {
     SettingMovedPull,
     /// [`TextMerge::SettingMoved`] settled by a staged hand edit.
     SettingMovedByHand,
-    /// The workweave sets `lib`'s `history` by hand under its header and
-    /// `main` by its setter: git's merge holds the key twice.
-    DuplicateKey(ManifestStopHistory),
-    /// [`TextMerge::DuplicateKey`] at a landing.
-    DuplicateKeyLand(ManifestStopHistory),
-    /// [`TextMerge::DuplicateKey`] replayed and settled by a staged hand
-    /// edit, after git's own continue refused while it was unmerged.
-    DuplicateKeyByHand,
-    /// [`TextMerge::DuplicateKey`] replayed, with a second workweave commit
+    /// A replay whose text merge of `rwv.toml` holds a key twice, with a second workweave commit
     /// changing `rwv.toml`: the continue writes the first, and the replay is
     /// killed at the next pause and `then` exits it.
     KilledAtTheNextPause(AbortOr),
-    /// [`TextMerge::DuplicateKey`] replayed, killed at the pause before its
+    /// A replay whose text merge of `rwv.toml` holds a key twice, killed at the pause before its
     /// check ran.
     KilledBeforeTheCheck(AbortOr),
 }
@@ -19326,10 +19320,6 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
     let flag = |history: H| match history {
         H::Merge => "merge",
         H::Linear => "linear",
-    };
-    let replayed = |step: Step, history: H| match history {
-        H::Merge => step,
-        H::Linear => step.may_strand(&[Repo::Proj]),
     };
     let differs = "rwv.toml: the VCS merged its text with no conflict, into";
     let moved = || {
@@ -19476,71 +19466,6 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
             ]);
             (
                 "a text merge of rwv.toml the check stopped is settled by a staged hand edit",
-                steps,
-            )
-        }
-        T::DuplicateKey(history) | T::DuplicateKeyLand(history) => {
-            let land = matches!(how, T::DuplicateKeyLand(_));
-            let mut steps = duplicated(history);
-            let (start, resume): (Vec<&str>, &[&str]) = if land {
-                (
-                    vec!["land", "--history", flag(history)],
-                    &["land", "--continue"],
-                )
-            } else {
-                (
-                    vec!["sync", "--history", flag(history)],
-                    &["sync", "--continue"],
-                )
-            };
-            let at = if land { a() } else { ww("w") };
-            steps.extend([
-                Step::rwv(&ww("w"), &start)
-                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                    .claim(Claim::OutputContains("into a file that does not parse"))
-                    .claim(Claim::OutputContains("--continue` writes and stages")),
-                replayed(Step::rwv(&ww("w"), resume).expect(Exit::Succeeds), history),
-                lib_merged(&at, history),
-                one(&at, "history"),
-            ]);
-            (
-                match (land, history) {
-                    (false, H::Merge) => {
-                        "a sync's merge whose text merge of rwv.toml holds a key twice stops"
-                    }
-                    (false, H::Linear) => {
-                        "a sync's replay whose text merge of rwv.toml holds a key twice stops"
-                    }
-                    (true, H::Merge) => {
-                        "a landing's merge whose text merge of rwv.toml holds a key twice stops"
-                    }
-                    (true, H::Linear) => {
-                        "a landing's replay whose text merge of rwv.toml holds a key twice stops"
-                    }
-                },
-                steps,
-            )
-        }
-        T::DuplicateKeyByHand => {
-            let mut steps = duplicated(H::Linear);
-            steps.extend([
-                Step::rwv(&ww("w"), &["sync", "--history", "linear"])
-                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                    .claim(Claim::OutputContains("into a file that does not parse")),
-                Step::git(&ww("w"), Repo::Proj, &["rebase", "--continue"]).expect(Exit::Code(1)),
-                Step::git(&ww("w"), Repo::Proj, &["checkout", "--theirs", "rwv.toml"])
-                    .expect(Exit::Succeeds),
-                Step::git(&ww("w"), Repo::Proj, &["add", "--", "rwv.toml"]).expect(Exit::Succeeds),
-                Step::rwv(&ww("w"), &["sync", "--continue"])
-                    .expect(Exit::Succeeds)
-                    .may_strand(&[Repo::Proj]),
-                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-                    .expect(Exit::Succeeds)
-                    .claim(Claim::OutputLacks("fork")),
-                one(&ww("w"), "history"),
-            ]);
-            (
-                "a replayed commit the check stopped is settled by a staged hand edit",
                 steps,
             )
         }

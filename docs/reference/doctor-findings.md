@@ -279,7 +279,7 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 | `at` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | where `<b>` is checked out | commits only the rewrite; other edits stay uncommitted |
 | `mid-operation` | edit rwv.toml until it parses, then stage it | VCS action (git: `git -C <checkout> add -- <paths>`) | the checkout | stages the working file as it stands; the operation is still in progress |
 | `mid-operation` | let the operation go on with the staged rwv.toml | the stopped operation's `--continue` | here | a merge commits it in the merge; a replay makes it part of the replayed tip; it stops again while the staged file does not parse |
-| `mid-operation` | abandon the operation that stopped | `rwv abort` | here | `rwv abort` moves only what the operation moved, back to where it found it |
+| `mid-operation` | abandon the operation that stopped | `rwv abort`, against the stopped operation's workspace | here | `rwv abort` moves only what the operation moved, back to where it found it |
 
 **Where this sits.** [Formats](./formats.md) states the member-entry keys; [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.
 
