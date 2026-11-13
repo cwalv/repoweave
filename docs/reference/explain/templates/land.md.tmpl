@@ -130,15 +130,18 @@ only when that branch contains its base: the newest commit of its first-parent
 chain that a lock in the target's history pins. Otherwise the landing refuses as
 `pin` `off lineage`, listing the base and the branch, with the fact
 `patch-equivalent` where commits on that branch carry the same changes. A pin
-this clone lacks decides the base only where the rule looks for it: a pin a
-lock commit of the target's history holds that the source's project branch
-does not reach, a lock written since the two branches parted. For such a pin
-the landing fetches the member's remotes, as `rwv fetch` does, and says so; a
-pin the fetch brings is judged like any other, and one no remote holds does not
-decide the base and is reported as `history pin absent` (under `--json`,
-`history-pin-absent` in `reports`). Where a remote cannot be reached, whether it
-holds the pin cannot be told, and the landing refuses as `pin` `unasked`,
-offering `rwv fetch` for once the remote is back.
+this clone lacks does not decide the base, and the landing contacts no remote
+for it. Where a lock commit of the target's history that the source's project
+branch does not reach holds it (a lock written since the two branches parted),
+or a re-pin record of the target's history names it as the pin a member was
+moved off by name, the landing reports it once, as `history pin absent` (under
+`--json`, `history-pin-absent` in `reports`), naming the pin and its lock
+commit: this clone does not hold it, and `rwv sync`, which fetches every repo
+first, judges it, as do `rwv fetch` and a rerun. A landing made without a sync,
+on a clone that lacks such a pin, can pass with that note work that a clone
+holding the pin refuses as `pin` `off lineage`: work built on commits the
+target moved off, which it brings back, as merging them would in single-repo
+git.
 
 **The source's lock.** A member whose checkout is beyond its pin is relocked
 forward at op start, after the savepoints, so `rwv abort` rolls the relock back
@@ -234,7 +237,6 @@ the landing.
 | `history` | `not fast-forward` | the target records `ff-only` for a repo and the landing is not a fast-forward |
 | `pin` | `off lineage` | a member's base is not on its receiving branch |
 | `pin` | `unreachable` | the target, or its upstream as last fetched, pins a commit this clone lacks |
-| `pin` | `unasked` | a pin of the target's history since the branches parted that this clone lacks could decide the base, and a remote of the member could not be fetched to look for it |
 | `pin` | `not on declared branch` | a receiving branch does not reach the target's pin, or a `dependency` or `reference` member's branch does not reach the feature's pin |
 | `pin` | `unmerged` | the feature and the target changed a `dependency` or `reference` member's pin, neither containing the other |
 | `pin` | `unpinned` | a receiving branch holds commits nothing records |

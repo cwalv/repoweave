@@ -104,22 +104,38 @@ pins disagree with the lock change waives nothing and is listed under
 
 ## The lineage reader
 
-The lineage rule does not read these records. `lineage::PinHistory::of` reads
-one lock per commit `rev-list --full-history -- rwv.lock` lists, and
-`lineage::judge` decides the base from the pins this clone holds. A pin this
-clone lacks is asked about only where `PinHistory::asked_about` finds it in a
-lock commit the source's project branch does not reach (`rev-list --not
-<source>`, which covers every merge base of a criss-cross at once); then
-`lineage::judge_asking` fetches the member's remotes once and judges again.
-A pin from before the branches parted decides nothing on a clone that lacks it,
-and no remote is asked for it. The bound holds unless the work's first-parent
-chain carries a commit that no held pin of the target's history contains and
-that the source did not make after the branches parted: a member carried by
-hand onto commits of a lineage the target pinned and moved off. That landing
-passes with no fetch and no note where a clone holding the pin would refuse it
-`pin` `off lineage`; it brings back commits the target dropped, which is what
-merging them does in single-repo git.
+`lineage::PinHistory::of` reads one lock per commit `rev-list --full-history
+-- rwv.lock` lists, and `lineage::judge` decides the base from the pins this
+clone holds; a pin it lacks decides nothing, and no verb fetches for it.
+`rwv sync` judges after its own fetch of every repo; `rwv land` fetches
+nothing.
 
-`rwv push` reads the records of the pushed range once per push, and leaves out
-of `pin held by no branch` a pin no backup holds that is the old pin of a
-record of the range for the member, or that such an old pin contains.
+`PinHistory::considered` picks the lacked pins a verb reports as `history pin
+absent`: those a lock commit the source's project branch does not reach holds
+(`rev-list --not <source>`, which covers every merge base of a criss-cross at
+once), and those a record of the target's history names as `<old>` for the
+member, however old. The records are read through `repin::recorded_in` from
+the lock commits `PinHistory::of` lists, once per history and only when a
+lacked pin is outside that range; `repin::moved_off` takes a member's old pins
+from them. A lacked pin can change the verdict only by making the base newer,
+which needs the work's first-parent chain to carry a commit the pin contains
+and no held pin of the target's history does. A target moves off such a commit
+either forward, which keeps it contained in the new pin, or backward, which a
+verb does only by name, writing a record (`pin` `backwards` lists the ways).
+
+What they do not cover:
+
+- A landing made without a sync, on a clone that lacks a considered pin,
+  passes with the note where a clone holding the pin refuses `pin` `off
+  lineage`.
+- A move off a pin made by a hand edit of the lock leaves no record. Where
+  that lock commit is one the source's project branch reaches, the lacked pin
+  is not reported at all.
+
+Each lands work built on commits the target dropped, and brings them back,
+as merging them does in single-repo git.
+
+`rwv push` reads the records of the pushed range through the same
+`repin::recorded_in` once per push, and leaves out of `pin held by no branch`
+a pin no backup holds that is a `repin::moved_off` pin of the range for the
+member, or that such an old pin contains.

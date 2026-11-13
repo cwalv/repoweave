@@ -48,23 +48,27 @@ The sync refuses such a member as `pin` `off lineage` before anything moves.
 The rule reads commits, so its answer depends on which commits the clone holds
 in one case: a pin of the target's history that this clone lacks. A lacked pin
 can only make the base newer, and so turn a pass into a refusal, and only where
-the commit it names held some of the very work being landed. Such a pin is
-looked for only where a lock commit the source's project branch does not reach
-holds it: the target's history since the two branches parted. For that pin the
-verb fetches the member's remotes, as `rwv fetch` does, and says so. A pin the
-fetch brings is judged like any other, so a colleague's commit not yet fetched
-is judged as if it had been. One no remote holds does not decide the base, and
-the verb reports it as `history pin absent`. Where a remote cannot be reached,
-whether it holds the pin cannot be told, and the verb refuses as `pin`
-`unasked`; `rwv fetch`, once the remote is back, lets the next run through.
+the commit it names held some of the very work being landed. `rwv sync` judges
+after its fetch of every repo, so a colleague's commit published on a branch is
+judged as if it had always been here. A pin it still lacks then does not decide
+the base.
 
-A lacked pin from before the two branches parted is not looked for. It could
-decide the base only where the source's member was carried by hand onto commits
-the target had pinned and moved off before then, and landing those brings back
-commits the target dropped, as merging them would in single-repo git, which
-checks nothing for a submodule commit that has gone. A clone that holds such a
-pin still judges by it, so the same work can be refused as `pin` `off lineage`
-on a clone that holds that commit and land from one that lacks it.
+`rwv land` contacts no remote: it judges on the pins this clone holds. Neither
+verb refuses for a lacked pin. Each reports one, once per run, as `history pin
+absent`, naming the pin and its lock commit, where it is the kind that can
+matter: a pin a lock commit the source's project branch does not reach holds
+(the target's history since the two branches parted), or one a re-pin record
+of the target's history names as the pin a member was moved off by name. The
+landing's note says this clone does not hold the pin and that `rwv sync`
+fetches and judges it.
+
+What stays outside the rule: a landing made without a sync, on a clone that
+lacks such a pin, passes with the note where a clone holding the pin refuses
+`pin` `off lineage`; and a pin the target moved off by a hand edit of its lock,
+before the branches parted, leaves no record to read, so a landing passes such
+work with no note at all. Both land work built on commits the target dropped,
+and bring those commits back, as merging them would in single-repo git, which
+checks nothing for a submodule commit that has gone.
 
 **`--from <branch>`** merges another weave branch's history in, whatever the
 setting, and always as a merge commit: work moving between published branches

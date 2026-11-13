@@ -760,11 +760,9 @@ judge-then-act, and it runs under the same op record as `pull
    new work: `lineage::new_work` is empty), rebase (under a `linear` or `ff-only` target), merge (`--from`, a
    `merge` target, or a range holding a merge), or reset (`--reset-to-target`). Members with new
    work, and following members while the branch has dependents, are judged by
-   `lineage::judge_asking`. A pin of the target's history this clone lacks
-   that a lock commit the source does not reach holds sends
-   `fetch::ask_remotes` to the member's remotes once; one still absent is
-   reported (`history pin absent`), and an unreachable remote is `pin`
-   unasked.
+   `lineage::judge_by_history`, after the sync's fetch of every repo. A pin
+   of the target's history this clone still lacks decides nothing; one that
+   `PinHistory::considered` keeps is reported (`history pin absent`).
    Then the project branch's act, `push-branch` for every branch that would
    move (three ways for a divergence: unpushed, landed, rewritten), edits,
    alignment, protection, a range holding a merge under rebase, and
