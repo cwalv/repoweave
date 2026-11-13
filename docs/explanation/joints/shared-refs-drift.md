@@ -307,7 +307,9 @@ nothing of the move, and its message names the branch it was set aside from.
 The `git stash apply <stash>` that merges them back onto the moved tip is
 printed the moment the stash is made, before the checkout is tried, and again
 in the report; where an earlier run's stash is kept too, the report prints
-each, oldest first. A stash set aside from another branch, or against another
+each, oldest first. Both hold edits of the same files, and git refuses to
+apply a stash over unstaged changes to a file it touches, so stage or commit
+what each brings back before applying the next. A stash set aside from another branch, or against another
 tip, is never named here.
 
 Where git refuses a step, such as staged changes, an untracked file in the
