@@ -18,6 +18,8 @@ For `rwv land`, the initiating workweave holds the owner record and the target w
 
 If the operation paused on a conflict, stage the resolved files in the conflicted repository (`git add <files>`) and run `rwv sync --continue` or `rwv land --continue` from the weave root. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the conflict resolution walkthrough.
 
+If the operation stopped as `unparseable-project` `mid-operation`, the project repo's `rwv.toml` that its merge or rebase produced does not parse. Edit `rwv.toml` in the project repo until it parses, stage it with the `git -C <checkout> add -- rwv.toml` line the stop prints, and run the printed `--continue`. A merge commits the staged file in the merge; a rebase, which has already finished, records it as a commit after the replayed tip. An edit that is not staged leaves the stop as it was.
+
 `--continue` loads all parameters (source or target, the landing's plan, `--history`, `--retire`) from the saved op-state record. Do not re-supply the original flags. Already-converged repositories are skipped, so `--continue` is idempotent.
 
 ## Roll back with `rwv abort`

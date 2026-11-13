@@ -452,8 +452,9 @@ repository entry with no \
 `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in \
 one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each \
 naming the line and what was expected. `rwv sync` and `rwv land` refuse with it when the \
-project does not load after the project repo is replayed, and `rwv abort` rolls that operation \
-back.
+project's `rwv.lock` does not load after the project repo is replayed, and `rwv abort` rolls \
+that operation back; an `rwv.toml` the replay or merge produced that does not parse stops as \
+`mid-operation` instead.
 
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and \
 choosing the commits a lock pins is a decision about state, not a repair.";
@@ -546,6 +547,7 @@ pub enum State {
     UnparseableProjectHere,
     UnparseableProjectMalformed,
     UnparseableProjectAt,
+    UnparseableProjectMidOperation,
     LegacyWorkweaveIndexOldPath,
     MissingLockMergeDriverAttributeAbsent,
     MissingLockMergeDriverAttributeLegacy,
@@ -616,7 +618,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 84] = [
+    pub const ALL: [State; 85] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMidOperation,
@@ -662,6 +664,7 @@ impl State {
         Self::UnparseableProjectHere,
         Self::UnparseableProjectMalformed,
         Self::UnparseableProjectAt,
+        Self::UnparseableProjectMidOperation,
         Self::LegacyWorkweaveIndexOldPath,
         Self::MissingLockMergeDriverAttributeAbsent,
         Self::MissingLockMergeDriverAttributeLegacy,
@@ -1137,9 +1140,9 @@ impl State {
                 name: "malformed",
                 means: "the project's `rwv.toml` or `rwv.lock` does not parse, listed with the \
                         file that failed and the parser's error",
-                refused_by: "`rwv sync` and `rwv land`, when the project does not load after \
-                             the project repo is replayed; `rwv doctor` reports it for every \
-                             project",
+                refused_by: "`rwv sync` and `rwv land`, when the project's `rwv.lock` does not \
+                             load after the project repo is replayed; `rwv doctor` reports it \
+                             for every project",
                 offers: &[],
                 verb_offers: &[],
             },
@@ -1151,6 +1154,28 @@ impl State {
                         does not parse, with the parser's error",
                 refused_by: "the verbs that act on that branch",
                 offers: &[Form::DoctorFixOnBranch],
+                verb_offers: &[],
+            },
+            Self::UnparseableProjectMidOperation => &StateRow {
+                axis: Axis::UnparseableProject,
+                name: "mid-operation",
+                means: "the `rwv.toml` the operation's merge or replay of the project repo \
+                        produced does not parse, listed with the parser's error. The two sides \
+                        merged as text without a conflict, into a file that is not a manifest. \
+                        Under merge history the merge is in progress and the merged file is \
+                        staged in the working tree; continuing commits the staged file in the \
+                        merge. Under linear history the replay finished and the replayed tip \
+                        holds the file; continuing records the staged file as a commit after \
+                        that tip",
+                refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
+                             first read what the merge or replay produced, and their \
+                             `--continue` while the staged `rwv.toml` does not parse; `rwv \
+                             abort` runs",
+                offers: &[
+                    Form::StageParsingManifest,
+                    Form::ResumeWithManifest,
+                    Form::AbortOperation,
+                ],
                 verb_offers: &[],
             },
             Self::LegacyWorkweaveIndexOldPath => &StateRow {
@@ -1883,6 +1908,8 @@ pub enum ChoiceId {
     MarkResolved,
     ResumeOperation,
     AbortOperation,
+    StageParsingManifest,
+    ResumeWithManifest,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2128,6 +2155,19 @@ impl ChoiceId {
                 keeps_work: "`rwv abort` moves only what the operation moved, back to where it \
                              found it",
             },
+            Self::StageParsingManifest => &ChoiceRow {
+                id: None,
+                phrase: "edit rwv.toml until it parses, then stage it",
+                keeps_work: "stages the working file as it stands; the operation is still in \
+                             progress",
+            },
+            Self::ResumeWithManifest => &ChoiceRow {
+                id: None,
+                phrase: "let the operation go on with the staged rwv.toml",
+                keeps_work: "a merge commits it in the merge; a replay records it in a commit \
+                             after the replayed tip; it stops again while the staged file does \
+                             not parse",
+            },
             Self::LandAgain => &ChoiceRow {
                 id: None,
                 phrase: "land again once nothing else is changing the checkout: the landing \
@@ -2331,6 +2371,8 @@ pub enum Form {
     MarkResolved,
     ResumeOperation,
     AbortOperation,
+    StageParsingManifest,
+    ResumeWithManifest,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2358,7 +2400,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 97] = [
+    pub const ALL: [Form; 99] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2456,6 +2498,8 @@ impl Form {
         Self::MarkResolved,
         Self::ResumeOperation,
         Self::AbortOperation,
+        Self::StageParsingManifest,
+        Self::ResumeWithManifest,
     ];
 
     pub fn row(self) -> &'static FormRow {
@@ -3026,6 +3070,18 @@ impl Form {
             Self::AbortOperation => &FormRow {
                 choice: C::AbortOperation,
                 steps: &[Rwv("rwv abort")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::StageParsingManifest => &FormRow {
+                choice: C::StageParsingManifest,
+                steps: &[Vcs(A::MarkResolved)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::ResumeWithManifest => &FormRow {
+                choice: C::ResumeWithManifest,
+                steps: &[Step::ResumeRecorded],
                 at: W::Here,
                 shipped: true,
             },

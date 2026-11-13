@@ -247,7 +247,9 @@ fn take(
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
-    crate::workweave::refuse_symlinked_members(ctx.active_path(), &project)?;
+    if let Run::Fresh(_) = run {
+        crate::workweave::refuse_symlinked_members(ctx.active_path(), &project)?;
+    }
     let held = match run {
         Run::Fresh(_) => None,
         Run::Continue => branch_left_by_a_stop(ctx.active_path())?,
@@ -274,6 +276,15 @@ fn take(
                     "the op was started for project `{recorded}`, not `{project}`"
                 ));
             }
+            let pre_manifest = vcs
+                .resolve_savepoint(&dir, &SavepointKey::Op(op.id.clone()))
+                .and_then(|at| manifest_at(vcs.as_ref(), &dir, at.id()))
+                .context("the project's rwv.toml did not parse when the sync began")?;
+            crate::workweave::refuse_symlinked_members_named(
+                ctx.active_path(),
+                &project,
+                &pre_manifest,
+            )?;
             let owner = crate::op_state::read_owner(&op.workspace)?
                 .context("the op record vanished while it was resumed")?;
             let from = take_in
@@ -1644,6 +1655,13 @@ fn act(
     } else {
         set_aside_authored(sync, &pre_manifest)?;
         take_project(sync, &head, &source, resets_project, output, reported)?;
+        crate::project_merge::settle_replayed_manifest(
+            vcs,
+            sync.label(),
+            &sync.dir,
+            sync.ctx.active_path(),
+            OpVerb::Sync,
+        )?;
         remap(sync, op, output)?;
         relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
     }

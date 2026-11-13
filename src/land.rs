@@ -1260,6 +1260,7 @@ pub struct Resumed<'a> {
     pub recorded: &'a [RepoOperand],
     /// The consent this `--continue` adds.
     pub added: &'a [RepoOperand],
+    pub verb: crate::op_state::OpVerb,
 }
 
 /// Judge the source's `rwv.toml` as the stop's resolution left it against
@@ -1293,8 +1294,25 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         .merge_bases(&dir, &head, resumed.target_tip)?
         .into_iter()
         .next();
+    let ours = match vcs.staged_file(&dir, Manifest::FILE_NAME)? {
+        Some(staged) => Manifest::from_toml_str(&staged).map_err(|error| {
+            let produced = if vcs.merge_in_flight(&dir).ok().flatten().is_some() {
+                crate::project_merge::Produced::Merge
+            } else {
+                crate::project_merge::Produced::Replay
+            };
+            crate::project_merge::unparseable_result(
+                vcs,
+                &label,
+                &dir,
+                (&crate::op_state::resume_command(resumed.verb), produced),
+                &error,
+            )
+        })?,
+        None => Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
+    };
     let sides = Sides {
-        ours: Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
+        ours,
         theirs,
         base: base_commit.as_ref().and_then(|b| manifest_at(vcs, &dir, b)),
         our_lock: None,

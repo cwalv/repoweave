@@ -571,8 +571,30 @@ impl ProjectMerge<'_> {
         let text = merged
             .file(vcs, &dir, Manifest::FILE_NAME)?
             .context("the merged project holds no rwv.toml")?;
-        let manifest = Manifest::from_toml_str(&text)
-            .context("the merged rwv.toml does not parse; resolve it, then continue")?;
+        let manifest = match Manifest::from_toml_str(&text) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                if matches!(merged, Merged::Tree(_)) {
+                    op_state::journal_merging(
+                        self.ctx.active_path(),
+                        crate::manifest::RepoKey::Project,
+                        sides.incoming(self.head),
+                    )?;
+                    vcs.start_merge(
+                        &dir,
+                        sides.incoming(self.head),
+                        DerivedContentPolicy::keep_incoming_side(),
+                    )?;
+                }
+                return Err(unparseable_result(
+                    vcs,
+                    &repo,
+                    &dir,
+                    (&self.resume, Produced::Merge),
+                    &error,
+                ));
+            }
+        };
 
         let reach = MemberReach {
             root: self.ctx.active_path(),
@@ -915,4 +937,98 @@ fn read_manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Mani
         )
         .ok()?;
     Manifest::from_toml_str(&text).ok()
+}
+
+/// What left the project repo's unparseable `rwv.toml`.
+#[derive(Clone, Copy)]
+pub(crate) enum Produced {
+    Merge,
+    Replay,
+}
+
+impl Produced {
+    fn says(self) -> &'static str {
+        match self {
+            Self::Merge => {
+                "the merge is in progress, its rwv.toml staged as the two sides merged it as \
+                 text; a staged rwv.toml that parses is committed in the merge"
+            }
+            Self::Replay => {
+                "the replay finished and the replayed tip's rwv.toml, as the two sides merged it \
+                 as text, does not parse; a staged rwv.toml that parses is recorded as a commit \
+                 after that tip"
+            }
+        }
+    }
+}
+
+/// The stop where the `rwv.toml` a merge or replay of the project repo at
+/// `dir` produced does not parse: what is there, the parser's error, then
+/// staging a fix, the operation's continue, and abort.
+pub(crate) fn unparseable_result(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    (resume, produced): (&str, Produced),
+    error: &anyhow::Error,
+) -> anyhow::Error {
+    let file = dir.join(Manifest::FILE_NAME).display().to_string();
+    let parse_error = format!("{error:#}");
+    crate::diagnosis::State::UnparseableProjectMidOperation
+        .of(repo)
+        .project_repo()
+        .subject(file)
+        .listing(std::iter::once(produced.says()).chain(parse_error.lines()))
+        .bind_list("<paths>", [Manifest::FILE_NAME])
+        .bind_list("<resume>", resume.split_whitespace())
+        .checkout(dir)
+        .judge(vcs)
+        .refused()
+}
+
+/// Settle the `rwv.toml` the replay of the project repo at `dir` left at its
+/// tip. Where it does not parse, a staged `rwv.toml` that does is committed
+/// after the tip and journaled as the project's tip in `workspace`; without
+/// one the operation stops on [`unparseable_result`].
+pub(crate) fn settle_replayed_manifest(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    workspace: &Path,
+    verb: op_state::OpVerb,
+) -> anyhow::Result<()> {
+    let head = vcs.head_revision(dir)?;
+    let Ok(at_head) = vcs.read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME)) else {
+        return Ok(());
+    };
+    let Err(at_head_error) = Manifest::from_toml_str(&at_head) else {
+        return Ok(());
+    };
+    let staged = vcs.staged_file(dir, Manifest::FILE_NAME)?;
+    let parsed = match staged.as_deref() {
+        Some(text) if text != at_head => Manifest::from_toml_str(text).map(|_| ()),
+        _ => Err(at_head_error),
+    };
+    if let Err(error) = parsed {
+        return Err(unparseable_result(
+            vcs,
+            repo,
+            dir,
+            (&op_state::resume_command(verb), Produced::Replay),
+            &error,
+        ));
+    }
+    crate::repin::commit(
+        vcs,
+        dir,
+        &[Manifest::FILE_NAME],
+        "Make rwv.toml parse after the replay",
+        None,
+        &crate::repin::Naming::Unnamed,
+    )?;
+    op_state::journal_tip(
+        workspace,
+        crate::manifest::RepoKey::Project,
+        vcs.head_revision(dir)?.id(),
+    )
 }

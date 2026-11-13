@@ -785,6 +785,26 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    unparseable_merged_manifest(
+        scenarios::TakingIn::SyncLinear,
+        scenarios::LeftBy::StagedFix
+    ),
+    unparseable_merged_manifest(scenarios::TakingIn::SyncLinear, scenarios::LeftBy::Abort),
+    unparseable_merged_manifest(scenarios::TakingIn::SyncMerge, scenarios::LeftBy::StagedFix),
+    unparseable_merged_manifest(scenarios::TakingIn::SyncMerge, scenarios::LeftBy::Abort),
+    unparseable_merged_manifest(
+        scenarios::TakingIn::LandLinear,
+        scenarios::LeftBy::StagedFix
+    ),
+    unparseable_merged_manifest(scenarios::TakingIn::LandLinear, scenarios::LeftBy::Abort),
+    unparseable_merged_manifest(scenarios::TakingIn::LandMerge, scenarios::LeftBy::StagedFix),
+    unparseable_merged_manifest(scenarios::TakingIn::LandMerge, scenarios::LeftBy::Abort),
+    unparseable_merged_manifest_pulled(scenarios::LeftBy::StagedFix),
+    unparseable_merged_manifest_pulled(scenarios::LeftBy::Abort),
+    abort_restores_members_past_an_unparseable_manifest(scenarios::TargetMembers::Adds),
+    abort_restores_members_past_an_unparseable_manifest(scenarios::TargetMembers::Removes),
+    abort_ignores_a_half_finished_manifest_fix,
+    an_unparseable_intermediate_manifest_is_replayed,
     solo_workweave,
     history_rebase_pin_remap,
     stack_carried,
@@ -6407,4 +6427,51 @@ fn abort_of_a_landing_whose_alignment_made_a_checkout_removes_it() {
         runner::run(scenarios::abort_of_a_landing_whose_alignment_made_a_checkout(edited))
             .assert_fully_decided_green();
     }
+}
+
+#[test]
+fn an_unparseable_merged_manifest_is_left_by_its_printed_choices() {
+    use scenarios::{LeftBy, TakingIn};
+    for taking_in in [
+        TakingIn::SyncLinear,
+        TakingIn::SyncMerge,
+        TakingIn::LandLinear,
+        TakingIn::LandMerge,
+    ] {
+        for left_by in [LeftBy::StagedFix, LeftBy::Abort] {
+            runner::run(scenarios::unparseable_merged_manifest(taking_in, left_by))
+                .assert_fully_decided_green();
+        }
+    }
+}
+
+#[test]
+fn an_unparseable_manifest_merged_by_pull_is_left_by_its_printed_choices() {
+    for left_by in [scenarios::LeftBy::StagedFix, scenarios::LeftBy::Abort] {
+        runner::run(scenarios::unparseable_merged_manifest_pulled(left_by))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn abort_restores_members_past_an_unparseable_manifest() {
+    for change in [
+        scenarios::TargetMembers::Adds,
+        scenarios::TargetMembers::Removes,
+    ] {
+        runner::run(scenarios::abort_restores_members_past_an_unparseable_manifest(change))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn abort_ignores_a_half_finished_manifest_fix() {
+    runner::run(scenarios::abort_ignores_a_half_finished_manifest_fix())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn an_unparseable_intermediate_manifest_is_replayed_and_landed() {
+    runner::run(scenarios::an_unparseable_intermediate_manifest_is_replayed())
+        .assert_fully_decided_green();
 }

@@ -1796,6 +1796,34 @@ pub(crate) fn refresh_drift_after(
 
 /// CWD's project as Phase 1' left it: the manifest the op ends with.
 fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
+    let vcs = ctx.project_vcs.as_ref();
+    let dir = &ctx.cwd_project_dir;
+    let repo = crate::workspace::project_rel_path(&ctx.cwd_project_name);
+    if vcs.merge_in_flight(dir)?.is_some() {
+        if let Some(Err(error)) = vcs
+            .staged_file(dir, Manifest::FILE_NAME)?
+            .map(|text| Manifest::from_toml_str(&text))
+        {
+            return Err(crate::project_merge::unparseable_result(
+                vcs,
+                &repo,
+                dir,
+                (
+                    &op_state::resume_command(ctx.verb),
+                    crate::project_merge::Produced::Merge,
+                ),
+                &error,
+            ));
+        }
+    } else {
+        crate::project_merge::settle_replayed_manifest(
+            vcs,
+            &repo,
+            dir,
+            &ctx.owner_workspace_dir,
+            ctx.verb,
+        )?;
+    }
     let failure = match Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()) {
         Ok(project) => return Ok(project),
         Err(failure) => failure,
@@ -4856,6 +4884,7 @@ fn rejudge_entries(
         target_tip: &target_tip,
         recorded: &recorded,
         added,
+        verb: record.verb,
     };
     match crate::land::rejudge_resolved(&resumed, owner_workspace_dir)? {
         crate::land::Rejudged::Unresolved => return Ok(()),

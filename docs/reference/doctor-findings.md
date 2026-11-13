@@ -266,8 +266,9 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 | State | Means | Refused by |
 |---|---|---|
 | `here` | the project's `rwv.toml` at the checked-out tip names member-entry keys an earlier release wrote, each listed with the key that replaces it | every verb that reads the project's `rwv.toml`; `rwv doctor` reports it instead, and `rwv status` and `rwv prime` skip the project with a warning |
-| `malformed` | the project's `rwv.toml` or `rwv.lock` does not parse, listed with the file that failed and the parser's error | `rwv sync` and `rwv land`, when the project does not load after the project repo is replayed; `rwv doctor` reports it for every project |
+| `malformed` | the project's `rwv.toml` or `rwv.lock` does not parse, listed with the file that failed and the parser's error | `rwv sync` and `rwv land`, when the project's `rwv.lock` does not load after the project repo is replayed; `rwv doctor` reports it for every project |
 | `at` | the `rwv.toml` at the tip of a live branch the verb acts on, not the checked-out one, names member-entry keys an earlier release wrote or does not parse, with the parser's error | the verbs that act on that branch |
+| `mid-operation` | the `rwv.toml` the operation's merge or replay of the project repo produced does not parse, listed with the parser's error. The two sides merged as text without a conflict, into a file that is not a manifest. Under merge history the merge is in progress and the merged file is staged in the working tree; continuing commits the staged file in the merge. Under linear history the replay finished and the replayed tip holds the file; continuing records the staged file as a commit after that tip | `rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they first read what the merge or replay produced, and their `--continue` while the staged `rwv.toml` does not parse; `rwv abort` runs |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -275,6 +276,9 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 |---|---|---|---|---|
 | `here` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | here | commits only the rewrite; other edits stay uncommitted |
 | `at` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | where `<b>` is checked out | commits only the rewrite; other edits stay uncommitted |
+| `mid-operation` | edit rwv.toml until it parses, then stage it | VCS action (git: `git -C <checkout> add -- <paths>`) | the checkout | stages the working file as it stands; the operation is still in progress |
+| `mid-operation` | let the operation go on with the staged rwv.toml | the stopped operation's `--continue` | here | a merge commits it in the merge; a replay records it in a commit after the replayed tip; it stops again while the staged file does not parse |
+| `mid-operation` | abandon the operation that stopped | `rwv abort` | here | `rwv abort` moves only what the operation moved, back to where it found it |
 
 **Where this sits.** [Formats](./formats.md) states the member-entry keys; [Upgrade rwv](../how-to/upgrade-rwv.md) walks through the rewrite.
 
@@ -288,7 +292,7 @@ A commit other than the checked-out one that names the old keys is not reported 
 
 #### `malformed`
 
-**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is restored from version control, or written afresh by `rwv lock`, which then pins nothing until `rwv member pin` or `rwv update --remote` gives each member its pin. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv land` refuse with it when the project does not load after the project repo is replayed, and `rwv abort` rolls that operation back.
+**Error. Report-only.** Any other reason the project did not load. The message names which file failed and carries that file's remedy — the manifest is yours to edit, at the line the parser names; the lock is restored from version control, or written afresh by `rwv lock`, which then pins nothing until `rwv member pin` or `rwv update --remote` gives each member its pin. A repository entry with no `role`, an unknown top-level key, an unknown `[integrations.<name>]` table, an unknown key in one, and an `enabled` that is not `true` or `false` are all parse failures of this kind, each naming the line and what was expected. `rwv sync` and `rwv land` refuse with it when the project's `rwv.lock` does not load after the project repo is replayed, and `rwv abort` rolls that operation back; an `rwv.toml` the replay or merge produced that does not parse stops as `mid-operation` instead.
 
 `--fix` has no arm for it. Rewriting a manifest rwv could not parse would be guesswork, and choosing the commits a lock pins is a decision about state, not a repair.
 
