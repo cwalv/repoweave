@@ -8250,10 +8250,15 @@ fn apply_finding_repairs(
                 ) {
                     Ok(true) => {
                         outln!(
-                            "[fixed] core: claim-unreadable at {}: released it ({}); a landing \
-                             of another rwv release that held it has lost its claim",
+                            "[fixed] core: claim-unreadable at {}: released it ({}); {}",
                             file.display(),
-                            unreadable_claim_text(seen)
+                            unreadable_claim_text(seen),
+                            if crate::landing_claim::is_takeover_guard_file(file) {
+                                "a takeover by an rwv of another release that held it no longer \
+                                 guards its removal of the claim beside it"
+                            } else {
+                                "a landing of another rwv release that held it has lost its claim"
+                            }
                         );
                         true
                     }

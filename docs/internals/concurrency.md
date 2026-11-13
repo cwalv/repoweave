@@ -96,10 +96,16 @@ and a permission truly denied:
 | `renameat2` / `renamex_np` | `EINVAL` (no `RENAME_NOREPLACE`: NFS, FUSE without rename2), `ENOSYS` (kernel before 3.15, or a platform with no such call), `EOPNOTSUPP`/`ENOTSUP` (no `RENAME_EXCL`) | unix |
 | `MoveFileExW` | `ERROR_INVALID_FUNCTION`, `ERROR_NOT_SUPPORTED` | Windows |
 
-`EPERM` from `link(2)` is not a permission rwv could be granted: a denied
-directory write is `EACCES`, and the temp beside the target was created a
-moment before, so a directory rwv cannot write fails at the temp, before any
-link. Every other error, `EACCES` and `ERROR_ACCESS_DENIED` included, is
+`EPERM` from `link(2)` means no links here on vfat and exfat, and the rename
+is reached on it. It has other causes: `fs.protected_hardlinks` on a temp a
+mount reports as another user's (a forced `uid=`, a 9p or FUSE share with
+mapped ownership), an immutable source, a seccomp policy denying `linkat`.
+On those the rename is as exclusive and as atomic as the link, so nothing is
+downgraded; where the rename is refused too, the refusal names the filesystem
+when the cause was ownership or policy, a wrong diagnosis rather than a wrong
+outcome. A denied directory write is `EACCES`, which fails at the temp before
+any link. `EMLINK` (a filesystem whose links stop at one) is not a selector
+and surfaces as itself. Every other error, `EACCES` and `ERROR_ACCESS_DENIED` included, is
 reported as it is and never retried in another mode. A filesystem that makes
 links never reaches the rename.
 
@@ -108,6 +114,18 @@ filesystem without hard links can be mounted in the gate without privilege,
 so the suite stands one in by withholding a mode from a test build
 (`RWV_TEST_WITHHOLD`, read only with the `test-pause` feature), and the error
 it returns is the one such a filesystem returns.
+
+**Residuals of the exclusive publish.** These are known and not guarded:
+
+- A userspace filesystem that accepts `RENAME_NOREPLACE` and ignores it. The
+  kernel's check under the parent directory's lock covers racers through one
+  mount, so the rename is exclusive within one mount, or wherever the server
+  enforces the flag. Two mounts, or two hosts, of such a server can each
+  rename onto the name and each be told it won.
+- An NFS `link` the server made and answered, retransmitted, with `EEXIST`.
+  The writer then reads its own file as the winner's and refuses on itself.
+- A directory fsync that fails after the publish. The name exists and the
+  caller is told the publish failed.
 
 **A killed writer's temp is removed by the next publish of its name.** A temp
 is never at a published name, so one left behind blocks nothing. Every

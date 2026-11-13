@@ -492,14 +492,31 @@ fn c_path(path: &Path) -> std::io::Result<std::ffi::CString> {
 }
 
 /// `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING` fails with
-/// `ERROR_ALREADY_EXISTS` on an occupied target.
+/// `ERROR_ALREADY_EXISTS` on an occupied target. A rename needs delete access
+/// to its source, which a scanner holding the just-closed temp without sharing
+/// deletion denies for a moment, so that is retried as [`rename_over`] retries.
 #[cfg(windows)]
 fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     use windows::core::HSTRING;
+    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
     use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
-    // SAFETY: both strings are NUL-terminated and outlive the call.
-    unsafe { MoveFileExW(&HSTRING::from(from), &HSTRING::from(to), MOVE_FILE_FLAGS(0)) }
-        .map_err(win32_io_error)
+    let held_open = |e: &std::io::Error| {
+        [ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION]
+            .iter()
+            .any(|code| e.raw_os_error() == Some(code.0 as i32))
+    };
+    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        // SAFETY: both strings are NUL-terminated and outlive the call.
+        match unsafe { MoveFileExW(&HSTRING::from(from), &HSTRING::from(to), MOVE_FILE_FLAGS(0)) }
+            .map_err(win32_io_error)
+        {
+            Err(e) if held_open(&e) && std::time::Instant::now() < deadline => {
+                std::thread::sleep(CLAIM_POLL)
+            }
+            outcome => return outcome,
+        }
+    }
 }
 
 /// `windows::core::Error` carries an HRESULT; a Win32 code rides in its low
@@ -549,16 +566,25 @@ fn filesystem_of(dir: &Path) -> String {
         return "a filesystem the OS did not name".to_owned();
     }
     // SAFETY: statfs returned 0.
-    let magic = unsafe { stat.assume_init() }.f_type as u64;
+    let magic = unsafe { stat.assume_init() }.f_type;
+    filesystem_named(magic as u64 & 0xffff_ffff)
+}
+
+/// A Linux filesystem's name from its `statfs` magic, a 32-bit value: read
+/// from a signed `f_type` it is masked rather than sign-extended.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn filesystem_named(magic: u64) -> String {
     let name = match magic {
         0x4d44 => "vfat (FAT)",
         0x2011_bab0 => "exfat",
         0x6573_5546 => "a FUSE mount",
+        0x0102_1997 => "9p",
         0xfe53_4d42 => "SMB2",
         0xff53_4d42 => "CIFS",
         0x517b => "SMB",
         0x6969 => "NFS",
-        0x5346_544e => "ntfs3",
+        0x7366_746e => "ntfs3",
+        0x5346_544e => "ntfs",
         0x9123_683e => "btrfs",
         0x5846_5342 => "xfs",
         0xef53 => "ext4",
@@ -1065,6 +1091,62 @@ mod tests {
         restage
             .again(path)
             .expect("a first vanish is staged again however long staging took");
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn the_filesystems_most_likely_to_refuse_are_named() {
+        assert_eq!(filesystem_named(0x4d44), "vfat (FAT)");
+        assert_eq!(filesystem_named(0x2011_bab0), "exfat");
+        assert_eq!(filesystem_named(0x0102_1997), "9p");
+        assert_eq!(filesystem_named(0x7366_746e), "ntfs3");
+        assert_eq!(
+            filesystem_named(0xffff_ffff_fe53_4d42_u64 & 0xffff_ffff),
+            "SMB2"
+        );
+        assert_eq!(filesystem_named(0x1234), "a filesystem of type 0x1234");
+    }
+
+    /// Every code each list selects on, and codes it must not: a missing
+    /// source, another filesystem, a read-only one, a denied permission.
+    #[test]
+    #[cfg(unix)]
+    fn the_mode_selectors_are_exactly_the_no_such_operation_codes() {
+        use nix::libc;
+        let code = std::io::Error::from_raw_os_error;
+        for selects in [libc::EPERM, libc::EOPNOTSUPP, libc::ENOTSUP, libc::ENOSYS] {
+            assert!(makes_no_hard_links(&code(selects)), "{selects}");
+        }
+        for selects in [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP, libc::ENOTSUP] {
+            assert!(makes_no_rename_no_replace(&code(selects)), "{selects}");
+        }
+        for not in [
+            libc::ENOENT,
+            libc::EXDEV,
+            libc::EROFS,
+            libc::EACCES,
+            libc::EEXIST,
+        ] {
+            assert!(!makes_no_hard_links(&code(not)), "{not}");
+            assert!(!makes_no_rename_no_replace(&code(not)), "{not}");
+        }
+    }
+
+    #[test]
+    fn a_replace_sweeps_an_abandoned_temp_of_its_name() {
+        let tmp = crate::tempdir().unwrap();
+        let path = tmp.path().join("f");
+        let abandoned = tmp.path().join(temp_name("f", 99));
+        std::fs::write(&abandoned, b"half").unwrap();
+        replace(&path, b"x").unwrap();
+        assert!(!abandoned.exists());
+    }
+
+    #[test]
+    fn only_a_name_carrying_the_process_key_reads_as_a_temp() {
+        assert!(is_temp_of(&temp_name("f", 3), "f"));
+        assert!(!is_temp_of("f.tmp.123.3", "f"));
+        assert!(!is_temp_of("f.tmp.123.abc.3", "f"));
     }
 
     #[test]

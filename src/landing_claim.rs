@@ -512,6 +512,18 @@ fn take_within(
                 let judged = standing(&seen);
                 (seen, judged)
             }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound && path.symlink_metadata().is_ok() =>
+            {
+                let why = "a symbolic link to nothing".to_owned();
+                (
+                    why.clone().into_bytes(),
+                    Standing::Unopenable {
+                        file: path.reported(),
+                        why,
+                    },
+                )
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
             Err(e) => (
                 format!("{e:#}").into_bytes(),
@@ -774,6 +786,12 @@ fn is_takeover_guard(name: &str) -> bool {
             .all(|pair| pair[0] == TAKEOVER && pair[1].parse::<OpId>().is_ok())
 }
 
+/// Whether `file` is a takeover guard beside a claim, not the claim itself.
+pub fn is_takeover_guard_file(file: &Path) -> bool {
+    file.file_name()
+        .is_some_and(|name| is_takeover_guard(&name.to_string_lossy()))
+}
+
 fn takeover_guards(dir: &Path) -> Vec<std::path::PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -978,6 +996,23 @@ mod tests {
         let reported = unopenable_in(&dir);
         assert_eq!(reported.len(), 1, "{reported:?}");
         assert_eq!(reported[0].file, path.reported());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_dangling_link_at_the_claims_name_is_refused_by_name_not_spun_on() {
+        let tmp = crate::tempdir().unwrap();
+        let (_, path) = claims_on(tmp.path(), "main");
+        std::fs::create_dir_all(path.dir()).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("nowhere"), path.reported()).unwrap();
+        let next = tmp.path().join("next");
+        std::fs::create_dir_all(next.join("projects")).unwrap();
+        record(&next, &op(2));
+        let refused = take_within(path, "main", &op(2), &next, Duration::ZERO).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::ClaimUnopenable)
+        );
     }
 
     #[test]
