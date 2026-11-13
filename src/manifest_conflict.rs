@@ -415,9 +415,16 @@ pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
 
 pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec<String> {
     let by_hand = "no verb settles it: edit rwv.toml, then stage it";
+    let replaying = matches!(vcs.rebase_in_flight(dir), Ok(Some(_)));
+    let label = |side: &str| match (side, replaying) {
+        ("ours", false) | ("theirs", true) => "yours",
+        ("ours", true) | ("theirs", false) => "incoming",
+        _ => "common base",
+    };
     let mut lines = match reading {
         Reading::Unreadable { side, why } => vec![format!(
-            "rwv.toml's {side} side does not read as a manifest ({why}); {by_hand}"
+            "rwv.toml's {} side does not read as a manifest ({why}); {by_hand}",
+            label(side)
         )],
         Reading::Unparsed(why) => vec![format!(
             "rwv.toml does not read as a manifest ({why}); {by_hand}"
@@ -427,9 +434,15 @@ pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec
         )],
         Reading::Entries(conflicts) => conflicts
             .iter()
-            .flat_map(|conflict| conflict_lines(conflict, by_hand))
+            .flat_map(|conflict| conflict_lines(conflict, replaying, by_hand))
             .collect(),
     };
+    if lines.iter().any(|line| line.contains(" yours")) {
+        lines.push(format!(
+            "(yours: the side of the branch checked out in {}; incoming: the side it takes in)",
+            dir.display()
+        ));
+    }
     if lines.iter().any(|line| line.contains(by_hand)) {
         lines.push("to stage rwv.toml once it is edited:".to_owned());
         lines.push(format!(
@@ -442,32 +455,40 @@ pub(crate) fn reading_lines(vcs: &dyn Vcs, dir: &Path, reading: &Reading) -> Vec
     lines
 }
 
-fn conflict_lines(conflict: &EntryConflict, by_hand: &str) -> Vec<String> {
+/// `replaying`: the checkout is replaying its branch's commits, so the side
+/// the VCS records as its own is the one taken in, and the other is the
+/// branch's own.
+fn conflict_lines(conflict: &EntryConflict, replaying: bool, by_hand: &str) -> Vec<String> {
     let name = entry_name(&conflict.path);
     let member = match conflict.path.as_slice() {
         [table, member] if table == "repositories" => Some(member.as_str()),
         _ => None,
     };
+    let (yours, incoming) = if replaying {
+        (&conflict.theirs, &conflict.ours)
+    } else {
+        (&conflict.ours, &conflict.theirs)
+    };
     let mut lines = Vec::new();
-    match (&conflict.ours, &conflict.theirs) {
-        (Some(toml::Value::Table(ours)), Some(toml::Value::Table(theirs))) => {
+    match (yours, incoming) {
+        (Some(toml::Value::Table(yours)), Some(toml::Value::Table(incoming))) => {
             lines.push(format!("rwv.toml entry {name} is in conflict:"));
-            let mut keys: Vec<&String> = ours.keys().chain(theirs.keys()).collect();
+            let mut keys: Vec<&String> = yours.keys().chain(incoming.keys()).collect();
             keys.sort();
             keys.dedup();
             for key in keys {
-                let (o, t) = (ours.get(key), theirs.get(key));
-                if o == t {
+                let (y, i) = (yours.get(key), incoming.get(key));
+                if y == i {
                     continue;
                 }
                 lines.push(format!(
-                    "  {key}: {} in ours, {} in theirs",
-                    shown(o),
-                    shown(t)
+                    "  {key}: {} in yours, {} incoming",
+                    shown(y),
+                    shown(i)
                 ));
                 match &member {
                     Some(member) => {
-                        for (side, value) in [("ours", o), ("theirs", t)] {
+                        for (side, value) in [("yours", y), ("incoming", i)] {
                             let setter = field_setter(member, key, value);
                             lines.push(format!(
                                 "    keep {side}: {}",
@@ -479,14 +500,14 @@ fn conflict_lines(conflict: &EntryConflict, by_hand: &str) -> Vec<String> {
                 }
             }
         }
-        (ours, theirs) => {
+        (yours, incoming) => {
             lines.push(format!(
-                "rwv.toml entry {name} is in conflict: {} in ours, {} in theirs",
-                shown(ours.as_ref()),
-                shown(theirs.as_ref())
+                "rwv.toml entry {name} is in conflict: {} in yours, {} incoming",
+                shown(yours.as_ref()),
+                shown(incoming.as_ref())
             ));
             let top_history = conflict.path == ["history"];
-            for (side, value) in [("ours", ours), ("theirs", theirs)] {
+            for (side, value) in [("yours", yours), ("incoming", incoming)] {
                 let setter = match (&member, value) {
                     (Some(member), None) => Some(format!("rwv member remove {member}")),
                     (None, value) if top_history => Some(history_setter(value.as_ref(), None)),

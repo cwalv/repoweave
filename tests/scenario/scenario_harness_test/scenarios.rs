@@ -18670,6 +18670,14 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains(
                         "rwv.toml entry history is in conflict",
                     ))
+                    .claim(Claim::OutputContains(match history {
+                        H::Merge => "keep yours: rwv branch set-history linear",
+                        H::Linear => "keep yours: rwv branch set-history merge",
+                    }))
+                    .claim(Claim::OutputContains(match history {
+                        H::Merge => "keep incoming: rwv branch set-history merge",
+                        H::Linear => "keep incoming: rwv branch set-history linear",
+                    }))
                     .claim(Claim::OutputLacks("--repo")),
                 Step::rwv(&ww("w"), &["branch", "set-history", target])
                     .expect(Exit::Succeeds)
