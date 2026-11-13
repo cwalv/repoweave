@@ -304,7 +304,6 @@ src/sync.rs	clone-topology	-	1
 src/sync.rs	dropped-repo-has-unique-commits	tests/sync/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
 src/sync.rs	edits drift left in place	tests/sync/land_drift_test.rs	1
-src/sync.rs	edits moved and edited	tests/sync/land_drift_test.rs	1
 src/sync.rs	foreign-tip	tests/sync/abort_hardening_test.rs	5
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
