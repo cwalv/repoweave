@@ -21977,8 +21977,8 @@ pub fn a_fix_is_not_carried_off_the_replayed_tip(
 /// branch of three project commits, the first adding its table, so every
 /// replayed commit holds an `rwv.toml` that does not parse. The stop says the
 /// two earlier ones keep it; a staged fix goes into the tip alone, and once
-/// landed `rwv cherry-pick`, `rwv switch --detach` and `rwv workweave create
-/// --at` of an earlier one refuse it by name, moving and making nothing.
+/// landed `rwv cherry-pick`, `rwv switch --detach` and `rwv workweave create`
+/// at an earlier one refuse it by name, moving and making nothing.
 pub fn earlier_replayed_commits_keep_an_unparseable_rwv_toml(taking_in: TakingIn) -> Scenario {
     let mut steps = vec![create("p"), create("w")];
     steps.extend(adds_a_copies(&a()));
@@ -22006,6 +22006,10 @@ pub fn earlier_replayed_commits_keep_an_unparseable_rwv_toml(taking_in: TakingIn
                 .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectCommit))
                 .claim(Claim::LocalStateUnchanged(ww("p"))),
             Step::rwv(&a(), &["workweave", "create", "w3", "--at", "main~1"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectCommit))
+                .claim(Claim::OutputContains("duplicate key"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv(&a(), &["workweave", "create", "w4", "--detach", "main~1"])
                 .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectCommit))
                 .claim(Claim::OutputContains("duplicate key"))
                 .claim(Claim::LocalStateUnchanged(a())),
