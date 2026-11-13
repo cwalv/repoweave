@@ -8863,6 +8863,7 @@ pub fn dc06_member_set_from_merge() -> Scenario {
             Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
             Step::rwv(&ww("w"), &["land", "--continue"])
                 .expect(Exit::Succeeds)
+                .resolved_by_hand(&[Repo::Proj])
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::App,
