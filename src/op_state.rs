@@ -517,14 +517,18 @@ pub struct TakeInRecord {
     /// them, which aligning `T`'s workspace then moves.
     #[serde(default)]
     pub realigned: Vec<RepoKey>,
-    /// Each checkout a landing moves, in `T`'s workspace by its fast-forward
-    /// or by aligning that workspace after it, or in place in a third one,
-    /// written before it moves and taken back where it did not move.
+    /// Each checkout of `T`'s workspace a landing moves, by its fast-forward
+    /// or by aligning that workspace after it, written before it moves and
+    /// taken back where it did not move.
     #[serde(default)]
     pub moved_in_target: Vec<RepoKey>,
     /// The tip each checkout `moved_in_target` names is moved to.
     #[serde(default)]
     pub wrote_in_target: BTreeMap<RepoKey, CommitId>,
+    /// Each checkout a landing fast-forwards in place in a third workspace,
+    /// written before it moves and taken back where it did not move.
+    #[serde(default)]
+    pub moved_in_place: Vec<InPlaceMove>,
     /// Each branch a landing moves as a ref, and the tip it moves it to,
     /// written before it moves.
     #[serde(default)]
@@ -729,6 +733,7 @@ impl TakeInRecord {
     /// or branch is journaled.
     pub fn wrote_target(&self) -> bool {
         !self.moved_in_target.is_empty()
+            || !self.moved_in_place.is_empty()
             || !self.moved_refs.is_empty()
             || !self.created_refs.is_empty()
     }
@@ -758,13 +763,13 @@ impl TakeInRecord {
             .filter(move |(_, receiving)| {
                 matches!(&receiving.moves, Moves::InPlace { workspace: at } if at == workspace)
             })
-            .map(|(repo, _)| {
+            .map(move |(repo, _)| {
                 (
                     repo,
-                    self.moved_in_target
-                        .contains(repo)
-                        .then(|| self.wrote_in_target.get(repo))
-                        .flatten(),
+                    self.moved_in_place
+                        .iter()
+                        .find(|moved| moved.workspace == workspace && moved.repo == *repo)
+                        .and_then(|moved| moved.wrote.as_ref()),
                 )
             })
     }
@@ -904,6 +909,15 @@ pub enum Moves {
     /// The member takes `tip`, merging nothing; the branch does not move,
     /// and is created at `tip` first when `create`.
     Follows { create: bool },
+}
+
+/// A checkout a landing fast-forwards in place in `workspace`, and the tip it
+/// writes there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InPlaceMove {
+    pub workspace: PathBuf,
+    pub repo: RepoKey,
+    pub wrote: Option<CommitId>,
 }
 
 /// A branch a landing moves as a ref, and the tip it writes there.
@@ -4048,6 +4062,43 @@ mod tests {
 
     fn make_land_record(op_id: &OpId, owner: &Path, target: &Path) -> OwnerRecord {
         OwnerRecord::new_land(op_id, None, test_project(), owner, Some(target), false)
+    }
+
+    #[test]
+    fn in_place_moves_come_from_the_in_place_journal_alone() {
+        let workspace = PathBuf::from("/third");
+        let repo = RepoKey::Member(crate::manifest::RepoPath::new("app").unwrap());
+        let tip = CommitId::parse(&"a".repeat(40)).unwrap();
+        let mut take_in = TakeInRecord::default();
+        take_in.receiving.insert(
+            repo.clone(),
+            Receiving {
+                branch: "main".to_owned(),
+                tip: tip.clone(),
+                moves: Moves::InPlace {
+                    workspace: workspace.clone(),
+                },
+            },
+        );
+        take_in.moved_in_target.push(repo.clone());
+        take_in.wrote_in_target.insert(repo.clone(), tip.clone());
+
+        assert_eq!(
+            take_in.in_place_moves(&workspace).collect::<Vec<_>>(),
+            vec![(&repo, None)],
+            "a checkout of the target's workspace is not a move in place"
+        );
+
+        take_in.moved_in_place.push(InPlaceMove {
+            workspace: workspace.clone(),
+            repo: repo.clone(),
+            wrote: Some(tip.clone()),
+        });
+        assert_eq!(
+            take_in.in_place_moves(&workspace).collect::<Vec<_>>(),
+            vec![(&repo, Some(&tip))]
+        );
+        assert_eq!(take_in.in_place_moves(Path::new("/elsewhere")).count(), 0);
     }
 
     #[test]

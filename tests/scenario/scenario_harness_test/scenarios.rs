@@ -7865,100 +7865,146 @@ pub fn member_change_choice_order() -> Scenario {
 /// `docs` detached at its pin, stated as the `checkout` fact; a hotfix onto
 /// `stable` moving `main` fast-forwards the primary's clean checkout of it in
 /// place; then commits on the detached checkout take C14.
-pub fn shared_checkout_detached() -> Scenario {
-    scenario(
-        "shared checkout detached",
-        vec![
-            Step::rwv(
-                &a(),
-                &[
-                    "branch",
-                    "create",
-                    "stable",
-                    "--declared",
-                    "--set-branch",
-                    "local/remotes/lib=dev",
-                ],
-            )
+fn stable_holding_docs_detached() -> Vec<Step> {
+    vec![
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "create",
+                "stable",
+                "--declared",
+                "--set-branch",
+                "local/remotes/lib=dev",
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .may_rewind(&[Repo::Lib]),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "st",
+                "--branch",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
+        Step::rwv(&ww("st"), &["status"])
             .expect(Exit::Succeeds)
-            .may_rewind(&[Repo::Lib]),
-            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
-            Step::rwv(
-                &a(),
-                &[
-                    "workweave",
-                    "create",
-                    "--project",
-                    "proj",
-                    "st",
-                    "--branch",
-                    "stable",
-                ],
-            )
-            .expect(Exit::Succeeds),
-            Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
-            Step::rwv(&ww("st"), &["status"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("checkout: main is checked out in"))
-                .claim(Claim::OutputContains(
-                    "local/remotes/docs: alignment aligned",
-                )),
-            Step::rwv(
-                &a(),
-                &[
-                    "workweave",
-                    "create",
-                    "--project",
-                    "proj",
-                    "hotfix",
-                    "--at",
-                    "stable",
-                ],
-            )
-            .expect(Exit::Succeeds),
-            Step::rwv(
-                &ww("hotfix"),
-                &[
-                    "branch",
-                    "set-mode",
-                    "proj--hotfix",
-                    "feature",
-                    "--target",
-                    "stable",
-                ],
-            )
-            .expect(Exit::Succeeds),
-            Step::commit(&ww("hotfix"), Repo::Docs, "hotfix-docs"),
-            Step::rwv(&ww("hotfix"), &["land", "--history", "linear", "--retire"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("in place in"))
-                .claim(Claim::Contains {
-                    at: a(),
-                    repo: Repo::Docs,
-                    rev: "main",
-                    mark: "hotfix-docs",
-                })
-                .claim(Claim::Contains {
-                    at: a(),
-                    repo: Repo::Docs,
-                    rev: "HEAD",
-                    mark: "hotfix-docs",
-                })
-                .claim(Claim::Contains {
-                    at: ww("st"),
-                    repo: Repo::Docs,
-                    rev: "HEAD",
-                    mark: "hotfix-docs",
-                }),
-            Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
-            Step::git(&a(), Repo::Docs, &["for-each-ref", "refs/rwv/pre-op/"])
-                .claim(Claim::OutputLacks("-in-place")),
-            Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
-            Step::commit(&ww("st"), Repo::Docs, "st-docs"),
-            Step::rwv(&ww("st"), &["lock"])
-                .expect(Exit::refuses(Repo::Docs, State::AlignmentDetachedUnpushed))
-                .claim(Claim::OutputContains("keep this work on a branch")),
-        ],
+            .claim(Claim::OutputContains("checkout: main is checked out in"))
+            .claim(Claim::OutputContains(
+                "local/remotes/docs: alignment aligned",
+            )),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "hotfix",
+                "--at",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("hotfix"),
+            &[
+                "branch",
+                "set-mode",
+                "proj--hotfix",
+                "feature",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("hotfix"), Repo::Docs, "hotfix-docs"),
+    ]
+}
+
+pub fn shared_checkout_detached() -> Scenario {
+    let mut steps = stable_holding_docs_detached();
+    steps.extend([
+        Step::rwv(&ww("hotfix"), &["land", "--history", "linear", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("in place in"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Docs,
+                rev: "main",
+                mark: "hotfix-docs",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Docs,
+                rev: "HEAD",
+                mark: "hotfix-docs",
+            })
+            .claim(Claim::Contains {
+                at: ww("st"),
+                repo: Repo::Docs,
+                rev: "HEAD",
+                mark: "hotfix-docs",
+            }),
+        Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
+        Step::git(&a(), Repo::Docs, &["for-each-ref", "refs/rwv/pre-op/"])
+            .claim(Claim::OutputLacks("-in-place")),
+        Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
+        Step::commit(&ww("st"), Repo::Docs, "st-docs"),
+        Step::rwv(&ww("st"), &["lock"])
+            .expect(Exit::refuses(Repo::Docs, State::AlignmentDetachedUnpushed))
+            .claim(Claim::OutputContains("keep this work on a branch")),
+    ]);
+    scenario("shared checkout detached", steps)
+}
+
+/// `shared-checkout-detached` stopped once the landing landed: `docs` moved
+/// both in the target's workspace, whose detached checkout aligning follows
+/// to the new pin, and in place in the primary. `rwv abort` puts both back.
+pub fn abort_restores_a_member_moved_in_the_target_and_in_place() -> Scenario {
+    let mut steps = stable_holding_docs_detached();
+    steps.extend([
+        Step::rwv_paused(
+            &ww("hotfix"),
+            &["land", "--history", "linear"],
+            "landed",
+            "landing",
+        )
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::Docs,
+            rev: "HEAD",
+            mark: "hotfix-docs",
+        })
+        .claim(Claim::Contains {
+            at: ww("st"),
+            repo: Repo::Docs,
+            rev: "HEAD",
+            mark: "hotfix-docs",
+        }),
+        Step::kill("landing"),
+        Step::rwv(&ww("hotfix"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Docs, Repo::Proj])
+            .may_restore(&[Repo::Docs, Repo::Proj]),
+        Step::git(&a(), Repo::Docs, &["log", "--format=%s", "HEAD"])
+            .claim(Claim::OutputLacks("hotfix-docs")),
+        Step::git(&a(), Repo::Docs, &["log", "--format=%s", "main"])
+            .claim(Claim::OutputLacks("hotfix-docs")),
+        Step::git(&ww("st"), Repo::Docs, &["log", "--format=%s", "HEAD"])
+            .claim(Claim::OutputLacks("hotfix-docs")),
+    ]);
+    scenario(
+        "abort restores a member moved in the target and in place",
+        steps,
     )
 }
 

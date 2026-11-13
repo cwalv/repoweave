@@ -122,6 +122,12 @@ fn a_landing_fast_forwards_a_receiving_branch_the_primary_holds_in_place() {
 }
 
 #[test]
+fn abort_restores_a_member_moved_in_the_target_and_in_place() {
+    runner::run(scenarios::abort_restores_a_member_moved_in_the_target_and_in_place())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn an_in_place_fast_forward_is_leased_and_aborted_from_either_side_or_refused_on_edits() {
     for end in [
         scenarios::InPlaceEnd::AbortedFromTheSource,
@@ -1036,6 +1042,7 @@ every_scenario!(
     continue_reports_a_created_receiving_branch,
     member_change_choice_order,
     shared_checkout_detached,
+    abort_restores_a_member_moved_in_the_target_and_in_place,
     abort_leaves_a_target_member_the_alignment_never_moved,
     in_place_fast_forward(scenarios::InPlaceEnd::AbortedFromTheSource),
     in_place_fast_forward(scenarios::InPlaceEnd::AbortedFromThePrimary),

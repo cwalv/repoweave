@@ -6976,7 +6976,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let cwd_repo = ctx.cwd_workspace_dir.join(repo_path.as_path());
         let there = workspace.join(repo_path.as_path());
         let (branch, cwd_tip) = planned(key)?;
-        journal_fast_forward(ctx, key, cwd_tip.id())?;
+        journal_in_place(ctx, workspace, key, cwd_tip.id())?;
         match ff_advance_repo(vcs.as_ref(), repo_path, &there, &cwd_repo, branch, &cwd_tip) {
             Ok(advance) => {
                 if emit_text {
@@ -6995,7 +6995,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 }
             }
             Err(e) => {
-                unjournal_unless_at(ctx, key, vcs.as_ref(), &there, cwd_tip.id())?;
+                if !landing_reached(vcs.as_ref(), &there, cwd_tip.id()) {
+                    unjournal_in_place(ctx, workspace, key)?;
+                }
                 if let Err(e) = moved.absorb(Err(e)) {
                     if emit_text {
                         eprintln!("  {repo_path}: ff-advance in place failed: {e:#}");
@@ -7399,6 +7401,24 @@ fn advance_receiving_ref(
 /// workspace, before it moves, so `rwv abort` restores it whichever step a
 /// stop interrupts (a journaled repo still at its savepoint is untouched)
 /// and leaves every other repo there where it stands.
+fn journal_in_place(
+    ctx: &OpContext<'_>,
+    workspace: &Path,
+    key: &RepoKey,
+    to: &CommitId,
+) -> anyhow::Result<()> {
+    journal(ctx, |take_in| {
+        take_in
+            .moved_in_place
+            .retain(|moved| !(moved.workspace == workspace && moved.repo == *key));
+        take_in.moved_in_place.push(op_state::InPlaceMove {
+            workspace: workspace.to_path_buf(),
+            repo: key.clone(),
+            wrote: Some(to.clone()),
+        });
+    })
+}
+
 fn journal_fast_forward(ctx: &OpContext<'_>, key: &RepoKey, to: &CommitId) -> anyhow::Result<()> {
     journal(ctx, |take_in| {
         if !take_in.moved_in_target.contains(key) {
@@ -7502,12 +7522,12 @@ fn unjournal_unmoved(
         let RepoKey::Member(path) = repo else {
             continue;
         };
-        if ctx.take_in.receiving.get(repo).is_some_and(|r| {
-            matches!(
-                r.moves,
-                op_state::Moves::InCheckout | op_state::Moves::InPlace { .. }
-            )
-        }) {
+        if ctx
+            .take_in
+            .receiving
+            .get(repo)
+            .is_some_and(|r| r.moves == op_state::Moves::InCheckout)
+        {
             continue;
         }
         let vcs = crate::vcs::probe_vcs();
@@ -7670,14 +7690,24 @@ fn unjournal_unless_at(
     dir: &Path,
     landing_at: &CommitId,
 ) -> anyhow::Result<()> {
-    let landing_at = ResolvedRevisionId::from(landing_at.clone());
-    if vcs
-        .head_revision(dir)
-        .is_ok_and(|head| vcs.is_ancestor(dir, &landing_at, &head).unwrap_or(true))
-    {
+    if landing_reached(vcs, dir, landing_at) {
         return Ok(());
     }
     unjournal(ctx, key)
+}
+
+fn landing_reached(vcs: &dyn Vcs, dir: &Path, landing_at: &CommitId) -> bool {
+    let landing_at = ResolvedRevisionId::from(landing_at.clone());
+    vcs.head_revision(dir)
+        .is_ok_and(|head| vcs.is_ancestor(dir, &landing_at, &head).unwrap_or(true))
+}
+
+fn unjournal_in_place(ctx: &OpContext<'_>, workspace: &Path, key: &RepoKey) -> anyhow::Result<()> {
+    journal(ctx, |take_in| {
+        take_in
+            .moved_in_place
+            .retain(|moved| !(moved.workspace == workspace && moved.repo == *key));
+    })
 }
 
 /// Take `key` back off the journal of repos the landing moves in `T`'s
