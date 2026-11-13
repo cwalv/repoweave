@@ -7371,10 +7371,11 @@ impl DriftReading {
 /// A path is drift only where both are shown: the branch moved under the
 /// checkout, and the path still holds what the moved-from tip held. Without
 /// that every difference is an edit, as it is in a checkout stopped in an
-/// operation, and in one whose index already holds HEAD's entry for a path
-/// the move changed: a checkout left behind holds the old tip at every such
-/// path it has not edited, so one that took part of the move has had it
-/// taken by something its history does not show.
+/// operation, and in one holding no record of where it stood, and in one
+/// whose index already holds HEAD's entry for a path the move changed: a
+/// checkout left behind holds the old tip at every such path it has not
+/// edited, so one that took part of the move has had it taken by something
+/// its history does not show.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
     // Refreshing an index entry ends a merge, cherry-pick or revert in
     // progress, so a checkout stopped in one has no drift to refresh.
@@ -7383,6 +7384,17 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
         None => vcs.left_behind_at(repo)?,
     };
     let standings = vcs.path_standings(repo, left.as_ref())?;
+    if left.is_none()
+        && vcs.mid_operation(repo).is_none()
+        && standings
+            .iter()
+            .any(|standing| (standing.index, standing.file) != (Holds::Head, Holds::Head))
+        && vcs.checkout_unrecorded(repo)?
+    {
+        return Err(VcsError::CheckoutUnrecorded {
+            repo: repo.to_path_buf(),
+        });
+    }
     let left = left.filter(|_| {
         !standings
             .iter()

@@ -2318,6 +2318,24 @@ Schema:
         {
           "type": "object",
           "required": [
+            "kind",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "checkout-unrecorded"
+              ]
+            },
+            "repo": {
+              "$ref": "#/definitions/WirePath"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "ctx",
             "kind",
             "message"

@@ -795,6 +795,9 @@ pub enum VcsError {
     /// pulled out of git's own refusal so a caller can name the specific
     /// files instead of re-parsing [`VcsError::CommandFailed`] stderr itself.
     UntrackedCollision { repo: PathBuf, paths: Vec<String> },
+    /// The checkout holds no record of where it last stood, so a move of its
+    /// branch cannot be told from edits.
+    CheckoutUnrecorded { repo: PathBuf },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -818,12 +821,13 @@ pub enum VcsErrorKind {
     MidOperation,
     HookRejected,
     UntrackedCollision,
+    CheckoutUnrecorded,
     Io,
     CommandFailed,
 }
 
 impl VcsErrorKind {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::NotARepo,
         Self::RevisionNotFound,
         Self::RebaseConflict,
@@ -831,6 +835,7 @@ impl VcsErrorKind {
         Self::MidOperation,
         Self::HookRejected,
         Self::UntrackedCollision,
+        Self::CheckoutUnrecorded,
         Self::Io,
         Self::CommandFailed,
     ];
@@ -852,6 +857,7 @@ impl VcsError {
             Self::MidOperation { .. } => VcsErrorKind::MidOperation,
             Self::HookRejected { .. } => VcsErrorKind::HookRejected,
             Self::UntrackedCollision { .. } => VcsErrorKind::UntrackedCollision,
+            Self::CheckoutUnrecorded { .. } => VcsErrorKind::CheckoutUnrecorded,
             Self::Io { .. } => VcsErrorKind::Io,
             Self::CommandFailed { .. } => VcsErrorKind::CommandFailed,
         }
@@ -894,6 +900,9 @@ pub enum VcsErrorOutput {
     UntrackedCollision {
         repo: crate::path_spelling::WirePath,
         paths: Vec<String>,
+    },
+    CheckoutUnrecorded {
+        repo: crate::path_spelling::WirePath,
     },
     Io {
         ctx: String,
@@ -944,6 +953,9 @@ impl From<&VcsError> for VcsErrorOutput {
             VcsError::UntrackedCollision { repo, paths } => Self::UntrackedCollision {
                 repo: crate::path_spelling::WirePath::of(repo),
                 paths: paths.clone(),
+            },
+            VcsError::CheckoutUnrecorded { repo } => Self::CheckoutUnrecorded {
+                repo: crate::path_spelling::WirePath::of(repo),
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -998,6 +1010,12 @@ impl fmt::Display for VcsError {
                  them, then re-run.",
                 repo.display(),
                 paths.join(", ")
+            ),
+            Self::CheckoutUnrecorded { repo } => write!(
+                f,
+                "the reflog of {} holds no entry for this checkout, so rwv cannot tell drift \
+                 from edits",
+                repo.display()
             ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(
@@ -4097,6 +4115,15 @@ pub trait Vcs: Send + Sync {
     /// every move made in that worktree appends to and a move made from
     /// another worktree does not.
     fn left_behind_at(&self, repo: &Path) -> Result<Option<CommitId>, VcsError>;
+
+    /// Whether `repo` is on a branch and its checkout holds no record at all
+    /// of where it last stood, so [`Vcs::left_behind_at`]'s `None` says
+    /// nothing about whether the branch moved.
+    ///
+    /// For git: the worktree's `HEAD` reflog has no entry, as after git's
+    /// expiry of an idle checkout's log, a hand expiry, or
+    /// `core.logAllRefUpdates=false`.
+    fn checkout_unrecorded(&self, repo: &Path) -> Result<bool, VcsError>;
 
     /// Each path whose index entry or file differs from `HEAD`, with what
     /// each holds measured against `HEAD` and against `left` — where the

@@ -551,6 +551,7 @@ fn every_vcs_error() -> Vec<VcsError> {
             repo: repo(),
             paths: vec!["f".into()],
         },
+        VcsError::CheckoutUnrecorded { repo: repo() },
         VcsError::Io {
             ctx: "spawn".into(),
             source: std::io::Error::other("boom"),
@@ -570,6 +571,7 @@ fn every_vcs_error() -> Vec<VcsError> {
             | VcsError::MidOperation { .. }
             | VcsError::HookRejected { .. }
             | VcsError::UntrackedCollision { .. }
+            | VcsError::CheckoutUnrecorded { .. }
             | VcsError::Io { .. }
             | VcsError::CommandFailed { .. } => {}
         }

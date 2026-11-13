@@ -1382,6 +1382,7 @@ fn every_vcs_error() -> Vec<VcsErrorOutput> {
             repo: repo.clone(),
             paths: vec!["src/main.rs".to_owned()],
         },
+        VcsErrorOutput::CheckoutUnrecorded { repo: repo.clone() },
         VcsErrorOutput::Io {
             ctx: "read HEAD".to_owned(),
             message: "permission denied".to_owned(),
@@ -1412,6 +1413,7 @@ fn vcs_error_tag(e: &VcsErrorOutput) -> &'static str {
         VcsErrorOutput::MidOperation { .. } => "mid-operation",
         VcsErrorOutput::HookRejected { .. } => "hook-rejected",
         VcsErrorOutput::UntrackedCollision { .. } => "untracked-collision",
+        VcsErrorOutput::CheckoutUnrecorded { .. } => "checkout-unrecorded",
         VcsErrorOutput::Io { .. } => "io",
         VcsErrorOutput::CommandFailed { .. } => "command-failed",
     }

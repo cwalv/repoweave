@@ -48,10 +48,17 @@ fn init_repo(path: &Path) {
 }
 
 fn fixture() -> Fixture {
+    fixture_with_lib_config(&[])
+}
+
+fn fixture_with_lib_config(config: &[(&str, &str)]) -> Fixture {
     let tmp = common::tempdir().unwrap();
     let primary = tmp.path().join("primary");
     let primary_lib = primary.join(LIB);
     init_repo(&primary_lib);
+    for (key, value) in config {
+        common::git_in(&primary_lib, &["config", key, value]);
+    }
     commit_file(&primary_lib, "README.md", "init\n", "init");
     commit_file(&primary_lib, "notes.txt", "one\n", "one");
     commit_file(&primary_lib, "spare.txt", "two\n", "spare");
@@ -3486,4 +3493,176 @@ fn update_switch_and_status_name_a_set_back_checkout_alone() {
         );
         assert!(!said.contains("rwv lock --commit"), "{verb:?}:\n{said}");
     }
+}
+
+// ---------------------------------------------------------------------------
+// A checkout whose reflog holds no entry
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug)]
+enum NoEntry {
+    ExpiredByHand,
+    ExpiredWhileIdle,
+    NeverLogged,
+}
+
+const NO_ENTRY: [NoEntry; 3] = [
+    NoEntry::ExpiredByHand,
+    NoEntry::ExpiredWhileIdle,
+    NoEntry::NeverLogged,
+];
+
+fn fixture_without_entry(how: NoEntry) -> Fixture {
+    let f = match how {
+        NoEntry::NeverLogged => fixture_with_lib_config(&[("core.logAllRefUpdates", "false")]),
+        _ => fixture(),
+    };
+    match how {
+        NoEntry::ExpiredByHand => {
+            common::git_in(&f.ww_lib, &["reflog", "expire", "--expire=now", "--all"]);
+        }
+        NoEntry::ExpiredWhileIdle => {
+            let two_hundred_days_on = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + 200 * 86400;
+            let out = std::process::Command::new("git")
+                .args([
+                    "reflog",
+                    "expire",
+                    "--expire=90.days.ago",
+                    "--expire-unreachable=30.days.ago",
+                    "--all",
+                ])
+                .env("GIT_TEST_DATE_NOW", two_hundred_days_on.to_string())
+                .current_dir(&f.ww_lib)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{}", common::cli::describe(&out));
+        }
+        NoEntry::NeverLogged => {}
+    }
+    assert_eq!(
+        std::fs::metadata(f.ww_lib.join(common::git_in(
+            &f.ww_lib,
+            &["rev-parse", "--git-path", "logs/HEAD"]
+        )))
+        .map(|m| m.len())
+        .unwrap_or(0),
+        0,
+        "{how:?}: the checkout's HEAD log holds nothing"
+    );
+    f
+}
+
+fn move_notes(f: &Fixture) {
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("new.txt"), "new\n").unwrap();
+    });
+}
+
+/// The commands the `choices:` block prints.
+fn printed_commands(stderr: &str) -> Vec<String> {
+    choice_lines(stderr)
+        .into_iter()
+        .filter(|l| l.starts_with("git -C ") || l.starts_with("rwv "))
+        .collect()
+}
+
+/// Run every printed command as printed.
+fn run_every_choice(stderr: &str, dir: &Path) {
+    let commands = printed_commands(stderr);
+    assert!(!commands.is_empty(), "{stderr}");
+    for line in &commands {
+        let out = run_printed(stderr, line, dir);
+        assert!(
+            out.status.success(),
+            "{line}:\n{}",
+            common::cli::describe(&out)
+        );
+    }
+}
+
+/// A branch moved from another worktree under a checkout whose reflog holds
+/// no entry: rwv cannot tell the move's reverse from edits, so every verb
+/// holds the checkout with no choice that commits, and the printed stash
+/// leaves it at HEAD.
+#[test]
+fn a_move_under_a_checkout_with_no_reflog_entry_is_held_with_no_commit_offered() {
+    for how in NO_ENTRY {
+        let f = fixture_without_entry(how);
+        move_notes(&f);
+        let before = path_state(&f.ww_lib, &["notes.txt", "new.txt"]);
+
+        for verb in [&["lock"][..], &["land"]] {
+            let out = common::cli::run(verb, &f.ww);
+            let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+            assert!(
+                stderr.contains("holds no entry for this checkout"),
+                "{how:?} {verb:?}:\n{stderr}"
+            );
+            assert!(!stderr.contains("commit"), "{how:?} {verb:?}:\n{stderr}");
+            assert_eq!(
+                path_state(&f.ww_lib, &["notes.txt", "new.txt"]),
+                before,
+                "{how:?} {verb:?}: nothing was written"
+            );
+        }
+        let said = common::cli::describe(&common::cli::run(&["doctor"], &f.ww));
+        assert!(said.contains("holds no entry"), "{how:?}:\n{said}");
+        assert!(
+            !said.contains("commit them if they are yours"),
+            "{how:?}:\n{said}"
+        );
+
+        let out = common::cli::run(&["lock"], &f.ww);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        run_every_choice(&stderr, &f.ww);
+        assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+        let out = common::cli::run(&["lock"], &f.ww);
+        assert!(
+            out.status.success(),
+            "{how:?}:\n{}",
+            common::cli::describe(&out)
+        );
+    }
+}
+
+/// A clean checkout with no reflog entry has nothing to tell apart.
+#[test]
+fn a_clean_checkout_with_no_reflog_entry_is_not_held() {
+    for how in NO_ENTRY {
+        let f = fixture_without_entry(how);
+        assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+        for verb in [&["lock"][..], &["land"], &["doctor"]] {
+            let out = common::cli::run(verb, &f.ww);
+            assert!(
+                !common::cli::describe(&out).contains("holds no entry"),
+                "{how:?} {verb:?}:\n{}",
+                common::cli::describe(&out)
+            );
+        }
+    }
+}
+
+/// Edits in a checkout with no reflog entry are held the same way, whatever
+/// the branch did: the drift cannot be ruled out, so the one choice is the
+/// stash that keeps them.
+#[test]
+fn an_edit_in_a_checkout_with_no_reflog_entry_is_held_with_the_stash_alone() {
+    let f = fixture_without_entry(NoEntry::ExpiredByHand);
+    std::fs::write(f.ww_lib.join("README.md"), "edited\n").unwrap();
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert!(
+        stderr.contains("holds no entry for this checkout"),
+        "{stderr}"
+    );
+    assert_eq!(printed_commands(&stderr).len(), 1, "{stderr}");
+    run_every_choice(&stderr, &f.ww);
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
 }

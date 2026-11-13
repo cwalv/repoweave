@@ -740,18 +740,7 @@ fn left_behind_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
     let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
         return Ok(None);
     };
-    let recorded = GitVcs::run_trimmed(
-        [
-            "log",
-            "-g",
-            "-n1",
-            "--no-show-signature",
-            "--format=%H",
-            "HEAD",
-        ],
-        repo,
-    )?;
-    let Ok(recorded) = CommitId::parse(&recorded) else {
+    let Some(recorded) = newest_head_log_entry(repo)? else {
         return Ok(None);
     };
     let head = GitVcs.head_revision(repo)?;
@@ -763,6 +752,45 @@ fn left_behind_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
         return Ok(None);
     }
     Ok(Some(recorded))
+}
+
+fn newest_head_log_entry(repo: &Path) -> Result<Option<CommitId>, VcsError> {
+    let newest = GitVcs::run_trimmed(
+        [
+            "log",
+            "-g",
+            "-n1",
+            "--no-show-signature",
+            "--format=%H",
+            "HEAD",
+        ],
+        repo,
+    )?;
+    Ok(CommitId::parse(&newest).ok())
+}
+
+/// [`Vcs::checkout_unrecorded`] for git.
+///
+/// The worktree's own `HEAD` log file is read, since `log -g HEAD` answers an
+/// emptied log with the current commit and then the branch's shared log, which
+/// read as an entry saying the branch did not move.
+fn checkout_unrecorded(repo: &Path) -> Result<bool, VcsError> {
+    let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
+        return Ok(false);
+    };
+    let log = GitVcs::run_trimmed(
+        [
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "logs/HEAD",
+        ],
+        repo,
+    )?;
+    match std::fs::metadata(log) {
+        Ok(log) => Ok(log.len() == 0),
+        Err(_) => Ok(newest_head_log_entry(repo)?.is_none()),
+    }
 }
 
 /// Whether the checkout's index lists any path. Only the first byte of the
@@ -4182,6 +4210,10 @@ impl Vcs for GitVcs {
 
     fn left_behind_at(&self, repo: &Path) -> Result<Option<CommitId>, VcsError> {
         left_behind_at(repo)
+    }
+
+    fn checkout_unrecorded(&self, repo: &Path) -> Result<bool, VcsError> {
+        checkout_unrecorded(repo)
     }
 
     fn path_standings(

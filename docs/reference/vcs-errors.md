@@ -47,6 +47,21 @@ to which page holds it, so the split costs a reader nothing.
 
 ---
 
+### `checkout-unrecorded`
+
+**Condition.** A checkout on a branch differs from its HEAD and the VCS holds no
+record of where the checkout last stood. For git, the checkout's HEAD reflog has
+no entry: git expired it from an idle checkout, it was expired by hand, or
+`core.logAllRefUpdates` is `false`.
+
+**What it means.** Without that record rwv cannot tell the branch having moved
+under the checkout from edits made in it, since both leave files that differ from
+HEAD. It judges neither.
+
+**Exits.** `git stash push` sets every difference aside without recording any of
+it. Differences that are only the branch's move are taken back with the recipe on
+[Shared-refs drift](../explanation/joints/shared-refs-drift.md).
+
 ### `command-failed`
 
 **Condition.** A VCS command failed for a reason rwv has no more specific name

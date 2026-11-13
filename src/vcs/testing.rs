@@ -1227,6 +1227,10 @@ impl Vcs for FakeVcs {
         unsupported("left_behind_at")
     }
 
+    fn checkout_unrecorded(&self, _repo: &Path) -> Result<bool, VcsError> {
+        unsupported("checkout_unrecorded")
+    }
+
     fn path_standings(
         &self,
         _repo: &Path,

@@ -126,7 +126,7 @@ refreshes only what both answer:
   entry is a commit other than HEAD, and an ancestor of it, had its
   branch moved forward from that commit (the *moved-from tip*) by
   something else. Where the newest entry is HEAD, the branch moved
-  backward or sideways, HEAD is detached, no reflog exists, the
+  backward or sideways, HEAD is detached, the
   index lists no path at all, or the checkout is stopped in a merge,
   rebase, cherry-pick, revert or bisect, nothing is shown to have moved
   under the checkout and every difference is an edit. A checkout left behind also holds the moved-from tip's index
@@ -251,6 +251,13 @@ your edits, and leaves the checkout at HEAD; take back only your own files
 from it. `rwv doctor` names the same and offers no commit.
 
 ### Drift rwv cannot show
+
+A checkout whose `HEAD` reflog holds no entry cannot say whether its branch
+moved: git expires the log of a checkout left idle past its default 90 days,
+and `git reflog expire` or `core.logAllRefUpdates=false` leaves none. Where
+such a checkout differs from HEAD, every verb refuses it as `edits` `drift left
+in place`, naming that, with `git stash push` as its one choice and no commit.
+A clean one is not held.
 
 Where nothing shows that the branch moved under the checkout — the move went
 unrecorded, the checkout already took part of it, it moved backward or
