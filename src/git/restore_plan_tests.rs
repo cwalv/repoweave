@@ -56,6 +56,7 @@ fn named(plan: &CheckoutRestorePlan) -> String {
             RestoredFrom::Intent => "RestoredFromIntent",
             RestoredFrom::Converged => "RestoredFromConverged",
             RestoredFrom::Abandoned => "AbandonedForeignTip",
+            RestoredFrom::FinishedByHand => "RestoredFinishedByHand",
         }
         .to_owned(),
         CheckoutRestorePlan::Cancel { then, .. } => format!("Canceled({})", named(then)),

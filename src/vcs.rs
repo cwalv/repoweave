@@ -1065,6 +1065,9 @@ pub struct Attribution<'a> {
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
     pub own_steps: &'a [OwnStep],
+    /// The tip the op's own replay reached here once the operator finished
+    /// it by hand, which holds their resolution.
+    pub finished_by_hand: Option<&'a CommitId>,
     /// Whether the checkout is in the workspace abort was run in, where its
     /// uncommitted edits are kept as a backup before a move discards them;
     /// elsewhere they refuse the move.
@@ -1086,6 +1089,8 @@ pub enum KeptWork {
     Edits(BackupWitness),
     /// The commits a detached HEAD held that no branch reaches.
     Commits(BackupWitness),
+    /// The op's own replay as the operator finished it by hand.
+    FinishedByHand(BackupWitness),
 }
 
 /// Outcome of a [`Vcs::verified_restore_savepoint`] call.
@@ -1237,6 +1242,9 @@ pub enum RestoredFrom {
     /// A foreign tip the operator gave up, kept as an `abandoned` backup
     /// first.
     Abandoned,
+    /// The op's own replay, finished by hand: the operator's resolution,
+    /// kept as a backup first.
+    FinishedByHand,
 }
 
 /// What restoring a checkout to its savepoint would do, judged from what

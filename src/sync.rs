@@ -9385,6 +9385,10 @@ fn plan_abort_workspace(
                 .get(&repo_key)
                 .or(finished_by_hand.as_ref())
                 .or(stopped_carry.as_ref()),
+            finished_by_hand: finished_by_hand.as_ref().filter(|by_hand| {
+                Some(*by_hand) != converged_tips.get(&repo_key)
+                    && Some(*by_hand) != advanced_tips.get(&repo_key)
+            }),
             started_from: match (side, &repo_key) {
                 (AbortSide::Replay, RepoKey::Project) => source_tip,
                 _ => stopped_carry.as_ref(),
@@ -9548,6 +9552,7 @@ fn plan_in_place(
                 started_from: None,
                 integrates: Integrates::No,
                 own_steps: &[],
+                finished_by_hand: None,
                 edits_here: false,
             };
             plan_checkout(
@@ -11551,6 +11556,11 @@ fn report_abort_outcome(
                 match work {
                     crate::vcs::KeptWork::Edits(backup) => outln!(
                         "  {label}: its uncommitted edits are kept as backup {} (`rwv backup list`)",
+                        backup.backup().name
+                    ),
+                    crate::vcs::KeptWork::FinishedByHand(backup) => outln!(
+                        "  {label}: its replay as finished by hand is kept as backup {} \
+                         (`rwv backup list`)",
                         backup.backup().name
                     ),
                     crate::vcs::KeptWork::Commits(backup) => outln!(

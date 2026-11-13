@@ -18211,7 +18211,9 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     let w1_app = if unpinned { "w1-unpinned" } else { "w1-app" };
     let abort = match before {
         BeforeTheCarry::FinishedByHand => {
-            Step::rwv(&ww("w1"), &["abort"]).discards_a_hand_finished_replay(&[Repo::App])
+            Step::rwv(&ww("w1"), &["abort"]).claim(Claim::OutputContains(
+                "local/remotes/app: the commits its detached HEAD held are kept as backup",
+            ))
         }
         _ => Step::rwv(&ww("w1"), &["abort"]),
     };

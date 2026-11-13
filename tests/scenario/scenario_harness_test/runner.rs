@@ -957,13 +957,6 @@ impl Step {
         self.may_strand(repos)
     }
 
-    /// The step aborts a carry whose replay the operator finished with their
-    /// own `git rebase --continue`: abort puts the branch back and keeps no
-    /// backup of the commits that finish wrote.
-    pub fn discards_a_hand_finished_replay(self, repos: &[Repo]) -> Step {
-        self.may_strand(repos)
-    }
-
     pub fn may_restore(mut self, repos: &[Repo]) -> Step {
         self.allow.may_restore.extend_from_slice(repos);
         self

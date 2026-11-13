@@ -5787,7 +5787,9 @@ impl GitVcs {
                 },
             )?;
             return Ok(CheckoutRestorePlan::SwitchBack {
-                keep_detached_as_abandoned: !attributable(&held.head) && off.is_none(),
+                keep_detached_as_abandoned: off.is_none()
+                    && (!attributable(&held.head)
+                        || attribution.finished_by_hand == Some(&held.head)),
                 off,
                 from: held.head,
                 onto: onto.map(|(branch, _)| branch),
@@ -5801,7 +5803,9 @@ impl GitVcs {
         if held.head == *savepoint {
             return Ok(CheckoutRestorePlan::Untouched { at: held.head });
         }
-        let why = if attribution.intent == Some(&held.head) {
+        let why = if attribution.finished_by_hand == Some(&held.head) {
+            RestoredFrom::FinishedByHand
+        } else if attribution.intent == Some(&held.head) {
             RestoredFrom::Intent
         } else if attribution.wrote(&held.head) {
             RestoredFrom::Converged
@@ -6023,6 +6027,16 @@ impl GitVcs {
                 let outcome = match why {
                     RestoredFrom::Intent => VerifiedRestoreOutcome::RestoredFromIntent,
                     RestoredFrom::Converged => VerifiedRestoreOutcome::RestoredFromConverged,
+                    RestoredFrom::FinishedByHand => {
+                        let source = self.head_backup_source(repo)?;
+                        kept.push(KeptWork::FinishedByHand(self.create_backup(
+                            repo,
+                            &source,
+                            &ResolvedRevisionId::from(from.clone()),
+                            None,
+                        )?));
+                        VerifiedRestoreOutcome::RestoredFromConverged
+                    }
                     RestoredFrom::Abandoned => {
                         let source = self.head_backup_source(repo)?;
                         let backup = self.create_backup(
@@ -6115,12 +6129,13 @@ impl GitVcs {
                     return self.diverged(repo, key);
                 }
                 if *keep_detached_as_abandoned {
-                    self.create_backup(
+                    let backup = self.create_backup(
                         repo,
                         &BackupSource::DetachedHead,
                         &ResolvedRevisionId::from(from.clone()),
                         Some(BackupMark::Abandoned),
                     )?;
+                    kept.push(KeptWork::Commits(backup));
                 }
                 let switch_back = |vcs: &Self| match onto {
                     Some(branch) => vcs.attach_head_to(repo, &LocalRefName::of_branch(branch)),
