@@ -765,7 +765,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
-        count: 7,
+        count: 9,
         callers: &[],
         justification: "Temp-file cleanup for the two publish modes, never \
             able to name the published file itself, plus the claim release. \
@@ -785,7 +785,11 @@ const ALLOWLIST: &[Allowed] = &[
             remove_named, the landing claim's takeover lock: called only on \
             a lock its own op created with create_new, or one `rwv abort` \
             of that op finds naming it, so it removes rwv-internal \
-            bookkeeping of an op that is ending, never user data. (6) and \
+            bookkeeping of an op that is ending, never user data. (8) and \
+            (9) refuse_without_exclusive_publish, removing the probe's own \
+            temp and the temp-shaped name it published that temp onto, both \
+            created by this call a moment earlier and never a published \
+            file's name. (6) and \
             (7) remove_if_abandoned, unix and Windows: the sweep a publish \
             runs over temps beside its target named <a name beginning with \
             the target's>.tmp.<pid>.<16 hex digits>.<serial>, a spelling only \
