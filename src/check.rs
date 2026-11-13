@@ -7311,6 +7311,15 @@ impl DriftReading {
             .collect()
     }
 
+    /// Where the checkout's branch moved, as a refusal's subject says it.
+    pub fn moved(&self) -> String {
+        format!(
+            "its branch moved from {} to {} outside this checkout",
+            self.left.as_ref().map(CommitId::short).unwrap_or_default(),
+            self.head.as_ref().map(CommitId::short).unwrap_or_default()
+        )
+    }
+
     pub fn is_refreshable(&self) -> bool {
         self.paths
             .iter()
@@ -8295,68 +8304,30 @@ struct HeldDrift {
     unread: bool,
 }
 
-fn apply_finding_repairs(
-    ctx: &crate::workspace::WorkspaceContext,
-    world: &DoctorWorld,
-    violations: Vec<CheckViolation>,
+/// The checkouts `--fix` writes nothing to for their edits' sake, judged
+/// into `held.refused`: a merge of edits interrupted, and files both moved and
+/// edited, which are merged where `held.merging` consents and judged where it
+/// does not; `merged` holds the checkouts merged.
+struct HeldPass {
+    held: std::collections::HashSet<std::path::PathBuf>,
+    merged: std::collections::HashSet<std::path::PathBuf>,
+}
+
+fn settle_held_drift(
+    vcs: &dyn crate::vcs::Vcs,
+    violations: &[CheckViolation],
     repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
-    release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
     held: &mut HeldDrift,
     fix_errors: &mut Vec<String>,
-) -> Vec<CheckViolation> {
-    let vcs = world.vcs.as_ref();
-
+) -> HeldPass {
     let location_of = |workweave: &Option<WorkweaveId>, repo: &RepoPath| match workweave {
         Some(ww) => format!("{ww}/{repo}"),
         None => format!("{repo}"),
     };
-
-    let (registrations, violations): (Vec<_>, Vec<_>) = violations.into_iter().partition(|v| {
-        matches!(
-            v,
-            CheckViolation::StaleWorktreeRegistration {
-                sub_kind: RegistrationDirectoryKind::DirectoryGone,
-                ..
-            }
-        )
-    });
-
-    let mut kept = Vec::with_capacity(violations.len() + registrations.len());
-    for v in registrations {
-        let CheckViolation::StaleWorktreeRegistration {
-            workweave, repo, ..
-        } = &v
-        else {
-            unreachable!()
-        };
-        let repaired = match repo_locations.get(&(workweave.clone(), repo.clone())) {
-            Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
-                Ok(true) => {
-                    outln!(
-                        "[fixed] core: stale-worktree-registration for {}: pruned",
-                        location_of(workweave, repo)
-                    );
-                    true
-                }
-                Ok(false) => false,
-                Err(e) => {
-                    fix_errors.push(format!("state-hygiene --fix failed: {e:#}"));
-                    true
-                }
-            },
-            None => false,
-        };
-        if !repaired {
-            kept.push(v);
-        }
-    }
-
-    let mut refreshed_checkouts: std::collections::HashSet<std::path::PathBuf> =
-        std::collections::HashSet::new();
     let mut held_checkouts = std::collections::HashSet::new();
     let mut merged_checkouts = std::collections::HashSet::new();
     let mut drifted: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for v in &violations {
+    for v in violations {
         if let CheckViolation::IndexDrift {
             workweave, repo, ..
         }
@@ -8440,19 +8411,13 @@ fn apply_finding_repairs(
             }
         };
         held_checkouts.insert(repo_abs.clone());
-        let moved = format!(
-            "its branch moved from {} to {} outside this checkout",
-            reading
-                .left
-                .as_ref()
-                .map(CommitId::short)
-                .unwrap_or_default(),
-            reading
-                .head
-                .as_ref()
-                .map(CommitId::short)
-                .unwrap_or_default()
-        );
+        if vcs.unmerged_paths(repo_abs).is_ok_and(|u| !u.is_empty()) {
+            held.refused.add(crate::diagnosis::judge_unresolved(
+                vcs, location, repo_abs, None,
+            ));
+            continue;
+        }
+        let moved = reading.moved();
         let judged = |subject: String, listing: Vec<String>| {
             crate::diagnosis::moved_and_edited(location)
                 .subject(subject)
@@ -8555,7 +8520,6 @@ fn apply_finding_repairs(
                     ));
                 }
                 held_checkouts.remove(repo_abs);
-                refreshed_checkouts.insert(repo_abs.clone());
                 merged_checkouts.insert(repo_abs.clone());
             }
             Err(e) => fix_errors.push(format!("{location}: merging edited drift failed: {e:#}")),
@@ -8563,12 +8527,28 @@ fn apply_finding_repairs(
     }
     held.merge_found = merged_any;
     held.unread = unread;
+    HeldPass {
+        held: held_checkouts,
+        merged: merged_checkouts,
+    }
+}
+
+/// `violations` without the drift findings of a checkout the pass held,
+/// which its refusal names instead, and with a merged checkout's drift
+/// findings read again.
+fn drift_findings_standing(
+    vcs: &dyn crate::vcs::Vcs,
+    violations: Vec<CheckViolation>,
+    repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
+    pass: &HeldPass,
+) -> Vec<CheckViolation> {
     let after_merge: std::collections::HashMap<
         std::path::PathBuf,
         (Vec<IndexDriftKind>, Vec<WorkingTreeDriftKind>),
-    > = merged_checkouts
+    > = pass
+        .merged
         .iter()
-        .map(|at: &std::path::PathBuf| {
+        .map(|at| {
             (
                 at.clone(),
                 read_drift(vcs, at)
@@ -8577,29 +8557,101 @@ fn apply_finding_repairs(
             )
         })
         .collect();
-    let stands_after_merge = |v: &CheckViolation| match v {
-        CheckViolation::IndexDrift {
-            workweave,
-            repo,
-            kind,
-        } => repo_locations
-            .get(&(workweave.clone(), repo.clone()))
-            .and_then(|at| after_merge.get(at))
-            .is_none_or(|(index, _)| index.contains(kind)),
-        CheckViolation::WorkingTreeDrift {
-            workweave,
-            repo,
-            kind,
-        } => repo_locations
-            .get(&(workweave.clone(), repo.clone()))
-            .and_then(|at| after_merge.get(at))
-            .is_none_or(|(_, files)| files.contains(kind)),
-        _ => true,
+    let standing = |workweave: &Option<WorkweaveId>, repo: &RepoPath| {
+        let at = repo_locations.get(&(workweave.clone(), repo.clone()));
+        (
+            at.is_some_and(|at| pass.held.contains(at)),
+            at.and_then(|at| after_merge.get(at)),
+        )
     };
-    for v in violations {
-        if !stands_after_merge(&v) {
-            continue;
+    violations
+        .into_iter()
+        .filter(|v| match v {
+            CheckViolation::IndexDrift {
+                workweave,
+                repo,
+                kind,
+            } => match standing(workweave, repo) {
+                (true, _) => false,
+                (_, Some((index, _))) => index.contains(kind),
+                _ => true,
+            },
+            CheckViolation::WorkingTreeDrift {
+                workweave,
+                repo,
+                kind,
+            } => match standing(workweave, repo) {
+                (true, _) => false,
+                (_, Some((_, files))) => files.contains(kind),
+                _ => true,
+            },
+            _ => true,
+        })
+        .collect()
+}
+
+fn apply_finding_repairs(
+    ctx: &crate::workspace::WorkspaceContext,
+    world: &DoctorWorld,
+    violations: Vec<CheckViolation>,
+    repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
+    release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
+    held: &mut HeldDrift,
+    fix_errors: &mut Vec<String>,
+) -> Vec<CheckViolation> {
+    let vcs = world.vcs.as_ref();
+
+    let location_of = |workweave: &Option<WorkweaveId>, repo: &RepoPath| match workweave {
+        Some(ww) => format!("{ww}/{repo}"),
+        None => format!("{repo}"),
+    };
+
+    let (registrations, violations): (Vec<_>, Vec<_>) = violations.into_iter().partition(|v| {
+        matches!(
+            v,
+            CheckViolation::StaleWorktreeRegistration {
+                sub_kind: RegistrationDirectoryKind::DirectoryGone,
+                ..
+            }
+        )
+    });
+
+    let mut kept = Vec::with_capacity(violations.len() + registrations.len());
+    for v in registrations {
+        let CheckViolation::StaleWorktreeRegistration {
+            workweave, repo, ..
+        } = &v
+        else {
+            unreachable!()
+        };
+        let repaired = match repo_locations.get(&(workweave.clone(), repo.clone())) {
+            Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
+                Ok(true) => {
+                    outln!(
+                        "[fixed] core: stale-worktree-registration for {}: pruned",
+                        location_of(workweave, repo)
+                    );
+                    true
+                }
+                Ok(false) => false,
+                Err(e) => {
+                    fix_errors.push(format!("state-hygiene --fix failed: {e:#}"));
+                    true
+                }
+            },
+            None => false,
+        };
+        if !repaired {
+            kept.push(v);
         }
+    }
+
+    let pass = settle_held_drift(vcs, &violations, repo_locations, held, fix_errors);
+    let held_checkouts = pass.held.clone();
+    let mut refreshed_checkouts: std::collections::HashSet<std::path::PathBuf> =
+        pass.merged.clone();
+    let violations = drift_findings_standing(vcs, violations, repo_locations, &pass);
+    for v in violations {
         if matches!(v.fix_disposition(), FixDisposition::ReportOnly) {
             kept.push(v);
             continue;
@@ -9504,7 +9556,7 @@ pub fn run_check(
 
     let mut fix_errors: Vec<String> = Vec::new();
     let mut held = HeldDrift {
-        merging: merge_edited_drift,
+        merging: merge_edited_drift.filter(|_| repair == Repair::Apply),
         refused: crate::diagnosis::Report::default(),
         merge_found: false,
         unread: false,
@@ -9530,6 +9582,22 @@ pub fn run_check(
 
     let mut findings = collect_doctor_violations(ctx, &world, ScanProgress::Heartbeat);
 
+    if !fix {
+        let violations = std::mem::take(&mut findings.violations);
+        let pass = settle_held_drift(
+            world.vcs.as_ref(),
+            &violations,
+            &findings.repo_locations,
+            &mut held,
+            &mut fix_errors,
+        );
+        findings.violations = drift_findings_standing(
+            world.vcs.as_ref(),
+            violations,
+            &findings.repo_locations,
+            &pass,
+        );
+    }
     if fix {
         let violations = std::mem::take(&mut findings.violations);
         let violations = apply_finding_repairs(

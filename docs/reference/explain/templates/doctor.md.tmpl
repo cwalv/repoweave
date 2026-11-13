@@ -56,7 +56,10 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
 - `--merge-edited-drift` widens `--fix` for a checkout whose branch moved
   under it and that holds files both that move and an edit here changed
   (`edits` `moved and edited`). Without it `--fix` writes nothing to such a
-  checkout and refuses, naming it. With it, every merge is computed first;
+  checkout and refuses, naming it, as plain `rwv doctor` does and as every
+  verb judging the checkout's edits does; where the checkout is in another
+  workspace, the choice printed names that workspace with `rwv -C`. With it,
+  every merge is computed first;
   then the checkout's working copy and index are kept as a backup (`rwv
   backup list`), the move's other files are refreshed, and each such file's
   edit is merged onto the moved tip against the tip the checkout was at,

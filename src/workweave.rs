@@ -2917,10 +2917,8 @@ pub fn judge_dirty_checkouts(
             Ok(files) => files,
             Err(why) => vec![format!("(status check failed: {why})")],
         };
-        let mut judging = crate::diagnosis::State::EditsDirty
-            .of(&dirty.repo)
-            .listing(listed)
-            .checkout(&dirty.dir);
+        let mut judging =
+            crate::diagnosis::dirty(vcs, &dirty.repo, &dirty.dir, listed).checkout(&dirty.dir);
         if !dirty.in_manifest {
             judging = judging.subject("not a manifest member");
         }

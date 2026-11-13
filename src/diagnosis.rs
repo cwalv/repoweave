@@ -759,15 +759,14 @@ impl State {
                 name: "moved and edited",
                 means: "the checkout's branch moved under it from another checkout, and each \
                         listed file was changed both by that move and by an uncommitted edit \
-                        here. Nothing in the checkout is refreshed while such a file stands, so \
-                        the move's other files still hold the old tip's content and a commit \
-                        there would record the move's reverse; the checkout's other edits are \
-                        listed beside it with no choice of their own. Setting the edits aside \
-                        sets aside the old tip's content with them, and taking them back brings \
-                        it back",
-                refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
-                             workspace; `rwv doctor --fix` and `rwv sync` name it and write \
-                             nothing to that checkout",
+                        here. Nothing in the checkout is refreshed or recorded while such a file \
+                        stands, so the move's other files still hold the old tip's content and a \
+                        commit there would record the move's reverse; the checkout's other edits \
+                        get no choice of their own. Setting the edits aside sets aside the old \
+                        tip's content with them, and taking them back brings it back",
+                refused_by: "every verb that judges a checkout's edits, `rwv doctor` with or \
+                             without `--fix` included, for a checkout in either workspace; \
+                             conflicted files are judged `unresolved` first",
                 offers: &[
                     Form::MergeEditedDrift,
                     Form::SetEditsAside,
@@ -2298,6 +2297,9 @@ impl ChoiceId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Where {
     Here,
+    /// The workspace holding the judged checkout: here, or the one an `rwv`
+    /// step names with `-C` where the checkout was judged in another.
+    CheckoutsWorkspace,
     Any,
     Checkout,
     Primary,
@@ -2315,6 +2317,7 @@ impl Where {
     pub fn describe(self) -> &'static str {
         match self {
             Self::Here => "here",
+            Self::CheckoutsWorkspace => "the checkout's workspace",
             Self::Any => "any workspace",
             Self::Checkout => "the checkout",
             Self::Primary => "the primary",
@@ -3152,7 +3155,7 @@ impl Form {
             Self::MergeEditedDrift => &FormRow {
                 choice: C::MergeEditedDrift,
                 steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
-                at: W::Here,
+                at: W::CheckoutsWorkspace,
                 shipped: true,
             },
             Self::SetEditsAside => &FormRow {
@@ -3170,7 +3173,7 @@ impl Form {
             Self::ReplaceThenMerge => &FormRow {
                 choice: C::ReplaceThenMerge,
                 steps: &[Rwv("rwv doctor --fix --merge-edited-drift")],
-                at: W::Here,
+                at: W::CheckoutsWorkspace,
                 shipped: true,
             },
             Self::DriftLandAgain => &FormRow {
@@ -3586,6 +3589,12 @@ impl Judging {
                     .lines(vcs, self.verb)
                     .iter()
                     .map(|line| for_spelled_project(fill(line, &self.bindings)))
+                    .map(|line| match (&self.workspace, form.row().at) {
+                        (Some(workspace), Where::CheckoutsWorkspace) => {
+                            in_workspace(&line, workspace)
+                        }
+                        _ => line,
+                    })
                     .collect(),
             })
             .collect();
@@ -3598,6 +3607,21 @@ impl Judging {
             facts: self.facts,
             choices,
         }
+    }
+}
+
+/// `line`, an `rwv` command, spelled to run in `workspace` from anywhere.
+fn in_workspace(line: &str, workspace: &Path) -> String {
+    match line.strip_prefix("rwv ") {
+        Some(rest) => {
+            let shown = workspace.display().to_string();
+            let quoted = match shown.contains(char::is_whitespace) {
+                true => format!("\"{shown}\""),
+                false => shown,
+            };
+            format!("rwv -C {quoted} {rest}")
+        }
+        None => line.to_owned(),
     }
 }
 
@@ -4063,16 +4087,37 @@ pub fn judge_edits(
         None => match vcs.interrupted_merge(dir) {
             Ok(Some(merge)) => interrupted_merge(repo, &merge),
             _ if dirty.is_empty() => return None,
-            _ => match vcs.unmerged_paths(dir) {
-                Ok(conflicted) if !conflicted.is_empty() => unresolved(repo, conflicted),
-                _ => State::EditsDirty.of(repo).listing(dirty),
-            },
+            _ => self::dirty(vcs, repo, dir, dirty),
         },
     };
     if let Some(workspace) = elsewhere {
         judging = judging.elsewhere(workspace);
     }
     Some(judging.checkout(dir).judge(vcs))
+}
+
+/// `dir`'s uncommitted `files`, judged by what else the checkout holds,
+/// since no commit clears any of these: a merge of edits onto a moved tip
+/// interrupted part way, conflicted files, or files both a move of its branch
+/// under it and an edit here changed. Otherwise `dirty`, listing `files`.
+pub fn dirty(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path, files: Vec<String>) -> Judging {
+    if let Ok(Some(merge)) = vcs.interrupted_merge(dir) {
+        return interrupted_merge(repo, &merge);
+    }
+    if let Ok(conflicted) = vcs.unmerged_paths(dir) {
+        if !conflicted.is_empty() {
+            return unresolved(repo, conflicted);
+        }
+    }
+    if let Ok(reading) = crate::check::read_drift(vcs, dir) {
+        let held = reading.moved_and_edited();
+        if !held.is_empty() {
+            return moved_and_edited(repo)
+                .subject(reading.moved())
+                .listing(held);
+        }
+    }
+    State::EditsDirty.of(repo).listing(files)
 }
 
 fn unresolved(repo: impl fmt::Display, conflicted: Vec<String>) -> Judging {

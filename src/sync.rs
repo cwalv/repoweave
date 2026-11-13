@@ -2211,9 +2211,7 @@ pub(crate) fn plan_checkout_removal(
         .map_err(|e| crate::refusal::refusing(RefusalKind::UnreadableStatus, e))?;
     if !dirty.is_empty() {
         report.add(
-            State::EditsDirty
-                .of(repo_path)
-                .listing(dirty)
+            crate::diagnosis::dirty(vcs, repo_path, &dest, dirty)
                 .checkout(&dest)
                 .judge(vcs),
         );
@@ -5245,8 +5243,10 @@ fn judge_edits_beside_drift(
         .into_iter()
         .filter(|file| !reading.refreshes(file))
         .collect();
+    let held = !reading.moved_and_edited().is_empty();
+    let conflicted = held && vcs.unmerged_paths(&at.dir).is_ok_and(|u| !u.is_empty());
     match drifted {
-        Some(drifted) if reading.is_refreshable() || !reading.moved_and_edited().is_empty() => {
+        Some(drifted) if !conflicted && (reading.is_refreshable() || held) => {
             drifted.push(DriftedCheckout {
                 vcs,
                 at,
@@ -5313,18 +5313,10 @@ fn settle_drift(
             None => judging,
         };
         if !outcome.held.is_empty() {
-            let (moved_from, moved_to) = (
-                checkout.reading.left.as_ref().map(CommitId::short),
-                checkout.reading.head.as_ref().map(CommitId::short),
-            );
             report.add(
                 elsewhere(
                     crate::diagnosis::moved_and_edited(&at.repo)
-                        .subject(format!(
-                            "its branch moved from {} to {} outside this checkout",
-                            moved_from.unwrap_or_default(),
-                            moved_to.unwrap_or_default()
-                        ))
+                        .subject(checkout.reading.moved())
                         .listing(&outcome.held),
                 )
                 .checkout(&at.dir)

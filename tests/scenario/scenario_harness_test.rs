@@ -1282,6 +1282,15 @@ every_scenario!(
     moved_and_edited(scenarios::MovedAndEditedEnd::TwoEdits),
     moved_and_edited_doctor,
     moved_and_edited_second_reading,
+    moved_and_edited_unresolved_then_moved_again,
+    moved_and_edited_in_the_target,
+    moved_and_edited_judged_by(scenarios::HeldVerb::Lock),
+    moved_and_edited_judged_by(scenarios::HeldVerb::LockCommit),
+    moved_and_edited_judged_by(scenarios::HeldVerb::UpdateRemote),
+    moved_and_edited_judged_by(scenarios::HeldVerb::Switch),
+    moved_and_edited_judged_by(scenarios::HeldVerb::Sync),
+    moved_and_edited_judged_by(scenarios::HeldVerb::Doctor),
+    moved_and_edited_judged_by(scenarios::HeldVerb::WorkweaveDelete),
     moved_and_edited_interrupted(scenarios::MergeKilledAt::Journaled),
     moved_and_edited_interrupted(scenarios::MergeKilledAt::Refreshed),
     moved_and_edited_interrupted(scenarios::MergeKilledAt::Written),
@@ -5517,6 +5526,73 @@ fn a_file_moved_and_edited_twice_is_refused_by_the_merge_naming_stash() {
 #[test]
 fn plain_doctor_fix_writes_nothing_beside_a_file_moved_and_edited_and_refreshes_other_seats() {
     runner::run(scenarios::moved_and_edited_doctor()).assert_fully_decided_green();
+}
+
+#[test]
+fn lock_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::Lock,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn lock_commit_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::LockCommit,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::UpdateRemote,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn switch_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::Switch,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::Sync,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn plain_doctor_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::Doctor,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn workweave_delete_names_a_file_moved_and_edited_and_offers_no_commit() {
+    runner::run(scenarios::moved_and_edited_judged_by(
+        scenarios::HeldVerb::WorkweaveDelete,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_file_moved_and_edited_in_the_target_is_merged_by_the_choice_printed_from_the_seat() {
+    runner::run(scenarios::moved_and_edited_in_the_target()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_conflict_left_by_a_merge_is_judged_unresolved_first_even_once_the_branch_moves_again() {
+    runner::run(scenarios::moved_and_edited_unresolved_then_moved_again())
+        .assert_fully_decided_green();
 }
 
 #[test]

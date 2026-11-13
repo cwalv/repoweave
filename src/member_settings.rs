@@ -91,9 +91,7 @@ pub fn run_set_role(
         if !dirty.is_empty() {
             let mut report = crate::diagnosis::Report::default();
             report.add(
-                crate::diagnosis::State::EditsDirty
-                    .of(&repo_path)
-                    .listing(dirty)
+                crate::diagnosis::dirty(vcs.as_ref(), &repo_path, &member, dirty)
                     .checkout(&member)
                     .judge(vcs.as_ref()),
             );

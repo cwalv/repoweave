@@ -105,9 +105,7 @@ pub fn generate_lock(
             let tracked = vcs.tracked_dirty_file_names(checkout.path())?;
             if !tracked.is_empty() {
                 report.add(
-                    State::EditsDirty
-                        .of(repo_path)
-                        .listing(tracked)
+                    crate::diagnosis::dirty(vcs.as_ref(), repo_path, checkout.path(), tracked)
                         .checkout(checkout.path())
                         .judge(vcs.as_ref()),
                 );
@@ -611,10 +609,8 @@ fn judge_member(
         let tracked = vcs.tracked_dirty_file_names(dir)?;
         if !tracked.is_empty() {
             refusals.add(
-                State::EditsDirty
-                    .of(path)
+                crate::diagnosis::dirty(vcs.as_ref(), path, dir, tracked)
                     .member()
-                    .listing(tracked)
                     .checkout(dir)
                     .by_verb(relocking.verb)
                     .judge(vcs.as_ref()),
