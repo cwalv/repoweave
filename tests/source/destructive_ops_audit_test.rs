@@ -446,7 +446,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 12,
+        count: 11,
         callers: &[],
         justification: "(1)-(2) savepoint creates, a checkout's and a \
             branch's moved as a ref; (A)-(C) savepoint drops: every one \
@@ -479,13 +479,7 @@ const ALLOWLIST: &[Allowed] = &[
             (8) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
             refresh read, by a compare-and-swap whose old and new values are \
             both that commit, so it moves no ref; a branch moved since makes \
-            it fail rather than move back or record the newer tip. (9) \
-            take_amended: moves a checked-out branch from a commit an \
-            operation's replay wrote to a copy of it whose only change is \
-            what the index already stages, by a compare-and-swap on the old \
-            value, so a branch moved since is left; the replay's record \
-            names the copy before the move, and the replaced commit was \
-            never published.",
+            it fail rather than move back or record the newer tip.",
     },
     Allowed {
         file: "git.rs",

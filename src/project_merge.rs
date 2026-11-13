@@ -993,8 +993,20 @@ pub(crate) fn unparseable_result(
     vcs: &dyn Vcs,
     repo: impl std::fmt::Display,
     dir: &Path,
+    resume: (&str, Produced),
+    error: &dyn std::fmt::Display,
+) -> anyhow::Error {
+    unparseable_result_saying(vcs, repo, dir, resume, error, &[])
+}
+
+/// [`unparseable_result`] with `lines` said after what produced the file.
+fn unparseable_result_saying(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
     (resume, produced): (&str, Produced),
     error: &dyn std::fmt::Display,
+    lines: &[String],
 ) -> anyhow::Error {
     let file = dir.join(Manifest::FILE_NAME).display().to_string();
     let parse_error = format!("{error:#}");
@@ -1002,7 +1014,11 @@ pub(crate) fn unparseable_result(
         .of(repo)
         .project_repo()
         .subject(file)
-        .listing(std::iter::once(produced.says()).chain(parse_error.lines()))
+        .listing(
+            std::iter::once(produced.says())
+                .chain(lines.iter().map(String::as_str))
+                .chain(parse_error.lines()),
+        )
         .bind_list("<paths>", [Manifest::FILE_NAME])
         .bind_list("<resume>", resume.split_whitespace())
         .checkout(dir)
@@ -1075,58 +1091,113 @@ pub(crate) fn refuse_unparseable_working_manifest(
 }
 
 /// Settle the `rwv.toml` the replay of the project repo at `dir` left at its
-/// tip. Where it does not parse, a staged `rwv.toml` that does becomes part
-/// of the replayed tip; without one the operation stops on
-/// [`unparseable_result`].
+/// tip. Where it does not parse, a staged `rwv.toml` that does is returned,
+/// for the re-map to write into its copy of the replayed tip; without one,
+/// or where the checkout is off the tip the replay wrote, the operation stops
+/// on [`unparseable_result`].
 pub(crate) fn settle_replayed_manifest(
     vcs: &dyn Vcs,
     repo: impl std::fmt::Display,
     dir: &Path,
     workspace: &Path,
     verb: op_state::OpVerb,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let head = vcs.head_revision(dir)?;
-    let Ok(at_head) = vcs.read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME)) else {
-        return Ok(());
+    let Some(at_head_error) = unparseable_at(vcs, dir, head.id()) else {
+        return Ok(None);
     };
-    let Err(at_head_error) = Manifest::from_toml_str(&at_head) else {
-        return Ok(());
-    };
-    let stop = |error: &anyhow::Error| {
-        unparseable_result(
-            vcs,
-            &repo,
-            dir,
-            (&op_state::resume_command(verb), Produced::Replay),
-            error,
-        )
+    let rebase = journaled_project_rebase(dir, workspace, head.id())?;
+    let replayed = vcs.replayed(dir, &rebase.base, &rebase.from, &rebase.onto, head.id())?;
+    let replayed_tip = replayed.as_ref().and_then(|replayed| {
+        replayed
+            .images
+            .iter()
+            .rev()
+            .find_map(|(_, image)| image.clone())
+    });
+    let mut lines = Vec::new();
+    let resume = op_state::resume_command(verb);
+    let stop = |error: &dyn std::fmt::Display, lines: &[String]| {
+        unparseable_result_saying(vcs, &repo, dir, (&resume, Produced::Replay), error, lines)
     };
     let fix = match vcs
         .staged_file(dir, Manifest::FILE_NAME)?
-        .filter(|staged| *staged != at_head)
+        .filter(|staged| *staged != at_head_error.1)
     {
-        None => return Err(stop(&at_head_error)),
+        None => return Err(stop(&at_head_error.0, &lines)),
         Some(fix) => match Manifest::from_toml_str(&fix) {
             Ok(_) => fix,
-            Err(error) => return Err(stop(&error)),
+            Err(error) => return Err(stop(&error, &lines)),
         },
     };
-    refuse_unparseable_working_manifest(vcs, &repo, dir, &op_state::resume_command(verb), &fix)?;
-    amend_replayed_tip(vcs, dir, workspace, head.id(), fix)
+    refuse_unparseable_working_manifest(vcs, &repo, dir, &resume, &fix)?;
+    let in_the_way = match vcs.head_attachment(dir)? {
+        crate::vcs::HeadAttachment::Attached(on) if on.to_string() != rebase.branch => {
+            Some(format!(
+                "'{on}' is checked out, not '{}', the branch the replay wrote",
+                rebase.branch
+            ))
+        }
+        crate::vcs::HeadAttachment::Attached(_) => None,
+        _ => Some(format!(
+            "HEAD is detached, not on '{}', the branch the replay wrote",
+            rebase.branch
+        )),
+    }
+    .or_else(|| match &replayed_tip {
+        Some(tip) if tip == head.id() => None,
+        Some(tip) => Some(format!(
+            "{} stands on the replayed tip {}, a commit made after the replay; only the \
+             replayed tip takes the staged rwv.toml, so move that commit off it to go on",
+            head.id().short(),
+            tip.short()
+        )),
+        None => Some(format!(
+            "{} is not the tip the replay wrote; only that tip takes the staged rwv.toml",
+            head.id().short()
+        )),
+    });
+    let in_the_way = match in_the_way {
+        Some(line) => Some(line),
+        None => vcs
+            .tracked_dirty_file_names(dir)?
+            .iter()
+            .any(|path| path == LockFile::FILE_NAME)
+            .then(|| {
+                "rwv.lock has uncommitted edits, which the copy of the replayed tip that \
+                 takes the staged rwv.toml rewrites"
+                    .to_owned()
+            }),
+    };
+    if let Some(line) = in_the_way {
+        lines.insert(0, line);
+        return Err(stop(&at_head_error.0, &lines));
+    }
+    Ok(Some(fix))
 }
 
-/// Make `fix`, the staged `rwv.toml`, part of `tip`, the commit the
-/// project's replay journaled in `workspace` wrote last. The replay's record
-/// names the amended commit before the branch moves to it, so the operation
-/// owns the branch at either tip.
-fn amend_replayed_tip(
-    vcs: &dyn Vcs,
+/// The parser's error for the `rwv.toml` at `commit` in `dir`, and the file,
+/// where it does not parse.
+fn unparseable_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<(anyhow::Error, String)> {
+    let text = vcs
+        .read_file_at_revision(
+            dir,
+            &ResolvedRevisionId::from(commit.clone()),
+            Path::new(Manifest::FILE_NAME),
+        )
+        .ok()?;
+    Manifest::from_toml_str(&text)
+        .err()
+        .map(|error| (error, text))
+}
+
+/// The project rebase the operation journaled in `workspace`.
+fn journaled_project_rebase(
     dir: &Path,
     workspace: &Path,
     tip: &CommitId,
-    fix: String,
-) -> anyhow::Result<()> {
-    let rebase = op_state::read_owner(workspace)?
+) -> anyhow::Result<op_state::Rebasing> {
+    op_state::read_owner(workspace)?
         .and_then(|owner| owner.take_in)
         .and_then(|take_in| {
             take_in
@@ -1141,53 +1212,5 @@ fn amend_replayed_tip(
                 dir.display(),
                 tip.short()
             )
-        })?;
-    let replayed = vcs
-        .replayed(dir, &rebase.base, &rebase.from, &rebase.onto, tip)?
-        .filter(|replayed| replayed.written.last() == Some(tip))
-        .ok_or_else(|| {
-            crate::untokened!(
-                InternalInvariant,
-                "{}: no record of its replay describes its tip {}",
-                dir.display(),
-                tip.short()
-            )
-        })?;
-    let crate::vcs::HeadAttachment::Attached(on) = vcs.head_attachment(dir)? else {
-        return Err(crate::untokened!(
-            EnvironmentPassthrough,
-            "{}: left its branch '{}' after its replay",
-            dir.display(),
-            rebase.branch
-        ));
-    };
-    let parent = vcs.parents(dir, tip)?.into_iter().next().ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "{}: the replayed tip {} has no parent",
-            dir.display(),
-            tip.short()
-        )
-    })?;
-    let amended = crate::repin::copy_with_manifest(vcs, dir, tip, &parent, fix.into_bytes())?;
-    let became = |commit: &CommitId| {
-        if commit == tip {
-            amended.clone()
-        } else {
-            commit.clone()
-        }
-    };
-    let replayed = crate::vcs::Replayed {
-        images: replayed
-            .images
-            .iter()
-            .map(|(was, image)| (was.clone(), image.as_ref().map(became)))
-            .collect(),
-        written: replayed.written.iter().map(became).collect(),
-    };
-    vcs.record_replayed(dir, &rebase.from, &rebase.onto, &replayed)?;
-    crate::test_pause::point("replayed-manifest-recorded");
-    vcs.take_amended(&on, tip, &amended)?;
-    crate::test_pause::point("replayed-manifest-amended");
-    Ok(())
+        })
 }

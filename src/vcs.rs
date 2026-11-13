@@ -3529,25 +3529,12 @@ pub trait Vcs: Send + Sync {
 
     /// Move the branch `on` witnesses from `from`, where a replay left it, to
     /// `to`, a copy of that replay whose commits differ from it only in
-    /// paths the checkout holds unchanged. Refuses a branch not at `from`
-    /// and an uncommitted change the move would overwrite.
+    /// paths the checkout holds unchanged or already stages as `to` holds
+    /// them. Refuses a branch not at `from` and an uncommitted change the
+    /// move would overwrite.
     ///
     /// For git: `git reset --keep <to>`.
     fn take_rewritten(
-        &self,
-        on: &AttachedRef,
-        from: &CommitId,
-        to: &CommitId,
-    ) -> Result<(), VcsError>;
-
-    /// Move the branch `on` witnesses from `from`, a commit a replay wrote,
-    /// to `to`, a copy of it whose tree differs from it only in paths the
-    /// checkout's index already holds as `to` does: the index and the
-    /// working files are left as they are, as an amend of `from` with what
-    /// is staged leaves them. Refuses a branch not at `from`.
-    ///
-    /// For git: `git update-ref <branch> <to> <from>`.
-    fn take_amended(
         &self,
         on: &AttachedRef,
         from: &CommitId,

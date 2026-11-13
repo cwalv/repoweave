@@ -226,8 +226,7 @@ src/pins.rs	pin off remote	-	1
 src/pins.rs	pin unpinned	tests/doctor/benign_staleness_test.rs	2
 src/plugins.rs	(untokened:environment-passthrough)	-	1
 src/plugins.rs	unknown-verb	tests/vcs/vcs_tool_floor_test.rs	1
-src/project_merge.rs	(untokened:environment-passthrough)	-	1
-src/project_merge.rs	(untokened:internal-invariant)	-	4
+src/project_merge.rs	(untokened:internal-invariant)	-	2
 src/project_merge.rs	(untokened:owed)	-	1
 src/project_merge.rs	op-parked	-	1
 src/project_merge.rs	unparseable-project mid-operation	-	1

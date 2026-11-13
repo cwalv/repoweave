@@ -1655,14 +1655,14 @@ fn act(
     } else {
         set_aside_authored(sync, &pre_manifest)?;
         take_project(sync, &head, &source, resets_project, output, reported)?;
-        crate::project_merge::settle_replayed_manifest(
+        let fix = crate::project_merge::settle_replayed_manifest(
             vcs,
             sync.label(),
             &sync.dir,
             sync.ctx.active_path(),
             OpVerb::Sync,
         )?;
-        remap(sync, op, output)?;
+        remap(sync, op, output, fix.as_deref())?;
         relock(sync, &pre_head, &source, &moved, resets_project, &resets)?;
     }
     let carries = carrier.carry()?;
@@ -2120,10 +2120,17 @@ fn take_project(
     let attached = match vcs.head_attachment(dir)? {
         HeadAttachment::Attached(attached) => attached,
         _ => {
+            crate::project_merge::settle_replayed_manifest(
+                vcs,
+                &label,
+                dir,
+                sync.ctx.active_path(),
+                OpVerb::Sync,
+            )?;
             return Err(crate::untokened!(
                 EnvironmentPassthrough,
                 "{label}: left its branch during the sync"
-            ))
+            ));
         }
     };
     let branch = RawRefName::new(attached.to_string());
@@ -2201,7 +2208,7 @@ fn take_project(
 
 /// Pin each replayed project commit at what the member rebases made of the
 /// commits it pinned.
-fn remap(sync: &Sync<'_>, op: &Op, output: OutputMode) -> anyhow::Result<()> {
+fn remap(sync: &Sync<'_>, op: &Op, output: OutputMode, fix: Option<&str>) -> anyhow::Result<()> {
     let rebases = crate::op_state::read_owner(&op.workspace)?
         .and_then(|owner| owner.take_in)
         .map(|take_in| take_in.rebases)
@@ -2212,8 +2219,13 @@ fn remap(sync: &Sync<'_>, op: &Op, output: OutputMode) -> anyhow::Result<()> {
         sync.ctx.active_path(),
         &rebases,
         &op.workspace,
-    )?;
-    for moved in remapped.unwrap_or_default() {
+        fix,
+    )?
+    .unwrap_or_default();
+    if let Some(dropped) = &remapped.emptied {
+        say(output, &format!("{}: {}", sync.label(), dropped));
+    }
+    for moved in remapped.remapped {
         say(
             output,
             &format!(

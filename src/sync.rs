@@ -1794,11 +1794,14 @@ pub(crate) fn refresh_drift_after(
     }
 }
 
-/// CWD's project as Phase 1' left it: the manifest the op ends with.
-fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
+/// CWD's project as Phase 1' left it: the manifest the op ends with, and
+/// the staged `rwv.toml` the re-map writes into the replayed tip whose own
+/// does not parse.
+fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<(Project, Option<String>)> {
     let vcs = ctx.project_vcs.as_ref();
     let dir = &ctx.cwd_project_dir;
     let repo = crate::workspace::project_rel_path(&ctx.cwd_project_name);
+    let mut fix = None;
     if vcs.merge_in_flight(dir)?.is_some() {
         let resume = op_state::resume_command(ctx.verb);
         let stop = |error: &dyn std::fmt::Display| {
@@ -1820,7 +1823,7 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
             vcs, &repo, dir, &resume, &staged,
         )?;
     } else {
-        crate::project_merge::settle_replayed_manifest(
+        fix = crate::project_merge::settle_replayed_manifest(
             vcs,
             &repo,
             dir,
@@ -1829,7 +1832,7 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<Project> {
         )?;
     }
     let failure = match Project::from_dir(&ctx.cwd_project_dir, ctx.cwd_project_name.clone()) {
-        Ok(project) => return Ok(project),
+        Ok(project) => return Ok((project, fix)),
         Err(failure) => failure,
     };
     let refusal = match UnparseableProjectKind::of(&failure) {
@@ -5708,7 +5711,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // Checkouts are added and removed only below this point, and removed only
     // after every manifest repo replayed, so an op that parks leaves every
     // checkout in place for `rwv abort`, which restores refs and nothing else.
-    let replayed = reload_replayed_project(ctx)?;
+    let (replayed, fix) = reload_replayed_project(ctx)?;
     let pre_op_manifest = pre_op_manifest(ctx)?;
 
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
@@ -6055,7 +6058,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         ctx.handler.record_member(member);
     }
 
-    remap_landing(ctx)?;
+    remap_landing(ctx, fix.as_deref())?;
 
     settle_members(
         &ctx.cwd_workspace_dir,
@@ -6068,9 +6071,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 }
 
 /// Pin each project commit the landing's rebase replayed at what the member
-/// rebases made of the commits it pinned, and record the project tip that
-/// leaves as the one the landing composed.
-fn remap_landing(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+/// rebases made of the commits it pinned, with `fix` as the replayed tip's
+/// `rwv.toml` where given, and record the project tip that leaves as the
+/// one the landing composed.
+fn remap_landing(ctx: &OpContext<'_>, fix: Option<&str>) -> anyhow::Result<()> {
     let rebases = op_state::read_owner(&ctx.owner_workspace_dir)?
         .and_then(|owner| owner.take_in)
         .map(|take_in| take_in.rebases)
@@ -6081,11 +6085,15 @@ fn remap_landing(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.cwd_workspace_dir,
         &rebases,
         &ctx.owner_workspace_dir,
+        fix,
     )?
     else {
         return Ok(());
     };
-    for moved in remapped {
+    if let (Some(line), true) = (&remapped.emptied, ctx.handler.emit_text()) {
+        eprintln!("  {}: {line}", RepoKey::Project);
+    }
+    for moved in remapped.remapped {
         report_landing(
             ctx,
             op_state::LandingReport::Remapped {
@@ -6432,7 +6440,10 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     };
     carrier.finish_stopped()?;
 
-    let cwd_project = reload_replayed_project(ctx)?;
+    let (cwd_project, fix) = reload_replayed_project(ctx)?;
+    if fix.is_some() {
+        remap_landing(ctx, fix.as_deref())?;
+    }
 
     if let Err(e) = relock_landing(ctx, &cwd_project.manifest) {
         if emit_text {

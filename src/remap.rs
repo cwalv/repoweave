@@ -351,53 +351,74 @@ fn replayed_lock(
     LockFile { repositories }
 }
 
+/// Whether `commit` changes nothing but its lock, once its `rwv.toml` is
+/// `manifest` where that is given.
 fn changes_nothing_but_the_lock(
     vcs: &dyn Vcs,
     dir: &Path,
     commit: &CommitId,
+    manifest: Option<&str>,
 ) -> anyhow::Result<bool> {
     let Some(parent) = vcs.parents(dir, commit)?.into_iter().next() else {
         return Ok(false);
     };
+    let parent = ResolvedRevisionId::from(parent);
+    if let Some(manifest) = manifest {
+        let at_parent = vcs
+            .read_file_at_revision(dir, &parent, Path::new(Manifest::FILE_NAME))
+            .ok();
+        if at_parent.as_deref() != Some(manifest) {
+            return Ok(false);
+        }
+    }
     Ok(vcs
-        .changed_paths_between(
-            dir,
-            &ResolvedRevisionId::from(parent),
-            &ResolvedRevisionId::from(commit.clone()),
-        )?
+        .changed_paths_between(dir, &parent, &ResolvedRevisionId::from(commit.clone()))?
         .iter()
-        .all(|path| path == LockFile::FILE_NAME))
+        .all(|path| {
+            path == LockFile::FILE_NAME || (manifest.is_some() && path == Manifest::FILE_NAME)
+        }))
 }
 
-/// A project branch's re-map: each pin a dropped commit's re-map moved, and,
+/// A project branch's re-map: each pin a dropped commit's re-map moved,
 /// where any commit changed, the rewritten tip with what the replay's
-/// commits became once rewritten.
+/// commits became once rewritten, and the replayed tip where the `rwv.toml`
+/// given for it left it changing nothing, so it was dropped.
 #[derive(Debug, Default)]
 pub(crate) struct ProjectRemap {
     pub(crate) remapped: Vec<Remapped>,
     pub(crate) rewritten: Option<(CommitId, Replayed)>,
+    pub(crate) emptied: Option<CommitId>,
 }
 
 /// Rewrite each commit the project rebase `replayed` wrote onto `onto` so its
-/// lock pins what the member rebases made of the commits it pinned. Commits
-/// already pinning so are kept as they are; one left changing nothing, as
-/// the rebase drops a commit it leaves empty, is dropped. A written commit no
-/// replayed commit became, such as a relock written after the replay, keeps
-/// the pins it changed, so a re-map of a branch already re-mapped keeps it.
+/// lock pins what the member rebases made of the commits it pinned, and the
+/// last one, where `tip_manifest` is given, so its `rwv.toml` is that.
+/// Commits already pinning so are kept as they are; one left changing
+/// nothing, as the rebase drops a commit it leaves empty, is dropped. A
+/// written commit no replayed commit became, such as a relock written after
+/// the replay, keeps the pins it changed, so a re-map of a branch already
+/// re-mapped keeps it.
 pub(crate) fn remap_project(
     vcs: &dyn Vcs,
     dir: &Path,
     replayed: &Replayed,
     onto: &CommitId,
     replays: &BTreeMap<RepoPath, Vec<MemberReplay>>,
+    tip_manifest: Option<&str>,
 ) -> anyhow::Result<ProjectRemap> {
     let mut became: Vec<(CommitId, CommitId)> = Vec::new();
     let mut remapped = Vec::new();
     let mut parent = onto.clone();
     let mut before = lock_at(vcs, dir, onto);
     let mut rewritten = false;
+    let mut emptied = None;
     for written in &replayed.written {
-        let members: Vec<RepoPath> = match manifest_at(vcs, dir, written) {
+        let carried = tip_manifest.filter(|_| replayed.written.last() == Some(written));
+        let manifest = match carried {
+            Some(text) => Manifest::from_toml_str(text).ok(),
+            None => manifest_at(vcs, dir, written),
+        };
+        let members: Vec<RepoPath> = match manifest {
             Some(manifest) => manifest.iter_entries().map(|(p, _)| p.clone()).collect(),
             None => lock_at(vcs, dir, written)
                 .map(|lock| lock.iter_entries().map(|(p, _)| p.clone()).collect())
@@ -433,11 +454,14 @@ pub(crate) fn remap_project(
             .map(crate::lock::render)
             .transpose()?
             .is_some_and(|text| text == rendered);
-        if pins_as_before && changes_nothing_but_the_lock(vcs, dir, written)? {
+        if pins_as_before && changes_nothing_but_the_lock(vcs, dir, written, carried)? {
+            if carried.is_some() {
+                emptied = Some(written.clone());
+            }
             rewritten = true;
             continue;
         }
-        let keep = !rewritten && current.as_deref() == Some(rendered.as_str());
+        let keep = carried.is_none() && !rewritten && current.as_deref() == Some(rendered.as_str());
         parent = if keep {
             written.clone()
         } else {
@@ -448,6 +472,7 @@ pub(crate) fn remap_project(
                 written,
                 &parent,
                 rendered.into_bytes(),
+                carried.map(|text| text.as_bytes().to_vec()),
                 &mut |member, pin| {
                     map_pin(
                         member,
@@ -484,19 +509,31 @@ pub(crate) fn remap_project(
                 },
             )
         }),
+        emptied,
     })
 }
 
+/// What re-mapping the project branch did: each pin a dropped commit's
+/// re-map moved, and, where the replayed tip was dropped as changing nothing
+/// once its `rwv.toml` was the one given, the line that says so.
+#[derive(Debug, Default)]
+pub(crate) struct RemappedProject {
+    pub(crate) remapped: Vec<Remapped>,
+    pub(crate) emptied: Option<String>,
+}
+
 /// Re-map the project branch checked out in `project_dir` through the
-/// rebases journaled in `rebases`, where the project branch is among them;
-/// `None` where it was not rebased.
+/// rebases journaled in `rebases`, where the project branch is among them,
+/// writing `tip_manifest`, where given, as the `rwv.toml` of its copy of the
+/// replayed tip; `None` where it was not rebased.
 pub(crate) fn remap_rebased_project(
     project_vcs: &dyn Vcs,
     project_dir: &Path,
     root: &Path,
     rebases: &[Rebasing],
     workspace: &Path,
-) -> anyhow::Result<Option<Vec<Remapped>>> {
+    tip_manifest: Option<&str>,
+) -> anyhow::Result<Option<RemappedProject>> {
     let Some(project) = rebases.iter().find(|r| r.repo == RepoKey::Project) else {
         return Ok(None);
     };
@@ -522,15 +559,33 @@ pub(crate) fn remap_rebased_project(
             repo: &RepoKey::Project,
         },
     )?;
-    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    let manifest = match tip_manifest {
+        Some(text) => Manifest::from_toml_str(text)?,
+        None => Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?,
+    };
     let replays = member_replays(root, &manifest, rebases, &[], workspace)?;
-    let remap = remap_project(project_vcs, project_dir, &replayed, &project.onto, &replays)?;
+    let remap = remap_project(
+        project_vcs,
+        project_dir,
+        &replayed,
+        &project.onto,
+        &replays,
+        tip_manifest,
+    )?;
     if let Some((rewritten, became)) = &remap.rewritten {
         project_vcs.record_replayed(project_dir, &project.from, &project.onto, became)?;
         crate::test_pause::point("remap-recorded");
         project_vcs.take_rewritten(&on, &tip, rewritten)?;
     }
-    Ok(Some(remap.remapped))
+    Ok(Some(RemappedProject {
+        remapped: remap.remapped,
+        emptied: remap.emptied.map(|tip| {
+            format!(
+                "the replayed tip {} is dropped: with the staged rwv.toml it changes nothing",
+                tip.short()
+            )
+        }),
+    }))
 }
 
 #[cfg(test)]
@@ -649,6 +704,7 @@ mod tests {
             &replayed,
             &onto,
             &BTreeMap::new(),
+            None,
         )
         .unwrap();
 

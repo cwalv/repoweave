@@ -819,10 +819,18 @@ every_scenario!(
         scenarios::TakingIn::LandLinear,
         scenarios::ReplayedManifest::BrokenByTheBranch
     ),
-    an_amend_killed_part_way(
+    a_carried_fix_killed_part_way(
         scenarios::TakingIn::LandLinear,
-        "replayed-manifest-recorded",
-        scenarios::AfterTheKill::Abort
+        "remap-recorded",
+        scenarios::ThenRun::Abort
+    ),
+    a_carried_fix_beside_an_edited_lock(
+        scenarios::TakingIn::SyncLinear,
+        scenarios::ThenRun::Continue
+    ),
+    a_fix_is_not_carried_off_the_replayed_tip(
+        scenarios::TakingIn::SyncLinear,
+        scenarios::OffTheReplayedTip::Detached
     ),
     solo_workweave,
     history_rebase_pin_remap,
@@ -6520,22 +6528,51 @@ fn a_replay_in_flight_is_not_judged_on_its_rwv_toml() {
 }
 
 holding_rwv! {
-    /// A `--continue` killed while it makes a staged `rwv.toml` part of the
-    /// replayed tip, before and after the branch moves: run again it
-    /// finishes, and `rwv abort` puts everything back without
+    /// A `--continue` killed while it carries a staged `rwv.toml` into the
+    /// replayed tip, at the re-map's record and after the branch moved: run
+    /// again it finishes, and `rwv abort` puts everything back without
     /// `--abandon-foreign-tip`.
-    fn an_amend_killed_part_way_is_left_by_continue_or_abort() {
-        use scenarios::{AfterTheKill, TakingIn};
+    fn a_carried_fix_killed_part_way_is_left_by_continue_or_abort() {
+        use scenarios::{TakingIn, ThenRun};
         for (taking_in, point) in [
-            (TakingIn::SyncLinear, "replayed-manifest-recorded"),
-            (TakingIn::SyncLinear, "replayed-manifest-amended"),
-            (TakingIn::LandLinear, "replayed-manifest-recorded"),
-            (TakingIn::LandLinear, "replayed-manifest-amended"),
+            (TakingIn::SyncLinear, "remap-recorded"),
+            (TakingIn::LandLinear, "remap-recorded"),
+            (TakingIn::LandLinear, "relocking"),
         ] {
-            for after in [AfterTheKill::Continue, AfterTheKill::Abort] {
-                runner::run(scenarios::an_amend_killed_part_way(taking_in, point, after))
+            for then in [ThenRun::Continue, ThenRun::Abort] {
+                runner::run(scenarios::a_carried_fix_killed_part_way(taking_in, point, then))
                     .assert_fully_decided_green();
             }
+        }
+    }
+}
+
+#[test]
+fn a_carried_fix_beside_an_edited_lock_is_refused_before_anything_moves() {
+    use scenarios::{TakingIn, ThenRun};
+    for taking_in in [TakingIn::SyncLinear, TakingIn::LandLinear] {
+        for then in [ThenRun::Continue, ThenRun::Abort] {
+            runner::run(scenarios::a_carried_fix_beside_an_edited_lock(
+                taking_in, then,
+            ))
+            .assert_fully_decided_green();
+        }
+    }
+}
+
+#[test]
+fn a_fix_is_not_carried_off_the_replayed_tip() {
+    use scenarios::{OffTheReplayedTip, TakingIn};
+    for taking_in in [TakingIn::SyncLinear, TakingIn::LandLinear] {
+        for moved in [
+            OffTheReplayedTip::CommitOnTop,
+            OffTheReplayedTip::AnotherBranch,
+            OffTheReplayedTip::Detached,
+        ] {
+            runner::run(scenarios::a_fix_is_not_carried_off_the_replayed_tip(
+                taking_in, moved,
+            ))
+            .assert_fully_decided_green();
         }
     }
 }

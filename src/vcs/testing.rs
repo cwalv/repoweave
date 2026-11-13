@@ -557,15 +557,6 @@ impl Vcs for FakeVcs {
         unsupported("take_rewritten")
     }
 
-    fn take_amended(
-        &self,
-        _on: &super::AttachedRef,
-        _from: &CommitId,
-        _to: &CommitId,
-    ) -> Result<(), VcsError> {
-        unsupported("take_amended")
-    }
-
     fn rebase_continue(
         &self,
         _repo: &Path,

@@ -250,37 +250,18 @@ pub(crate) fn recorded(
         .collect())
 }
 
-/// A copy of the replayed `commit` on its own `parent` whose `rwv.toml` is
-/// `manifest`: its lock and message, and so each re-pin it records, kept.
-pub(crate) fn copy_with_manifest(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    commit: &CommitId,
-    parent: &CommitId,
-    manifest: Vec<u8>,
-) -> Result<CommitId, VcsError> {
-    vcs.copy_replayed(
-        dir,
-        commit,
-        parent,
-        &[crate::vcs::FileChange {
-            path: crate::manifest::Manifest::FILE_NAME.to_owned(),
-            content: Some(manifest),
-        }],
-        None,
-    )
-}
-
 /// A copy of the replayed `commit` on `parent` whose `rwv.lock` is `lock`,
-/// its message kept, each re-pin it records taken through `map` as its
-/// lock's pins were; a re-pin `map` leaves moving nothing, or moving off a
-/// pin `parent`'s lock does not hold, is dropped.
+/// and whose `rwv.toml` is `manifest` where that is given, its message kept,
+/// each re-pin it records taken through `map` as its lock's pins were; a
+/// re-pin `map` leaves moving nothing, or moving off a pin `parent`'s lock
+/// does not hold, is dropped.
 pub(crate) fn copy_with_lock(
     vcs: &dyn Vcs,
     dir: &Path,
     commit: &CommitId,
     parent: &CommitId,
     lock: Vec<u8>,
+    manifest: Option<Vec<u8>>,
     map: &mut dyn FnMut(&RepoPath, &CommitId) -> CommitId,
 ) -> Result<CommitId, VcsError> {
     let records = recorded(vcs, dir, commit)?;
@@ -316,14 +297,20 @@ pub(crate) fn copy_with_lock(
             moves.then(|| Repin { from, to, ..repin }.annotation())
         })
         .collect();
+    let changes: Vec<crate::vcs::FileChange> = std::iter::once(crate::vcs::FileChange {
+        path: LockFile::FILE_NAME.to_owned(),
+        content: Some(lock),
+    })
+    .chain(manifest.map(|content| crate::vcs::FileChange {
+        path: crate::manifest::Manifest::FILE_NAME.to_owned(),
+        content: Some(content),
+    }))
+    .collect();
     vcs.copy_replayed(
         dir,
         commit,
         parent,
-        &[crate::vcs::FileChange {
-            path: LockFile::FILE_NAME.to_owned(),
-            content: Some(lock),
-        }],
+        &changes,
         had_records.then_some((KEY, mapped.as_slice())),
     )
 }
@@ -410,6 +397,7 @@ mod tests {
             &commit,
             &parent,
             b"{}".to_vec(),
+            None,
             &mut |_, pin| map_to(pin),
         )
         .unwrap();

@@ -623,6 +623,7 @@ impl Carrier<'_> {
                 &replayed,
                 &carrying.onto,
                 &replays,
+                None,
             )?;
             if let Some((rewritten, became)) = remap.rewritten {
                 vcs.record_replayed(&dir, &carrying.from, &carrying.onto, &became)?;

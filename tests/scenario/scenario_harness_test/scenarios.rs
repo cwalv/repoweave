@@ -21718,25 +21718,26 @@ pub fn a_replay_in_flight_is_not_judged_on_its_rwv_toml(
     scenario("a replay in flight is not judged on its rwv.toml", steps)
 }
 
-/// What is run after a `--continue` killed while it makes a staged
-/// `rwv.toml` part of the replayed tip.
+/// What is run once a `--continue` that would carry a staged `rwv.toml`
+/// into the replayed tip was killed or refused.
 #[derive(Clone, Copy)]
-pub enum AfterTheKill {
+pub enum ThenRun {
     Continue,
     Abort,
 }
 
-/// [`unparseable_merged_manifest`] under linear history, its staged fix's
-/// `--continue` killed at `point`, before or after the branch moves to the
-/// amended tip: the printed `--continue` run again finishes, with no
-/// `rwv.toml` that does not parse left on the branch, and `rwv abort` puts
-/// the workweave back with no `--abandon-foreign-tip`.
-pub fn an_amend_killed_part_way(
-    taking_in: TakingIn,
-    point: &'static str,
-    after: AfterTheKill,
-) -> Scenario {
-    let mut steps = vec![create("w")];
+/// [`unparseable_merged_manifest`]'s stop under linear history, reached by
+/// `taking_in` over a `lib` that each side moved and locked, so the replayed
+/// lock commit is re-pinned; with the workweave's table dropped and the fix
+/// staged by the stop's printed line.
+fn a_fix_staged_at_the_replayed_tip(taking_in: TakingIn) -> Vec<Step> {
+    let mut steps = vec![
+        create("w"),
+        Step::commit(&a(), Repo::Lib, "a-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
     steps.extend(adds_a_copies(&a()));
     steps.push(Step::commit(&a(), Repo::Proj, "a-proj"));
     steps.extend([
@@ -21749,43 +21750,219 @@ pub fn an_amend_killed_part_way(
         ),
         Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
         Step::commit(&ww("w"), Repo::Proj, "w-proj"),
-        stops_unparseable(Step::rwv(&ww("w"), &taking_in.args()), taking_in.says()),
+        stops_unparseable(Step::rwv(&ww("w"), &taking_in.args()), taking_in.says())
+            .may_rewind(&[Repo::Lib]),
         Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", W_COPIES, ""),
         Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
+    ]);
+    steps
+}
+
+/// The workweave's `w-proj` holds the staged fix and `a`'s table, with no
+/// `rwv.toml` that does not parse left at its tip or on `a`'s `main`.
+fn the_fix_is_in_the_tip(taking_in: TakingIn) -> Vec<Step> {
+    let mut steps = vec![
+        Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-1"])
+            .claim(Claim::OutputLine("w-proj")),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains(A_COPIES))
+            .claim(Claim::OutputLacks("w.txt")),
+    ];
+    if taking_in.lands() {
+        steps.push(
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputContains(A_COPIES))
+                .claim(Claim::OutputLacks("w.txt")),
+        );
+    }
+    steps
+}
+
+/// [`a_fix_staged_at_the_replayed_tip`], its `--continue` killed at `point`:
+/// at the re-map's record, before the branch moves to the copy of the
+/// replayed tip that holds the fix, or after it moved. Run again, the
+/// `--continue` finishes with the fix in the tip; `rwv abort` puts the
+/// workweave back with no `--abandon-foreign-tip`, keeping the fix, still
+/// uncommitted before the move, as a backup.
+pub fn a_carried_fix_killed_part_way(
+    taking_in: TakingIn,
+    point: &'static str,
+    then: ThenRun,
+) -> Scenario {
+    let mut steps = a_fix_staged_at_the_replayed_tip(taking_in);
+    steps.extend([
         Step::rwv_paused(
             &ww("w"),
             &[taking_in.args()[0], "--continue"],
             point,
-            "amending",
+            "carrying",
         ),
-        Step::kill("amending"),
+        Step::kill("carrying"),
     ]);
-    match after {
-        AfterTheKill::Continue => {
-            steps.extend([
+    match then {
+        ThenRun::Continue => {
+            steps.push(
                 Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
                     .expect(Exit::Succeeds)
                     .may_strand(&[Repo::Proj]),
-                Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-1"])
-                    .claim(Claim::OutputLine("w-proj")),
-                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-                    .claim(Claim::OutputContains(A_COPIES))
-                    .claim(Claim::OutputLacks("w.txt")),
-            ]);
-            if taking_in.lands() {
-                steps.push(
-                    Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
-                        .claim(Claim::OutputLacks("w.txt")),
-                );
-            }
+            );
+            steps.extend(the_fix_is_in_the_tip(taking_in));
         }
-        AfterTheKill::Abort => steps.extend(aborted_from(
-            Step::rwv(&ww("w"), &["abort"]).may_strand(&[Repo::Proj]),
+        ThenRun::Abort => {
+            let abort = Step::rwv(&ww("w"), &["abort"]).may_strand(&[Repo::Proj]);
+            steps.extend(aborted_from(
+                if point == "remap-recorded" {
+                    abort.claim(Claim::OutputContains(
+                        "uncommitted edits are kept as backup",
+                    ))
+                } else {
+                    abort
+                },
+                &ww("w"),
+                &[Repo::Lib],
+            ));
+        }
+    }
+    scenario("a carried fix killed part way", steps)
+}
+
+/// [`a_fix_staged_at_the_replayed_tip`] with an edit to `rwv.lock` left
+/// beside the fix: the copy of the replayed tip rewrites the lock, so the
+/// `--continue` refuses in the same state, saying so, before anything moves.
+/// With the edit undone it finishes; or the printed `rwv abort` puts the
+/// workweave back, keeping both edits as a backup.
+pub fn a_carried_fix_beside_an_edited_lock(taking_in: TakingIn, then: ThenRun) -> Scenario {
+    let mut steps = a_fix_staged_at_the_replayed_tip(taking_in);
+    steps.extend([
+        Step::hand_edit(
             &ww("w"),
-            &[],
+            Repo::Proj,
+            "rwv.lock",
+            "\"repositories\"",
+            "\"repositories\" ",
+        ),
+        Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains("rwv.lock has uncommitted edits"))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+    ]);
+    match then {
+        ThenRun::Continue => {
+            steps.extend([
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.lock",
+                    "\"repositories\" ",
+                    "\"repositories\"",
+                ),
+                Step::rwv_printed(&ww("w"), taking_in.resume())
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj]),
+            ]);
+            steps.extend(the_fix_is_in_the_tip(taking_in));
+        }
+        ThenRun::Abort => steps.extend(aborted_from(
+            Step::rwv_printed(&ww("w"), "rwv abort").claim(Claim::OutputContains(
+                "uncommitted edits are kept as backup",
+            )),
+            &ww("w"),
+            &[Repo::Lib],
         )),
     }
-    scenario("an amend killed part way", steps)
+    scenario("a carried fix beside an edited lock", steps)
+}
+
+/// How the checkout is moved off the replayed tip by hand before the
+/// `--continue`.
+#[derive(Clone, Copy)]
+pub enum OffTheReplayedTip {
+    /// A commit made on top of the replayed tip, the fix left staged.
+    CommitOnTop,
+    /// Another branch made and checked out at the replayed tip.
+    AnotherBranch,
+    /// HEAD detached at the replayed tip.
+    Detached,
+}
+
+/// [`a_fix_staged_at_the_replayed_tip`] with the checkout moved off the
+/// replayed tip by `moved`: the staged fix is carried only into the commit
+/// the replay wrote, on the branch it wrote, so the `--continue` refuses in
+/// the same state, naming what stands in the way, and moves nothing. A
+/// commit made on top is the operator's, which `rwv abort` refuses to
+/// discard: moved off by hand, the `--continue` finishes with the fix in the
+/// replayed tip. Otherwise the printed `rwv abort` puts the workweave back
+/// with no `--abandon-foreign-tip`, keeping the fix as a backup.
+pub fn a_fix_is_not_carried_off_the_replayed_tip(
+    taking_in: TakingIn,
+    moved: OffTheReplayedTip,
+) -> Scenario {
+    let mut steps = a_fix_staged_at_the_replayed_tip(taking_in);
+    let (args, says): (&[&str], &'static str) = match moved {
+        OffTheReplayedTip::CommitOnTop => (
+            &["commit", "-q", "--only", "--allow-empty", "-m", "hand"],
+            "a commit made after the replay",
+        ),
+        OffTheReplayedTip::AnotherBranch => (
+            &["checkout", "-q", "-b", "side"],
+            "the branch the replay wrote",
+        ),
+        OffTheReplayedTip::Detached => (&["checkout", "-q", "--detach"], "HEAD is detached"),
+    };
+    steps.extend([
+        Step::git(&ww("w"), Repo::Proj, args),
+        Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains(says))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(Claim::Lacks {
+                at: a(),
+                repo: Repo::Proj,
+                rev: "main",
+                mark: "w-proj",
+            }),
+    ]);
+    if let OffTheReplayedTip::CommitOnTop = moved {
+        steps.extend([
+            Step::git(&ww("w"), Repo::Proj, &["reset", "-q", "--soft", "HEAD~1"]),
+            Step::rwv_printed(&ww("w"), taking_in.resume())
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj]),
+        ]);
+        steps.extend(the_fix_is_in_the_tip(taking_in));
+        return scenario("a fix is not carried off the replayed tip", steps);
+    }
+    steps.extend([
+        Step::rwv_printed(&ww("w"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_restore(&[Repo::Proj, Repo::Lib])
+            .may_rewind(&[Repo::Lib])
+            .claim(Claim::OutputContains(
+                "uncommitted edits are kept as backup",
+            ))
+            .claim(Claim::Lacks {
+                at: ww("w"),
+                repo: Repo::Proj,
+                rev: "HEAD",
+                mark: "a-proj",
+            })
+            .claim(Claim::Lacks {
+                at: a(),
+                repo: Repo::Proj,
+                rev: "main",
+                mark: "w-proj",
+            }),
+        Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains("w.txt"))
+            .claim(Claim::OutputLacks("a.txt")),
+    ]);
+    scenario("a fix is not carried off the replayed tip", steps)
 }
 
 /// [`unparseable_merged_manifest`] under merge history, with `a` adding a
