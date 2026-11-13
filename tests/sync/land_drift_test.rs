@@ -2733,6 +2733,58 @@ fn pull_update_remote_and_cherry_pick_hold_a_moved_and_edited_project_manifest()
     }
 }
 
+/// The printed merge leaves `rwv.toml` conflicted, the edit here and the
+/// move's both at its end: the next verb names it `unresolved` with its
+/// choice, before reading the manifest.
+#[test]
+fn a_project_manifest_left_conflicted_by_the_merge_is_unresolved() {
+    let f = fixture();
+    f.move_project_manifest();
+    let project = f.ww_project();
+    let manifest = project.join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(&manifest, format!("{text}# seat note\n")).unwrap();
+    let out = common::cli::run(&MERGE, &f.ww);
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsUnresolved);
+    assert!(
+        listing_under(&stderr, "edits unresolved").contains(&"rwv.toml".to_owned()),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("failed to parse"), "{stderr}");
+}
+
+/// A merge of the operator's own stopped on a conflict in `rwv.toml`: the
+/// verb names the operation in progress, not the conflict alone.
+#[test]
+fn a_project_repo_stopped_in_a_merge_is_named_mid_operation() {
+    let f = fixture();
+    let project = f.ww_project();
+    let manifest = project.join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    common::git_in(&project, &["branch", "side"]);
+    std::fs::write(&manifest, format!("{text}# mine\n")).unwrap();
+    common::git_in(&project, &["commit", "-q", "-am", "mine"]);
+    common::git_in(&project, &["checkout", "-q", "side"]);
+    std::fs::write(&manifest, format!("{text}# side\n")).unwrap();
+    common::git_in(&project, &["commit", "-q", "-am", "side"]);
+    common::git_in(&project, &["checkout", "-q", "ww/project"]);
+    let merged = common::git()
+        .args(["merge", "side"])
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(!merged.status.success());
+
+    let out = common::cli::run(&["lock", "--commit"], &f.ww);
+
+    common::cli::refused(&out, State::EditsCommitMidOperation);
+}
+
 /// A project repo a merge of its edits left set back is named `set back`
 /// alone by `rwv status`, `rwv cherry-pick` and `rwv switch`: no judgment
 /// calls it detached or offers committing its manifest beside that line.

@@ -4402,8 +4402,8 @@ pub fn dirty_beside_drift(
 /// The project repo at `dir` given [`dirty_beside_drift`]'s judgment before a
 /// verb reads its manifest or stages anything there: drift its branch's move
 /// left is refreshed, and the verb is refused where that move's content cannot
-/// be told from what the verb would commit. Edits of the operator's own are
-/// the verb's to handle.
+/// be told from what the verb would commit, or where a file is conflicted.
+/// Edits of the operator's own are the verb's to handle.
 pub fn settle_project_drift(
     project: &crate::manifest::ProjectName,
     dir: &Path,
@@ -4417,7 +4417,10 @@ pub fn settle_project_drift(
     let Some(judging) = dirty_beside_drift(vcs.as_ref(), &repo, dir, files).filter(|judging| {
         matches!(
             judging.judged_state(),
-            State::EditsMovedAndEdited | State::EditsDriftLeftInPlace | State::EditsSetBack
+            State::EditsMovedAndEdited
+                | State::EditsDriftLeftInPlace
+                | State::EditsSetBack
+                | State::EditsUnresolved
         )
     }) else {
         return Ok(());
