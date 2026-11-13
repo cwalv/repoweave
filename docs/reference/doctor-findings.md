@@ -92,7 +92,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
 | [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
 | [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
-| [`workweave-drift`](#workweave-drift) / `dangling-link-unfetched` | Error | Report-only by default (`--abandon-lost-pins`) |
+| [`workweave-drift`](#workweave-drift) / `dangling-link-unfetched` | Error | Report-only by default (`--fix --abandon-lost-pins`) |
 | [`workweave-drift`](#workweave-drift) / `extra` | Warning | Report-only |
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
@@ -117,7 +117,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
-| [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--release-unreadable-claims`) |
+| [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--fix --release-unreadable-claims`) |
 | [`claim-unopenable`](#claim-unopenable) | Warning | Report-only |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |

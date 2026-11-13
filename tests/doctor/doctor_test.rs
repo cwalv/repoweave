@@ -2520,6 +2520,27 @@ fn an_unreadable_claim_is_reported_and_released_only_by_its_named_flag() {
     );
 }
 
+/// A consent flag that only widens `--fix` is refused without it, naming it.
+#[test]
+fn a_consent_flag_is_refused_without_fix() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    for flag in ["--release-unreadable-claims", "--abandon-lost-pins"] {
+        let out = rwv_cmd()
+            .args(["doctor", flag])
+            .current_dir(&root)
+            .output()
+            .expect("failed to spawn rwv doctor");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "{flag} alone is refused: {err}");
+        assert!(
+            err.contains("--fix") && err.contains(flag),
+            "the refusal names the missing flag: {err}"
+        );
+    }
+}
+
 /// A landing claim rwv cannot read at all is reported as such, and no flag
 /// releases it.
 #[test]

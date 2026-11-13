@@ -7150,7 +7150,7 @@ impl CheckViolation {
                          `rwv update --project {project}` at the primary weave to clone it \
                          again, then `rwv doctor --fix` there, which relinks this checkout \
                          keeping its files — where its pinned commits went with the deleted \
-                         clone, the finding that follows names `--abandon-lost-pins`",
+                         clone, the finding that follows names `--fix --abandon-lost-pins`",
                     canonical_path.display(),
                     project = workweave.project,
                 )

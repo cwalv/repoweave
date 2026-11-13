@@ -48,9 +48,9 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   copy goes stale the first time an arm moves, and the one an operator reads
   is the last to be corrected. A finding marked **Report-only by default**
   is repaired only when you also pass the flag named in its entry —
-  `--abandon-lost-pins`. Idempotent. Mutually exclusive with `--locked` and
+  `--abandon-lost-pins`, which is refused without `--fix`. Idempotent. Mutually exclusive with `--locked` and
   `--json`.
-- `--abandon-lost-pins` widens `--fix` by exactly one arm: a workweave
+- `--abandon-lost-pins` (refused without `--fix`) widens `--fix` by exactly one arm: a workweave
   checkout whose pinned revision is in no clone is relinked onto the canonical
   clone's HEAD, and the pin is given up. Named for what it destroys.
 
