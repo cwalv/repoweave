@@ -739,27 +739,21 @@ fn mid_op_lock_commit_refuses_with_in_flight_message() {
     assert_in_flight_op_refusal(&stderr, "sync");
 }
 
-/// Plain `rwv lock` (no `--commit`) is NOT gated: writing the working-tree
-/// `rwv.lock` is the auto-relock's own input, so the
-/// mutex is scoped to `--commit`. This guards the scope from over-broadening.
+/// Plain `rwv lock` refuses while an op involves the workspace, as
+/// `rwv lock --commit` does.
 #[test]
-fn mid_op_plain_lock_is_not_gated() {
+fn mid_op_plain_lock_refuses_with_in_flight_message() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _c1) = make_shared_workspaces(tmp.path());
     plant_owner_record(&ww.root, "sync", "relock", &primary.root, &ww.root);
 
-    // Plain `rwv lock` writes the working-tree lock and must NOT hit the op
-    // guard (it succeeds despite the planted op-state).
     let assertion = rwv()
         .args(["lock"])
         .current_dir(&ww.root)
         .assert()
-        .success();
+        .failure();
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
-    assert!(
-        !stderr.contains("in progress (started"),
-        "plain `rwv lock` must not be gated by the op mutex; got: {stderr}"
-    );
+    assert_in_flight_op_refusal(&stderr, "sync");
 }
 
 /// `rwv land` (the retire entry point) refuses while an op involves the

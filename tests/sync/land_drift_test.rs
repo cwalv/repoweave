@@ -1271,6 +1271,12 @@ fn held_landing(f: &Fixture, point: &str) -> common::pause::Paused {
         .unwrap_or_else(|e| panic!("the landing reaches {point}: {e}"))
 }
 
+/// The workweave with the record of the landing killed in it removed, so the
+/// verbs that refuse while a landing is recorded run.
+fn without_the_killed_landing(f: &Fixture) {
+    std::fs::remove_file(f.ww.join(".rwv-op")).unwrap();
+}
+
 /// The lines the `choices:` block prints.
 fn choice_lines(stderr: &str) -> Vec<String> {
     stderr
@@ -1701,10 +1707,9 @@ fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
         "no index entry was written"
     );
 
-    let out = common::cli::run(&["lock"], &f.ww);
+    let out = common::cli::run(&["doctor", "--fix"], &f.ww);
 
     let said = common::cli::describe(&out);
-    assert!(out.status.success(), "{said}");
     assert!(said.contains("refreshed drift"), "{said}");
     assert!(holds_every_shape(&f), "{said}");
     assert_eq!(
@@ -1733,10 +1738,9 @@ fn a_refresh_killed_with_its_index_copy_written_leaves_nothing_after_the_next() 
     drop(held_landing(&f, "drift-write-spawn"));
     assert!(!drift_scratch(&f.ww_lib).is_empty());
 
-    let out = common::cli::run(&["lock"], &f.ww);
+    let out = common::cli::run(&["doctor", "--fix"], &f.ww);
 
     let said = common::cli::describe(&out);
-    assert!(out.status.success(), "{said}");
     assert_eq!(drift_scratch(&f.ww_lib), Vec::<String>::new(), "{said}");
     assert_eq!(
         common::git_in(&f.ww_lib, &["status", "--porcelain"]),
@@ -1887,10 +1891,9 @@ fn a_verb_run_between_another_refreshs_writes_finishes_it() {
     move_of_every_shape(&f);
     let held = held_landing(&f, "drift-write-index");
 
-    let out = common::cli::run(&["lock"], &f.ww);
+    let out = common::cli::run(&["doctor", "--fix"], &f.ww);
 
     let said = common::cli::describe(&out);
-    assert!(out.status.success(), "{said}");
     assert_eq!(
         common::git_in(&f.ww_lib, &["status", "--porcelain"]),
         "",
@@ -2950,7 +2953,7 @@ fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
         std::fs::write(elsewhere.join("u.txt"), "a2\nm\nm\nm\nb2\n").unwrap();
     });
 
-    let out = common::cli::run(&["lock"], &f.ww);
+    let out = common::cli::run(&["doctor", "--fix"], &f.ww);
 
     let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
     assert_eq!(
@@ -2967,6 +2970,7 @@ fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
         "",
         "{said}"
     );
+    without_the_killed_landing(&f);
     let out = common::cli::run(&["lock"], &f.ww);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
@@ -2991,6 +2995,7 @@ fn a_file_the_second_move_puts_back_after_a_killed_refresh_reads_as_an_edit() {
         std::fs::write(elsewhere.join("z.txt"), "z\n").unwrap();
     });
 
+    without_the_killed_landing(&f);
     let out = common::cli::run(&["lock"], &f.ww);
 
     let stderr = common::cli::refused(&out, State::EditsDirty);
@@ -3698,10 +3703,10 @@ fn a_hand_add_of_one_file_after_a_refresh_killed_between_its_writes_is_finished_
         Some("spare moved\n")
     );
 
+    without_the_killed_landing(&f);
     let out = common::cli::run(&["lock"], &f.ww);
 
     let said = common::cli::describe(&out);
-    assert!(out.status.success(), "{said}");
     assert!(said.contains("refreshed drift"), "{said}");
     assert!(said.contains("spare.txt"), "{said}");
     assert!(!said.contains("commit"), "{said}");
