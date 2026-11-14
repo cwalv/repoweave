@@ -1420,6 +1420,11 @@ fn run_shape(id: &str) {
                 .into_iter()
                 .map(move |ending| (point, phase, ending))
         })
+        .filter(|(point, phase, ending)| {
+            std::env::var("KILL_MATRIX_ONLY").map_or(true, |only| {
+                named(shape, *phase, point, *ending).contains(&only)
+            })
+        })
         .map(|(point, phase, ending)| {
             Box::new(move || {
                 let failed =
