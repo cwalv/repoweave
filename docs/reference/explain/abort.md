@@ -35,10 +35,8 @@ what the checkout holds:
 | Stopped in an operation begun at the savepoint, in a repo the op never integrates (or with no savepoint) | `left stopped in a <operation>, which this operation never starts there`; left as it is |
 | In the target workspace of a `land`, in a repo whose branch the landing never fast-forwarded | `left at <tip>, where something other than this landing moved it`; not the op's, so not restored |
 
-A branch a landing moved as a ref is put back to its savepoint only where it
-stands at the tip the landing wrote (anywhere else, abort refuses as for a
-moved target), so what the reset discards is the landing's own and no slot
-is written for it.
+A branch moved as a ref is put back the same way, its tip kept first in its
+slot where nothing else reaches it.
 
 ### The backup slots
 
