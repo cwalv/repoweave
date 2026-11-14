@@ -20704,9 +20704,7 @@ pub fn a_replay_rwv_settled_still_checks_its_tip(verb: TipVerb) -> Scenario {
                 Repo::Proj,
                 State::UnparseableProjectMidOperation,
             ))
-            .claim(Claim::OutputContains(
-                "wrote and staged the merge of both sides",
-            ))
+            .claim(Claim::OutputContains("wrote the merge of both sides"))
             .claim(Claim::OutputContains(
                 "local/remotes/docs recurse-submodules",
             )),
