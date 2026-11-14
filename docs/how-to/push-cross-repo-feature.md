@@ -58,18 +58,20 @@ rwv push: github/chatly/server: pin unpinned (HEAD abc1234def56 is 1 commit beyo
 choices:
   record it: the lock, and `rwv.toml` as it stands
     rwv lock --commit
+  pin it at a commit you choose on its declared branch
+    rwv member pin github/chatly/server abc1234def56789a0b1c2d3e4f5a6b7c8d9e0f12 --commit
   take theirs; yours is kept in a backup
-    rwv update --remote --reset-to-upstream github/chatly/server
+    rwv update --remote --reset-to-upstream github/chatly/server --commit
 
 rwv explain pin
 ```
 
-- **To publish the new local commits:** Record the updated lock and commit it, then push:
+- **To publish the new local commits:** Record the updated lock and commit it, then push. `rwv lock --commit` records every member's tip; `rwv member pin <member> <rev> --commit` pins one member at the commit you name (its `HEAD` for the commits listed):
   ```bash
   rwv lock --commit
   rwv push
   ```
-- **To take the remote's work instead:** `rwv update --remote --reset-to-upstream github/chatly/server` moves the member's branch to its upstream and keeps the unlocked commits in a backup; then `rwv push`.
+- **To take the remote's work instead:** `rwv update --remote --reset-to-upstream github/chatly/server --commit` moves the member's branch to its upstream, keeps the unlocked commits in a backup, and commits the lock with the re-pin; then `rwv push`.
 - **To publish the existing lock:** Move the member's branch back to the locked revision, keeping the unlocked commits on a branch of their own, then push:
   ```bash
   git -C github/chatly/server branch keep-local

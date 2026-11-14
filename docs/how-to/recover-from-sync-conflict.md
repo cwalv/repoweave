@@ -13,6 +13,8 @@ cd ../../..
 rwv sync --continue      # or: rwv land --continue
 ```
 
+`rwv status` names the operation and marks each repository it stopped in (`[mid-rebase]`, for example), with the two commands that end it; see [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md#inspect-what-is-in-flight).
+
 To abandon the sync instead and restore every repository in the involved workspaces to its pre-op savepoint:
 
 ```bash

@@ -3,7 +3,7 @@
 When `rwv sync` or `rwv land` is interrupted by a conflict, crash, or `Ctrl-C`, inspect the in-flight operation with `rwv status`, then either finish it with `--continue` or roll back to the pre-op savepoints with `rwv abort`:
 
 ```bash
-rwv status                # inspect per-repo mid_op state
+rwv status                # the operation, and each repository it stopped in
 rwv sync --continue       # or: rwv land --continue
 rwv abort                 # roll back all involved workspaces to pre-op savepoints
 ```
@@ -11,6 +11,8 @@ rwv abort                 # roll back all involved workspaces to pre-op savepoin
 ## Inspect what is in flight
 
 `rwv status` is read-only and marks any repository that is mid-rebase, mid-merge, mid-cherry-pick, mid-revert or mid-bisect (in `--json` output, `"mid_op": "<op>"`).
+
+While an operation is recorded, `rwv status` opens with a header naming it: the verb, its id, the phase it stopped in, its age and the workspace that holds it, then the two commands that end it (`rwv sync --continue` or `rwv land --continue`, and `rwv abort`). Each repository the operation stopped in carries its mark (`[mid-rebase]`, for example) and is reported as `edits` `mid-operation`, which prints no choice of its own: the header's commands are the way on. The pin and alignment states the stop causes are not reported as states of their own; they are judged again once the operation ends. `rwv doctor` reports the recorded operation as `stale-op-state`, naming the same two commands, and never repairs it: another terminal may be resolving the conflict.
 
 For `rwv land`, the initiating workweave holds the owner record and the target workspace holds a lease pointing back to it. Run `--continue` from the initiating workspace. `rwv abort` can be run from either workspace and rolls back both with the same verdict per repository; its lines for the other workspace's repositories carry a `[target]` prefix (run from the initiating workweave) or a `[source]` prefix (run from the target).
 

@@ -53,8 +53,10 @@ Add `--json` for a machine-readable envelope. To read a workweave from outside i
   clean; under `--retire`, every checkout of the workweave, untracked files
   included.
 - In the target's workspace, a receiving branch holding commits its lock does
-  not record, and no other lock or remote holds, refuses (`pin` `unpinned`):
-  run `rwv lock --commit` there first.
+  not record, and no other lock or remote holds, refuses (`pin` `unpinned`).
+  The refusal names the target's workspace and prints its choices addressed
+  to it (`rwv -C <target workspace> lock --commit`), which run from where
+  they are printed.
 - The landing changes the target's member entries only where named: an
   entry the feature changed refuses (`target` `member changes`) until
   `rwv land --allow-member-change <repo>` names it.
@@ -102,7 +104,7 @@ rwv branch set-history linear
 | `merge` | A merge commit whose first parent is the target's tip |
 | `ff-only` | Refuse unless the target's tip is already in the feature; `rwv sync` rebases it there first |
 
-A target that records nothing refuses a landing that needs more than a fast-forward (`history` `unset`); `rwv land --history linear` lands once without recording a setting.
+A target that records nothing refuses a landing that needs more than a fast-forward (`history` `unset`); `rwv land --history linear` lands once without recording a setting. The refusal prints the setter addressed to the target's workspace (`rwv -C <target workspace> branch set-history <setting>`), so it runs from the workweave it is printed in.
 
 ## If `land` hits a conflict
 
