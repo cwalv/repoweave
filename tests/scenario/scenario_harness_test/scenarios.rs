@@ -12781,6 +12781,19 @@ pub fn cherry_pick_conflict() -> Scenario {
     scenario("cherry-pick conflict continued", steps)
 }
 
+/// A hand commit of the copy at a cherry-pick stop: the continue takes it as
+/// the copy the stop asked for and completes.
+pub fn cherry_pick_continue_after_a_hand_commit() -> Scenario {
+    let mut steps = conflicting_port();
+    steps.extend([
+        Step::git(&ww("p"), Repo::Lib, &["checkout", "--theirs", "README"]),
+        Step::git(&ww("p"), Repo::Lib, &["add", "README"]),
+        Step::git(&ww("p"), Repo::Lib, &["commit", "--no-edit"]),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"]).expect(Exit::Succeeds),
+    ]);
+    scenario("cherry-pick continued after a hand commit", steps)
+}
+
 /// `cherry-pick-conflict`, abandoned: `rwv abort` puts every repo back,
 /// the copy that went through included.
 pub fn cherry_pick_conflict_aborts() -> Scenario {

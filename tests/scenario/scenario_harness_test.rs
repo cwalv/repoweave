@@ -1711,6 +1711,7 @@ every_scenario!(
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
     a_target_judged_alignment_choice_runs_in_the_target,
+    cherry_pick_continue_after_a_hand_commit,
     backup_list_reads_the_members_of_the_commit_when_the_working_manifest_does_not_parse,
     a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does,
     a_withheld_publish_prints_a_push_that_runs,
@@ -5525,6 +5526,11 @@ fn backup_list_survives_an_unparseable_working_manifest() {
         scenarios::backup_list_reads_the_members_of_the_commit_when_the_working_manifest_does_not_parse(),
     )
     .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_continues_after_a_hand_commit() {
+    runner::run(scenarios::cherry_pick_continue_after_a_hand_commit()).assert_fully_decided_green();
 }
 
 #[test]
