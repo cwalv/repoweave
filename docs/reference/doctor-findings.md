@@ -97,7 +97,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
 | [`history-disagreement`](#history-disagreement) | Warning | Report-only |
 | [`stale-worktree-registration`](#stale-worktree-registration) / `directory-gone`, `directory-moved` | Warning | Auto-fixable |
-| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands` | Warning | Report-only |
+| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands`, `workweave-directory-gone` | Warning | Report-only |
 | [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
 | [`clone-topology`](#clone-topology) / `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree` | Error | Report-only |
 | [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
@@ -785,7 +785,10 @@ marker was lost or edited".
 **What to do:** `rwv doctor --fix`. Where the directory is still a worktree of
 the project clone, it writes the marker again from the entry and the worktree
 relation (`primary`, `project` and the `parent` the entry keeps). Where nothing
-the entry names is left, it removes the entry. A verb that does not destroy
+the entry names is left, it removes the entry. A missing directory the project
+clone still registers a worktree inside is not reported here: its registrations
+are [`workweave-directory-gone`](#workweave-directory-gone), and the entry stays
+with them. A verb that does not destroy
 the workweave, run from inside it, restores the marker the same way and says
 so; `rwv workweave delete` and `rwv land --retire` refuse instead, naming
 `rwv doctor --fix`.
@@ -1112,8 +1115,22 @@ runs in. The finding names both paths.
 the VCS's own repair for a moved checkout, so what the registration holds of it
 (the commit it is on, the changes marked for its next commit) moves with it.
 The workweave is then listed under the name its marker records. A workweave
-moved anywhere else is out of sight of this scan, so its registrations read as
-`directory-gone`: run `rwv doctor --fix` from inside the moved workweave first.
+moved anywhere else is out of sight of this scan, and its registrations read as
+`workweave-directory-gone`.
+
+#### `workweave-directory-gone`
+
+**Warning. Report-only.** Nothing stands at the registered path, which lies in
+the directory a workweave of this weave is recorded at, and that directory is
+gone too: the workweave was moved where no scan looks, or removed by hand. The
+registration holds what the VCS keeps of the checkout (the commit it is on, the
+changes marked for its next commit), so `--fix` keeps it, and keeps the
+workweave's entry in the index with it. The finding names the workweave.
+
+**What to do:** if the workweave moved, run `rwv doctor --fix` inside it, which
+records each checkout where it stands, as for `directory-moved`. If it is gone,
+`rwv workweave delete <name> --project <project>` drops its registrations and its
+entry.
 
 ---
 

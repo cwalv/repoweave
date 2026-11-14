@@ -418,8 +418,8 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// For each `(repo_abs, worktree_path)` pair, attempts `git worktree remove
 /// --force <worktree_path>` first (cleans up both the on-disk directory and
 /// the `.git/worktrees/` registration). If `remove` fails because the
-/// on-disk directory is already gone, falls back to `git worktree prune` to
-/// clear the stale administrative entry.
+/// on-disk directory is already gone, falls back to dropping that path's
+/// stale administrative entry.
 ///
 /// This is the canonical cleanup path used by:
 /// - `create_workweave` rollback — called on any mid-create failure.
@@ -478,7 +478,7 @@ pub fn prune_orphan_worktrees_for(vcs: &dyn Vcs, pairs: &[(PathBuf, PathBuf)]) {
             }
         }
         // Always prune stale entries regardless of remove outcome.
-        if let Err(e) = vcs.worktree_prune(repo_abs) {
+        if let Err(e) = prune_registrations_under(vcs, repo_abs, worktree_path) {
             eprintln!(
                 "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                 repo_abs.display()
@@ -556,8 +556,8 @@ struct RefAttempt {
 ///   registration before returning a non-zero exit — these stale registrations
 ///   must be pruned even though the worktree was never fully recorded as
 ///   successful. After `remove_dir_all(&workweave_dir)` removes the worktree
-///   path, the registration becomes prunable; running `git worktree prune` in
-///   each attempted repo clears it.
+///   path, the registration becomes prunable; dropping each registration
+///   inside the workweave directory in each attempted repo clears it.
 ///
 /// Call `defuse()` to commit the create — the guard then does nothing on drop.
 /// If the guard is dropped without being defused (i.e. due to any failure path,
@@ -589,9 +589,10 @@ struct CreateRollbackGuard {
     /// branch is no longer checked out when the DESTROY runs).
     ref_attempts: Vec<RefAttempt>,
     /// Repos where a worktree creation was attempted (success or failure).
-    /// On rollback, `git worktree prune` is run in each of these repos after
-    /// `remove_dir_all(&workweave_dir)` so that stale `.git/worktrees/<name>`
-    /// entries left by a partial hook-failed add are cleared.
+    /// On rollback, each registration inside `workweave_dir` is dropped in
+    /// each of these repos after `remove_dir_all(&workweave_dir)`, so stale
+    /// `.git/worktrees/<name>` entries left by a partial hook-failed add are
+    /// cleared.
     prune_on_rollback: Vec<PathBuf>,
     /// Set to `true` when the create completes successfully OR when
     /// `rollback_and_collect_failures` has already been called. Prevents
@@ -617,9 +618,10 @@ impl CreateRollbackGuard {
     }
 
     /// Record a repo where a worktree creation was attempted, regardless of
-    /// outcome. On rollback, `git worktree prune` will run in this repo after
-    /// the workweave directory is removed, clearing any stale `.git/worktrees/`
-    /// entry that a hook-failed partial `git worktree add` may have left behind.
+    /// outcome. On rollback, each registration inside the workweave directory
+    /// is dropped in this repo once that directory is removed, clearing any
+    /// stale `.git/worktrees/` entry a hook-failed partial `git worktree add`
+    /// may have left behind.
     ///
     /// Call this BEFORE the birth call so that even a failed
     /// `create_worktree_on` leaves the repo in the prune list.
@@ -675,7 +677,7 @@ impl CreateRollbackGuard {
                 }
             }
             // Always prune stale admin entries regardless of remove outcome.
-            if let Err(e) = self.vcs.worktree_prune(repo_abs) {
+            if let Err(e) = prune_registrations_under(self.vcs.as_ref(), repo_abs, worktree_path) {
                 eprintln!(
                     "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                     repo_abs.display()
@@ -719,7 +721,9 @@ impl CreateRollbackGuard {
         // now-gone directory). Repos already handled in step 1 are included here
         // too — prune is idempotent.
         for repo_abs in &self.prune_on_rollback {
-            if let Err(e) = self.vcs.worktree_prune(repo_abs) {
+            if let Err(e) =
+                prune_registrations_under(self.vcs.as_ref(), repo_abs, &self.workweave_dir)
+            {
                 eprintln!(
                     "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                     repo_abs.display()
@@ -841,7 +845,7 @@ impl Drop for CreateRollbackGuard {
         //    to force-delete a branch registered in any worktree entry, even
         //    when the worktree directory no longer exists on disk.
         for repo_abs in &self.prune_on_rollback {
-            if let Err(e) = vcs.worktree_prune(repo_abs) {
+            if let Err(e) = prune_registrations_under(vcs, repo_abs, &self.workweave_dir) {
                 eprintln!(
                     "rwv workweave rollback: warning: git worktree prune failed in {}: {e:#}",
                     repo_abs.display()
@@ -1349,8 +1353,7 @@ pub(crate) fn replace_standalone_member(
 
     // A worktree once registered at the slot is stale now that the slot is
     // empty, and git refuses to add one where a registration stands.
-    let born = vcs
-        .worktree_prune(&canonical)
+    let born = prune_registrations_under(vcs, &canonical, &slot)
         .map_err(anyhow::Error::from)
         .and_then(|()| {
             release_branch_the_clone_reaches(vcs, &canonical, project, workweave, &at)?;
@@ -3183,7 +3186,7 @@ fn merge_baselines(
 }
 
 /// Resolve the canonical store path that owns a workweave checkout, for the
-/// `worktree remove` / `worktree prune` calls below — and for any caller that
+/// worktree removals and registration drops below — and for any caller that
 /// needs to tell a linked workspace apart from a store that merely sits where
 /// one was expected (sync's prune of a dropped repo asks exactly that before
 /// it deletes a directory).
@@ -3191,7 +3194,7 @@ fn merge_baselines(
 /// Under the clone-topology invariants (see
 /// `docs/explanation/joints/clone-topology.md`) every workweave checkout is a
 /// linked workspace whose `.git/` resolves into a canonical store somewhere
-/// in the weave. `git worktree remove` and `git worktree prune` only know
+/// in the weave. `git worktree remove` and a registration drop only know
 /// about the worktree they're invoked from when called in that canonical
 /// store — running them in some other "looks like a clone of the same repo"
 /// directory either silently no-ops (the registration stays stale) or fails
@@ -3607,8 +3610,28 @@ fn remove_checkout(vcs: &dyn Vcs, store: &Path, path: &Path) -> Result<(), VcsEr
     } else {
         Ok(())
     };
-    let _ = vcs.worktree_prune(store);
+    let _ = prune_registrations_under(vcs, store, path);
     removed
+}
+
+/// Drop each of `repo`'s registrations of a worktree at or inside `dir`
+/// whose directory is gone. A registration elsewhere is another checkout's,
+/// which may only have moved, so it stays.
+pub(crate) fn prune_registrations_under(
+    vcs: &dyn Vcs,
+    repo: &Path,
+    dir: &Path,
+) -> Result<(), VcsError> {
+    let dir = CanonicalPath::of(dir);
+    for registered in vcs.list_stale_worktree_registrations(repo)? {
+        if CanonicalPath::of(&registered)
+            .as_path()
+            .starts_with(dir.as_path())
+        {
+            vcs.prune_stale_worktree_registration(repo, &registered)?;
+        }
+    }
+    Ok(())
 }
 
 /// What a workweave delete discarded, by kind. Each is kept as a backup first.
@@ -3714,7 +3737,10 @@ pub fn delete_workweave(
     discard_unpublished: Option<DiscardUnpublishedConsent>,
     remote_deletes: &crate::deletion::RemoteDeletes,
 ) -> anyhow::Result<WorkweaveDeletion> {
-    let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
+    let workweave_dir = match recorded_where_nothing_stands(ws_root, project, name)? {
+        Some(gone) => gone,
+        None => ensure_registered_workweave(ws_root, project, name)?,
+    };
     let claimants = crate::check::workweave_claimants(ws_root, project, name);
     if claimants.len() > 1 {
         crate::refuse!(
@@ -3759,6 +3785,19 @@ pub fn delete_workweave(
         remote_deletes,
         Deleter::Operator,
     )
+}
+
+/// The directory `name` is recorded at, where nothing stands there: what is
+/// left of the workweave is its registrations and its entry, which the
+/// delete drops.
+fn recorded_where_nothing_stands(
+    ws_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+) -> anyhow::Result<Option<PathBuf>> {
+    Ok(workweave_index::lookup_raw(ws_root, project, name)?
+        .filter(|recorded| recorded.as_path().symlink_metadata().is_err())
+        .map(|recorded| recorded.into_path_buf()))
 }
 
 /// Keep, as backups, the work in `workweave_dir`'s checkouts that the discard
@@ -4340,7 +4379,7 @@ fn delete_workweave_inner_at(
         &project_dir_fallback,
     )
     .into_path_buf();
-    if project_worktree.exists() && crate::git::is_linked_worktree(&project_worktree) {
+    if !project_worktree.exists() || crate::git::is_linked_worktree(&project_worktree) {
         if let Err(e) = remove_checkout(project_vcs.as_ref(), &project_store, &project_worktree) {
             let msg = format!("{}: {e:#}", project_rel_path(project));
             eprintln!("rwv workweave delete: error: {msg}");

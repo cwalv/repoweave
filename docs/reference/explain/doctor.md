@@ -1232,6 +1232,13 @@ Schema:
           "enum": [
             "directory-moved"
           ]
+        },
+        {
+          "description": "Nothing, at a path inside the directory a workweave of this weave is recorded at, which is gone too. Report-only: the workweave may have moved where no scan finds it, and the registration holds the checkout's commit and the changes marked for its next commit, so `--fix` keeps it until the workweave is recorded where it stands (`rwv doctor --fix` inside it) or deleted (`rwv workweave delete`).",
+          "type": "string",
+          "enum": [
+            "workweave-directory-gone"
+          ]
         }
       ]
     },
@@ -2238,6 +2245,13 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "recorded_in": {
+              "description": "The workweave whose recorded directory holds the registered path, `<project>--<name>`, for `workweave-directory-gone`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "stands_at": {
               "description": "Where the checkout now stands, for `directory-moved`.",

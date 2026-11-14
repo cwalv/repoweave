@@ -3,7 +3,7 @@
 //! Exercises the three check kinds:
 //!
 //!   1. `stale-worktree-registration` — registered worktree whose path is
-//!      gone. `--fix` runs `git worktree prune` (information-preserving:
+//!      gone. `--fix` drops the registration (information-preserving:
 //!      the only state dropped is a pointer to an already-missing dir).
 //!   2. `stale-op-state` — a `.rwv-op` file is present at a workspace
 //!      root. **Report-only forever** — never auto-fixed.
@@ -164,7 +164,7 @@ fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
 
 /// Scenario: a manifest repo has a worktree registration whose on-disk
 /// directory has been hand-deleted. `rwv doctor` must report
-/// stale-worktree-registration; `--fix` must call `git worktree prune`
+/// stale-worktree-registration; `--fix` must drop the registration
 /// and a re-run must be clean (idempotent).
 #[test]
 fn stale_worktree_registration_reported_and_fixable() {
@@ -1445,5 +1445,156 @@ fn a_new_non_reclamation_finding_stays_itemized_beside_the_count_lines() {
         stdout.contains("disagrees with its records"),
         "the misnamed-dir finding must stay itemized — full message, no \
          filter; got:\n{stdout}"
+    );
+}
+
+/// A primary with one member, and a workweave `far` created at a directory
+/// of its own, with a change marked for its member checkout's next commit,
+/// then moved outside every container to `moved`. Returns the primary, the
+/// moved directory and the tempdir.
+fn a_dir_workweave_moved_away() -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    let origin = common::under(tmp.path(), "origins/acme/x.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    for args in [
+        vec!["init", "demo"],
+        vec!["member", "add", &common::file_url(&origin)],
+    ] {
+        rwv_cmd().args(&args).current_dir(&ws).assert().success();
+    }
+    let far = tmp.path().join("elsewhere").join("far");
+    rwv_cmd()
+        .args([
+            "workweave",
+            "create",
+            "far",
+            "--dir",
+            &far.to_string_lossy(),
+        ])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let member = common::under(&far, "local/acme/x");
+    std::fs::write(member.join("staged.txt"), "staged\n").unwrap();
+    common::git_in(&member, &["add", "staged.txt"]);
+    let moved = tmp.path().join("moved").join("far2");
+    std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+    std::fs::rename(&far, &moved).unwrap();
+    (tmp, ws, moved)
+}
+
+fn doctor_report(dir: &Path, args: &[&str]) -> (Vec<serde_json::Value>, String) {
+    let json = rwv_cmd()
+        .args(["doctor", "--all", "--json"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let text = rwv_cmd().args(args).current_dir(dir).output().unwrap();
+    (
+        report["violations"].as_array().cloned().unwrap_or_default(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&text.stdout),
+            String::from_utf8_lossy(&text.stderr)
+        ),
+    )
+}
+
+/// The registrations of a workweave moved where no scan looks are kept by
+/// the primary's `doctor --fix`, so what they hold of each checkout survives,
+/// and `doctor --fix` run inside it then records it where it stands.
+#[test]
+fn a_workweave_moved_where_no_scan_looks_keeps_its_registrations_until_recorded() {
+    let (_tmp, ws, moved) = a_dir_workweave_moved_away();
+
+    let (violations, fixed) = doctor_report(&ws, &["doctor", "--all", "--fix"]);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v["kind"] == "stale-worktree-registration"
+                && v["sub_kind"] == "workweave-directory-gone"
+                && v["recorded_in"] == "demo--far"),
+        "{violations:?}"
+    );
+    assert!(
+        fixed.contains("run `rwv doctor --fix` inside it")
+            && !fixed.contains("pruned")
+            && !fixed.contains("stale-registry-entry"),
+        "{fixed}"
+    );
+    let member = common::under(&moved, "local/acme/x");
+    assert_eq!(
+        common::git_in(&member, &["status", "--porcelain"]).trim(),
+        "A  staged.txt"
+    );
+
+    rwv_cmd()
+        .args(["doctor", "--fix"])
+        .current_dir(&moved)
+        .assert()
+        .success();
+    assert_eq!(
+        common::git_in(&member, &["status", "--porcelain"]).trim(),
+        "A  staged.txt"
+    );
+    let (violations, _) = doctor_report(&ws, &["doctor", "--all"]);
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v["kind"] == "stale-worktree-registration"),
+        "{violations:?}"
+    );
+}
+
+/// The same workweave gone for good: the `workweave delete` the finding
+/// names, run as printed, drops what is left of it.
+#[test]
+fn a_workweave_whose_directory_is_gone_is_deleted_as_the_finding_names() {
+    let (_tmp, ws, moved) = a_dir_workweave_moved_away();
+    std::fs::remove_dir_all(&moved).unwrap();
+
+    let (_, report) = doctor_report(&ws, &["doctor", "--all"]);
+    let delete = report
+        .split('`')
+        .find(|quoted| quoted.starts_with("rwv workweave delete "))
+        .unwrap_or_else(|| panic!("the finding names the delete: {report}"));
+    let args: Vec<&str> = delete.split_whitespace().skip(1).collect();
+    rwv_cmd().args(&args).current_dir(&ws).assert().success();
+
+    let (violations, _) = doctor_report(&ws, &["doctor", "--all"]);
+    assert!(
+        !violations
+            .iter()
+            .any(|v| v["kind"] == "stale-worktree-registration"
+                || v["kind"] == "workweave-tree-integrity"),
+        "{violations:?}"
+    );
+}
+
+/// Deleting another workweave drops only the registrations inside the
+/// directory it removes: those of a workweave moved where no scan looks stay,
+/// and what they hold of its checkouts with them.
+#[test]
+fn deleting_another_workweave_keeps_the_registrations_of_one_moved_away() {
+    let (_tmp, ws, moved) = a_dir_workweave_moved_away();
+    rwv_cmd()
+        .args(["workweave", "create", "near"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    rwv_cmd()
+        .args(["workweave", "delete", "near"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let member = common::under(&moved, "local/acme/x");
+    assert_eq!(
+        common::git_in(&member, &["status", "--porcelain"]).trim(),
+        "A  staged.txt"
     );
 }

@@ -253,6 +253,9 @@ pub fn case_token(v: &CheckViolation) -> String {
             RegistrationDirectoryKind::DirectoryMoved => {
                 "stale-worktree-registration/directory-moved".into()
             }
+            RegistrationDirectoryKind::WorkweaveDirectoryGone => {
+                "stale-worktree-registration/workweave-directory-gone".into()
+            }
         },
         CheckViolation::StaleOpState { .. } => "stale-op-state".into(),
         CheckViolation::UnreadableOpRecord { .. } => "unreadable-op-record".into(),
@@ -745,13 +748,23 @@ pub fn corpus() -> Vec<CheckViolation> {
             workweave: Some(workweave()),
             repo: repo(),
             worktree_path: path("/gone"),
+            recorded_in: None,
             stands_at: None,
             sub_kind: RegistrationDirectoryKind::DirectoryGone,
+        },
+        CheckViolation::StaleWorktreeRegistration {
+            workweave: None,
+            repo: repo(),
+            worktree_path: path("/far/repo"),
+            recorded_in: Some(workweave()),
+            stands_at: None,
+            sub_kind: RegistrationDirectoryKind::WorkweaveDirectoryGone,
         },
         CheckViolation::StaleWorktreeRegistration {
             workweave: Some(workweave()),
             repo: repo(),
             worktree_path: path("/unlinked"),
+            recorded_in: None,
             stands_at: None,
             sub_kind: RegistrationDirectoryKind::DirectoryStands,
         },
@@ -759,6 +772,7 @@ pub fn corpus() -> Vec<CheckViolation> {
             workweave: Some(workweave()),
             repo: repo(),
             worktree_path: path("/was"),
+            recorded_in: None,
             stands_at: Some(path("/is")),
             sub_kind: RegistrationDirectoryKind::DirectoryMoved,
         },

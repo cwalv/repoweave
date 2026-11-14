@@ -3271,11 +3271,6 @@ impl Vcs for GitVcs {
         Ok(Some(RawRefName::new(chosen)))
     }
 
-    fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError> {
-        Self::run(["worktree", "prune"], repo)?;
-        Ok(())
-    }
-
     fn conflict_resolution_hint(&self, op: ConflictOp) -> String {
         git_conflict_resolution_hint(op)
     }

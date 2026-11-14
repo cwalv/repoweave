@@ -246,6 +246,19 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   alone. A remote that does not answer refuses `member remove --delete`
   (`remotes-unconfirmed`), which offers `rwv member remove <repo>` without
   `--delete`; a landing or sync skips that prune and says so.
+- The primary's `rwv doctor --fix` keeps the registrations of a workweave
+  whose recorded directory is gone, and its index entry
+  (`stale-worktree-registration` `workweave-directory-gone`): it names `rwv
+  doctor --fix` run inside the moved workweave and `rwv workweave delete
+  <name>`, which now deletes a workweave whose directory is gone. A workweave
+  delete or a landing's or create's clean-up drops only registrations inside
+  the directories it removed.
+- A record whose branch exists nowhere, the kind a kill at its last write
+  leaves, counts as no dependent for any verb, as it already did not for the
+  deletion rule's sweep that drops it.
+- `rwv cherry-pick --continue` over a copy whose branch moved outside the
+  checkout refuses as moved, naming `rwv abort` alone, also where the checkout
+  records nothing of where it stood.
 - `rwv member remove --delete --discard-unpublished` removes the clone with
   what no remote is confirmed to hold, a remote that does not answer counting
   as holding what it last gave, and lists what went first. Both refusals, and

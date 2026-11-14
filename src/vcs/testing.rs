@@ -477,10 +477,6 @@ impl Vcs for FakeVcs {
         unsupported("tag_at_head")
     }
 
-    fn worktree_prune(&self, _repo: &Path) -> Result<(), VcsError> {
-        unsupported("worktree_prune")
-    }
-
     fn conflict_resolution_hint(&self, _op: ConflictOp) -> String {
         unsupported("conflict_resolution_hint")
     }

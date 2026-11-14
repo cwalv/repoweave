@@ -293,7 +293,7 @@ const ALLOWLIST: &[Allowed] = &[
         callers: &[
             ("remove_worktree", 4),
             ("prune_orphan_worktrees_for", 2),
-            ("prune_stale_worktree_registration", 3),
+            ("prune_stale_worktree_registration", 4),
         ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
@@ -325,7 +325,7 @@ const ALLOWLIST: &[Allowed] = &[
             only on the path where workweave_dir does NOT exist, so the \
             `worktree_path.exists()` guard inside \
             prune_orphan_worktrees_for is false for every pair and only \
-            `worktree prune` (admin entries for absent dirs) actually runs. \
+            the drop of that pair's own registration of an absent dir runs. \
             (5) rwv abort's removal of a checkout of the target's workspace \
             the landing made (sync::run_step, AbortStep::RemoveMade): only a \
             checkout the record journals as made by this landing; planned \
@@ -344,8 +344,14 @@ const ALLOWLIST: &[Allowed] = &[
             fix_state_hygiene for a stale-worktree-registration finding; \
             workweave::materialize_member, which drops the \
             registration of the very slot it is about to give a worktree, \
-            only when nothing stands there; and workweave::create_workweave, \
-            which does the same for the project checkout's destination.",
+            only when nothing stands there; workweave::create_workweave, \
+            which does the same for the project checkout's destination; and \
+            workweave::prune_registrations_under, which drops only \
+            registrations at or inside a directory its caller removed or never \
+            made, each read as stale first: the clean-ups of a workweave delete, \
+            a create's rollback, an abort's removal of a checkout it made, and a \
+            relink at an emptied slot. A registration elsewhere is another \
+            checkout's, which may only have moved.",
     },
     Allowed {
         file: "git.rs",

@@ -11481,7 +11481,11 @@ fn run_step(
                             at.vcs.remove_worktree(&store, &at.dir)
                         })
                         .map(|()| {
-                            let _ = at.vcs.worktree_prune(&store);
+                            let _ = crate::workweave::prune_registrations_under(
+                                at.vcs.as_ref(),
+                                &store,
+                                &at.dir,
+                            );
                         }),
                     Ok(Some(_)) => {
                         eprintln!(

@@ -273,6 +273,50 @@ fn list_returns_empty_when_no_registry() {
 // doctor: prune stale, adopt orphan
 // ---------------------------------------------------------------------------
 
+/// A workweave whose directory is removed by hand leaves its registrations
+/// in the project clone: doctor keeps them and the entry, naming the delete,
+/// which drops both.
+#[test]
+fn a_workweave_removed_by_hand_keeps_its_entry_until_it_is_deleted() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+
+    let weaveroot = tmp.path().join(".workweaves");
+    std::fs::create_dir_all(&weaveroot).unwrap();
+
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "feat"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+
+    let ww_dir = weaveroot.join("web-app--feat");
+    std::fs::remove_dir_all(&ww_dir).unwrap();
+
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .assert()
+        .stdout(predicate::str::contains(
+            "`rwv workweave delete feat --project web-app`",
+        ))
+        .stdout(predicate::str::contains("pruned stale registry entry").not());
+    assert!(read_index(&ws, "web-app")["workweaves"]
+        .get("feat")
+        .is_some());
+
+    rwv()
+        .args(["workweave", "delete", "feat", "--project", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(read_index(&ws, "web-app")["workweaves"]
+        .get("feat")
+        .is_none());
+}
+
+/// An entry whose directory is gone and that the project clone registers
+/// nothing inside of is pruned by doctor --fix.
 #[test]
 fn doctor_fix_prunes_stale_registry_entry() {
     let tmp = common::tempdir().unwrap();
@@ -287,20 +331,16 @@ fn doctor_fix_prunes_stale_registry_entry() {
         .assert()
         .success();
 
-    // Delete the workweave directory out-of-band, leaving the registry
-    // pointing at a missing path. This is the "stale entry" scenario.
     let ww_dir = weaveroot.join("web-app--feat");
     std::fs::remove_dir_all(&ww_dir).unwrap();
+    common::git_in(ws.join("projects/web-app"), &["worktree", "prune"]);
 
-    // Doctor without --fix must surface the stale entry (as the per-class
-    // count line; the recorded path is per-item detail in `--json`).
     rwv()
         .args(["doctor"])
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains("stale-registry-entry"));
 
-    // Doctor with --fix must prune it.
     rwv()
         .args(["doctor", "--fix"])
         .current_dir(&ws)

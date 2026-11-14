@@ -396,6 +396,9 @@ pub enum CheckViolation {
         /// Absolute path of the registered worktree, as recorded in the
         /// VCS's worktree list.
         worktree_path: PathBuf,
+        /// The workweave whose recorded directory holds the registered path,
+        /// for [`RegistrationDirectoryKind::WorkweaveDirectoryGone`].
+        recorded_in: Option<WorkweaveId>,
         /// Where the checkout the registration records now stands, for
         /// [`RegistrationDirectoryKind::DirectoryMoved`].
         stands_at: Option<PathBuf>,
@@ -727,7 +730,8 @@ impl CheckViolation {
             CheckViolation::StaleWorktreeRegistration { sub_kind, .. } => match sub_kind {
                 RegistrationDirectoryKind::DirectoryGone
                 | RegistrationDirectoryKind::DirectoryMoved => Auto,
-                RegistrationDirectoryKind::DirectoryStands => ReportOnly,
+                RegistrationDirectoryKind::DirectoryStands
+                | RegistrationDirectoryKind::WorkweaveDirectoryGone => ReportOnly,
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Missing | DriftKind::Symlink | DriftKind::DanglingLink => Auto,
@@ -1444,6 +1448,13 @@ pub enum RegistrationDirectoryKind {
     /// `--fix` records the checkout where it stands, keeping what the
     /// registration holds of it.
     DirectoryMoved,
+    /// Nothing, at a path inside the directory a workweave of this weave is
+    /// recorded at, which is gone too. Report-only: the workweave may have
+    /// moved where no scan finds it, and the registration holds the
+    /// checkout's commit and the changes marked for its next commit, so
+    /// `--fix` keeps it until the workweave is recorded where it stands
+    /// (`rwv doctor --fix` inside it) or deleted (`rwv workweave delete`).
+    WorkweaveDirectoryGone,
 }
 
 /// How stale recorded content should be treated.
@@ -2208,6 +2219,10 @@ pub enum ViolationOutput {
         /// Where the checkout now stands, for `directory-moved`.
         #[serde(skip_serializing_if = "Option::is_none")]
         stands_at: Option<WirePath>,
+        /// The workweave whose recorded directory holds the registered path,
+        /// `<project>--<name>`, for `workweave-directory-gone`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        recorded_in: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
         sub_kind: RegistrationDirectoryKind,
     },
@@ -2686,6 +2701,7 @@ impl ViolationOutput {
                 workweave,
                 repo,
                 worktree_path,
+                recorded_in,
                 stands_at,
                 sub_kind,
             } => Self::StaleWorktreeRegistration {
@@ -2694,6 +2710,7 @@ impl ViolationOutput {
                 workweave: workweave.clone(),
                 worktree_path: WirePath::of(&worktree_path),
                 stands_at: stands_at.as_deref().map(WirePath::of),
+                recorded_in,
                 sub_kind,
             },
             CheckViolation::StaleOpState {
@@ -3435,6 +3452,8 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
                         });
                     }
                 }
+                crate::workweave::RegistryEntryValidation::MissingDirectory
+                    if registers_under(&primary, &project, path.as_path()) => {}
                 other => {
                     let reason = match other {
                         crate::workweave::RegistryEntryValidation::MissingDirectory => {
@@ -5893,6 +5912,7 @@ pub fn scan_state_hygiene(
     repos: &[StateHygieneScanTarget],
     op_state_targets: &[StateHygieneOpStateTarget],
     moved: &[MovedCheckout],
+    gone: &[GoneWorkweave],
 ) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
@@ -5974,10 +5994,20 @@ pub fn scan_state_hygiene(
                     .iter()
                     .find(|checkout| CanonicalPath::of(&checkout.recorded) == registered)
                     .map(|checkout| checkout.stands.clone());
+                let recorded_in = gone
+                    .iter()
+                    .find(|workweave| {
+                        registered
+                            .as_path()
+                            .starts_with(CanonicalPath::of(&workweave.recorded).as_path())
+                    })
+                    .map(|workweave| workweave.id.clone());
                 let sub_kind = if worktree_path.symlink_metadata().is_ok() {
                     RegistrationDirectoryKind::DirectoryStands
                 } else if stands_at.is_some() {
                     RegistrationDirectoryKind::DirectoryMoved
+                } else if recorded_in.is_some() {
+                    RegistrationDirectoryKind::WorkweaveDirectoryGone
                 } else {
                     RegistrationDirectoryKind::DirectoryGone
                 };
@@ -5985,6 +6015,7 @@ pub fn scan_state_hygiene(
                     workweave: repo.workweave.clone(),
                     repo: repo.repo.clone(),
                     worktree_path,
+                    recorded_in,
                     stands_at,
                     sub_kind,
                 });
@@ -6069,6 +6100,52 @@ pub fn scan_state_hygiene(
 pub struct MovedCheckout {
     pub recorded: PathBuf,
     pub stands: PathBuf,
+}
+
+/// Whether the project repo of `project` in the primary holds a worktree
+/// registration inside `dir`: what `workweave-directory-gone` reports, and
+/// what keeps the index entry naming `dir`.
+fn registers_under(primary: &CanonicalPath, project: &ProjectName, dir: &Path) -> bool {
+    let dir = CanonicalPath::of(dir);
+    crate::vcs::project_vcs()
+        .list_stale_worktree_registrations(&project_dir(primary.as_path(), project))
+        .is_ok_and(|registered| {
+            registered
+                .iter()
+                .any(|path| CanonicalPath::of(path).as_path().starts_with(dir.as_path()))
+        })
+}
+
+/// A workweave of this weave whose recorded directory is gone.
+pub struct GoneWorkweave {
+    pub id: WorkweaveId,
+    pub recorded: PathBuf,
+}
+
+/// The workweaves of the primary `ctx` resolves to whose recorded directory
+/// is gone.
+fn gone_workweaves(ctx: &crate::workspace::WorkspaceContext) -> Vec<GoneWorkweave> {
+    let primary = ctx.primary_path();
+    crate::workspace::discover_projects(primary)
+        .into_iter()
+        .filter_map(|project| {
+            let index = crate::workweave_index::read(primary, &project).ok()??;
+            Some((project, index))
+        })
+        .flat_map(|(project, index)| {
+            index
+                .workweaves
+                .into_iter()
+                .filter(|(_, entry)| entry.path.as_path().symlink_metadata().is_err())
+                .map(move |(name, entry)| GoneWorkweave {
+                    id: WorkweaveId {
+                        project: project.clone(),
+                        name,
+                    },
+                    recorded: entry.path.as_path().to_path_buf(),
+                })
+        })
+        .collect()
 }
 
 /// The checkouts of each workweave of this primary found in a workweave
@@ -7315,6 +7392,7 @@ impl CheckViolation {
                 workweave,
                 repo,
                 worktree_path,
+                recorded_in,
                 stands_at,
                 sub_kind,
             } => {
@@ -7335,6 +7413,22 @@ impl CheckViolation {
                          keep its files, then run `rwv doctor --fix` to prune it",
                         worktree_path.display()
                     ),
+                    RegistrationDirectoryKind::WorkweaveDirectoryGone => {
+                        let (name, project) = recorded_in
+                            .as_ref()
+                            .map(|id| (id.name.to_string(), id.project.to_string()))
+                            .unwrap_or_default();
+                        format!(
+                            "{location}: stale-worktree-registration: the checkout registered \
+                             at {} is in the directory workweave `{name}` is recorded at, \
+                             which is gone, so `rwv doctor --fix` keeps the registration and \
+                             what it holds of the checkout. If the workweave moved, run `rwv \
+                             doctor --fix` inside it, which records it where it stands; if it \
+                             is gone, `rwv workweave delete {name} --project {project}` \
+                             removes what is left of it",
+                            worktree_path.display()
+                        )
+                    }
                     RegistrationDirectoryKind::DirectoryMoved => format!(
                         "{location}: stale-worktree-registration: the checkout registered \
                          at {} stands at {}, its directory moved by hand (run `rwv doctor \
@@ -10912,6 +11006,7 @@ fn collect_doctor_violations(
         &hygiene_targets,
         &hygiene_op_state_targets,
         &moved_checkouts(ctx),
+        &gone_workweaves(ctx),
     ));
 
     for project in &input.projects {

@@ -3576,9 +3576,6 @@ pub trait Vcs: Send + Sync {
     /// of them. Returns `None` when no tag points at the current HEAD commit.
     fn tag_at_head(&self, repo: &Path) -> Result<Option<RawRefName>, VcsError>;
 
-    /// Prune stale worktree administrative files from a repo.
-    fn worktree_prune(&self, repo: &Path) -> Result<(), VcsError>;
-
     /// Human-readable hint text for the VCS-level steps to resolve a conflict
     /// and stage the result. Embedded verbatim in sync's conflict-bail messages.
     ///
@@ -4350,7 +4347,9 @@ pub trait Vcs: Send + Sync {
     fn main_checkout(&self, checkout: &Path) -> Option<PathBuf>;
     /// List paths registered as worktrees of `repo` whose on-disk
     /// directories no longer exist. The administrative entries are still
-    /// in the VCS state and will be dropped by [`worktree_prune`].
+    /// in the VCS state until
+    /// [`prune_stale_worktree_registration`](Vcs::prune_stale_worktree_registration)
+    /// drops one.
     ///
     /// For git: parses
     /// `git worktree list --porcelain` and returns the `worktree` path
@@ -4359,12 +4358,7 @@ pub trait Vcs: Send + Sync {
     /// resolution.
     ///
     /// Used by `rwv doctor` to surface stale worktree registrations as a
-    /// state-hygiene finding; `--fix` calls [`worktree_prune`] to drop
-    /// the registrations (information-preserving by construction — the
-    /// only state being removed is a pointer to a directory that already
-    /// no longer exists).
-    ///
-    /// [`worktree_prune`]: Vcs::worktree_prune
+    /// state-hygiene finding.
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
     /// Where the store of the linked checkout at `checkout` records it, when

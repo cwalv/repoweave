@@ -48,6 +48,7 @@ src/alignment.rs	target record changed	-	1
 src/backup.rs	(untokened:owed)	-	2
 src/backup.rs	pin would be unreachable	tests/sync/push_test.rs	1
 src/branch.rs	(untokened:environment-passthrough)	-	1
+src/branch.rs	(untokened:internal-invariant)	-	1
 src/branch.rs	head-not-on-branch	-	2
 src/branch.rs	invalid-ref-name	-	1
 src/branch.rs	name exists	-	3
@@ -307,7 +308,7 @@ src/sync.rs	pin none	tests/doctor/benign_staleness_test.rs	1
 src/sync.rs	pin unmerged	tests/sync/push_test.rs	1
 src/sync.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	3
 src/sync.rs	push-branch ahead	-	1
-src/sync.rs	remotes-unconfirmed	-	1
+src/sync.rs	remotes-unconfirmed	tests/weave/workweave_submodule_test.rs	1
 src/sync.rs	resume-contradicts-record	-	4
 src/sync.rs	savepoint-unfiled	tests/sync/sync_prune_direction_test.rs	1
 src/sync.rs	target moved mid-operation	tests/sync/crash_matrix_test.rs	2
