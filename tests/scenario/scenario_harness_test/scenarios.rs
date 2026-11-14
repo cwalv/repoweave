@@ -14945,9 +14945,9 @@ pub fn abort_stops_at_the_first_write_that_fails() -> Scenario {
 
 /// A landing stopped in its retire, and an abort that has judged its plan
 /// and taken the target's claim when a commit lands on the target's `app`:
-/// the plan is made again under the claim, so the abort is refused with
-/// nothing of either side restored and no abort begun, and the printed
-/// `--leave-target` ends the landing.
+/// the plan is made again under the claim, so the abort keeps `app`'s new
+/// tip as a backup before it puts `app` back, and the printed show line
+/// returns that commit.
 pub fn abort_judges_again_once_it_holds_the_target() -> Scenario {
     scenario(
         "abort judges again once it holds the target",
@@ -14963,20 +14963,18 @@ pub fn abort_judges_again_once_it_holds_the_target() -> Scenario {
             Step::kill("landing"),
             Step::rwv_paused(&ww("w1"), &["abort"], "abort-retaken", "aborting"),
             Step::commit(&a(), Repo::App, "late-app"),
-            abort_refused_whole(
-                Step::release("aborting").expect(Exit::refuses_kind(RefusalKind::ForeignTip)),
-                true,
-                &[a(), ww("w1")],
-            ),
-            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputContains("late-app")),
-            Step::rwv_printed_exactly(&ww("w1"), "rwv abort --leave-target")
+            Step::release("aborting")
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj])
-                .may_restore(&[Repo::App, Repo::Proj]),
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                )),
+            kept_backup_shown(&ww("w1"), "remotes/app log ", "late-app"),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputContains("late-app")),
+                .claim(Claim::OutputLacks("late-app"))
+                .claim(Claim::OutputLacks("w1-app")),
         ],
     )
 }

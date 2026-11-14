@@ -11945,12 +11945,16 @@ fn report_abort_outcome(
             report_abort_outcome(vcs, at, then, savepoint, tally);
         }
         VerifiedRestoreOutcome::ForeignTip { observed_tip, .. } => {
-            tally.any_failure = true;
+            tally.any_foreign = true;
             eprintln!(
-                "  {label}: moved to {} after abort planned its restore, so it is left as it \
-                 is; rerun `rwv abort`",
+                "  {label}: moved to {} after abort planned its restore, so it is left as it is",
                 observed_tip.short()
             );
+            tally.blocked.push((
+                named.clone(),
+                "nothing to clear: it moved while abort ran, and the rerun judges it again"
+                    .to_owned(),
+            ));
         }
     }
 }
