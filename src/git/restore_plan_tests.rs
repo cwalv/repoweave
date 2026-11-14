@@ -622,10 +622,14 @@ fn a_ref_restore_keeps_a_tip_nothing_else_reaches_in_the_branchs_slot() {
     };
     assert_eq!(*tip, wrote);
     assert_eq!(backup.backup().name.as_str(), "topic/aborted");
-    assert_eq!(
-        git(p.path(), &["rev-parse", "refs/rwv/backup/topic/aborted"]),
-        wrote.as_str()
-    );
+    let listed = GitVcs
+        .list_backups(p.path(), crate::vcs::RemoteTracking::Ignored)
+        .unwrap();
+    let slot = listed
+        .iter()
+        .find(|l| l.backup.name.as_str() == "topic/aborted")
+        .expect("the slot is listed");
+    assert_eq!(slot.backup.tip.id(), &wrote);
     assert_eq!(git(p.path(), &["rev-parse", "topic"]), saved.at.as_str());
 }
 
@@ -642,7 +646,10 @@ fn a_ref_restore_keeps_nothing_of_a_tip_another_branch_reaches() {
 
     assert_eq!(outcome, crate::vcs::RefRestoreOutcome::Restored);
     assert_eq!(git(p.path(), &["rev-parse", "topic"]), saved.at.as_str());
-    assert_eq!(git(p.path(), &["for-each-ref", "refs/rwv/backup/"]), "");
+    assert!(GitVcs
+        .list_backups(p.path(), crate::vcs::RemoteTracking::Ignored)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
