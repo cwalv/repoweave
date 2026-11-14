@@ -291,7 +291,7 @@ Lives at `<workspace>/projects/<project>/.rwv-owned-digests` (with a transient `
 
 Used by `rwv doctor` (`managed-file-drift`, `derived-state-stale`) and by `rwv materialize` (`--regenerate-drifted` / `--adopt-drifted`) to distinguish files last written by `rwv` from files modified out-of-band.
 
-## `.rwv-op` — owner op-state record
+## `.rwv-op` — owner op record
 
 Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv land` operation starts, and cleared by the same verbs on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with `rwv sync --continue` / `rwv land --continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason.
 

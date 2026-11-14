@@ -3244,7 +3244,9 @@ fn check_no_foreign_vocabulary(root: &Path) -> Vec<String> {
     errors
 }
 
-/// Scan operator surfaces for `docs/internals/` paths.
+/// Scan operator surfaces for `docs/internals/` paths, and the pages
+/// `docs/SUMMARY.md` lists for implementation names (see
+/// [`implementation_names_in`]).
 ///
 /// The reader-axis rule is that operator-facing text references only pages
 /// mdBook renders. `docs/internals/` is not in `docs/SUMMARY.md`, so a
@@ -3292,8 +3294,10 @@ fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
             root.join("docs/SUMMARY.md").display()
         ));
     }
+    let listed: HashSet<PathBuf> = summary_pages.iter().cloned().collect();
     files.extend(summary_pages);
 
+    let types = declared_src_types(root);
     for path in files {
         let Ok(content) = fs::read_to_string(&path) else {
             continue;
@@ -3307,9 +3311,76 @@ fn check_no_internals_on_operator_surfaces(root: &Path) -> Vec<String> {
                     n + 1
                 ));
             }
+            if !listed.contains(&path) {
+                continue;
+            }
+            for name in implementation_names_in(line, root, &types) {
+                errors.push(format!(
+                    "{rel}:{}: names the implementation, `{name}` — an operator surface \
+                     states observable behavior; the module and type layout belongs in \
+                     `ARCHITECTURE.md` or `docs/internals/`",
+                    n + 1
+                ));
+            }
         }
     }
     errors
+}
+
+/// The types `src/` declares outside `src/bin/` and its test modules.
+///
+/// An operator page that quotes one in backticks is describing the
+/// implementation. What this does not hold: a type spelled without
+/// backticks, a function or field named alone, and a type whose name is a
+/// single word, which reads the same as the operator's own word for the
+/// thing (`Role`, `Repo`).
+fn declared_src_types(root: &Path) -> HashSet<String> {
+    let declaration = Regex::new(
+        r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+([A-Z][A-Za-z0-9_]*)",
+    )
+    .unwrap();
+    let src = root.join("src");
+    let bin = src.join("bin");
+    let mut types = HashSet::new();
+    for path in src_rs_files(root) {
+        if !path.starts_with(&src) || path.starts_with(&bin) {
+            continue;
+        }
+        let Ok(content) = fs::read_to_string(&path) else {
+            continue;
+        };
+        for line in before_test_module(&content).lines() {
+            if let Some(cap) = declaration.captures(line) {
+                types.insert(cap[1].to_owned());
+            }
+        }
+    }
+    types
+}
+
+/// The implementation names `line` quotes in backticks: a `src/` source file
+/// of this repo other than the two crate roots, a `Type::member` of a
+/// declared type, or a declared type of two or more capitalized words.
+fn implementation_names_in(line: &str, root: &Path, types: &HashSet<String>) -> Vec<String> {
+    let span = Regex::new(r"`([^`]+)`").unwrap();
+    let source_file = Regex::new(r"^src/[\w/.-]+\.rs$").unwrap();
+    let qualified = Regex::new(r"^([A-Z]\w*)::\w+(?:\(\))?$").unwrap();
+    let words = Regex::new(r"^(?:[A-Z][a-z0-9]+){2,}$").unwrap();
+    let mut found = Vec::new();
+    for cap in span.captures_iter(line) {
+        let quoted = &cap[1];
+        let names_source = source_file.is_match(quoted)
+            && !matches!(quoted, "src/main.rs" | "src/lib.rs")
+            && root.join(quoted).is_file();
+        let names_type = qualified
+            .captures(quoted)
+            .is_some_and(|c| types.contains(&c[1]))
+            || (words.is_match(quoted) && types.contains(quoted));
+        if names_source || names_type {
+            found.push(quoted.to_owned());
+        }
+    }
+    found
 }
 
 /// Every page `docs/SUMMARY.md` links to, resolved against `docs/`.
@@ -7968,6 +8039,47 @@ mod tests {
             combined.contains("docs/internals/") && combined.contains("doctor.md"),
             "an internals reference on an explain page must be reported, got:\n{combined}"
         );
+    }
+
+    /// An implementation name on a page `docs/SUMMARY.md` lists is reported,
+    /// and the operator's own word for a thing is not.
+    #[test]
+    fn an_implementation_name_on_a_listed_page_is_reported() {
+        let tmp = crate::tempdir().expect("tempdir");
+        let root = tmp.path();
+        write_minimal_clean_summary(root);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("src/seam.rs"),
+            "pub trait Backend {}\npub struct RemoteHandle;\npub enum Role {}\n",
+        )
+        .unwrap();
+        fs::write(root.join("src/seam_impl.rs"), "").unwrap();
+        let listed = collect_summary_listed_pages(root);
+        let page = listed.first().expect("a listed page").clone();
+        fs::create_dir_all(page.parent().unwrap()).unwrap();
+        fs::write(
+            &page,
+            "The role of the `Role` column. A user file `src/main.rs`.\n\
+             Calls `Backend::push` on a `RemoteHandle` held by `src/seam_impl.rs`.\n",
+        )
+        .unwrap();
+        let errors = check_no_internals_on_operator_surfaces(root);
+        let combined = errors.join("\n");
+        for named in ["`Backend::push`", "`RemoteHandle`", "`src/seam_impl.rs`"] {
+            let report = format!("names the implementation, {named}");
+            assert!(
+                combined.contains(&report),
+                "{named} must be reported:\n{combined}"
+            );
+        }
+        for spared in ["`Role`", "`src/main.rs`"] {
+            let report = format!("names the implementation, {spared}");
+            assert!(
+                !combined.contains(&report),
+                "{spared} must pass:\n{combined}"
+            );
+        }
     }
 
     /// A `docs/internals/` reference embedded in a generated schema is caught.

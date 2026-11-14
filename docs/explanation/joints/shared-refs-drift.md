@@ -1,29 +1,30 @@
 # Shared-refs drift
 
-repoweave's workweave model is built on top of git worktrees. Worktrees
-sharing a single repo's object store and refs DAG is what makes them
-cheap: no re-clone, no re-fetch, branch creation is just a ref write.
-It also means a branch ref checked out in one workspace can be moved from
-outside it, leaving that workspace's index and working tree describing the
-old commit. This joint defines the two flavors of that drift, the
+repoweave's workweave model is built on linked worktrees (for git, `git
+worktree`). Worktrees sharing a single repo's object store and branch refs
+is what makes them cheap: no re-clone, no re-fetch, branch creation is just
+a ref write. It also means a branch ref checked out in one workspace can be
+moved from outside it, leaving that workspace's record of what it holds
+(for git, its index) and its working tree describing the old commit. This joint defines the two flavors of that drift, the
 safe-to-fix classification rwv applies to them, and the invariant that
 makes refreshing it safe.
 
 ## How worktrees share state (and what they don't)
 
-Git's worktree model:
+A linked worktree shares and keeps apart:
 
-- **Shared:** the object store (`.git/objects/`) and branch refs
-  (`.git/refs/heads/`). A commit visible in one worktree is visible in
-  any sibling.
-- **Per-worktree:** the index (`HEAD`/`index`), the working tree files
-  on disk, and any worktree-private bookkeeping.
+- **Shared:** the object store and the branch refs. A commit visible in
+  one worktree is visible in any sibling. (For git: `.git/objects/` and
+  `.git/refs/heads/`.)
+- **Per-worktree:** the checked-out commit, the VCS's record of what the
+  checkout holds, the working tree files on disk, and any worktree-private
+  bookkeeping. (For git: `HEAD` and the index.)
 
 The asymmetry is the whole reason worktrees are cheap. It is also the
 source of drift whenever a branch ref checked out in one workspace is
-moved without updating that workspace's index and working tree.
+moved without updating that workspace's record and working tree.
 
-Git's porcelain refuses to do that: `git push`, `git fetch` and
+For git, the porcelain refuses to do that: `git push`, `git fetch` and
 `git branch -f` each refuse to move a branch that another worktree has
 checked out. Plumbing does not refuse — `git update-ref` moves it — and
 neither does a branch two worktrees share after a forced attach
@@ -41,10 +42,11 @@ ref main advances to commit Y outside B's working tree:
 workspace B after:  HEAD → main → commit Y    (index + WT on disk still = X)
 ```
 
-B's `HEAD` symbolic ref resolves to Y now (it followed `main`), but B's
-*index file* and B's *working tree files* still reflect X. Nothing
-about git's ref store is corrupt, yet B's index and working tree are now
-drifted from its own `HEAD`.
+B's checked-out commit is Y now (it followed `main`), but B's record of
+what it holds and B's *working tree files* still reflect X. Nothing in the
+ref store is corrupt, yet B's record and working tree are now drifted from
+its own checked-out commit. (For git: B's `HEAD` resolves to Y, and its
+index and working tree still reflect X.)
 
 `rwv` keeps workweaves from competing for a branch name by giving each
 workweave's `owned` and `fork` members its own flat ephemeral branch
@@ -61,23 +63,24 @@ The drift produces two distinct symptoms; rwv distinguishes them.
 
 ### Index drift (`record-drift`)
 
-The on-disk *index* no longer matches HEAD. `git status` shows
-"phantom" staged changes — entries that aren't actually anything the
-user staged, but stale index entries left over from when HEAD was at a
-prior commit.
+The checkout's record of what it holds no longer matches the checked-out
+commit. The VCS shows "phantom" changes marked for commit — entries that
+aren't actually anything the user marked, but stale entries left over from
+when the checkout was at a prior commit. (For git: the on-disk *index*
+no longer matches `HEAD`, and `git status` lists staged changes.)
 
 Index drift is harmless functionally — file content on disk is
-unchanged — but noisy. It leaks into every `git status`, every commit
-prompt, every editor's git integration. The operator either learns to
-ignore it (bad — masks real staged changes) or compulsively re-runs
-`git reset` (bad — interrupts flow). Neither is acceptable as a
-permanent state.
+unchanged — but noisy. It leaks into every status listing, every commit
+prompt, every editor's VCS integration. The operator either learns to
+ignore it (bad — masks real changes marked for commit) or compulsively
+resets it (bad — interrupts flow). Neither is acceptable as a permanent
+state.
 
 ### Working-tree drift
 
-On-disk *files* still reflect a prior commit. The index may agree or
-disagree, but the user-visible file content is stale relative to the
-worktree's effective HEAD.
+On-disk *files* still reflect a prior commit. The record of what the
+checkout holds may agree or disagree, but the user-visible file content is
+stale relative to the checkout's effective commit.
 
 This is worse than index drift: workers reading the files (test
 runners, build tools, agents) see content that doesn't match the
@@ -86,7 +89,7 @@ inputs; tests run against the wrong sources; agents reason from stale
 documentation.
 
 In both cases the *cause* is the same — the checked-out branch ref moved
-without updating the workspace's index and working tree. The symptom is
+without updating the workspace's record and working tree. The symptom is
 what differs.
 
 ## Safe-to-fix classification
@@ -124,9 +127,10 @@ them would discard the operator's work. So rwv asks two questions, and
 refreshes only what both answer:
 
 - **Did the branch move under this checkout?** Every move a checkout
-  makes itself — a commit, a reset, a rebase, a revert, a stash, an
-  `update-ref` run in it — is recorded in its own `HEAD` reflog. A move
-  made from another worktree is not. So a checkout whose newest reflog
+  makes itself — a commit, a reset, a rebase, a revert, a stash, a ref
+  update run in it — is recorded in that checkout's own history of moves.
+  A move made from another worktree is not. (For git, that history is the
+  checkout's `HEAD` reflog.) So a checkout whose newest reflog
   entry is a commit other than HEAD, and an ancestor of it, had its
   branch moved forward from that commit (the *moved-from tip*) by
   something else. A checkout whose newest entry is a commit HEAD does not
@@ -391,8 +395,8 @@ another workspace's checkout it prints that workspace's `rwv -C` line.
 
 > rwv replaces a path only where its branch is shown to have moved under the
 > checkout, two readings agree that the path still holds exactly what the
-> moved-from tip held, a commit reachable from HEAD, and git's own write
-> refuses unless it still does. Where the evidence is not conclusive, every
+> moved-from tip held, a commit reachable from the checked-out commit, and the
+> VCS's own write refuses unless it still does (for git, its two-way merge). Where the evidence is not conclusive, every
 > difference is an edit. No content that the checkout's history does not
 > hold is replaced or deleted, save a change made in the instant before git
 > writes. A staged return of a whole move after a refresh by hand reads as
@@ -408,12 +412,13 @@ not change reads as unchanged; a file changed in any way reads as live.
 
 Most users will rarely think about drift explicitly:
 
-- If a checked-out branch ref moves underneath a workspace and `git status`
-  shows phantom staged changes, run `rwv doctor --fix`, or let the next
-  `rwv land` or `rwv sync` refresh it.
+- If a checked-out branch ref moves underneath a workspace and the VCS
+  shows phantom changes marked for commit (for git, `git status` lists
+  staged changes), run `rwv doctor --fix`, or let the next `rwv land` or
+  `rwv sync` refresh it.
 - Build tools that read files seeing stale content is a *real* symptom
   of working-tree drift, not a build-tool bug. The fix is the same.
-- Running `git reset` in a drifted checkout records the move as the
+- Resetting a drifted checkout by hand (for git, `git reset`) records the move as the
   checkout's own. What it leaves — files at the old tip, index at HEAD —
   reads as an edit returning files to earlier content, and rwv leaves it
   for you; stash it if it is not your work (see
@@ -423,15 +428,15 @@ Most users will rarely think about drift explicitly:
   unavoidable in the worktree model.
 
 Drift is not a sign that your repository objects are corrupt: every
-commit is intact, and only a workspace's index and files lag its ref.
+commit is intact, and only a workspace's record of what it holds and its files lag its ref.
 
 ## What rwv does *not* do
 
 - rwv assigns each workweave its own `<project>--<workweave>` ephemeral
   branch (Invariant I3 in [clone-topology](./clone-topology.md)), but it
-  cannot prevent external git commands or plumbing from moving a branch
-  ref checked out in a workspace.
-- rwv does not rewrite git's worktree model. When a ref moves underneath
+  cannot prevent external VCS commands from moving a branch ref checked
+  out in a workspace (for git, plumbing such as `git update-ref`).
+- rwv does not rewrite the VCS's worktree model. When a ref moves underneath
   a checkout, this joint governs how `rwv` classifies and remediates the
   resulting drift.
 - rwv does not silently discard live content. Ever. Live work

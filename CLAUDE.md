@@ -184,7 +184,14 @@ Three gates in `src/bin/generate-explain.rs`:
   and the sixteen fixtures behind that boundary are read by nothing.
 - `check_no_internals_on_operator_surfaces` scans generated operator surfaces
   — `docs/reference/explain/**` and `docs/reference/schemas/*.json` — plus
-  every page `docs/SUMMARY.md` links to, for `docs/internals/` paths. The
+  every page `docs/SUMMARY.md` links to, for `docs/internals/` paths, and
+  scans the pages `docs/SUMMARY.md` links to alone for implementation names:
+  a backticked `src/` source file other than `main.rs` and `lib.rs`, a
+  `Type::member` of a type `src/` declares, or such a type of two or more
+  capitalized words. The generated pages quote type names lifted from doc
+  comments, and are not held to the second rule. A type spelled without
+  backticks, a function named alone, and a single-word type name
+  (`Role`) pass. The
   generator is an audience boundary; what it lifts onto an operator page must
   be operator-clean, and the same holds for hand-authored pages a reader
   reaches through the sidebar. Root `README.md` and `ARCHITECTURE.md` are

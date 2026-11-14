@@ -40,7 +40,7 @@ is called.
 Future implementations (jj, hg, sl) would each own their own module; rwv
 core consumes the trait, not any one impl.
 
-The backend type is **private to `src/git.rs`**. Outside that module the
+The backend type is **private to the git backend's module**. Outside that module the
 git implementation is reachable only as a `Vcs` handle. That is what
 makes the principle above a compile-time property rather than a
 convention: rwv core cannot name a backend, so every frame that speaks
@@ -70,7 +70,7 @@ Two failure modes the seam prevents:
   category of bug entirely.
 
 The principle is also a code-review tool. If a PR adds a git command,
-git-specific name, or git config flag *outside* `src/git.rs`, send it
+git-specific name, or git config flag *outside* the git backend's module, send it
 back: the abstraction belongs in the Vcs trait.
 
 ## Worked examples
@@ -79,26 +79,26 @@ back: the abstraction belongs in the Vcs trait.
 
 **Concept:** "act on the remote that plays this role." A repo can have
 several remotes, and rwv acts on each for a different reason, so the trait
-resolves a role to an opaque `RemoteHandle`. rwv core holds the handle and
-gives it back to the methods that act on it (`fetch_remote`,
-`resolve_branch_on_remote`, `remote_default_branch`, `push_ref`); it never
-spells a remote name.
+resolves a role to an opaque remote handle. rwv core holds the handle and
+gives it back to the operations that act on it (fetching it, resolving a
+branch on it, reading its default branch, pushing to it); it never spells a
+remote name.
 
 The roles are:
 
 | Role | What it is |
 |---|---|
-| **Url remote** of a member | the remote that has the member's `url`. `Vcs::url_remote` finds it by the url, however the clone spells it; a clone that lacks it gets one before a verb fetches, named by the url's owner segment (a repo with no remote yet takes the VCS's first name). A name another url already holds refuses as `name` taken. |
+| **Url remote** of a member | the remote that has the member's `url`. The seam finds it by the url, however the clone spells it; a clone that lacks it gets one before a verb fetches, named by the url's owner segment (a repo with no remote yet takes the VCS's first name). A name another url already holds refuses as `name` taken. |
 | **Url remote** of the project repo | the remote `rwv clone`, `rwv init --adopt` or `rwv init --provider` created it with, recorded in the clone's own configuration; else its only remote while it has exactly one; else none. The project has no member url to find it by. |
 | **Push target** | where a branch publishes, in the VCS's own order: the branch's push remote, the repo's default push remote, the remote the branch takes in from, and last the url remote. A branch with none has no push target. |
 | **Home remote** | where a new branch is taken from: the remote the operator configured for it, else the url remote. |
 | **Upstream**, **push branch** | the remote branch a branch takes in from, and the same-named branch on its push target. |
 
-`Vcs::relation` reads where a branch tip stands to another by ancestry
-(even, behind, ahead, diverged), and `Vcs::reached_by_remote` whether a
-remote's tracking branches reach a commit.
+The seam also reads where a branch tip stands to another by ancestry
+(even, behind, ahead, diverged), and whether a remote's tracking branches
+reach a commit.
 
-**A handle is not a name.** `RemoteHandle` has no constructor outside the
+**A handle is not a name.** A remote handle has no constructor outside the
 backends and no way to read its name back as text; it displays, for the
 message that has to say which remote a verb acted on. A remote git called
 `origin`, `upstream`, or whatever the operator's `clone.defaultRemoteName`
@@ -113,7 +113,7 @@ by its own means (jj's `default` or hg's `default-push`) without core
 noticing.
 
 There is no bare-branch fallback in the trait surface: when the remote does
-not have the branch, the trait returns `VcsError::RevisionNotFound`, not the
+not have the branch, the trait reports the revision as not found, not the
 local branch tip. This prevents the silent "we advanced to the local working
 state instead of the remote target" failure mode.
 
@@ -139,7 +139,7 @@ business. Core selects a remote by the role it plays, never by name and never
 by a manifest role. A backend that genuinely needs to route by manifest role
 gets the parameter in the same change that gives it a reader.
 
-### (b) `Vcs::conflict_resolution_hint`
+### (b) The conflict-resolution hint
 
 **Concept:** the human-readable text we splice into sync's bail
 messages explaining how to resume after the user resolves conflicts.
@@ -149,9 +149,9 @@ rwv has a native `rwv sync --continue` / `rwv land --continue` that
 drives the remaining picks; the VCS impl stops at staging and rwv core
 appends the `rwv <verb> --continue` line.
 
-`Vcs::conflict_resolution_hint` takes a `ConflictOp` — the in-flight op
-sync's project-repo path can leave behind, one of `Rebase`, `Merge` or
-`CherryPick` — and returns the hint block for it. The git impl is
+The hint operation takes the kind of in-flight op sync's project-repo
+path can leave behind — a rebase, a merge or a cherry-pick — and
+returns the hint block for it. The git impl is
 asymmetric by op: `Merge` and `CherryPick` end with the VCS-native
 continue command, `Rebase` stops at staging the resolution.
 
@@ -201,7 +201,7 @@ asymmetry is the whole shape of the thing.
   verb refuses it until it is resolved. A project repo set up any other way
   is refused by every verb that writes it, as `missing-lock-merge-driver`,
   and `rwv doctor --fix` migrates it. The seam states this as
-  `Vcs::lock_driver_setup`, `declare_lock_driver_in` and `define_lock_driver`.
+  three operations: report the setup state, declare the driver in the repo, and define it in the clone's configuration.
 - **Derived content.** `<path> merge=rwv-ours` declares a path derived.
   Nothing defines `rwv-ours` durably: rwv's own replays define it inline, per
   git process, as `true` — the shell command that leaves the target side's
@@ -238,7 +238,7 @@ knows nor cares. The setup query answers with a state per half rather than
 a bool, because doctor asks twice — once to report, once to repair — and
 both answers come from one read.
 
-### (d) `Vcs::push_ref`
+### (d) Publishing a ref
 
 **Concept:** push a named ref to the remote it publishes to, its push
 target. For git, `git push <remote> <ref>`.
@@ -247,18 +247,18 @@ The impl owns the mechanism:
 
 - The force-push flag spelling.
 - The argument shape `git push <remote> <ref>`.
-- The order a push target is found in (`Vcs::push_target`).
+- The order a push target is found in.
 
 And what it explicitly does **not** own: the choice of which ref to
 publish. The predecessor read the current branch inside the impl, which
 put a policy decision — *what does publishing this repo mean?* — inside
 the git wrapper, where no caller could see it and a detached HEAD
-surfaced as a raw command failure from three layers down. `push_ref`
-takes the ref as a `PublishRef`, a value only the push verb can
-construct, and the remote as the handle `push_target` resolved, so the
+surfaced as a raw command failure from three layers down. The
+publishing operation takes the ref as a value only the push verb can
+construct, and the remote as the handle push-target resolution gave, so the
 decision is made once at the publish gate and the
 refusal for a detached checkout is stated there, in the verb's own
-voice. Whether a push may replace the remote's branch is a `Replace`
+voice. Whether a push may replace the remote's branch is an
 argument: fast-forward only, or a lease on the tip the push read, which
 only a repo the operator named with `--overwrite` yields.
 
@@ -276,10 +276,10 @@ different command on another VCS).
 
 Which repos get pushed at all is verb policy, and the trait cannot see
 it: the plan-time default scope (owned + fork; dependency and reference
-excluded before the loop) lives in the push verb, and `push_ref` is
-never told which role it is publishing. That separation
+excluded before the loop) lives in the push verb, and the publishing
+operation is never told which role it is publishing. That separation
 keeps the trait composable — a verb that wants to push only owned repos
-filters first and then calls `push_ref` — and keeps verb-level policy
+filters first and then publishes — and keeps verb-level policy
 debuggable, because the default-scope choice sits in one visible
 location instead of being distributed across the seam.
 
@@ -288,25 +288,25 @@ location instead of being distributed across the seam.
 The parts of the principle that can be mechanized are mechanized, and a
 reviewer should read a green build as having already answered them.
 
-1. **Naming the backend.** The type is private to `src/git.rs`, so any
+1. **Naming the backend.** The type is private to the git backend's module, so any
    reference from rwv core is `error[E0603]`. There is no way to write a
    new hardcoded backend that compiles.
 2. **Minting one.** The one constructor that hands out a git backend is
    `pub`, because the test suite needs a concrete one. That means a verb
    could call it instead of accepting a handle — dispatching correctly
    while remaining impossible to substitute in a test. The `vcs-seam`
-   gate refuses it outside `src/vcs.rs`, where every resolver that mints
+   gate refuses it outside the seam's own resolver module, where every resolver that mints
    a backend with no manifest entry to resolve from documents why git is
    the only answer it can give.
 3. **Spawning git from scratch.** The same gate refuses
-   `Command::new("git")` outside `src/git.rs`.
+   `Command::new("git")` outside the git backend's module.
 4. **Building a path out of git's on-disk layout.** The same gate
-   refuses `.git`-shaped path construction outside `src/git.rs`, and
+   refuses `.git`-shaped path construction outside the git backend's module, and
    names the helper to call instead. These three gate rules stop at the
    first test module, under any name: a `#[cfg(test)]` module may build
    a concrete backend.
 5. **Naming the remote.** Two halves, both the compiler's. A remote
-   crosses the seam as a `RemoteHandle`, which only a backend constructs
+   crosses the seam as an opaque handle, which only a backend constructs
    and which gives its name to nobody but a message; and no method on the
    `Vcs` trait accepts text for a remote, so there is no parameter for a
    caller to spell one into. Core reaches a remote through the role that
@@ -333,8 +333,8 @@ carries git's vocabulary across the seam:
   the third item in this list rather than this one: they spell git
   commands such as `git remote set-head <remote> -a`, and respelling the
   remote name alone would leave the commands standing. They come from
-  `Vcs::remote_default_branch_repair_hint`, and for a clone `rwv member add`
-  just made from `Vcs::clone_default_branch_repair_hint`, each given the
+  the seam's repair-hint operations, one for a remote and one for a clone
+  `rwv member add` just made, each given the
   handle and carrying the name and the command together because owning one
   without the other leaves a message half across the seam.
 
@@ -355,7 +355,7 @@ carries git's vocabulary across the seam:
   standalone word only, so rwv's own `origin_dir` concept is invisible
   to it by construction.
 - **A `.git*` file convention.** (`.gitattributes`, `.gitignore`,
-  `.gitmodules`.) The convention belongs in `src/git.rs`; a caller
+  `.gitmodules`.) The convention belongs in the git backend's module; a caller
   outside it that needs one is in the wrong module.
 - **A user-facing git-vocabulary string.** ("rebase", "cherry-pick",
   "merge --continue".) Per-VCS phrasing belongs in a trait method like
@@ -427,7 +427,7 @@ authors violated repeatedly is a preference until something refuses it.
 
 ## Adjacent seam: registries
 
-A registry (`src/registry.rs`) is a seam of its own, adjacent to `Vcs`
+A registry is a seam of its own, adjacent to `Vcs`
 rather than inside it: a registry decides a repo's identity, its
 canonical path, and — for `rwv member add --new` — what parameters creating one
 needs; `Vcs` decides how the backend that registry named actually creates,

@@ -100,10 +100,10 @@ guard → mark → savepoint → replay → relock → advance-target → retire
 | relock | Regenerates `rwv.lock` from CWD's new tips (**Phase 3**) and commits it if it changed | yes | yes |
 | advance-target | Fast-forwards the target's member repos, then its project repo, to CWD's tips | yes | yes |
 | retire | Checks that member tips match, that no checkout is dirty and that replay left no checkout it could not prune, then deletes the workweave | — | yes |
-| cleanup | Drops the savepoints and the op-state | yes | yes |
+| cleanup | Drops the savepoints and the op record | yes | yes |
 
 **Stopping and resuming.** A refusal at guard leaves no trace. Once the
-savepoints exist, a conflict, failure or crash keeps the op-state in every
+savepoints exist, a conflict, failure or crash keeps the op record in every
 workspace the operation mutates. `--continue`, from either workspace, resumes
 at the recorded phase; `rwv abort` restores both workspaces to where they
 started. A resume at advance-target runs relock again first, so the lock it
@@ -124,7 +124,7 @@ lacks is materialized, and a member it dropped is pruned, behind the dirty,
 unique-commit and store-claim refusals. Pruning waits until every repo has
 replayed, so an op that parks has removed nothing — `rwv abort` restores refs
 and cannot bring back a deleted checkout. A refused prune leaves its checkout
-on disk: the op still runs to completion and clears its op-state, then exits
+on disk: the op still runs to completion and clears its op record, then exits
 1 naming the checkout to remove by hand. Under `--retire` the dirty check
 refuses first if that checkout holds uncommitted changes, so the workweave is
 not deleted over them; what it committed stays on its branch, which the
@@ -141,7 +141,7 @@ a lock naming revisions it lacks. Members that landed stay landed, leaving a
 lock behind HEAD that `rwv lock --commit` refreshes; `rwv abort` rolls them
 back.
 
-The op-state is an owner record at the initiating workspace and a lease
+The op record is an owner record at the initiating workspace and a lease
 pointer at every other workspace the op mutates, which keeps a second
 operation out. See
 [formats](../../reference/formats.md#rwv-op--owner-op-state-record).
@@ -167,7 +167,7 @@ that repo, or a rebase, merge or cherry-pick the op left in progress. Every
 such tip is a commit the op made, so a clean abort writes no ref: what it
 discards is the op's own output. Any other tip, such as a commit made after
 the op stopped, is a foreign tip: abort refuses that repo, leaves its tip in
-place, keeps the op-state, and lists the blocking commits.
+place, keeps the op record, and lists the blocking commits.
 `--abandon-foreign-tip <repo>` consents to restoring over it, and the tip is
 first kept as a backup marked `abandoned`, named for the branch it moves
 off. The consent applies to the tip abort finds when it runs, so a foreign
@@ -291,7 +291,7 @@ sorted by repo path however the workers finished, beside `placements`, replay
 outcome is `failed`, and when a prune was refused: the op completes,
 reports a `prune-refused` member record, and exits 1. The envelope's
 `complete` field is true when the op ran its last phase and cleared its
-op-state, false when a phase parked it.
+op record, false when a phase parked it.
 
 ## Auto-target
 

@@ -106,14 +106,14 @@ A target that records nothing refuses a landing that needs more than a fast-forw
 
 ## If `land` hits a conflict
 
-If a replay or rebase hits a conflict during steps 1–3, `rwv land` stops before reaching `--retire`, keeps the workweave, and keeps its op record. Resolve the conflicted files in the named repo, stage them with `git add`, and resume from the workweave root — or roll both workspaces back to their pre-op state:
+If a replay or rebase hits a conflict during steps 1–3, `rwv land` stops before reaching `--retire`, keeps the workweave, and keeps its op record. Resolve the conflicted files in the named repo, mark them resolved (for git, `git add`), and resume from the workweave root — or roll both workspaces back to their pre-op state:
 
 ```bash
 git -C <conflicted-repo> add <files>
 rwv land --continue    # or: rwv abort
 ```
 
-Do not re-pass `--retire` or strategy flags with `--continue`; they are restored from the saved op-state. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the step-by-step conflict resolution walkthrough.
+Do not re-pass `--retire` or strategy flags with `--continue`; they are restored from the saved op record. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the step-by-step conflict resolution walkthrough.
 
 ## If `--retire` refuses to delete the workweave
 
@@ -131,7 +131,7 @@ A branch of the workweave that has not landed on the branch the workweave's reco
 ## Related
 
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving project or member-repo conflicts during `sync` or `land`
-- [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspecting op-state, `--continue` rules, and `rwv abort` recovery
+- [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspecting the op record, `--continue` rules, and `rwv abort` recovery
 - [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md) — creation, landing, and deletion contracts
 - [Sync semantics](../explanation/joints/sync-semantics.md) — phase ordering, lock exclusion, and savepoints
 - [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — parent tracking and one-hop landing

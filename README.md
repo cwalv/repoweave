@@ -201,7 +201,7 @@ Multiple agents can work in parallel — one workweave each. The first landing i
 - [How to hand a task to an agent](docs/how-to/hand-task-to-agent.md) — discover the workspace, drive verbs via `rwv explain`, selector grammar
 - [Bring workweave work home](docs/how-to/bring-workweave-work-home.md) — land semantics, `--retire`, and conflict resolution
 - [Workweave lifecycle](docs/explanation/joints/workweave-lifecycle.md) — create → work → land --retire, the retire contract, and deletion
-- [Resume or abort a mid-op sync](docs/how-to/resume-or-abort-mid-op-sync.md) — inspect op-state, `--continue`, `rwv abort` detail
+- [Resume or abort a mid-op sync](docs/how-to/resume-or-abort-mid-op-sync.md) — inspect the op record, `--continue`, `rwv abort` detail
 
 ### Documentation
 

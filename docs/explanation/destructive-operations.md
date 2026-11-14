@@ -204,10 +204,9 @@ When a PR introduces a destructive call:
    --hard` paths an operation can be aborted out of, write a
    `refs/rwv/pre-op/<op-id>` ref before the destructive write and wire
    the abort path to consume it. For a discard the operator consents to,
-   make the backup first through `Vcs::create_backup` and take the
-   witness it returns: the proof that destroys a branch
-   (`DestroyProof::backed_up`) runs the backup itself, so a discard
-   without one does not build.
+   make the backup first through the seam's backup operation and take
+   the witness it returns: the proof that destroys a branch runs the
+   backup itself, so a discard without one does not build.
 4. **Update the allowlist.** Add an entry to `ALLOWLIST` in
    `tests/source/destructive_ops_audit_test.rs` with the file name, pattern,
    count, and a one-paragraph justification that names the
