@@ -12963,7 +12963,7 @@ fn abort_keeps_the_operators_merge_and_commit(
             .claim(Claim::OutputContains(
                 "what abort discarded is kept as backup",
             )),
-        Step::rwv_printed_holding(at, "git -C ", named)
+        Step::rwv_printed_within(at, "git -C ", named)
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("own-x")),
         Step::git(at, repo, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).expect(Exit::Code(1)),
@@ -14137,9 +14137,9 @@ pub fn abort_in_the_target_keeps_colliding_edits(stop: LandedStop) -> Scenario {
 }
 
 /// A landing killed right after it fast-forwarded `app` in the target's
-/// workspace: the move was journaled before it was made, so abort, run from
-/// the source, restores it as the landing's own, keeping no backup of it,
-/// and leaves no savepoint behind in the target.
+/// workspace: abort, run from the source, restores it, keeping no backup of
+/// a tip the source's branch reaches, and leaves no savepoint behind in the
+/// target.
 pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario {
     scenario(
         "abort restores a target fast-forward killed after the move",
@@ -14158,7 +14158,7 @@ pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario 
                 .claim(Claim::OutputContains(
                     "[target] local/remotes/app: restored",
                 ))
-                .claim(Claim::OutputLacks("kept as backup")),
+                .claim(Claim::OutputLacks("[target] local/remotes/app: what abort")),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLacks("w-app")),
             Step::git(&a(), Repo::Lib, &["for-each-ref", "refs/rwv/pre-op/"])
@@ -14173,9 +14173,9 @@ pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario 
 /// A landing killed right after it fast-forwarded `app` in the target's
 /// workspace is continued; between the continued landing's read of the
 /// target and its fast-forward of `app`, already done, someone commits onto
-/// `app`. The landing stops, `app` stays on its journal, so abort puts `app`
-/// back, keeping the tip holding the new commit as a backup whose printed
-/// show line returns it.
+/// `app`. The landing stops; abort refuses, as for the target's project
+/// branch, and the `--leave-target` it offers ends the operation with `app`
+/// as it stands.
 pub fn a_continued_landing_racing_a_commit_on_a_repo_it_moved() -> Scenario {
     scenario(
         "a continued landing racing a commit on a repo it moved",
@@ -14194,17 +14194,15 @@ pub fn a_continued_landing_racing_a_commit_on_a_repo_it_moved() -> Scenario {
             Step::release("continued")
                 .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation)),
             Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("rwv abort --leave-target")),
+            Step::rwv_printed(&ww("w"), "rwv abort --leave-target")
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::App])
-                .may_restore(&[Repo::App])
-                .claim(Claim::OutputContains(
-                    "[target] local/remotes/app: what abort discarded is kept as backup",
-                )),
-            kept_backup_shown(&ww("w"), "remotes/app log ", "again"),
+                .may_restore(&[Repo::App]),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputLacks("w-app"))
-                .claim(Claim::OutputLacks("again")),
-            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+                .claim(Claim::OutputContains("w-app"))
+                .claim(Claim::OutputContains("again")),
         ],
     )
 }
@@ -14783,9 +14781,9 @@ pub fn abort_stops_at_the_first_write_that_fails() -> Scenario {
 
 /// A landing stopped in its retire, and an abort that has judged its plan
 /// and taken the target's claim when a commit lands on the target's `app`:
-/// the plan is made again under the claim, so the abort keeps `app`'s new
-/// tip as a backup before it puts `app` back, and the printed show line
-/// returns that commit.
+/// the plan is made again under the claim, so the abort refuses, as for the
+/// target's project branch, and the `--leave-target` it offers ends the
+/// operation with `app` as it stands.
 pub fn abort_judges_again_once_it_holds_the_target() -> Scenario {
     scenario(
         "abort judges again once it holds the target",
@@ -14802,17 +14800,16 @@ pub fn abort_judges_again_once_it_holds_the_target() -> Scenario {
             Step::rwv_paused(&ww("w1"), &["abort"], "abort-retaken", "aborting"),
             Step::commit(&a(), Repo::App, "late-app"),
             Step::release("aborting")
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("rwv abort --leave-target")),
+            Step::rwv_printed_exactly(&ww("w1"), "rwv abort --leave-target")
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj])
-                .may_restore(&[Repo::App, Repo::Proj])
-                .claim(Claim::OutputContains(
-                    "[target] local/remotes/app: what abort discarded is kept as backup",
-                )),
-            kept_backup_shown(&ww("w1"), "remotes/app log ", "late-app"),
+                .may_restore(&[Repo::App, Repo::Proj]),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputLacks("late-app"))
-                .claim(Claim::OutputLacks("w1-app")),
+                .claim(Claim::OutputContains("late-app"))
+                .claim(Claim::OutputContains("w1-app")),
         ],
     )
 }
@@ -16716,10 +16713,10 @@ pub enum MovedRefThen {
 
 /// A landing as refs killed once it moved every ref, before it released the
 /// target; then `then` happens to the `main` it moved in `app`. A commit on
-/// it is kept as a backup, which the printed show line returns, and the
-/// branch put back; a checkout of it refuses the abort before anything
-/// moves, printing the detach that frees it, and the rerun restores. The
-/// landing then lands again.
+/// it refuses the abort, as for the target's project branch, and the
+/// `--leave-target` it offers ends the operation with `main` as it stands; a
+/// checkout of it refuses the abort before anything moves, printing the
+/// detach that frees it, the rerun restores, and the landing lands again.
 pub fn abort_over_a_ref_the_landing_moved(then: MovedRefThen) -> Scenario {
     let mut steps = vec![create("w")];
     steps.extend(main_checked_out_nowhere());
@@ -16737,11 +16734,14 @@ pub fn abort_over_a_ref_the_landing_moved(then: MovedRefThen) -> Scenario {
         MovedRefThen::Committed => steps.extend([
             Step::hand_commit(&a(), Repo::App, "main", &[("raced.txt", "raced\n")]),
             Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("rwv abort --leave-target")),
+            Step::rwv_printed_exactly(&ww("w"), "rwv abort --leave-target")
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::App])
-                .may_restore(&[Repo::App, Repo::Proj])
-                .claim(Claim::OutputContains("kept as backup")),
-            kept_backup_shown(&ww("w"), "remotes/app log ", "hand commit"),
+                .may_restore(&[Repo::App, Repo::Proj]),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("hand commit")),
         ]),
         MovedRefThen::CheckedOut => steps.extend([
             Step::git(&a(), Repo::App, &["switch", "-q", "main"]),
@@ -16764,20 +16764,17 @@ pub fn abort_over_a_ref_the_landing_moved(then: MovedRefThen) -> Scenario {
                 .may_rewind(&[Repo::App])
                 .may_restore(&[Repo::App, Repo::Proj])
                 .claim(Claim::OutputContains("'main' restored")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w-app")),
+            lands_on_main(
+                Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
+                Repo::App,
+                "w-app",
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
         ]),
     }
-    steps.extend([
-        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-            .claim(Claim::OutputLacks("w-app"))
-            .claim(Claim::OutputLacks("hand commit")),
-        lands_on_main(
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"]),
-            Repo::App,
-            "w-app",
-        )
-        .expect(Exit::Succeeds)
-        .claim(Claim::WorkweaveGone(ww("w"))),
-    ]);
     scenario("abort over a ref the landing moved", steps)
 }
 
@@ -16894,8 +16891,8 @@ fn app_conflicting_port() -> Vec<Step> {
 
 /// `--continue` rechecks the members it is to copy onto: one switched to
 /// another branch during the stop refuses until it is back, and a commit
-/// made by hand in a member not yet started is a foreign tip, never taken
-/// for a copy; once it is moved off, the port completes, each commit copied.
+/// made by hand in a member not yet started is taken in, the copy made on
+/// it, as every `--continue` takes one in.
 pub fn cherry_pick_continue_rechecks_members() -> Scenario {
     let mut steps = app_conflicting_port();
     steps.extend([
@@ -16908,12 +16905,6 @@ pub fn cherry_pick_continue_rechecks_members() -> Scenario {
             .claim(Claim::LocalStateUnchanged(ww("p"))),
         Step::git(&ww("p"), Repo::Lib, &["switch", "-q", "-"]),
         Step::commit(&ww("p"), Repo::Lib, "hand-x"),
-        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputContains("local/remotes/lib"))
-            .claim(Claim::LocalStateUnchanged(ww("p"))),
-        Step::git(&ww("p"), Repo::Lib, &["branch", "keep-x"]),
-        Step::git(&ww("p"), Repo::Lib, &["reset", "-q", "--hard", "HEAD~1"]),
         Step::rwv(&ww("p"), &["cherry-pick", "--continue", "--json"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("\"complete\": true"))
@@ -16928,6 +16919,8 @@ pub fn cherry_pick_continue_rechecks_members() -> Scenario {
             }),
         Step::git(&ww("p"), Repo::Lib, &["log", "-1", "--format=%s"])
             .claim(Claim::OutputLine("fix-lib")),
+        Step::git(&ww("p"), Repo::Lib, &["log", "-2", "--format=%s"])
+            .claim(Claim::OutputLine("hand-x")),
         Step::git(&ww("p"), Repo::App, &["log", "-1", "--format=%s"])
             .claim(Claim::OutputLine("readme-main")),
     ]);
@@ -18278,7 +18271,7 @@ pub fn abort_keeps_a_tip_amended_during_a_stop() -> Scenario {
             .claim(Claim::OutputContains(
                 "local/remotes/app: what abort discarded is kept as backup",
             )),
-        Step::rwv_printed_holding(&ww("w"), "git -C ", "remotes/app log ")
+        Step::rwv_printed_within(&ww("w"), "git -C ", "remotes/app log ")
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("w-app")),
     ];
@@ -21780,8 +21773,7 @@ pub enum LandStopCommit {
     /// The landing stopped on the project repo's conflict, which the operator
     /// resolved and concluded, and then committed on top.
     AfterProjectResolution,
-    /// The same resolution, nothing committed on top: the project tip is the
-    /// operation's own.
+    /// The same resolution staged, and committed by `rwv land --continue`.
     ResolutionOnly,
 }
 
@@ -21837,7 +21829,9 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
                 &["-c", "core.editor=true", "rebase", "--continue"],
             )
         };
-        steps.push(concluded.may_strand(&[Repo::Proj]).may_rewind(&[Repo::App]));
+        if !matches!(typed, LandStopCommit::ResolutionOnly) {
+            steps.push(concluded.may_strand(&[Repo::Proj]).may_rewind(&[Repo::App]));
+        }
     }
     if !matches!(typed, LandStopCommit::ResolutionOnly) {
         steps.push(Step::commit(&ww("w"), Repo::Proj, "operator-own"));
@@ -21849,14 +21843,26 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             .may_rewind(&[Repo::App]),
     );
     if let LandStopCommit::ResolutionOnly = typed {
-        steps.push(
+        steps.extend([
             Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App])
-                .claim(Claim::OutputLacks("its tip, holding commits")),
-        );
-        return scenario("a land stop resolved by hand and continued, aborted", steps);
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "projects/proj: what abort discarded is kept as backup",
+                )),
+            kept_backup_shown(
+                &ww("w"),
+                "projects/proj log ",
+                if history == "merge" {
+                    "+alpha"
+                } else {
+                    "+beta"
+                },
+            ),
+        ]);
+        return scenario("a land stop resolved and continued, aborted", steps);
     }
     steps.extend([
         Step::rwv(&ww("w"), &["abort"])
@@ -21885,7 +21891,7 @@ pub fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort(
     history: &'static str,
 ) -> Scenario {
     let at = ww("w");
-    let steps = vec![
+    let mut steps = vec![
         Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
         Step::commit(&a(), Repo::Proj, "shared"),
         create("w"),
@@ -21920,12 +21926,91 @@ pub fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort(
             .claim(Claim::OutputContains("local/remotes/lib: "))
             .claim(Claim::OutputContains("kept as backup")),
         kept_backup_shown(&at, "remotes/lib log ", "hand-fix"),
-        Step::git(&at, Repo::Lib, &["log", "--format=%s", "-1"]).claim(Claim::OutputLine("w-lib")),
     ];
+    if verb == "sync" {
+        steps.push(kept_backup_shown(
+            &at,
+            "remotes/app log ",
+            if history == "merge" {
+                "+alpha"
+            } else {
+                "+beta"
+            },
+        ));
+    }
+    steps.extend([
+        Step::rwv(&at, &["backup", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("proj--w/aborted")),
+        Step::git(&at, Repo::Lib, &["log", "--format=%s", "-1"]).claim(Claim::OutputLine("w-lib")),
+    ]);
     scenario(
         "a commit at a stop the continue runs past is kept by abort",
         steps,
     )
+}
+
+/// How the `--continue` of a landing killed after it converged is cut short.
+#[derive(Debug, Clone, Copy)]
+pub enum ContinueCut {
+    /// Killed where the first run was.
+    Killed,
+    /// It loses the race for `app` in the target.
+    Raced,
+}
+
+/// A landing under `history` killed after it converged and before it wrote
+/// its target; the operator commits in `lib` and in the project repo, and
+/// `rwv land --continue` takes both in and is cut short as `cut` says.
+/// `rwv abort` puts every repo back, keeping each tip that held a hand
+/// commit in its branch's slot, and each printed show line returns it.
+pub fn a_commit_after_a_landing_converged_is_kept_by_abort(
+    history: &'static str,
+    cut: ContinueCut,
+) -> Scenario {
+    let at = ww("w");
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
+        create("w"),
+        Step::commit(&at, Repo::App, "w-app"),
+        Step::commit(&at, Repo::Lib, "w-lib"),
+        Step::rwv(&at, &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "t-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(&at, &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::commit(&at, Repo::Lib, "hand-lib"),
+        Step::commit(&at, Repo::Proj, "hand-proj"),
+    ];
+    match cut {
+        ContinueCut::Killed => steps.extend([
+            Step::rwv_paused(&at, &["land", "--continue"], "composed", "continued"),
+            Step::kill("continued"),
+        ]),
+        ContinueCut::Raced => steps.extend([
+            Step::rwv_paused(&at, &["land", "--continue"], "advance-target", "continued"),
+            Step::commit(&a(), Repo::App, "again"),
+            Step::release("continued")
+                .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation)),
+        ]),
+    }
+    steps.extend([
+        Step::rwv(&at, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: what abort discarded is kept as backup",
+            ))
+            .claim(Claim::OutputContains(
+                "projects/proj: what abort discarded is kept as backup",
+            )),
+        kept_backup_shown(&at, "remotes/lib log ", "hand-lib"),
+        kept_backup_shown(&at, "projects/proj log ", "hand-proj"),
+        Step::git(&at, Repo::Lib, &["log", "--format=%s", "-1"]).claim(Claim::OutputLine("w-lib")),
+    ]);
+    scenario("a commit after a landing converged is kept by abort", steps)
 }
 
 /// A landing stopped in `app`'s rebase, finished by the VCS's own continue,
@@ -23061,8 +23146,9 @@ pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry
 }
 
 /// `verb` under `history`, killed at `point`, right after its relock
-/// commit and before it journaled that commit's tip: `rwv abort` reads the
-/// commit as the operation's own, puts everything back and keeps no backup.
+/// commit and before it journaled that commit's tip: `rwv abort` puts
+/// everything back, the relock commit kept in the project branch's slot like
+/// any tip it resets.
 pub fn a_verb_killed_after_its_relock_commit_is_aborted(
     verb: &'static str,
     history: &'static str,
@@ -23082,7 +23168,9 @@ pub fn a_verb_killed_after_its_relock_commit_is_aborted(
             .may_strand(&[Repo::App, Repo::Proj])
             .may_rewind(&[Repo::App, Repo::Proj])
             .may_restore(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputLacks("kept as backup")),
+            .claim(Claim::OutputContains(
+                "projects/proj: what abort discarded is kept as backup proj--w1/aborted",
+            )),
         Step::rwv(&ww("w1"), &["status"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLacks("in progress")),
@@ -23524,6 +23612,103 @@ pub fn abort_a_carried_stack_killed_after_putting_it_back() -> Scenario {
     ]);
     scenario(
         "stack: an abort killed after it put a carried stack back is rerun",
+        steps,
+    )
+}
+
+/// After a stop of `stopped`, the operator commits in `lib` at `at`, a
+/// `--continue` (`resume`) refuses as `refused` on the conflict still standing, and
+/// `rwv abort` ends the operation: the hand commit is on a branch or in
+/// `lib`'s slot, never lost.
+fn aborted_after_a_hand_commit_and_a_continue(
+    stopped: Vec<Step>,
+    at: Place,
+    resume: &'static [&'static str],
+    refused: Exit,
+) -> Vec<Step> {
+    let mut steps = stopped;
+    steps.extend([
+        Step::commit(&at, Repo::Lib, "hand-lib"),
+        Step::rwv(&at, resume).expect(refused),
+        Step::rwv(&at, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+        Step::git(&at, Repo::Lib, &["log", "--all", "--format=%s"])
+            .claim(Claim::OutputContains("hand-lib")),
+        Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    steps
+}
+
+/// `pull --merge-upstream` stopped on `app`, aborted after a hand commit in
+/// `lib` and a `--continue`.
+pub fn pull_aborted_after_a_hand_commit_and_a_continue() -> Scenario {
+    scenario(
+        "pull aborted after a hand commit and a continue",
+        aborted_after_a_hand_commit_and_a_continue(
+            both_sides_move_app_conflictingly(),
+            b(),
+            &["pull", "--continue"],
+            Exit::refuses_kind(RefusalKind::OpParked),
+        ),
+    )
+}
+
+/// `update --remote --merge-upstream` stopped on `app`, aborted after a
+/// hand commit in `lib` and a `--continue`.
+pub fn update_remote_aborted_after_a_hand_commit_and_a_continue() -> Scenario {
+    scenario(
+        "update --remote aborted after a hand commit and a continue",
+        aborted_after_a_hand_commit_and_a_continue(
+            update_remote_stopped_on_a_conflict(),
+            a(),
+            &["update", "--remote", "--continue"],
+            Exit::refuses(Repo::App, State::EditsMidOperation),
+        ),
+    )
+}
+
+/// A port stopped on `app`, aborted after a hand commit in `lib` and a
+/// `--continue`.
+pub fn cherry_pick_aborted_after_a_hand_commit_and_a_continue() -> Scenario {
+    scenario(
+        "cherry-pick aborted after a hand commit and a continue",
+        aborted_after_a_hand_commit_and_a_continue(
+            app_conflicting_port(),
+            ww("p"),
+            &["cherry-pick", "--continue"],
+            Exit::refuses_kind(RefusalKind::OpParked),
+        ),
+    )
+}
+
+/// `stack-carried-by-a-landing` killed after its carry moved `w2`, then
+/// aborted with nothing done in between: every branch is put back, the
+/// backups the rebase and the carry made of tips the restored branches reach
+/// are dropped, and no line names one; what abort keeps is in its slots.
+pub fn abort_of_an_undisturbed_carried_stack_leaves_only_its_slots() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("rebased-")),
+        Step::rwv(&ww("w1"), &["backup", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("[rebased]"))
+            .claim(Claim::OutputLacks("rebased-")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("w2-app")),
+    ]);
+    scenario(
+        "stack: an undisturbed carried stack aborted leaves only abort's slots",
         steps,
     )
 }
@@ -26055,7 +26240,7 @@ pub fn a_carried_fix_killed_part_way(
             steps.extend(aborted_from(
                 match point {
                     "remap-recorded" => abort.claim(Claim::OutputContains(
-                        "uncommitted edits are kept as backup",
+                        "what abort discarded is kept as backup",
                     )),
                     "remap-moved" => abort.claim(Claim::OutputContains(
                         "projects/proj: what abort discarded is kept as backup",
@@ -26068,7 +26253,7 @@ pub fn a_carried_fix_killed_part_way(
             match point {
                 "remap-recorded" => steps.push(kept_backup_shown(
                     &ww("w"),
-                    "projects/proj diff ",
+                    "projects/proj log ",
                     "rwv.toml",
                 )),
                 "remap-moved" => steps.push(kept_backup_shown(
@@ -26124,7 +26309,7 @@ pub fn a_carried_fix_beside_an_edited_lock(taking_in: TakingIn, then: ThenRun) -
         }
         ThenRun::Abort => steps.extend(aborted_from(
             Step::rwv_printed(&ww("w"), "rwv abort").claim(Claim::OutputContains(
-                "uncommitted edits are kept as backup",
+                "what abort discarded is kept as backup",
             )),
             &ww("w"),
             &[Repo::Lib],
@@ -26274,7 +26459,7 @@ pub fn a_fix_is_not_carried_off_the_replayed_tip(
             .may_restore(&[Repo::Proj, Repo::Lib])
             .may_rewind(&[Repo::Lib])
             .claim(Claim::OutputContains(
-                "uncommitted edits are kept as backup",
+                "what abort discarded is kept as backup",
             ))
             .claim(Claim::Lacks {
                 at: ww("w"),

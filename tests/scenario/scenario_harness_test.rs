@@ -1292,6 +1292,12 @@ every_scenario!(
     ),
     a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort("sync", "linear"),
     a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort("land", "merge"),
+    abort_of_an_undisturbed_carried_stack_leaves_only_its_slots,
+    pull_aborted_after_a_hand_commit_and_a_continue,
+    update_remote_aborted_after_a_hand_commit_and_a_continue,
+    cherry_pick_aborted_after_a_hand_commit_and_a_continue,
+    a_commit_after_a_landing_converged_is_kept_by_abort("linear", scenarios::ContinueCut::Killed),
+    a_commit_after_a_landing_converged_is_kept_by_abort("merge", scenarios::ContinueCut::Raced),
     abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Landed),
     abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Retire),
     cherry_pick_abort_keeps_edits_made_after_the_stop,
@@ -3943,6 +3949,44 @@ fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort() {
     }
 }
 
+/// Pull, update --remote and cherry-pick, each stopped, aborted after a
+/// hand commit and a `--continue`: the hand commit survives.
+#[test]
+fn aborted_after_a_hand_commit_and_a_continue() {
+    for made in [
+        scenarios::pull_aborted_after_a_hand_commit_and_a_continue,
+        scenarios::update_remote_aborted_after_a_hand_commit_and_a_continue,
+        scenarios::cherry_pick_aborted_after_a_hand_commit_and_a_continue,
+    ] {
+        runner::run(made()).assert_fully_decided_green();
+    }
+}
+
+/// An undisturbed carried stack, aborted, leaves no backup but abort's
+/// slots and names none it does not keep.
+#[test]
+fn abort_of_an_undisturbed_carried_stack_leaves_only_its_slots() {
+    runner::run(scenarios::abort_of_an_undisturbed_carried_stack_leaves_only_its_slots())
+        .assert_fully_decided_green();
+}
+
+/// A commit made after a landing converged, taken in by a `--continue`
+/// that is killed or loses a race, is kept by abort, under either history.
+#[test]
+fn a_commit_after_a_landing_converged_is_kept_by_abort() {
+    for history in ["linear", "merge"] {
+        for cut in [
+            scenarios::ContinueCut::Killed,
+            scenarios::ContinueCut::Raced,
+        ] {
+            runner::run(
+                scenarios::a_commit_after_a_landing_converged_is_kept_by_abort(history, cut),
+            )
+            .assert_fully_decided_green();
+        }
+    }
+}
+
 /// A commit the operator adds on top of a rebase they finished by hand is
 /// kept as a backup by abort, which puts the repo back.
 #[test]
@@ -4117,9 +4161,10 @@ holding_rwv! {
     }
 
     /// A landing that moved `app`'s `main` and lost on the project repo; a
-    /// commit is then made on that `main`. `rwv abort` puts the branch back,
-    /// keeping the new tip as a backup first.
-    fn an_abort_keeps_a_branch_the_landing_moved_that_moved_again() {
+    /// commit is then made on that `main`. `rwv abort` refuses, as for the
+    /// target's project branch, and the `--leave-target` it offers ends the
+    /// operation with that `main` as it stands.
+    fn an_abort_refuses_a_branch_the_landing_moved_that_moved_again() {
         let mut steps = landing_from("held");
         steps.extend([
             Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
@@ -4128,18 +4173,14 @@ holding_rwv! {
                 .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
             Step::commit(&a(), Repo::App, "after"),
             Step::rwv(&ww("held"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("rwv abort --leave-target")),
+            Step::rwv_printed(&ww("held"), "rwv abort --leave-target")
                 .expect(Exit::Succeeds)
                 .may_rewrite(&[Repo::App])
-                .may_rewind(&[Repo::App])
-                .claim(Claim::OutputContains("kept as backup"))
-                .claim(Claim::BackedUp {
-                    repo: Repo::App,
-                    mark: "after",
-                    marked: None,
-                }),
-            Step::rwv_printed_holding(&ww("held"), "git -C ", "remotes/app log ")
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("after")),
+                .may_rewind(&[Repo::App]),
+            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main"])
+                .claim(Claim::OutputLine("after")),
         ]);
         bad_steps("a landed branch moved again", steps).assert_fully_decided_green();
     }

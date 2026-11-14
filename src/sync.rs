@@ -9122,10 +9122,10 @@ fn kept_line(
     let said = if what.is_empty() {
         String::new()
     } else {
-        format!("{what}; ")
+        format!(" ({what})")
     };
     format!(
-        "  {label}: {said}what abort discarded is kept as backup {}; this shows it: {}",
+        "  {label}: what abort discarded is kept as backup {}{said}; this shows it: {}",
         names.join(", "),
         vcs.show_kept(dir, base, kept)
     )

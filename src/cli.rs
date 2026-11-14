@@ -359,9 +359,10 @@ pub enum Commands {
     // ── Multi-workspace ops ───────────────────────────────────────────────────
     /// Roll the operation in progress (a sync, landing, pull or update --remote that merges or resets, or cherry-pick) back to its savepoints in every workspace it touched, run from any of them
     ///
-    /// A tip it leaves that holds commits the operation did not make, and the
-    /// working copy of a checkout stopped in a conflict, are each kept as a
-    /// backup first, named with the command that shows it.
+    /// The tip of each branch it resets, where nothing else reaches it, and
+    /// the working copy of each checkout it cancels or discards edits in, are
+    /// kept first, whoever made them, in one slot per branch and per checkout
+    /// that the next abort overwrites, named with the command that shows them.
     Abort {
         /// End a landing whose target something else has moved since (another landing built on it, a commit, a branch deleted or checked out): its source is restored and its whole target left as it stands, each tip the landing wrote there first kept as a backup where no branch reaches it, its savepoints dropped. Refused where abort can restore the target.
         #[arg(long = "leave-target")]
@@ -678,7 +679,7 @@ pub enum Commands {
 
 #[derive(Subcommand)]
 pub enum BackupAction {
-    /// List each repo's backups, marking redundant, `rebased` and `abandoned` ones, each with the commits only it holds
+    /// List each repo's backups, marking redundant ones and each mark (`rebased`, `superseded`, and abort's slots), each with the commits only it holds
     List {
         /// Emit one `{ "$schema": ..., "repos": [...] }` JSON envelope. See `rwv explain backup`.
         #[arg(long)]

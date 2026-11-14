@@ -2720,7 +2720,7 @@ fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
     assert!(out.status.success(), "[cell6] {said}");
     assert!(
         said.contains(&format!(
-            "{SERVER_PATH}: restored; what abort discarded is kept as backup"
+            "{SERVER_PATH}: what abort discarded is kept as backup"
         )),
         "[cell6] the server's tip is named as kept: {said}"
     );

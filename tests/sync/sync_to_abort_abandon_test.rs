@@ -286,13 +286,13 @@ fn abort_keeps_both_copies_tips_with_a_backup_each() {
 
     assert!(
         stdout.contains(&format!(
-            "  {SERVER_PATH}: restored; what abort discarded is kept as backup"
+            "  {SERVER_PATH}: what abort discarded is kept as backup"
         )),
         "the owner-side copy's tip must be kept.\nstdout:\n{stdout}"
     );
     assert!(
         stdout.contains(&format!(
-            "[target] {SERVER_PATH}: restored; what abort discarded is kept as backup"
+            "[target] {SERVER_PATH}: what abort discarded is kept as backup"
         )),
         "the target-side copy's tip must be kept.\nstdout:\n{stdout}"
     );

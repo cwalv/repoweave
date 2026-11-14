@@ -188,7 +188,6 @@ fn a_merge_the_op_stopped_in_is_canceled() {
         &Attribution {
             integrates: Integrates::Yes,
             own_steps: &steps,
-            ..Attribution::default()
         },
         "Canceled(Untouched)",
     );
@@ -203,13 +202,7 @@ fn a_merge_the_op_never_started_on_a_tip_it_never_wrote_is_canceled_and_its_tip_
     stopped_merging(p.path());
     let at = head(p.path());
     merge_conflicting(p.path());
-    let outcome = planned_then_run(
-        p.path(),
-        &Attribution {
-            ..Attribution::default()
-        },
-        "Canceled(Restored)",
-    );
+    let outcome = planned_then_run(p.path(), &Attribution::default(), "Canceled(Restored)");
     assert_eq!(GitVcs.mid_op(p.path()), None);
     assert_eq!(&head(p.path()), saved.id());
     let kept = GitVcs
@@ -548,7 +541,6 @@ fn a_cancel_plan_whose_merge_was_given_up_cancels_nothing_and_keeps_its_savepoin
     let attribution = Attribution {
         integrates: Integrates::Yes,
         own_steps: &steps,
-        ..Attribution::default()
     };
     let plan = GitVcs
         .plan_checkout_restore(p.path(), &key(), &attribution)

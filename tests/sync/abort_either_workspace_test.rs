@@ -222,12 +222,17 @@ fn abort_restores_both_workspaces(from: Invoked) {
         Invoked::Target => "[source] ",
         Invoked::Workweave => "",
     };
-    for line in [
-        format!("  {seat_label}projects/{PROJECT}: restored"),
-        format!("  {seat_label}{LIB}: canceled the rebase in progress"),
+    for (line, said) in [
+        (format!("  {seat_label}projects/{PROJECT}: "), "restored"),
+        (
+            format!("  {seat_label}{LIB}: "),
+            "canceled the rebase in progress",
+        ),
     ] {
         assert!(
-            stdout.lines().any(|l| l.starts_with(&line)),
+            stdout
+                .lines()
+                .any(|l| l.starts_with(&line) && l.contains(said)),
             "{from:?}: expected the line {line:?}\n{}",
             transcript(&out)
         );

@@ -371,7 +371,7 @@ fn abort_of_the_ops_own_converged_tip_keeps_it_in_the_branch_slot_in_one_line() 
         panic!("one line for the server:\n{stdout}");
     };
     assert!(
-        line.contains("restored; what abort discarded is kept as backup main/aborted")
+        line.contains("what abort discarded is kept as backup main/aborted (restored)")
             && !stdout.contains(op_id),
         "{stdout}"
     );

@@ -568,6 +568,50 @@ fn prune_drops_what_a_branch_reaches_and_trusts_no_unconfirmed_remote() {
     );
 }
 
+/// The slots abort keeps what it resets in are backups like any other:
+/// `list` shows each with its mark, and `prune` takes one a branch reaches,
+/// leaving one holding a commit nothing else does.
+#[test]
+fn list_shows_aborts_slots_and_prune_takes_one_a_branch_reaches() {
+    let weave = Weave::new();
+    let alpha = weave.alpha();
+    let main_tip = common::git_in(&alpha, &["rev-parse", "HEAD"]);
+    common::git_in(&alpha, &["config", "user.email", "test@test.com"]);
+    common::git_in(&alpha, &["config", "user.name", "Test"]);
+    let reached = "refs/rwv/backup/main/aborted";
+    common::git_in(&alpha, &["update-ref", reached, &main_tip]);
+    std::fs::write(alpha.join("lone.txt"), "lone\n").unwrap();
+    common::git_in(&alpha, &["add", "lone.txt"]);
+    common::git_in(&alpha, &["commit", "-qm", "alone"]);
+    let alone = common::git_in(&alpha, &["rev-parse", "HEAD"]);
+    common::git_in(&alpha, &["reset", "-q", "--hard", &main_tip]);
+    let held = "refs/rwv/backup/main/aborted-working-copy";
+    common::git_in(&alpha, &["update-ref", held, &alone]);
+
+    let listing =
+        String::from_utf8_lossy(&succeed(&["backup", "list"], &weave.ws).stdout).into_owned();
+    assert!(
+        listing.contains(&format!(
+            "main/aborted -> {} [aborted] [redundant]",
+            &main_tip[..12]
+        )),
+        "{listing}"
+    );
+    assert!(
+        listing.contains(&format!(
+            "main/aborted-working-copy -> {} [aborted-working-copy]",
+            &alone[..12]
+        )),
+        "{listing}"
+    );
+
+    succeed(&["backup", "prune"], &weave.ws);
+    assert_eq!(
+        refs_under(&alpha, "refs/rwv/backup/"),
+        vec![(held.to_owned(), alone)],
+    );
+}
+
 /// `list` runs while an operation is in progress; `drop` and `prune` decline.
 #[test]
 fn list_runs_mid_operation_and_drop_and_prune_do_not() {
