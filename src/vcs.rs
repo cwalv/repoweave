@@ -1128,9 +1128,12 @@ impl fmt::Display for VcsError {
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(
                 f,
-                "git {:?} in {} failed: {}",
-                args,
-                repo.display(),
+                "VCS action (git: `git -C {} {}`) failed: {}",
+                crate::check::shell_word(&repo.display().to_string()),
+                args.iter()
+                    .map(|arg| crate::check::shell_word(arg))
+                    .collect::<Vec<_>>()
+                    .join(" "),
                 stderr.trim()
             ),
         }

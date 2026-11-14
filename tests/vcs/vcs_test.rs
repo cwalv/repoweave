@@ -2343,3 +2343,18 @@ fn edits_dirty_for_an_untracked_file_prints_choices_that_clear_it() {
         .trim()
         .is_empty());
 }
+
+/// A failed VCS command is reported as the command line an operator could
+/// type, never as a debug-formatted argument list.
+#[test]
+fn a_failed_command_reads_as_the_line_that_ran() {
+    let err = VcsError::CommandFailed {
+        args: vec!["rebase".to_owned(), "--onto".to_owned(), "a b".to_owned()],
+        repo: PathBuf::from("/w/lib"),
+        stderr: "error: cannot rebase\n".to_owned(),
+    };
+    assert_eq!(
+        err.to_string(),
+        "VCS action (git: `git -C /w/lib rebase --onto 'a b'`) failed: error: cannot rebase"
+    );
+}

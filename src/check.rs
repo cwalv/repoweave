@@ -10679,7 +10679,7 @@ pub fn run_check_json(
 
 /// `word` as one shell argument: bare when no shell would split, expand or
 /// unescape it, single-quoted otherwise.
-fn shell_word(word: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn shell_word(word: &str) -> std::borrow::Cow<'_, str> {
     let bare = !word.is_empty()
         && word
             .chars()
