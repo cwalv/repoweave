@@ -162,6 +162,20 @@ workspace holds uncommitted stays there and is reported.
 `rwv workweave delete` applies the deletion rule to the workweave's branch and
 takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
 
+### Removing a member's clone keeps what only it holds
+
+- `rwv member remove --delete` in the primary, and a landing or sync that
+  prunes the primary's clone of a dropped member, refuse while the clone holds
+  anything whose commits no remote-tracking branch reaches, and name each:
+  a branch, a tag, a backup, edits the VCS set aside, a checked-out commit on
+  no branch. A branch whose commits a remote holds no longer blocks it.
+- The uncommitted-changes refusal of such a removal offers only to commit the
+  edits: setting them aside would leave them in the clone being removed.
+- `rwv pull` reads the upstream tip's `rwv.toml` before it moves the project
+  branch, and refuses one that does not parse (`unparseable-project at`), as
+  `rwv sync` does, for a fast-forward, `--reset-to-upstream` and
+  `--merge-upstream` alike.
+
 ### Git 2.36 or newer is required
 
 Every verb that reads or writes a repository checks the `git` on `PATH` first and

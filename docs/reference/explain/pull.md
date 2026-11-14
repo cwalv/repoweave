@@ -34,8 +34,10 @@ the checkout has edits.
    stands without the network.
 2. **The project branch.** Before it moves, the project repo is judged for
    a VCS operation in progress, an uncommitted `rwv.toml` or `rwv.lock`, and
-   uncommitted changes to files the fast-forward would overwrite (`edits`);
-   each refuses. Other uncommitted changes stay as they are, named in one
+   uncommitted changes to files the fast-forward would overwrite (`edits`),
+   and the upstream tip's `rwv.toml` is read: one that does not parse
+   (`unparseable-project at`) refuses before the branch moves, as `rwv sync`
+   refuses the same commit; each refuses. Other uncommitted changes stay as they are, named in one
    line. A branch behind its upstream then fast-forwards,
    and `pull` reports what the commits it took in changed:
    - `re-pinned <member>: <was> -> <now>` for each member whose pin the pulled
@@ -1088,8 +1090,9 @@ Schema:
 
 - `0` — every step completed.
 - `1` — a refusal stopped the pull: a repo the fetch could not complete, a
-  project branch that has diverged, uncommitted changes the fast-forward would
-  disturb, or any refusal of the update.
+  project branch that has diverged, an upstream whose `rwv.toml` does not
+  parse, uncommitted changes the fast-forward would disturb, or any refusal of
+  the update.
 
 ## Examples
 
@@ -1112,6 +1115,9 @@ rwv pull --repo github/acme/server
   projects/<name>` takes it in.
 - *edits dirty* — the project repo has uncommitted changes to files the
   fast-forward would overwrite, listed; commit or set them aside, then rerun.
+- *unparseable-project at* — the upstream tip's `rwv.toml` does not parse, so
+  nothing is taken in; a commit on the upstream branch that makes it parse
+  fixes it.
 - *pull could not complete the fetch* — a remote was unreachable or refused;
   `rwv update` aligns the members to the lock as it stands.
 - *target unrecorded* — the checked-out branch of the project repo has no record

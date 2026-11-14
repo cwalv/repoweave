@@ -182,7 +182,8 @@ state the checkout was judged in that refused the removal, with that state's
 choices, or the `refusal` token when the removal was refused on a condition, and
 the full `message`. Its checkout is left on disk with no manifest naming it: the
 sync still completes and clears its op record, then exits 1, so `rwv abort` does
-not apply and re-running the sync does not prune it; remove it by hand.
+not apply and re-running the sync does not prune it; `rwv member remove <path>
+--delete` removes it once nothing the refusal named stands.
 
 `refused` carries each judged line of a refusal with its choices. `advisories`
 carries a `derived-state-stale` record, naming `rwv materialize` and the inputs

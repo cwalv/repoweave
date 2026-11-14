@@ -384,12 +384,18 @@ Every guard runs before the manifest is written, so a refused delete leaves
   checkout derived from the clone** — a workweave's, or a worktree added by
   hand — are judged together and refuse as one: one line per state, on the
   `edits` and `checkout` kinds, with the choices each state prints;
-- *commits no other clone reaches* refuse
-  (`dropped-repo-has-unique-commits`): in the primary, any branch with no
-  remote counterpart or with commits ahead of it, and any backup that holds
-  commits no branch reaches (`rwv backup list` shows them; `rwv backup drop
-  <repo> <name>` drops the ones that are not wanted); in a workweave, a worktree
-  tip the canonical clone does not contain.
+- *work no other clone reaches* refuses
+  (`dropped-repo-has-unique-commits`): in the primary, where the clone is the
+  repo's only store, anything it holds whose commits no remote-tracking branch
+  reaches, each named: a branch, a tag, a backup (`rwv backup list` shows them;
+  `rwv backup drop <repo> <name>` drops the ones that are not wanted), edits
+  the VCS set aside, or a checked-out commit on no branch; in a workweave, a
+  worktree tip the canonical clone does not contain. Because edits set aside in
+  the primary's clone go with it, the uncommitted-changes refusal there offers
+  only to commit them.
+
+Ignored files go with the checkout, as they do when the VCS removes a working
+tree.
 
 (See `rwv explain workweave` for the workweave topology model.)
 
