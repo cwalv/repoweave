@@ -250,8 +250,8 @@ two writes is carried forward to the new parent by the next verb.
 **The index records no ownership.** What rwv may delete is decided by the
 deletion rule (`src/deletion.rs`) from the branch records and the refs
 themselves, never from a record that rwv created a ref; the index carries no
-`receipts` at all, and a file at the old path that still does is converted
-(`src/workweave_index.rs`).
+`receipts` at all, and a file at the old path is an unreadable index that
+`rwv doctor --fix` rebuilds from the markers and removes (`src/workweave_index.rs`).
 
 `.rwv-active` and `.rwv-workweave` are **mutually exclusive**; `rwv doctor`
 reports the conflict.

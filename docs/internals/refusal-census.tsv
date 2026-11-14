@@ -360,7 +360,6 @@ src/workweave.rs	standalone-in-workweave	-	3
 src/workweave.rs	target-dir-occupied	-	1
 src/workweave.rs	unregistered-workweave	-	1
 src/workweave.rs	workweave-drift	tests/integrations/symlinked_member_migration_test.rs	3
-src/workweave_index.rs	legacy-workweave-index old path	-	1
 src/workweave_index.rs	project-dir-missing	-	1
 src/workweave_index.rs	state-claim-held	-	1
-src/workweave_index.rs	unreadable-workweave-index	-	1
+src/workweave_index.rs	unreadable-workweave-index	-	2

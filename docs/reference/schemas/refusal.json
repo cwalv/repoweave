@@ -101,13 +101,6 @@
           ]
         },
         {
-          "description": "A project's workweave index at the path earlier releases kept it at.",
-          "type": "string",
-          "enum": [
-            "legacy-workweave-index"
-          ]
-        },
-        {
           "description": "A branch rwv never rewrites, renames or deletes.",
           "type": "string",
           "enum": [

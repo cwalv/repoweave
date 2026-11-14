@@ -186,17 +186,13 @@ A member of a workweave that still carries the branch shape an earlier release u
 
 ## Step 8 — a workweave index at the old path
 
-An earlier release kept each project's workweave index at `projects/<project>/.rwv-workweave-index`. The index now lives in the project clone, in the directory its worktrees share, so the primary and every workweave reach one copy and a clean of the project's working tree cannot remove it. A file left at the old path is read by nothing as the index: every verb that reads it refuses, whatever shape the file is in:
-
-The refusal is `legacy-workweave-index` in state `old path`, listing the file and offering `rwv doctor --fix`; `rwv explain legacy-workweave-index` serves the entry.
-
-`rwv doctor` reports it as `legacy-workweave-index` and `rwv doctor --fix` converts it. The conversion writes the new index first, then removes the old file: `container` becomes `basedir` with its value, each workweave keeps its path and gains the parent its marker records (the primary where the marker cannot be read), and `receipts` is not carried over. Workweaves placed with `--dir` stay listed.
+An earlier release kept each project's workweave index at `projects/<project>/.rwv-workweave-index`. The index now lives in the project clone, in the directory its worktrees share, so the primary and every workweave reach one copy and a clean of the project's working tree cannot remove it. A file left at the old path is read by nothing as the index: every verb that reads it refuses as `unreadable-workweave-index`, whatever shape the file is in, and names the command that rebuilds it.
 
 ```bash
-rwv doctor --fix
+rwv -C <primary> doctor --fix
 ```
 
-If the old file was committed to the project repo, the conversion removes the working file and leaves the deletion for you to commit. A file that does not parse is reported as `unreadable-workweave-index`, and `rwv doctor --fix` replaces it with an index rebuilt from the workweaves on disk.
+The rebuild lists the workweaves their `.rwv-workweave` markers record, writes the index into the project clone, and removes the old file. The basedir the old index recorded is not carried over: `rwv workweave set-default-create-basedir` records it again. A workweave outside the containers doctor scans is listed again by the next rwv run inside it. If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
 
 ## Step 9 — the lock merge driver an earlier release set up
 

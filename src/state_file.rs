@@ -32,8 +32,9 @@ pub enum StateFile {
     ProjectLock,
     /// Replaced, by a writer holding [`StateFile::IndexClaim`].
     WorkweaveIndex,
-    /// Read, and removed once its content is in [`StateFile::WorkweaveIndex`].
-    LegacyWorkweaveIndex,
+    /// The file earlier releases kept the index in, read by nothing and
+    /// removed by the rebuild of [`StateFile::WorkweaveIndex`].
+    OldPathWorkweaveIndex,
     /// Replaced, when its content changes.
     WorkspaceState,
     /// Created exclusively by the op that acquires its workspace, then
@@ -70,7 +71,7 @@ impl StateFile {
         StateFile::WorkweaveMarker,
         StateFile::ProjectLock,
         StateFile::WorkweaveIndex,
-        StateFile::LegacyWorkweaveIndex,
+        StateFile::OldPathWorkweaveIndex,
         StateFile::WorkspaceState,
         StateFile::OpRecord,
         StateFile::OpLease,
@@ -88,7 +89,7 @@ impl StateFile {
             StateFile::WorkweaveMarker => crate::workspace::WORKWEAVE_MARKER_FILE,
             StateFile::ProjectLock => crate::manifest::LockFile::FILE_NAME,
             StateFile::WorkweaveIndex => crate::workweave_index::INDEX_FILENAME,
-            StateFile::LegacyWorkweaveIndex => crate::workweave_index::LEGACY_INDEX_FILENAME,
+            StateFile::OldPathWorkweaveIndex => crate::workweave_index::OLD_PATH_INDEX_FILENAME,
             StateFile::WorkspaceState => crate::alignment::WORKSPACE_STATE_FILE,
             StateFile::OpRecord => crate::op_state::OP_STATE_FILE,
             StateFile::OpLease => crate::op_state::OP_LEASE_FILE,

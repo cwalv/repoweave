@@ -1318,6 +1318,9 @@ every_scenario!(
     an_unreadable_op_record_is_ended_by_its_verb,
     an_unreadable_workweave_index_is_rebuilt_by_doctor("garbage{"),
     an_unreadable_workweave_index_is_rebuilt_by_doctor("{\"workweaves\":{},\"future\":1}"),
+    an_unreadable_workweave_index_is_rebuilt_by_doctor(
+        "{\"container\":\"/c\",\"workweaves\":{},\"receipts\":[]}"
+    ),
     discarding_a_readable_op_record_is_refused,
     an_unreadable_op_lease_is_removed_by_its_verb,
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Switch),
@@ -6578,7 +6581,11 @@ fn an_unreadable_op_record_is_ended_by_its_verb() {
 
 #[test]
 fn an_unreadable_workweave_index_is_rebuilt_by_doctor() {
-    for content in ["garbage{", "{\"workweaves\":{},\"future\":1}"] {
+    for content in [
+        "garbage{",
+        "{\"workweaves\":{},\"future\":1}",
+        "{\"container\":\"/c\",\"workweaves\":{},\"receipts\":[]}",
+    ] {
         runner::run(scenarios::an_unreadable_workweave_index_is_rebuilt_by_doctor(content))
             .assert_fully_decided_green();
     }

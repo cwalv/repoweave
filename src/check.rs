@@ -253,27 +253,9 @@ pub enum CheckViolation {
         primary: PathBuf,
     },
 
-    /// A workweave index still at `projects/<project>/.rwv-workweave-index`,
-    /// where earlier releases kept it, in any shape.
-    ///
-    /// Auto-fixable: `--fix` converts it and moves it to the project clone's
-    /// shared directory. Every verb that reads the index refuses until then.
-    ///
-    /// Reported rather than refused at read (unlike the marker), because the
-    /// conversion has to be able to read the file it is about to move.
-    LegacyWorkweaveIndex {
-        /// The project whose index is at the old path.
-        project: ProjectName,
-        /// Absolute path to the old-path index file.
-        index_path: PathBuf,
-        /// How the old file was written.
-        sub_kind: LegacyWorkweaveIndexKind,
-    },
-
     /// A workweave index that exists but does not parse, at the path it lives
     /// at or at the old path, so nothing derived from it is evaluated: the
-    /// recorded placements and the conversion
-    /// ([`LegacyWorkweaveIndex`](Self::LegacyWorkweaveIndex)) alike.
+    /// recorded placements.
     ///
     /// Reported so the state names itself. Without it every marker-bearing
     /// workweave in the project reads as
@@ -734,7 +716,6 @@ impl CheckViolation {
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
-            CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::MissingLockMergeDriver { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::UninitializedSubmodule { sub_kind, .. } => match sub_kind {
                 SubmoduleCommitKind::Fetched => Auto,
@@ -854,7 +835,6 @@ impl CheckViolation {
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.severity(),
-            CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Extra => Warning,
                 DriftKind::Missing
@@ -903,7 +883,6 @@ impl CheckViolation {
                 ViolationKind::WeaveRootIdentityConflict
             }
             CheckViolation::LegacyWorkweaveMarker { .. } => ViolationKind::LegacyWorkweaveMarker,
-            CheckViolation::LegacyWorkweaveIndex { .. } => ViolationKind::LegacyWorkweaveIndex,
             CheckViolation::UnreadableOwnedState { .. } => ViolationKind::UnreadableOwnedState,
             CheckViolation::UnreadableWorkweaveIndex { .. } => {
                 ViolationKind::UnreadableWorkweaveIndex
@@ -964,7 +943,6 @@ pub enum ViolationKind {
     UnreadableActiveProject,
     WeaveRootIdentityConflict,
     LegacyWorkweaveMarker,
-    LegacyWorkweaveIndex,
     UnreadableOwnedState,
     UnreadableWorkweaveIndex,
     UnparseableProject,
@@ -991,7 +969,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 45] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1014,7 +992,6 @@ impl ViolationKind {
         Self::UnreadableActiveProject,
         Self::WeaveRootIdentityConflict,
         Self::LegacyWorkweaveMarker,
-        Self::LegacyWorkweaveIndex,
         Self::UnreadableOwnedState,
         Self::UnreadableWorkweaveIndex,
         Self::UnparseableProject,
@@ -1187,40 +1164,6 @@ impl PinKind {
     }
 }
 
-/// How the workweave index at the old path was written, which decides nothing
-/// about the repair.
-#[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum LegacyWorkweaveIndexKind {
-    /// No `receipts` key: written before that key was kept.
-    BeforeReceipts,
-    /// Carries `receipts`, empty or not: the shape of the release that kept
-    /// the index in the project checkout.
-    OldPath,
-}
-
-impl LegacyWorkweaveIndexKind {
-    pub const ALL: [Self; 2] = [Self::BeforeReceipts, Self::OldPath];
-
-    pub fn severity(self) -> crate::integration::Severity {
-        match self {
-            Self::BeforeReceipts | Self::OldPath => crate::integration::Severity::Warning,
-        }
-    }
-
-    pub fn fix_disposition(self) -> FixDisposition {
-        match self {
-            Self::BeforeReceipts | Self::OldPath => FixDisposition::Auto,
-        }
-    }
-
-    pub(crate) fn of(shape: crate::workweave_index::LegacyShape) -> Self {
-        match shape {
-            crate::workweave_index::LegacyShape::BeforeReceipts => Self::BeforeReceipts,
-            crate::workweave_index::LegacyShape::OldPath => Self::OldPath,
-        }
-    }
-}
 /// How a member's checkout stands against where its workspace expects it.
 #[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -2161,12 +2104,6 @@ pub enum ViolationOutput {
         marker_path: WirePath,
         primary: WirePath,
     },
-    LegacyWorkweaveIndex {
-        project: ProjectName,
-        index_path: WirePath,
-        #[serde(rename = "sub_kind")]
-        sub_kind: LegacyWorkweaveIndexKind,
-    },
     UnreadableOwnedState {
         project: ProjectName,
         state_path: WirePath,
@@ -2636,15 +2573,6 @@ impl ViolationOutput {
             } => Self::LegacyWorkweaveMarker {
                 marker_path: WirePath::of(&marker_path),
                 primary: WirePath::of(&primary),
-            },
-            CheckViolation::LegacyWorkweaveIndex {
-                project,
-                index_path,
-                sub_kind,
-            } => Self::LegacyWorkweaveIndex {
-                project: project.clone(),
-                index_path: WirePath::of(&index_path),
-                sub_kind,
             },
             CheckViolation::UnreadableOwnedState {
                 project,
@@ -3423,16 +3351,16 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
     let mut unreadable_index_projects: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     for project in crate::workspace::discover_projects(ws_root) {
-        let legacy = crate::workweave_index::legacy_index_path(ws_root, &project);
-        if legacy.exists() {
+        let old = crate::workweave_index::old_path_file(ws_root, &project);
+        if old.exists() {
             unreadable_index_projects.insert(project.as_str().to_string());
-            if let Err(e) = crate::workweave_index::legacy_shape(ws_root, &project) {
-                violations.push(CheckViolation::UnreadableWorkweaveIndex {
-                    project: project.clone(),
-                    index_path: legacy.reported(),
-                    error: format!("{e:#}"),
-                });
-            }
+            violations.push(CheckViolation::UnreadableWorkweaveIndex {
+                project: project.clone(),
+                index_path: old.reported(),
+                error: "it is at the path an earlier release kept the index, which this \
+                        release does not read"
+                    .to_owned(),
+            });
             continue;
         }
         let index = match crate::workweave_index::read(ws_root, &project) {
@@ -6666,12 +6594,6 @@ impl CheckViolation {
                      run `rwv doctor --fix` to migrate",
                 marker_path.display()
             ),
-            CheckViolation::LegacyWorkweaveIndex { index_path, .. } => format!(
-                "{} is a workweave index at the path earlier releases kept it, so every \
-                     verb that reads the index refuses for this project; run \
-                     `rwv doctor --fix` to convert it and move it into the project clone",
-                index_path.display()
-            ),
             CheckViolation::UnreadableOwnedState {
                 project,
                 state_path,
@@ -8359,7 +8281,6 @@ fn apply_workspace_repairs(
     fix_errors: &mut Vec<String>,
 ) {
     let vcs = world.vcs.as_ref();
-    let project_scope = world.project_scope();
 
     match primary_pointer(ctx.primary_path()) {
         Some(PointerContent::Selects(active_name))
@@ -8416,27 +8337,6 @@ fn apply_workspace_repairs(
                     root.display()
                 )),
             }
-        }
-    }
-
-    for project in crate::workspace::discover_projects(ctx.primary_path()) {
-        if let Some(active) = project_scope {
-            if &project != active {
-                continue;
-            }
-        }
-        match crate::workweave_index::convert_legacy_index(ctx.primary_path(), &project) {
-            Ok(Some(converted)) => outln!(
-                "[fixed] core: converted {} and moved it to {} ({} workweave(s) kept)",
-                converted.from,
-                converted.to,
-                converted.workweaves
-            ),
-            Ok(None) => {}
-            Err(e) => fix_errors.push(format!(
-                "failed to convert {}'s workweave index: {e:#}",
-                project
-            )),
         }
     }
 
@@ -8956,16 +8856,6 @@ fn apply_finding_repairs(
                 }
             }
 
-            CheckViolation::UnreadableWorkweaveIndex {
-                project,
-                index_path,
-                ..
-            } if *index_path
-                == crate::workweave_index::legacy_index_path(ctx.primary_path(), project)
-                    .reported() =>
-            {
-                false
-            }
             CheckViolation::UnreadableWorkweaveIndex { project, .. } => {
                 match rebuild_workweave_index(ctx.primary_path(), project) {
                     Ok(Some(names)) => {
@@ -10417,27 +10307,6 @@ fn collect_doctor_violations(
             marker_path: finding.marker_path,
             primary: finding.primary,
         });
-    }
-
-    for project in crate::workspace::discover_projects(ctx.primary_path()) {
-        if let Some(active) = project_scope {
-            if &project != active {
-                continue;
-            }
-        }
-        match crate::workweave_index::legacy_shape(ctx.primary_path(), &project) {
-            Ok(Some((index_path, shape))) => {
-                violations.push(CheckViolation::LegacyWorkweaveIndex {
-                    project,
-                    index_path: index_path.reported(),
-                    sub_kind: LegacyWorkweaveIndexKind::of(shape),
-                })
-            }
-            Ok(None) => {}
-            // An old-path file that does not parse has no shape to classify;
-            // `scan_registry_reconciliation` reports it as unreadable.
-            Err(_) => {}
-        }
     }
 
     violations.extend(scan_workweave_tree_integrity(ctx.primary_path()));

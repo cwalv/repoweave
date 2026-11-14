@@ -803,8 +803,8 @@ dropped. An entry's path is its branch's name with `%` and `/` escaped
 no name is never read into a snapshot, so no write names it.
 
 **No receipts.** Nothing records that rwv created a ref. The workweave index
-carries no `receipts` at all; an index an earlier release kept at the old path
-is converted, `receipts` dropped (`legacy-workweave-index`).
+carries no `receipts` at all; a file an earlier release kept at the old path is
+an unreadable index, rebuilt by `rwv doctor --fix` (`unreadable-workweave-index`).
 
 ---
 
@@ -2033,8 +2033,8 @@ landed — plus a seventh the implementation exposed.
    (canonical store, ref name), because the refs outlive the workweave
    directory and a marker-homed receipt would die with `remove_dir_all`. The
    receipts are gone (§3.7): the index carries no `receipts`, and
-   `rwv doctor --fix` converts an index an earlier release kept at the old path,
-   dropping them (`legacy-workweave-index`). Writes still go through one durable path
+   `rwv doctor --fix` rebuilds the index of a file an earlier release kept at the old
+   path (`unreadable-workweave-index`). Writes still go through one durable path
    (`durable_file::replace`) with the read-modify-write held under a
    cross-process claim (`IndexClaim`), which the workweave registry still needs.
    The marker is still `{primary, project, parent}` and nothing else. Legacy

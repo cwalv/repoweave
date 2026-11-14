@@ -167,21 +167,19 @@ fn the_parity_check_reports_a_json_renderer_that_drops_a_kind() {
     // The reported regression, planted: a collector reachable from the text
     // path and not the JSON one shows up here as a kind --json cannot produce.
     let holed = |v: CheckViolation| {
-        if matches!(v, CheckViolation::LegacyWorkweaveIndex { .. }) {
+        if matches!(v, CheckViolation::UnreadableWorkweaveIndex { .. }) {
             return false;
         }
         renders_as_json(v)
     };
     let gaps = parity_gaps(&renders_as_text, &holed, JSON_ONLY_BY_DESIGN);
-    for sub_kind in ["old-path", "before-receipts"] {
-        assert!(
-            gaps.contains(&format!(
-                "legacy-workweave-index/{sub_kind}: the text report renders it, --json does not"
-            )),
-            "a --json renderer that drops a kind must be reported; got:\n  {}",
-            gaps.join("\n  ")
-        );
-    }
+    assert!(
+        gaps.contains(
+            &"unreadable-workweave-index: the text report renders it, --json does not".to_string()
+        ),
+        "a --json renderer that drops a kind must be reported; got:\n  {}",
+        gaps.join("\n  ")
+    );
 }
 
 #[test]
@@ -200,8 +198,6 @@ fn the_corpus_covers_every_kind_and_is_not_empty() {
         "duplicate sample tokens hide a missing case: {tokens:?}"
     );
     for expected in [
-        "legacy-workweave-index/old-path",
-        "legacy-workweave-index/before-receipts",
         "record-drift/safe-to-fix",
         "workweave-tree-integrity/foreign-primary-other-workspace",
     ] {
@@ -538,7 +534,7 @@ fn a_legacy_index_reaches_both_the_report_and_the_wire_format() {
         .filter_map(|v| v["kind"].as_str())
         .collect();
     assert!(
-        kinds.contains(&"legacy-workweave-index"),
+        kinds.contains(&"unreadable-workweave-index"),
         "`doctor --json` must emit the finding the text report shows; kinds were \
          {kinds:?}, document:\n{json_stdout}"
     );

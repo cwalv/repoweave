@@ -480,25 +480,6 @@
         }
       }
     },
-    "LegacyWorkweaveIndexKind": {
-      "description": "How the workweave index at the old path was written, which decides nothing about the repair.",
-      "oneOf": [
-        {
-          "description": "No `receipts` key: written before that key was kept.",
-          "type": "string",
-          "enum": [
-            "before-receipts"
-          ]
-        },
-        {
-          "description": "Carries `receipts`, empty or not: the shape of the release that kept the index in the project checkout.",
-          "type": "string",
-          "enum": [
-            "old-path"
-          ]
-        }
-      ]
-    },
     "MarkerDefect": {
       "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a [`crate::manifest::ProjectName`] from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value `require_exclusive` refuses on, its path respelled by [`Self::into_wire`], not a re-description of it.",
       "oneOf": [
@@ -1741,32 +1722,6 @@
         {
           "type": "object",
           "required": [
-            "index_path",
-            "kind",
-            "project",
-            "sub_kind"
-          ],
-          "properties": {
-            "index_path": {
-              "$ref": "#/definitions/WirePath"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "legacy-workweave-index"
-              ]
-            },
-            "project": {
-              "type": "string"
-            },
-            "sub_kind": {
-              "$ref": "#/definitions/LegacyWorkweaveIndexKind"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
             "active",
             "error",
             "kind",
@@ -2227,6 +2182,34 @@
               "type": "string",
               "enum": [
                 "claim-unreadable"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "file",
+            "held_by",
+            "kind"
+          ],
+          "properties": {
+            "file": {
+              "description": "Absolute path to the claim file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "held_by": {
+              "description": "What it records about its holder: a pid and a host.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "claim-holder-unreachable"
               ]
             }
           }

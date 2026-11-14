@@ -268,8 +268,6 @@ struct OwnerRecordFixture {
     advanced_tips: Vec<(String, String)>,
     /// (repo-path-or-"(project)", sha) entries.
     converged_tips: Vec<(String, String)>,
-    /// override strings (e.g. "discard-local-commits", "allow-stale-lock").
-    overrides: Vec<&'static str>,
     /// The target repos a landing journaled as moved. `None` journals what a
     /// landing that reached `phase` journals: each repo with a converged tip
     /// once it is advancing the target, before it moves any.
@@ -288,17 +286,11 @@ fn tip_map_json(tips: &[(String, String)]) -> String {
 fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
     let advanced_json = tip_map_json(&rec.advanced_tips);
     let converged_json = tip_map_json(&rec.converged_tips);
-    let overrides_json = rec
-        .overrides
-        .iter()
-        .map(|o| format!("\"{o}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
     let body = format!(
         "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
-         \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
+         \"converged_tips\": {{{converged_json}}}, \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         take_in = if rec.verb_str == "land" {
             let mut plan: repoweave::op_state::TakeInRecord = serde_json::from_str(
@@ -2814,7 +2806,7 @@ fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
     format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
+         \"phase\": \"replay\", \"converged_tips\": {{}}, \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),

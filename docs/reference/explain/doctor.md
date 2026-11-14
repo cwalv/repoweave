@@ -199,10 +199,10 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `claim-owner-unreachable`, `claim-unopenable`, `claim-unreadable`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-merge-driver-unreadable`, `lock-pinned-by-name`, `member-permissions`, `missing-canonical-clone`, `missing-lock-merge-driver`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `record-drift`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-op-record`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `claim-holder-unreachable`, `claim-owner-unreachable`, `claim-unopenable`, `claim-unreadable`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `legacy-manifest-format`, `legacy-workweave-marker`, `lock-merge-driver-unreadable`, `lock-pinned-by-name`, `member-permissions`, `missing-canonical-clone`, `missing-lock-merge-driver`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `record-drift`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-op-record`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`alignment`, `clone-topology`, `dead-op-lease`, `legacy-workweave-index`, `member-permissions`, `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`, `record-drift`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `clone-topology`, `dead-op-lease`, `member-permissions`, `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`, `record-drift`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -714,25 +714,6 @@ Schema:
           "$ref": "#/definitions/SeverityOutput"
         }
       }
-    },
-    "LegacyWorkweaveIndexKind": {
-      "description": "How the workweave index at the old path was written, which decides nothing about the repair.",
-      "oneOf": [
-        {
-          "description": "No `receipts` key: written before that key was kept.",
-          "type": "string",
-          "enum": [
-            "before-receipts"
-          ]
-        },
-        {
-          "description": "Carries `receipts`, empty or not: the shape of the release that kept the index in the project checkout.",
-          "type": "string",
-          "enum": [
-            "old-path"
-          ]
-        }
-      ]
     },
     "MarkerDefect": {
       "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker `WorkweaveMarker::migrate_legacy` can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a `crate::manifest::ProjectName` from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value `require_exclusive` refuses on, its path respelled by `Self::into_wire`, not a re-description of it.",
@@ -1976,32 +1957,6 @@ Schema:
         {
           "type": "object",
           "required": [
-            "index_path",
-            "kind",
-            "project",
-            "sub_kind"
-          ],
-          "properties": {
-            "index_path": {
-              "$ref": "#/definitions/WirePath"
-            },
-            "kind": {
-              "type": "string",
-              "enum": [
-                "legacy-workweave-index"
-              ]
-            },
-            "project": {
-              "type": "string"
-            },
-            "sub_kind": {
-              "$ref": "#/definitions/LegacyWorkweaveIndexKind"
-            }
-          }
-        },
-        {
-          "type": "object",
-          "required": [
             "active",
             "error",
             "kind",
@@ -2462,6 +2417,34 @@ Schema:
               "type": "string",
               "enum": [
                 "claim-unreadable"
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "file",
+            "held_by",
+            "kind"
+          ],
+          "properties": {
+            "file": {
+              "description": "Absolute path to the claim file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            },
+            "held_by": {
+              "description": "What it records about its holder: a pid and a host.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "claim-holder-unreachable"
               ]
             }
           }

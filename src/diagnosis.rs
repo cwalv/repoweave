@@ -64,8 +64,6 @@ pub enum Axis {
     /// Where a workspace's checkouts sit against where the checked-out
     /// branch's record says they should.
     Alignment,
-    /// A project's workweave index at the path earlier releases kept it at.
-    LegacyWorkweaveIndex,
     /// A branch rwv never rewrites, renames or deletes.
     Protected,
     /// A project repo whose lock merge driver is not set up as this release
@@ -83,7 +81,7 @@ pub struct KindRow {
 }
 
 impl Axis {
-    pub const ALL: [Axis; 15] = [
+    pub const ALL: [Axis; 14] = [
         Self::Edits,
         Self::Checkout,
         Self::PushBranch,
@@ -95,7 +93,6 @@ impl Axis {
         Self::History,
         Self::HistoryDisagreement,
         Self::Alignment,
-        Self::LegacyWorkweaveIndex,
         Self::Protected,
         Self::MissingLockMergeDriver,
         Self::Port,
@@ -273,20 +270,6 @@ impl Axis {
                        [Reconcile repos](../how-to/reconcile-repos.md); \
                        [Destructive operations](../explanation/destructive-operations.md).",
             },
-            Self::LegacyWorkweaveIndex => &KindRow {
-                condition: "A project's workweave index is still at \
-                            `projects/<name>/.rwv-workweave-index`, where earlier releases \
-                            kept it, in whatever shape they wrote it.",
-                why: "The index of a project's workweaves lives in the project clone's shared \
-                      directory, where a workweave reaches it from its own project checkout and \
-                      a clean of the primary's project checkout cannot remove it. A file at the \
-                      old location is a second index: acting on it would trust placements no \
-                      current writer validated, and ignoring it would lose the workweaves it \
-                      records. Every verb that reads the index refuses until the file is \
-                      converted, and `rwv doctor` reports it instead.",
-                sits: "[Weave root](../explanation/joints/weave-root.md); \
-                       [Upgrade rwv](../how-to/upgrade-rwv.md).",
-            },
             Self::MissingLockMergeDriver => &KindRow {
                 condition: "A project repo's lock merge driver is not set up as this release \
                             sets it up: the checked-out branch's committed attribute line for \
@@ -363,20 +346,6 @@ impl Axis {
                     entry: sub_kind.entry(),
                 }),
             )),
-            Self::LegacyWorkweaveIndex => Some(Finding::of(
-                crate::check::ViolationKind::LegacyWorkweaveIndex,
-                crate::check::LegacyWorkweaveIndexKind::ALL.map(|sub_kind| SubKindRow {
-                    token: crate::wire_token::wire_token(&sub_kind),
-                    severity: sub_kind.severity(),
-                    fix: sub_kind.fix_disposition(),
-                    entry: match sub_kind {
-                        crate::check::LegacyWorkweaveIndexKind::BeforeReceipts => {
-                            BEFORE_RECEIPTS_ENTRY
-                        }
-                        crate::check::LegacyWorkweaveIndexKind::OldPath => OLD_PATH_ENTRY,
-                    },
-                }),
-            )),
             Self::Alignment => Some(Finding::of(
                 crate::check::ViolationKind::Alignment,
                 crate::check::AlignmentKind::ALL.map(|sub_kind| SubKindRow {
@@ -407,22 +376,6 @@ before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project c
 composes onto too), `rwv pull`, `rwv update --remote`, the `rwv member` \
 verbs, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and \
 `delete`; `rwv doctor` reports it instead";
-
-const BEFORE_RECEIPTS_ENTRY: &str = "The old file has no `receipts` key: an earlier release \
-wrote it before that key was kept. `rwv workweave create`, `list`, `delete`, `set-default-create-basedir` \
-and `-w` addressing refuse until it is converted, and `rwv explain legacy-workweave-index` is their \
-route line.
-
-**What to do:** `rwv doctor --fix`. It writes the index into the project clone's shared directory \
-— `container` becomes `basedir`, each workweave gains the parent its marker records, and \
-`receipts` is not carried over — and then removes the old file.";
-
-const OLD_PATH_ENTRY: &str = "The old file carries the `receipts` key, which a release that \
-still kept the index in the project checkout wrote, empty or not. The same verbs refuse, and the \
-same repair converts it.
-
-**What to do:** `rwv doctor --fix`, as above. A copy of the old file committed to the project \
-repo is converted all the same; removing the working file leaves a deletion for you to commit.";
 
 const PRE_SCHEMA_ENTRY: &str = "The project's `rwv.toml` names member-entry keys an earlier \
 release wrote: `version` where `branch` is now expected, or `submodules` where \
@@ -552,7 +505,6 @@ pub enum State {
     UnparseableProjectAt,
     UnparseableProjectMidOperation,
     UnparseableProjectCommit,
-    LegacyWorkweaveIndexOldPath,
     MissingLockMergeDriverAttributeAbsent,
     MissingLockMergeDriverAttributeLegacy,
     MissingLockMergeDriverConfigAbsent,
@@ -622,7 +574,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 89] = [
+    pub const ALL: [State; 88] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMovedAndEdited,
@@ -673,7 +625,6 @@ impl State {
         Self::UnparseableProjectAt,
         Self::UnparseableProjectMidOperation,
         Self::UnparseableProjectCommit,
-        Self::LegacyWorkweaveIndexOldPath,
         Self::MissingLockMergeDriverAttributeAbsent,
         Self::MissingLockMergeDriverAttributeLegacy,
         Self::MissingLockMergeDriverConfigAbsent,
@@ -1282,17 +1233,6 @@ impl State {
                 refused_by: "`rwv cherry-pick`, `rwv switch` to a commit, `rwv workweave create \
                              --at`",
                 offers: &[],
-                verb_offers: &[],
-            },
-            Self::LegacyWorkweaveIndexOldPath => &StateRow {
-                axis: Axis::LegacyWorkweaveIndex,
-                name: "old path",
-                means: "the project's workweave index is at the old path, listed; no verb reads \
-                        it as the index",
-                refused_by: "every verb that reads the workweave index: `rwv workweave create`, \
-                             `list`, `delete`, `set-default-create-basedir` and `-w` addressing; \
-                             `rwv doctor` reports it instead",
-                offers: &[Form::ConvertIndex],
                 verb_offers: &[],
             },
             Self::MissingLockMergeDriverAttributeAbsent => &StateRow {
@@ -2007,7 +1947,6 @@ pub enum ChoiceId {
     AnotherName,
     OpenIt,
     DoctorFix,
-    ConvertIndex,
     RecordCommitted,
     KeepRecordedHistory,
     MigrateLockDriver,
@@ -2440,12 +2379,6 @@ impl ChoiceId {
                 keeps_work: "leased to the push branch's tip, which the `rebased` backup holds; \
                              the backup goes once the push lands",
             },
-            Self::ConvertIndex => &ChoiceRow {
-                id: None,
-                phrase: "convert the index and move it into the project clone",
-                keeps_work: "every recorded workweave is kept; the old file is removed only \
-                             after the new one is written",
-            },
             Self::MigrateLockDriver => &ChoiceRow {
                 id: None,
                 phrase: "set up the lock merge driver: rewrite the attribute line, committing \
@@ -2622,7 +2555,6 @@ pub enum Form {
     OpenWorkweave,
     DoctorFix,
     DoctorFixOnBranch,
-    ConvertIndex,
     LockDirty,
     UpdateRemoteDirty,
     KeepRecordedHistory,
@@ -2686,7 +2618,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 120] = [
+    pub const ALL: [Form; 119] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2770,7 +2702,6 @@ impl Form {
         Self::OpenWorkweave,
         Self::DoctorFix,
         Self::DoctorFixOnBranch,
-        Self::ConvertIndex,
         Self::LockDirty,
         Self::UpdateRemoteDirty,
         Self::KeepRecordedHistory,
@@ -3326,12 +3257,6 @@ impl Form {
                 choice: C::DoctorFix,
                 steps: &[Rwv("rwv doctor --fix")],
                 at: W::WhereBranchCheckedOut,
-                shipped: true,
-            },
-            Self::ConvertIndex => &FormRow {
-                choice: C::ConvertIndex,
-                steps: &[Rwv("rwv doctor --fix")],
-                at: W::Here,
                 shipped: true,
             },
             Self::LockDirty => &FormRow {
@@ -5565,7 +5490,7 @@ mod tests {
     #[test]
     fn a_findings_entry_opens_each_sub_kind_with_the_registers_marks() {
         let entries = finding_entries_markdown(crate::manifest::VcsType::Git);
-        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::HistoryDisagreement, history), (Axis::Alignment, alignment), (Axis::LegacyWorkweaveIndex, index), (Axis::MissingLockMergeDriver, driver)] =
+        let [(Axis::UnparseableProject, entry), (Axis::Pin, pin), (Axis::HistoryDisagreement, history), (Axis::Alignment, alignment), (Axis::MissingLockMergeDriver, driver)] =
             &entries[..]
         else {
             panic!("each axis with a finding yields its entry, in order: {entries:?}");
@@ -5587,14 +5512,6 @@ mod tests {
         assert!(
             pin.contains("\n#### `behind`\n\n**Error. Report-only.** "),
             "{pin}"
-        );
-        assert!(
-            index.starts_with("### `legacy-workweave-index`\n"),
-            "{index}"
-        );
-        assert!(
-            index.contains("\n#### `old-path`\n\n**Warning. Auto-fixable.** "),
-            "{index}"
         );
         assert!(alignment.starts_with("### `alignment`\n"), "{alignment}");
         assert!(

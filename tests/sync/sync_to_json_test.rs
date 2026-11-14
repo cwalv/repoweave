@@ -527,12 +527,12 @@ const RESUMED_OP_ID: &str = "envelope-identity-resume";
 
 /// Plant the owner record a `land` leaves behind when it dies after relock:
 /// owned by `workspace`, landing into `target`, retiring nothing.
-fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path, overrides: &str) {
+fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path) {
     let body = format!(
         "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
-         \"overrides\": [{overrides}], \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),
         plan = common::land_plan_json(workspace, target, "web-app"),
@@ -560,7 +560,7 @@ fn stranded_sync_to_op(parent: &Path, workweave_name: &str) -> (PathBuf, PathBuf
     let (primary, ww, _primary_server, ww_server, _primary_project, ww_project, _advance_sha) =
         make_workweave_ahead_fixture(parent, workweave_name);
 
-    write_sync_to_owner_record_at_advance_target(&ww, &primary, "");
+    write_sync_to_owner_record_at_advance_target(&ww, &primary);
     write_lease(&primary, &ww);
     create_savepoint(&ww_project);
     create_savepoint(&ww_server);

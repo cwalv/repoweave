@@ -63,7 +63,6 @@ included, on [Doctor findings](./doctor-findings.md):
 - [`pin`](./doctor-findings.md#pin)
 - [`history-disagreement`](./doctor-findings.md#history-disagreement)
 - [`alignment`](./doctor-findings.md#alignment)
-- [`legacy-workweave-index`](./doctor-findings.md#legacy-workweave-index)
 - [`missing-lock-merge-driver`](./doctor-findings.md#missing-lock-merge-driver)
 
 The others follow.

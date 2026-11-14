@@ -377,12 +377,11 @@ fn the_page_check_reports_a_mark_that_drifted_from_the_code() {
         gaps.join("\n  ")
     );
 
-    let dropped = PAGE.replace("### `legacy-workweave-index`", "### `not-a-finding`");
+    let dropped = PAGE.replace("### `pin`", "### `not-a-finding`");
     assert_ne!(dropped, PAGE, "the seeded edit matched nothing");
     let gaps = page_gaps(&dropped, &register);
     assert!(
-        gaps.iter()
-            .any(|g| g.starts_with("legacy-workweave-index/")),
+        gaps.iter().any(|g| g.starts_with("pin/")),
         "a finding the page stops documenting must be reported; got:\n  {}",
         gaps.join("\n  ")
     );
@@ -1425,13 +1424,6 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["weave-root-identity-conflict/registered-workweave"]),
         ),
         (
-            "and moved it to",
-            Findings(&[
-                "legacy-workweave-index/before-receipts",
-                "legacy-workweave-index/old-path",
-            ]),
-        ),
-        (
             "set up the lock merge driver's attribute line in",
             Findings(&[
                 "missing-lock-merge-driver/attribute-absent",
@@ -1722,11 +1714,11 @@ fn the_repair_walk_reports_a_dead_arm_and_a_report_only_binding() {
     // A repair arm added in the pre-collection pass with no binding: the
     // shape this instrument exists for. Seeded by injecting an announcement
     // into `apply_workspace_repairs`' source text.
-    let anchor = "    for project in crate::workspace::discover_projects(ctx.primary_path()) {\n        if let Some(active) = project_scope {";
+    let anchor = "    for project in &world.input.projects {\n        let project_repo = project_dir(&world.workspace_dir, &project.name);";
     let seeded = CHECK_RS.replacen(
         anchor,
         "    println!(\"[fixed] core: refreshed the stale lock\");\n\
-         \x20   for project in crate::workspace::discover_projects(ctx.primary_path()) {\n        if let Some(active) = project_scope {",
+         \x20   for project in &world.input.projects {\n        let project_repo = project_dir(&world.workspace_dir, &project.name);",
         1,
     );
     assert_ne!(seeded, CHECK_RS, "the seeded edit matched nothing");

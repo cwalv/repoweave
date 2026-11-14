@@ -495,7 +495,7 @@ fn abort_refuses_an_unmigrated_workweave_before_restoring_anything() {
     let record = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"replay\", \
-         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
+         \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         root = common::json_escaped(&weave.seat),
     );

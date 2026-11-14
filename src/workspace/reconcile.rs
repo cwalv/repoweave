@@ -196,7 +196,7 @@ pub fn disagreement_at(root: &Path) -> anyhow::Result<Option<Disagreement>> {
         let Some(primary) = relation_primary(root, &project)? else {
             continue;
         };
-        if crate::workweave_index::legacy_index_path(primary.as_path(), &project).exists() {
+        if crate::workweave_index::old_path_file(primary.as_path(), &project).exists() {
             continue;
         }
         let root = CanonicalPath::of(root);

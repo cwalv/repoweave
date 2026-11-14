@@ -1381,10 +1381,6 @@ mod doctor_json {
             marker_path: String,
             primary: String,
         },
-        LegacyWorkweaveIndex {
-            project: String,
-            index_path: String,
-        },
         UnreadableOwnedState {
             project: String,
             state_path: String,

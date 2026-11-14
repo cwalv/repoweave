@@ -24,8 +24,8 @@
 
 use repoweave::check::{
     AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
-    LegacyWorkweaveIndexKind, MissingLockMergeDriverKind, OrphanedSavepointKind, PermissionsKind,
-    PinKind, PlacementConvergence, ProvenanceKind, RecordDriftKind, RegistrationDirectoryKind,
+    MissingLockMergeDriverKind, OrphanedSavepointKind, PermissionsKind, PinKind,
+    PlacementConvergence, ProvenanceKind, RecordDriftKind, RegistrationDirectoryKind,
     SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
     WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
@@ -188,12 +188,6 @@ pub fn case_token(v: &CheckViolation) -> String {
             }
         },
         CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker".into(),
-        CheckViolation::LegacyWorkweaveIndex { sub_kind, .. } => match sub_kind {
-            LegacyWorkweaveIndexKind::BeforeReceipts => {
-                "legacy-workweave-index/before-receipts".into()
-            }
-            LegacyWorkweaveIndexKind::OldPath => "legacy-workweave-index/old-path".into(),
-        },
         CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state".into(),
         CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
         CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
@@ -522,16 +516,6 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::LegacyWorkweaveMarker {
             marker_path: path("/ws/.rwv-workweave"),
             primary: path("/ws"),
-        },
-        CheckViolation::LegacyWorkweaveIndex {
-            project: project(),
-            index_path: path("/ws/projects/proj/.rwv-workweave-index"),
-            sub_kind: LegacyWorkweaveIndexKind::OldPath,
-        },
-        CheckViolation::LegacyWorkweaveIndex {
-            project: project(),
-            index_path: path("/ws/projects/proj/.rwv-workweave-index"),
-            sub_kind: LegacyWorkweaveIndexKind::BeforeReceipts,
         },
         CheckViolation::UnreadableOwnedState {
             project: project(),

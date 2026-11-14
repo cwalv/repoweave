@@ -155,11 +155,6 @@ const INTENDED_REUSE: &[(&str, &[&str], &str)] = &[
         "the project carries a manifest in the retired format",
     ),
     (
-        "legacy-workweave-index",
-        &["doctor", "kind"],
-        "the workweave index is at the path an earlier release kept it",
-    ),
-    (
         "legacy-workweave-marker",
         &["doctor", "refusal"],
         "the workweave marker is in the retired format",

@@ -21,9 +21,10 @@
 //! ```
 //!
 //! `basedir` is present only once `workweave set-default-create-basedir` has
-//! written it. An index at `projects/<project>/.rwv-workweave-index`, where
-//! earlier releases kept it, is read by nothing but [`convert_legacy_index`]:
-//! every other read refuses, naming the repair.
+//! written it. A file at `projects/<project>/.rwv-workweave-index`, where
+//! earlier releases kept the index, is read by nothing: every read of the
+//! index refuses it as unreadable, naming the rebuild, which writes the index
+//! afresh from the workweave markers and removes the old file.
 //!
 //! ## Advisory, validated before use
 //!
@@ -45,7 +46,7 @@ use crate::path_spelling::CanonicalPath;
 use crate::refusal::RefusalKind;
 use crate::state_file::{StateFile, StatePath};
 use crate::vcs::project_vcs;
-use crate::workspace::{project_dir, WorkweaveMarker};
+use crate::workspace::project_dir;
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -60,7 +61,7 @@ pub(crate) const INDEX_CLAIM_FILE: &str = "rwv-workweave-index.lock";
 
 /// The `.rwv-workweave-index` file name an earlier release kept in the
 /// project checkout.
-pub(crate) const LEGACY_INDEX_FILENAME: &str = ".rwv-workweave-index";
+pub(crate) const OLD_PATH_INDEX_FILENAME: &str = ".rwv-workweave-index";
 
 /// The recorded workweave registry for one `(primary, project)` pair.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,40 +92,9 @@ impl WorkweaveIndex {
     }
 }
 
-/// How an index at the old path was written, which decides nothing about how
-/// it converts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LegacyShape {
-    /// No `receipts` key: written before that key was kept.
-    BeforeReceipts,
-    /// Carries `receipts`, empty or not: current as of the old location.
-    OldPath,
-}
-
-/// An index at the old path, parsed in any shape an earlier release wrote.
-#[derive(Debug, Deserialize)]
-struct LegacyIndex {
-    #[serde(default)]
-    container: Option<CanonicalPath>,
-    #[serde(default)]
-    workweaves: BTreeMap<WorkweaveName, CanonicalPath>,
-    #[serde(default)]
-    receipts: Option<serde_json::Value>,
-}
-
-impl LegacyIndex {
-    fn shape(&self) -> LegacyShape {
-        if self.receipts.is_some() {
-            LegacyShape::OldPath
-        } else {
-            LegacyShape::BeforeReceipts
-        }
-    }
-}
-
-/// Where the old-path index of `(primary_root, project)` sits.
-pub fn legacy_index_path(primary_root: &Path, project: &ProjectName) -> StatePath {
-    StateFile::LegacyWorkweaveIndex.in_dir(&project_dir(primary_root, project))
+/// Where the file an earlier release kept the index in sits.
+pub fn old_path_file(primary_root: &Path, project: &ProjectName) -> StatePath {
+    StateFile::OldPathWorkweaveIndex.in_dir(&project_dir(primary_root, project))
 }
 
 /// The directory the project's clone shares with its worktrees, when
@@ -178,16 +148,6 @@ fn no_store(primary_root: &Path, project: &ProjectName, doing: &str) -> anyhow::
     )
 }
 
-/// The refusal an index at the old path earns every reader of the index.
-fn legacy_index_refusal(primary_root: &Path, project: &ProjectName) -> anyhow::Error {
-    let path = legacy_index_path(primary_root, project);
-    crate::diagnosis::State::LegacyWorkweaveIndexOldPath
-        .of(crate::workspace::project_rel_path(project))
-        .listing(vec![path.to_string()])
-        .judge(project_vcs().as_ref())
-        .refused()
-}
-
 /// Refuse unless `projects/<project>` is a clone that can keep the index, so a
 /// verb that will record a workweave learns so before it changes anything.
 pub fn require_clone(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
@@ -197,24 +157,31 @@ pub fn require_clone(primary_root: &Path, project: &ProjectName) -> anyhow::Resu
     }
 }
 
-fn refuse_legacy(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
-    if legacy_index_path(primary_root, project).exists() {
-        return Err(legacy_index_refusal(primary_root, project));
+fn refuse_old_path_file(primary_root: &Path, project: &ProjectName) -> anyhow::Result<()> {
+    let path = old_path_file(primary_root, project);
+    if path.exists() {
+        crate::refuse!(
+            RefusalKind::UnreadableWorkweaveIndex,
+            "the workweave index of project {project} is at {path}, where an earlier release \
+             kept it and this one does not read it. This rebuilds it from the workweaves on \
+             disk and removes that file:\n  {rebuild}",
+            rebuild = rebuild_command(primary_root),
+        );
     }
     Ok(())
 }
 
 /// Read the index file for `(primary_root, project)`.
 ///
-/// `Ok(None)` when no workweave has been recorded yet. An index at the old
-/// path refuses, whatever the file holds.
+/// `Ok(None)` when no workweave has been recorded yet. A file at the old
+/// path refuses as an unreadable index, whatever it holds.
 pub fn read(primary_root: &Path, project: &ProjectName) -> anyhow::Result<Option<WorkweaveIndex>> {
-    refuse_legacy(primary_root, project)?;
+    refuse_old_path_file(primary_root, project)?;
     read_current(primary_root, project)
 }
 
 /// [`read`] without the old-path refusal, for the reader that reports the
-/// state and the conversion that ends it.
+/// state and the rebuild that ends it.
 pub(crate) fn read_current(
     primary_root: &Path,
     project: &ProjectName,
@@ -246,18 +213,32 @@ pub fn rebuild_command(primary_root: &Path) -> String {
 }
 
 /// Replace the unreadable index of `(primary_root, project)` with one listing
-/// `found`, each workweave with the parent its marker records. Nothing is
-/// written where the index reads by the time the claim is held.
+/// `found`, each workweave with the parent its marker records, and remove the
+/// file an earlier release kept the index in. An index that reads by the time
+/// the claim is held is left as it is.
 pub fn rebuild(
     primary_root: &Path,
     project: &ProjectName,
     found: &[(WorkweaveName, CanonicalPath, CanonicalPath)],
 ) -> anyhow::Result<bool> {
-    IndexClaim::hold(primary_root, project, |claim| {
-        match read_for_edit(claim) {
+    IndexClaim::hold_unchecked(primary_root, project, |claim| {
+        let old = old_path_file(primary_root, project);
+        let had_old = old.exists();
+        let replaces = match read_for_edit(claim) {
             Err(e)
-                if crate::refusal::kind_of(&e) == Some(RefusalKind::UnreadableWorkweaveIndex) => {}
-            _ => return Ok(false),
+                if crate::refusal::kind_of(&e) == Some(RefusalKind::UnreadableWorkweaveIndex) =>
+            {
+                true
+            }
+            Ok(None) => had_old,
+            _ => false,
+        };
+        if !replaces {
+            if had_old {
+                old.remove()
+                    .with_context(|| format!("failed to remove {old}"))?;
+            }
+            return Ok(had_old);
         }
         let index = WorkweaveIndex {
             basedir: None,
@@ -275,6 +256,10 @@ pub fn rebuild(
                 .collect(),
         };
         write(claim, &index)?;
+        if had_old {
+            old.remove()
+                .with_context(|| format!("failed to remove {old} after rebuilding"))?;
+        }
         Ok(true)
     })
 }
@@ -313,7 +298,7 @@ impl IndexClaim {
     /// shared claim budget (`durable_file::CLAIM_WAIT`) for a peer holding it,
     /// then refusing with the path to remove.
     ///
-    /// An index at the old path refuses before the claim is taken. The claim
+    /// A file at the old path refuses before the claim is taken. The claim
     /// is released before this returns, and a release that fails is an error
     /// naming the file left behind, whatever `edit` returned.
     pub fn hold<T>(
@@ -321,11 +306,11 @@ impl IndexClaim {
         project: &ProjectName,
         edit: impl FnOnce(&Self) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
-        refuse_legacy(primary_root, project)?;
-        Self::hold_over_legacy(primary_root, project, edit)
+        refuse_old_path_file(primary_root, project)?;
+        Self::hold_unchecked(primary_root, project, edit)
     }
 
-    fn hold_over_legacy<T>(
+    fn hold_unchecked<T>(
         primary_root: &Path,
         project: &ProjectName,
         edit: impl FnOnce(&Self) -> anyhow::Result<T>,
@@ -532,84 +517,6 @@ pub fn lookup_raw(
         .and_then(|idx| idx.workweaves.get(name).map(|e| e.path.clone())))
 }
 
-/// The shape of the index at the old path, or `None` when there is none.
-///
-/// A file that does not parse is an error: nothing converts it.
-pub fn legacy_shape(
-    primary_root: &Path,
-    project: &ProjectName,
-) -> anyhow::Result<Option<(StatePath, LegacyShape)>> {
-    let path = legacy_index_path(primary_root, project);
-    if !path.exists() {
-        return Ok(None);
-    }
-    let legacy = parse_legacy(&path)?;
-    Ok(Some((path, legacy.shape())))
-}
-
-fn parse_legacy(path: &StatePath) -> anyhow::Result<LegacyIndex> {
-    let content = path
-        .read_to_string()
-        .with_context(|| format!("failed to read {path}"))?;
-    serde_json::from_str(&content).with_context(|| format!("failed to parse {path}"))
-}
-
-/// What converting an old-path index did.
-#[derive(Debug)]
-pub struct Converted {
-    pub from: StatePath,
-    pub to: StatePath,
-    pub workweaves: usize,
-}
-
-/// Convert the index at the old path: `container` becomes `basedir`, each
-/// workweave gains the parent its marker records (the primary where the
-/// marker cannot be read), `receipts` is dropped, and the file moves to the
-/// project clone's shared directory.
-///
-/// An index already at the new path keeps its own `basedir` and entries; the
-/// old file adds what it lacks. The old file is removed only after the new
-/// one is durable, so a crash leaves a conversion that re-runs. `None` when
-/// there is no old-path index.
-pub fn convert_legacy_index(
-    primary_root: &Path,
-    project: &ProjectName,
-) -> anyhow::Result<Option<Converted>> {
-    let from = legacy_index_path(primary_root, project);
-    if !from.exists() {
-        return Ok(None);
-    }
-    let legacy = parse_legacy(&from)?;
-    IndexClaim::hold_over_legacy(primary_root, project, |claim| {
-        let mut index = read_for_edit(claim)?.unwrap_or_default();
-        if index.basedir.is_none() {
-            index.basedir = legacy.container.clone();
-        }
-        for (name, path) in &legacy.workweaves {
-            let parent = WorkweaveMarker::read(path.as_path())
-                .ok()
-                .flatten()
-                .map(|marker| marker.parent().clone())
-                .unwrap_or_else(|| CanonicalPath::of(primary_root));
-            index
-                .workweaves
-                .entry(name.clone())
-                .or_insert_with(|| IndexedWorkweave {
-                    path: path.clone(),
-                    parent,
-                });
-        }
-        write(claim, &index)?;
-        from.remove()
-            .with_context(|| format!("failed to remove {from} after converting it"))?;
-        Ok(Some(Converted {
-            from: from.clone(),
-            to: StateFile::WorkweaveIndex.in_dir(&claim.store),
-            workweaves: index.workweaves.len(),
-        }))
-    })
-}
-
 /// Ensure `filename` appears in the ignore surface of the git repo rooted at
 /// `dir` (or, if `dir` is not a repo root, in a `.gitignore` next to it as a
 /// best-effort fallback).
@@ -757,20 +664,7 @@ mod tests {
     }
 
     fn write_old_path(primary: &Path, project: &ProjectName, content: &[u8]) {
-        legacy_index_path(primary, project)
-            .publish(content)
-            .unwrap();
-    }
-
-    fn refusal_kind(err: &anyhow::Error) -> Option<String> {
-        crate::diagnosis::report_of(err).map(|report| {
-            report
-                .kinds()
-                .iter()
-                .map(|axis| axis.token())
-                .collect::<Vec<_>>()
-                .join(",")
-        })
+        old_path_file(primary, project).publish(content).unwrap();
     }
 
     #[test]
@@ -789,7 +683,7 @@ mod tests {
             "the index must sit in the clone's shared dir"
         );
         assert!(
-            !legacy_index_path(&primary, &project).exists(),
+            !old_path_file(&primary, &project).exists(),
             "no write may land at the path earlier releases used"
         );
         let in_project: Vec<_> = std::fs::read_dir(primary.join("projects/web-app"))
@@ -987,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn an_old_path_index_refuses_every_reader_before_anything_changes() {
+    fn a_file_at_the_old_path_refuses_every_reader_as_an_unreadable_index() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
@@ -1004,19 +898,19 @@ mod tests {
             set_parent_of(&primary, &project, Path::new("/x"), at("/p")),
         ];
         for result in refusals {
-            let err = result.expect_err("an old-path index must refuse");
+            let err = result.expect_err("a file at the old path must refuse");
             assert_eq!(
-                refusal_kind(&err).as_deref(),
-                Some("legacy-workweave-index"),
+                crate::refusal::kind_of(&err),
+                Some(RefusalKind::UnreadableWorkweaveIndex),
                 "{err:#}"
             );
             assert!(
-                format!("{err:#}").contains("rwv doctor --fix"),
-                "the refusal must name the repair: {err:#}"
+                format!("{err:#}").contains(&rebuild_command(&primary)),
+                "the refusal must name the rebuild: {err:#}"
             );
         }
         assert_eq!(
-            legacy_index_path(&primary, &project).read().unwrap(),
+            old_path_file(&primary, &project).read().unwrap(),
             content,
             "a refused reader leaves the old file as it was"
         );
@@ -1031,124 +925,51 @@ mod tests {
     }
 
     #[test]
-    fn converting_an_old_path_index_renames_container_drops_receipts_and_moves_the_file() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        let boxed = tmp.path().join(".workweaves").join("web-app--boxed");
-        let elsewhere = tmp.path().join("elsewhere");
-        for ww in [&boxed, &elsewhere] {
-            std::fs::create_dir_all(ww).unwrap();
-        }
-        let parent = tmp.path().join("web-app--parent");
-        WorkweaveMarker::new(&primary, project.clone(), &parent)
-            .write(&boxed)
-            .unwrap();
-        let content = format!(
-            r#"{{"container":{:?},"workweaves":{{"boxed":{:?},"dir":{:?}}},"receipts":[{{"store":"/s","name":"web-app--boxed","created_at":"{}"}}]}}"#,
-            tmp.path().join(".workweaves").display().to_string(),
-            boxed.display().to_string(),
-            elsewhere.display().to_string(),
-            "a".repeat(40)
-        );
-        write_old_path(&primary, &project, content.as_bytes());
-
-        let converted = convert_legacy_index(&primary, &project).unwrap().unwrap();
-        assert_eq!(converted.workweaves, 2);
-
-        assert!(
-            !legacy_index_path(&primary, &project).exists(),
-            "the old file is moved, not copied"
-        );
-        let index = read(&primary, &project).unwrap().unwrap();
-        assert_eq!(
-            index.basedir,
-            Some(CanonicalPath::of(&tmp.path().join(".workweaves"))),
-            "`container` becomes `basedir` with its value"
-        );
-        assert_eq!(
-            index.workweaves.get(&name("boxed")).unwrap().parent,
-            CanonicalPath::of(&parent),
-            "the parent comes from the marker the workweave carries"
-        );
-        let unmarked = index.workweaves.get(&name("dir")).unwrap();
-        assert_eq!(unmarked.path, CanonicalPath::of(&elsewhere));
-        assert_eq!(
-            unmarked.parent,
-            CanonicalPath::of(&primary),
-            "a workweave whose marker cannot be read has the primary for a parent"
-        );
-        let written = new_index_file(&primary, &project).read_to_string().unwrap();
-        assert!(
-            !written.contains("receipts") && !written.contains("container"),
-            "the converted file carries neither: {written}"
-        );
-        assert!(convert_legacy_index(&primary, &project).unwrap().is_none());
-    }
-
-    #[test]
-    fn an_old_path_index_without_receipts_converts_the_same_way() {
+    fn the_rebuild_writes_the_index_from_the_markers_and_removes_the_old_path_file() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         write_old_path(
             &primary,
             &project,
-            br#"{"container":"/abs/container","workweaves":{"hotfix":"/abs/container/web-app--hotfix"}}"#,
+            br#"{"container":"/abs/container","workweaves":{"hotfix":"/abs/container/web-app--hotfix"},"receipts":[]}"#,
         );
-        assert_eq!(
-            legacy_shape(&primary, &project).unwrap().unwrap().1,
-            LegacyShape::BeforeReceipts
-        );
+        let found = [(
+            name("boxed"),
+            at("/c/web-app--boxed"),
+            CanonicalPath::of(&primary),
+        )];
 
-        convert_legacy_index(&primary, &project).unwrap().unwrap();
+        assert!(rebuild(&primary, &project, &found).unwrap());
 
+        assert!(!old_path_file(&primary, &project).exists());
         let index = read(&primary, &project).unwrap().unwrap();
-        assert_eq!(index.basedir, Some(at("/abs/container")));
-        assert!(index.workweaves.contains_key(&name("hotfix")));
+        assert_eq!(
+            index.workweaves.keys().cloned().collect::<Vec<_>>(),
+            vec![name("boxed")],
+            "the index lists what the markers say, not what the old file listed"
+        );
+        assert!(
+            !rebuild(&primary, &project, &found).unwrap(),
+            "nothing left to rebuild"
+        );
     }
 
     #[test]
-    fn converting_keeps_what_an_index_already_at_the_new_path_holds() {
+    fn the_rebuild_leaves_a_readable_index_and_removes_the_old_path_file_beside_it() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         set_basedir(&primary, &project, at("/kept")).unwrap();
         record(&primary, &project, "a");
-        write_old_path(
-            &primary,
-            &project,
-            br#"{"container":"/dropped","workweaves":{"a":"/old/a","b":"/old/b"},"receipts":[]}"#,
-        );
+        write_old_path(&primary, &project, br#"{"workweaves":{"b":"/old/b"}}"#);
 
-        // The new-path index is read under the old-path refusal, so the
-        // conversion is the only reader that sees both.
-        convert_legacy_index(&primary, &project).unwrap().unwrap();
+        assert!(rebuild(&primary, &project, &[]).unwrap());
 
+        assert!(!old_path_file(&primary, &project).exists());
         let index = read(&primary, &project).unwrap().unwrap();
         assert_eq!(index.basedir, Some(at("/kept")));
-        assert_eq!(
-            index.workweaves.get(&name("a")).unwrap().path,
-            at("/c/web-app--a"),
-            "an entry already recorded is not overwritten"
-        );
-        assert!(index.workweaves.contains_key(&name("b")));
-    }
-
-    #[test]
-    fn an_old_path_file_that_does_not_parse_is_not_converted() {
-        let tmp = crate::tempdir().unwrap();
-        let primary = tmp.path().join("ws");
-        let project = make_project(&primary, "web-app");
-        write_old_path(&primary, &project, b"{ this is not an index");
-
-        assert!(legacy_shape(&primary, &project).is_err());
-        assert!(convert_legacy_index(&primary, &project).is_err());
-        assert!(
-            legacy_index_path(&primary, &project).exists(),
-            "a file nothing could read is left for the operator"
-        );
-        assert!(!new_index_file(&primary, &project).exists());
+        assert!(index.workweaves.contains_key(&name("a")));
     }
 
     /// A finished write holds the claim only while it runs. Left behind, it

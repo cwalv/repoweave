@@ -277,7 +277,7 @@ Lives in the directory the project clone's worktrees share (git: `.git/` of `<pr
 
 It records the project's default workweave basedir once `set-default-create-basedir` has written one (`<parent-of-primary>/.workweaves` until then), and, for every workweave created for the project, its absolute path and the workspace it was forked from. `-w <project>--<name>` and `rwv workweave list` resolve through the paths; the parents are what restore a workweave's marker whole. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`. One that does not parse refuses every verb that reads it as `unreadable-workweave-index`, and `rwv doctor --fix` rebuilds it from the workweave markers on disk, all but the basedir.
 
-An index at `<primary>/projects/<project>/.rwv-workweave-index`, in any shape, is not read: every verb that reads the index refuses it as `legacy-workweave-index`, and `rwv doctor --fix` converts it and moves it into the clone. See [upgrade-rwv — Step 8](../how-to/upgrade-rwv.md#step-8--a-workweave-index-at-the-old-path).
+A file at `<primary>/projects/<project>/.rwv-workweave-index`, where earlier releases kept the index, is not read: every verb that reads the index refuses it as `unreadable-workweave-index`, and `rwv doctor --fix` rebuilds the index into the clone and removes the file. See [upgrade-rwv — Step 8](../how-to/upgrade-rwv.md#step-8--a-workweave-index-at-the-old-path).
 
 ## `rwv-workspace-state` — what the workspace last aligned for
 

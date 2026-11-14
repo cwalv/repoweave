@@ -2744,24 +2744,21 @@ pub fn index_parent() -> Scenario {
 
 pub fn index_old_path() -> Scenario {
     let refused_as_old_path = |step: Step| {
-        step.expect(Exit::refuses(
-            Repo::Proj,
-            State::LegacyWorkweaveIndexOldPath,
-        ))
-        .claim(Claim::OutputContains("rwv doctor --fix"))
-        .claim(Claim::IndexFile {
-            machine: Machine::A,
-            at: IndexAt::Old,
-            present: true,
-        })
-        .claim(Claim::IndexFile {
-            machine: Machine::A,
-            at: IndexAt::Common,
-            present: false,
-        })
+        step.expect(Exit::refuses_kind(RefusalKind::UnreadableWorkweaveIndex))
+            .claim(Claim::OutputContains("doctor --fix"))
+            .claim(Claim::IndexFile {
+                machine: Machine::A,
+                at: IndexAt::Old,
+                present: true,
+            })
+            .claim(Claim::IndexFile {
+                machine: Machine::A,
+                at: IndexAt::Common,
+                present: false,
+            })
     };
     scenario(
-        "an index at the old path refuses its readers until doctor converts it",
+        "an index at the old path refuses its readers as unreadable until doctor rebuilds it",
         vec![
             create("w1"),
             Step::rwv(
@@ -2800,7 +2797,7 @@ pub fn index_old_path() -> Scenario {
             )),
             refused_as_old_path(Step::rwv(&a(), &["workweave", "delete", "w1"]))
                 .claim(Claim::DirStands(Machine::A, ".workweaves/proj--w1")),
-            Step::rwv(&a(), &["doctor", "--fix"])
+            Step::rwv_printed(&a(), "rwv -C")
                 .expect(Exit::Succeeds)
                 .claim(Claim::IndexFile {
                     machine: Machine::A,
@@ -2812,10 +2809,6 @@ pub fn index_old_path() -> Scenario {
                     at: IndexAt::Common,
                     present: true,
                 })
-                .claim(Claim::IndexBasedir {
-                    machine: Machine::A,
-                    dir: Some("old-container"),
-                })
                 .claim(Claim::IndexLists {
                     machine: Machine::A,
                     name: "w1",
@@ -2823,8 +2816,7 @@ pub fn index_old_path() -> Scenario {
                 }),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLine("w1"))
-                .claim(Claim::OutputLine("far")),
+                .claim(Claim::OutputLine("w1")),
         ],
     )
 }
