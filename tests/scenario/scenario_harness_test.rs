@@ -4049,21 +4049,36 @@ fn sync_abort_keeps_another_seats_project_commit() {
 
 /// A sync stopped on `app`; another seat moves a repo not yet taken in;
 /// `--continue` refreshes the move or holds it, never commits its reverse.
+fn continue_reads_drift(history: &'static str, repo: Repo, how: scenarios::SeatMove) {
+    runner::run(scenarios::continue_reads_drift_a_stop_left(
+        history, repo, how,
+    ))
+    .assert_fully_decided_green();
+}
+
 #[test]
-fn sync_continue_reads_drift_a_stop_left() {
-    use scenarios::SeatMove as M;
-    for (history, repo, how) in [
-        ("linear", Repo::Lib, M::Commits),
-        ("merge", Repo::Lib, M::Commits),
-        ("linear", Repo::Proj, M::Commits),
-        ("linear", Repo::Lib, M::CommitsUnrecorded),
-        ("linear", Repo::Lib, M::MovesBack),
-    ] {
-        runner::run(scenarios::continue_reads_drift_a_stop_left(
-            history, repo, how,
-        ))
-        .assert_fully_decided_green();
-    }
+fn linear_sync_continue_refreshes_a_member_another_seat_moved() {
+    continue_reads_drift("linear", Repo::Lib, scenarios::SeatMove::Commits);
+}
+
+#[test]
+fn merge_sync_continue_refreshes_a_member_another_seat_moved() {
+    continue_reads_drift("merge", Repo::Lib, scenarios::SeatMove::Commits);
+}
+
+#[test]
+fn linear_sync_continue_refreshes_the_project_another_seat_moved() {
+    continue_reads_drift("linear", Repo::Proj, scenarios::SeatMove::Commits);
+}
+
+#[test]
+fn linear_sync_continue_holds_a_member_moved_with_no_record() {
+    continue_reads_drift("linear", Repo::Lib, scenarios::SeatMove::CommitsUnrecorded);
+}
+
+#[test]
+fn linear_sync_continue_holds_a_member_moved_back() {
+    continue_reads_drift("linear", Repo::Lib, scenarios::SeatMove::MovesBack);
 }
 
 #[test]
