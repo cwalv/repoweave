@@ -10308,6 +10308,29 @@ pub fn continue_rejudges_the_resolved_manifest() -> Scenario {
     scenario("continue rejudges the resolved manifest", steps)
 }
 
+/// The consent a `--continue` was given for the changes its resolution makes
+/// is recorded with the landing, so a `--continue` after the landing was
+/// killed asks for it no more.
+pub fn continue_keeps_the_consent_it_was_given() -> Scenario {
+    let mut steps = stop_resolved_to_the_features_manifest();
+    steps.extend([
+        Step::rwv_paused(
+            &ww("w"),
+            &["land", "--continue", "--allow-member-change", DOCS],
+            "aligning-target",
+            "landing",
+        ),
+        Step::kill("landing"),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+            .claim(Claim::OutputLacks(LIB))
+            .claim(Claim::OutputLacks(DOCS)),
+    ]);
+    scenario("continue keeps the consent it was given", steps)
+}
+
 /// The other choice a `--continue` refused on its resolution prints: `rwv
 /// abort` puts the target back, and a fresh `rwv land` judges the entries
 /// again.
