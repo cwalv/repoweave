@@ -1331,6 +1331,11 @@ every_scenario!(
     pull_aborted_after_a_hand_commit_and_a_continue,
     update_remote_aborted_after_a_hand_commit_and_a_continue,
     cherry_pick_aborted_after_a_hand_commit_and_a_continue,
+    sync_abort_keeps_another_seats_commit,
+    sync_abort_keeps_another_seats_project_commit,
+    land_abort_keeps_another_seats_commit,
+    pull_abort_keeps_another_seats_commit,
+    cherry_pick_abort_keeps_another_seats_commit,
     a_commit_after_a_landing_converged_is_kept_by_abort("linear", scenarios::ContinueCut::Killed),
     a_commit_after_a_landing_converged_is_kept_by_abort("merge", scenarios::ContinueCut::Raced),
     abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Landed),
@@ -4022,6 +4027,35 @@ fn aborted_after_a_hand_commit_and_a_continue() {
     ] {
         runner::run(made()).assert_fully_decided_green();
     }
+}
+
+/// A stopped operation aborted after another seat commits on the stopped
+/// repo's branch: the commit is kept in the branch's slot.
+#[test]
+fn sync_abort_keeps_another_seats_commit() {
+    runner::run(scenarios::sync_abort_keeps_another_seats_commit()).assert_fully_decided_green();
+}
+
+#[test]
+fn sync_abort_keeps_another_seats_project_commit() {
+    runner::run(scenarios::sync_abort_keeps_another_seats_project_commit())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_abort_keeps_another_seats_commit() {
+    runner::run(scenarios::land_abort_keeps_another_seats_commit()).assert_fully_decided_green();
+}
+
+#[test]
+fn pull_abort_keeps_another_seats_commit() {
+    runner::run(scenarios::pull_abort_keeps_another_seats_commit()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_abort_keeps_another_seats_commit() {
+    runner::run(scenarios::cherry_pick_abort_keeps_another_seats_commit())
+        .assert_fully_decided_green();
 }
 
 /// An undisturbed carried stack, aborted, leaves no backup but abort's

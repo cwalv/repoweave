@@ -18557,11 +18557,10 @@ fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
     ]
 }
 
-/// [`abort_keeps_a_tip_amended_during_a_stop`]'s stop, continued instead:
-/// the re-map refuses naming the tip it read, and each choice it prints, run
-/// as printed, ends the state.
-pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
-    let steps = vec![
+/// A `linear` sync of `w` that rebases `app` and stops on a conflict in
+/// `lib`'s rebase.
+fn sync_linear_stopped_on_lib() -> Vec<Step> {
+    vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
         create("w"),
         Step::commit(&ww("w"), Repo::App, "w-app"),
@@ -18575,6 +18574,15 @@ pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
         Step::rwv(&ww("w"), &["sync"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
             .claim(Claim::OutputContains("app: rebased")),
+    ]
+}
+
+/// [`abort_keeps_a_tip_amended_during_a_stop`]'s stop, continued instead:
+/// the re-map refuses naming the tip it read, and each choice it prints, run
+/// as printed, ends the state.
+pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
+    let mut steps = sync_linear_stopped_on_lib();
+    steps.extend([
         Step::hand_edit(&ww("w"), Repo::App, "README", "app", "app amended"),
         Step::git(
             &ww("w"),
@@ -18594,7 +18602,7 @@ pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
                 "local/remotes/app: what abort discarded is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "remotes/app log ", "README"),
-    ];
+    ]);
     scenario("sync continue refuses a tip amended during a stop", steps)
 }
 
@@ -18603,20 +18611,8 @@ pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
 /// puts `app` back, keeping the amended tip as a backup whose printed show
 /// line returns it.
 pub fn abort_keeps_a_tip_amended_during_a_stop() -> Scenario {
-    let steps = vec![
-        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
-        create("w"),
-        Step::commit(&ww("w"), Repo::App, "w-app"),
-        Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib\n", "lib in w\n"),
-        Step::git(&ww("w"), Repo::Lib, &["commit", "-qam", "readme-w"]),
-        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::commit(&a(), Repo::App, "main-app"),
-        Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib on main\n"),
-        Step::git(&a(), Repo::Lib, &["commit", "-qam", "readme-main"]),
-        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w"), &["sync"])
-            .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .claim(Claim::OutputContains("app: rebased")),
+    let mut steps = sync_linear_stopped_on_lib();
+    steps.extend([
         Step::hand_edit(&ww("w"), Repo::App, "README", "app", "app amended"),
         Step::git(
             &ww("w"),
@@ -18633,7 +18629,7 @@ pub fn abort_keeps_a_tip_amended_during_a_stop() -> Scenario {
         Step::rwv_printed_within(&ww("w"), "git -C ", "remotes/app log ")
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("w-app")),
-    ];
+    ]);
     scenario(
         "abort keeps a tip the operator amended during a stop",
         steps,
@@ -18749,42 +18745,47 @@ pub fn sync_continue_merges_a_range_the_stop_gave_a_merge() -> Scenario {
 /// whose first parent is `main`'s tip, reported `merged`, so `main`'s
 /// first-parent chain never runs through the seat.
 pub fn land_continue_composes_a_merge_the_stop_left() -> Scenario {
-    scenario(
-        "land --continue composes a merge the stop left",
-        vec![
-            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
-            create("w"),
-            Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
-            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
-            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
-            Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
-            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land"])
-                .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                .may_strand(&[Repo::Proj])
-                .may_rewind(&[Repo::App]),
-            Step::git(&ww("w"), Repo::App, &["rebase", "--abort"]),
-            Step::git(&ww("w"), Repo::App, &["merge", "main"]).expect(Exit::Code(1)),
-            Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
-            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "hand-merge"]),
-            Step::rwv(&ww("w"), &["land", "--continue"])
-                .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App, Repo::Proj])
-                .claim(Claim::OutputContains("local/remotes/app: merged")),
-            Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main^1"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLine("readme-main")),
-            Step::git(
-                &a(),
-                Repo::App,
-                &["log", "--first-parent", "--format=%s", "main"],
-            )
+    let mut steps = land_linear_stopped_on_app();
+    steps.extend([
+        Step::git(&ww("w"), Repo::App, &["rebase", "--abort"]),
+        Step::git(&ww("w"), Repo::App, &["merge", "main"]).expect(Exit::Code(1)),
+        Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "hand-merge"]),
+        Step::rwv(&ww("w"), &["land", "--continue"])
             .expect(Exit::Succeeds)
-            .claim(Claim::OutputLacks("hand-merge"))
-            .claim(Claim::OutputLacks("readme-w")),
-        ],
-    )
+            .may_strand(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("local/remotes/app: merged")),
+        Step::git(&a(), Repo::App, &["log", "-1", "--format=%s", "main^1"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("readme-main")),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["log", "--first-parent", "--format=%s", "main"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLacks("hand-merge"))
+        .claim(Claim::OutputLacks("readme-w")),
+    ]);
+    scenario("land --continue composes a merge the stop left", steps)
+}
+
+/// A `linear` landing of `w` stopped on a conflict in `app`'s rebase.
+fn land_linear_stopped_on_app() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app\n", "app in w\n"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app\n", "app on main\n"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App]),
+    ]
 }
 
 /// A `merge` landing stopped on `app`'s composing merge, its project merge
@@ -24071,6 +24072,133 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
     scenario(
         "stack: an abort meets a carried dependent it cannot move",
         steps,
+    )
+}
+
+/// Another seat's commit of `other-seat.txt` on `branch` of `repo`, written
+/// to the ref the checkout at `at` shares, the checkout itself untouched.
+fn another_seat_commits(at: &Place, repo: Repo, branch: &str) -> Step {
+    Step::hand_commit(at, repo, branch, &[("other-seat.txt", "other seat\n")])
+}
+
+/// After `stopped`, another seat commits on `branch` of the stopped `repo`
+/// at `at`; `rwv abort` ends the operation keeping that commit in the
+/// branch's `slot`, as it keeps the tip of every branch it resets.
+fn abort_keeps_another_seats_commit(
+    stopped: Vec<Step>,
+    at: Place,
+    repo: Repo,
+    branch: &'static str,
+    slot: &'static str,
+) -> Vec<Step> {
+    let mut steps = stopped;
+    steps.extend([
+        another_seat_commits(&at, repo, branch),
+        Step::rwv(&at, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj])
+            .claim(Claim::OutputContains("/aborted")),
+        Step::git(
+            &at,
+            repo,
+            &["log", "--format=%s", slot, "--", "other-seat.txt"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLine("hand commit")),
+        Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    steps
+}
+
+/// A `linear` sync stopped mid-rebase of `lib`, a commit of another seat's
+/// on `lib`'s branch, aborted.
+pub fn sync_abort_keeps_another_seats_commit() -> Scenario {
+    scenario(
+        "sync abort keeps another seat's commit on a branch stopped mid-rebase",
+        abort_keeps_another_seats_commit(
+            sync_linear_stopped_on_lib(),
+            ww("w"),
+            Repo::Lib,
+            "proj--w",
+            "refs/rwv/backup/proj--w/aborted",
+        ),
+    )
+}
+
+/// A `linear` sync of `w` stopped on its project repo's `rwv.toml`, where
+/// both sides set `lib`'s `history`.
+fn sync_linear_stopped_on_the_manifest() -> Vec<Step> {
+    vec![
+        create("w"),
+        Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", LIB]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+            .expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "rwv.toml entry local/remotes/lib is in conflict:",
+            )),
+    ]
+}
+
+/// A `linear` sync stopped mid-rebase of the project repo, a commit of
+/// another seat's on its branch, aborted.
+pub fn sync_abort_keeps_another_seats_project_commit() -> Scenario {
+    scenario(
+        "sync abort keeps another seat's commit on a project branch stopped mid-rebase",
+        abort_keeps_another_seats_commit(
+            sync_linear_stopped_on_the_manifest(),
+            ww("w"),
+            Repo::Proj,
+            "proj--w",
+            "refs/rwv/backup/proj--w/aborted",
+        ),
+    )
+}
+
+/// A `linear` landing stopped mid-rebase of `app`, a commit of another
+/// seat's on `app`'s branch, aborted.
+pub fn land_abort_keeps_another_seats_commit() -> Scenario {
+    scenario(
+        "land abort keeps another seat's commit on a branch stopped mid-rebase",
+        abort_keeps_another_seats_commit(
+            land_linear_stopped_on_app(),
+            ww("w"),
+            Repo::App,
+            "proj--w",
+            "refs/rwv/backup/proj--w/aborted",
+        ),
+    )
+}
+
+/// `pull --merge-upstream` stopped mid-merge of `app`, a commit of another
+/// seat's on `app`'s branch, aborted.
+pub fn pull_abort_keeps_another_seats_commit() -> Scenario {
+    scenario(
+        "pull abort keeps another seat's commit on a branch stopped mid-merge",
+        abort_keeps_another_seats_commit(
+            both_sides_move_app_conflictingly(),
+            b(),
+            Repo::App,
+            "main",
+            "refs/rwv/backup/main/aborted",
+        ),
+    )
+}
+
+/// A port stopped mid-copy into `app`, a commit of another seat's on
+/// `app`'s branch, aborted.
+pub fn cherry_pick_abort_keeps_another_seats_commit() -> Scenario {
+    scenario(
+        "cherry-pick abort keeps another seat's commit on a branch stopped mid-copy",
+        abort_keeps_another_seats_commit(
+            app_conflicting_port(),
+            ww("p"),
+            Repo::App,
+            "proj--p",
+            "refs/rwv/backup/proj--p/aborted",
+        ),
     )
 }
 

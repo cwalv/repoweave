@@ -5835,6 +5835,32 @@ impl GitVcs {
         Ok(())
     }
 
+    /// Keep the tip of the branch a rebase stopped in `repo` will move, where
+    /// something other than the rebase moved it since the rebase began: the
+    /// VCS's cancel writes that branch back to where the rebase began.
+    fn keep_branch_moved_under_rebase(
+        &self,
+        repo: &Path,
+        kept: &mut Vec<BackupWitness>,
+    ) -> Result<(), VcsError> {
+        let (Some(branch), Some(began)) = (Self::rebasing(repo)?, self.cancel_returns_to(repo)?)
+        else {
+            return Ok(());
+        };
+        let Some(tip) = self.resolve_local_branch_tip(repo, &branch)? else {
+            return Ok(());
+        };
+        if tip.id() != began.id() {
+            kept.extend(self.keep_in_slot(
+                repo,
+                &BackupSource::Branch(branch),
+                tip.id(),
+                began.id(),
+            )?);
+        }
+        Ok(())
+    }
+
     /// Cancel the operation `stopped` in `repo` as its own abort does,
     /// handing back the VCS's refusal where it refuses.
     fn cancel_stopped(&self, repo: &Path, stopped: ConflictOp) -> Result<(), VcsError> {
@@ -6382,6 +6408,9 @@ impl GitVcs {
                     return self.diverged(repo, key);
                 }
                 self.keep_working_copy_before_cancel(repo, clear_first.as_deref(), kept)?;
+                if *stopped == ConflictOp::Rebase {
+                    self.keep_branch_moved_under_rebase(repo, kept)?;
+                }
                 if self.mid_op(repo).is_some() {
                     if let Err(refused) = self.cancel_stopped(repo, *stopped) {
                         let why = match refused {
