@@ -26,7 +26,7 @@ If the operation stopped as `unparseable-project` `mid-operation`, the project r
 
 ## Roll back with `rwv abort`
 
-`rwv abort` restores every ref the operation moved to its pre-op savepoint (under `refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` in the target of a `land`): each checkout, onto the branch it was on, and each branch a landing moved without a checkout. It cancels a rebase, merge or cherry-pick left in progress, and clears the op record:
+`rwv abort` restores every ref the operation moved to the savepoint it took before moving anything: each checkout, onto the branch it was on, and each branch a landing moved without a checkout. It cancels a rebase, merge or cherry-pick left in progress, and clears the op record:
 
 | Current repository tip | `rwv abort` outcome |
 |---|---|

@@ -273,12 +273,10 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
 - **Abort of a carry** (the `AbortStep::Carried` step `plan_carried` plans,
   a source-side step of the abort plan, judged with every other step before
   `retake_target` and again before `mark_abort_begun`): each dependent's
-  branch a carry moved is read where it moved it. One built on, moved
-  elsewhere, gone, or checked out outside the op's workspaces blocks the
-  plan, and its obstacles join the abort's one refusal with nothing put
-  back: a gone or held branch names what to do first; a moved one is named
-  on the closing `--abandon-foreign-tip` command and, where each was only
-  built on, the op's own continue is offered, which keeps those commits.
+  branch a carry moved is read where it moved it. One gone, or checked out
+  outside the op's workspaces, blocks the plan, and its obstacles join the abort's one refusal with nothing put
+  back: a gone or held branch names what to do first. A moved one is put
+  back like any branch the op moved, its tip kept as a backup first.
   Under `--leave-target` the step runs with the source's.
 
 - **Phase 2 — member repos**: advance each of CWD's member repo
@@ -465,7 +463,8 @@ back first (`retake_target`): held already before `retire`, retaken at
 `retire`, refusing while another op holds either. An abort refused after that
 puts back what it retook (`Retaken::put_back`): the claim and each lease the op
 did not hold when the abort began. It then restores ref by ref;
-a ref another landing built on since is a foreign tip. Typed in the target's
+a project branch another landing built on since blocks the plan, which
+offers `--leave-target`. Typed in the target's
 workspace after the release, it finds the landing by the record that names
 that workspace as its target (`landing_released_into`), and takes it up only
 when there is one and its record shows its process ended: at `retire`, with
@@ -484,93 +483,55 @@ re-runs that phase before reaching cleanup again.
 
 ## Abort internals
 
-The operator contract — savepoints, verified restore, the foreign-tip refusal
-and `--abandon-foreign-tip` — is on the joint. What follows is how abort
-attributes a tip and what it prints.
+The operator contract (savepoints, and that abort never discards a commit or
+an edit without keeping it first) is on the joint. What follows is how abort
+plans each checkout and what it keeps.
 
-The destructive `reset --hard` to the savepoint is gated on the repo's
-current tip being **attributable to the op**. The attributable set is
-`{savepoint, advanced_tips[repo], converged_tips[repo]}` (`Attribution`);
-a landing writes no commit in the source's project repo before composing,
-so the tip it composes from there is its savepoint.
-A repo with no savepoint for the op is `NoSavepoint` and skipped. The
-classification of the rest:
+Abort puts every checkout back to its savepoint. It does not decide whose a
+tip is; it decides only whether moving off the tip loses a commit. A tip the
+savepoint reaches, or one the record names as written by the op
+(`Attribution::wrote`: `advanced_tips[repo]`, `converged_tips[repo]`, or the
+tip a stopped carry began from), leaves nothing behind. Any other tip is kept
+as a backup (`KeptWork::Tip`) before the reset. A repo with no savepoint for
+the op is `NoSavepoint` and skipped. The plan (`Vcs::plan_checkout_restore`)
+is made for every checkout of both workspaces before anything moves, and the
+executor re-reads each checkout before its write:
 
-| Current tip | Outcome |
+| Current state | Outcome |
 |---|---|
-| Equal to the savepoint | `Untouched` — op never moved this repo; HEAD not touched |
-| Equal to `advanced_tips[repo]` (the op's recorded intent tip) | `RestoredFromIntent` — op advanced this repo during replay; reset to savepoint |
-| Equal to `converged_tips[repo]` (the recorded converged tip) | `RestoredFromConverged` — op converged this repo; reset to savepoint |
-| On the target side of a `land`, a repo `take_in.moved_in_target` does not name | Not the op's, whatever its tip: left where it stands, its savepoint dropped (kept as a backup first when nothing reaches it), printed `left at <tip>, where something other than this landing moved it` unless it is at its savepoint; `--abandon-foreign-tip` naming it says it applies to nothing. An unreadable record (header only) has no journal, so this row never applies there |
-| Checkout on another branch than its savepoint names (or detached where it was attached), at an attributable tip | `SwitchedBack` — put back on the saved branch (non-forced; a dirty checkout errors), the branch it was on left where it stands, then classified again by this table |
-| Stopped in a rebase, merge or cherry-pick, in a repo the op integrates (`Integrates::Yes`: `OwnerRecord::operates_in`, the repos its plan integrates and each it journaled a merge, rebase or carry in), where canceling returns to an attributable tip (`Vcs::cancel_returns_to`: a rebase's starting tip, a merge's HEAD, a cherry-pick sequence's start), and the operation takes in what one the op journaled there does (`OwnerRecord::own_steps`: a merge's source, `Vcs::merge_in_flight`; a copy's commit, `Vcs::copy_in_flight`; a rebase onto the journaled `onto`, `Vcs::rebase_in_flight`, whose commits so far each replay one of the journaled range) | `Canceled` — canceled as the VCS's own abort would, then classified again by this table (printed `restored (from mid-op state)`); in a workspace abort was not typed in, `GitVcs::keep_working_copy_before_cancel` first keeps the working copy as a backup (`KeptWork::Edits`) |
-| Stopped in an operation begun at the savepoint, in a repo the op never integrates (`Integrates::No`: every target-side repo, and a source repo `operates_in` does not name), or with no savepoint | `LeftStopped` — left in it, its savepoint dropped |
-| Stopped in an operation the table cancels, where the VCS refuses the cancel (an unstaged edit to a file a merge or copy staged cleanly) | `CancelRefused` — refused with the VCS's own message, op-state retained; the recovery block prints the status command, the rerun, and `--abandon-foreign-tip <repo>`, which keeps the edits and a detached HEAD's commits as backups, moves the checkout hard to where canceling returns (`finish_refused_cancel`), and classifies again |
-| Stopped in any other operation, one begun at the savepoint under a header-only record (`Integrates::Unknown`) included | `StoppedForeign` — refused, nothing touched, op-state retained; the recovery block prints the VCS status command, the rerun, and `--abandon-foreign-tip <repo>`, which keeps edits and a detached HEAD's commits as backups, cancels it, and classifies again |
-| Anything else | `ForeignTip` — restore **refused**; tip left in place; violation reported; op-state retained; nothing written |
-| Anything else, with `--abandon-foreign-tip` naming the repo | `AbandonedForeignTip` — the tip is first kept as a backup marked `abandoned` (`Vcs::create_backup`, which hands back the `BackupWitness` the outcome carries), then reset to savepoint |
+| At the savepoint | `Untouched` |
+| At a tip the record names as written by the op | `RestoredFromIntent` / `RestoredFromConverged`, reset to the savepoint with no backup |
+| At any other tip the savepoint reaches | reset, no backup |
+| At any other tip | the tip kept as a backup (`KeptWork::Tip`), then reset; printed `its tip, holding commits this operation did not make, is kept as backup <name>` and the command that shows it |
+| On the target side of a `land`, a repo `take_in.moved_in_target` does not name | left where it stands, its savepoint dropped (kept as a backup first when nothing reaches it), printed `left at <tip>` unless it is at its savepoint. An unreadable record (header only) has no journal, so this row never applies there |
+| On another branch than its savepoint names, or detached where it was attached | `SwitchedBack`: put back on the saved branch, the branch it was on left where it stands (a detached HEAD's commits kept first), then planned again by this table |
+| Stopped in a rebase, merge or copy, other than the next row | `Canceled`: the working copy kept as a backup first (`GitVcs::keep_working_copy_before_cancel`), and, where the op did not start the operation (`Integrates` and `OwnerRecord::own_steps` say which it did), the commits HEAD holds that no branch reaches; then canceled as the VCS's own abort would, and planned again by this table. Untracked paths in the cancel's way, or an edit that makes the VCS refuse the cancel, are named in the plan (`clear_first`) and removed only after the working copy is kept |
+| Stopped in an operation begun at the savepoint in a repo the op never integrates (`Integrates::No`), or with no savepoint | `LeftStopped`, its savepoint dropped |
+| Uncommitted edits a reset or switch would discard, in the workspace abort runs in | kept as a backup first (`KeptWork::Edits`) |
+| The same in the other workspace of a landing | `EditsElsewhere`: the whole abort refused before anything moves, with the command that sets them aside and `rwv -C <workspace> abort` where that workspace takes the abort up |
+| Moved between the plan and its write | `ForeignTip`: left as it is, the abort stops there, refuses `foreign-tip`, and the rerun plans it again |
 
-Every hard move this table makes, a reset or a cancel not the op's own,
-first keeps the uncommitted edits it would discard (a tracked change, or an
-untracked or ignored file or directory where the destination has a path, in
-either direction) as a backup, and the outcome is wrapped in `Kept` naming
-it. That holds in the workspace abort was run in (`Attribution.edits_here`);
-in the other workspace of a landing the move is refused instead as
-`EditsElsewhere`, nothing touched, with the stash command and the rerun as
-its choices.
+**`advanced_tips`** is written during replay: the planned tip of each
+fast-forward before the fan-out, and the tip of each rebase right after it
+succeeds; the project tip after its composition is journaled without
+judging whose it is. It is cleared in the same persist that writes
+`converged_tips` at relock completion. A tip the op wrote but did not get to
+journal (killed between the two) is kept as a backup by the row above rather
+than reset silently.
 
-**`advanced_tips` — the advancement-intent journal.** The `advanced_tips`
-owner-record map closes the mid-replay attribution gap. It is written during
-the replay phase in two passes:
+**At a `--continue`'s entry**, while the op replays
+(`sync::keep_what_moved_at_the_stop`, called from `Op::resume` and the
+landing's continue): each checkout of the op's own workspace that moved
+during the stop off its savepoint and its journaled tip, onto commits its
+savepoint does not reach, has that tip kept as a backup journaled in
+`take_in.backups` and the tip journaled in `advanced_tips`. Whatever the
+continue does over it, a later abort names it.
 
-1. **Pre-advance (ff-movers):** at replay entry, the planned target SHA is
-   written for every repo whose advance is a genuine fast-forward (current ⊏
-   target) — before the fan-out. This is a true write-ahead log: the intent
-   precedes the advance, so the landing tip always equals the recorded target
-   and there is no window.
-
-2. **Post-advance (rebased repos):** because a rebase lands at a fresh SHA
-   unknowable before the rebase runs, the actual tip is captured right after
-   the rebase succeeds — for the project repo (serial Phase 1') immediately,
-   for parallel member repos in a single batch-write after the fan-out
-   joins.
-
-`advanced_tips` is cleared in the same atomic owner-record persist that
-writes `converged_tips` at relock completion. This means mid-replay crashes
-where the op cleanly advanced repos no longer produce foreign-tip refusals on
-those repos — they auto-restore as `RestoredFromIntent` (reported as
-`restored (from recorded intent tip)`).
-
-**Residual foreign-tip case.** After `advanced_tips` lands, `ForeignTip`
-fires only for genuinely-foreign tips (e.g. an operator commit made after the
-crash), plus the irreducible one-write window between a rebase completing and
-its tip being persisted into `advanced_tips`. That window is an irreducible
-floor: the tip cannot be recorded before it exists.
-During that instant abort treats the repo as foreign — it refuses that one
-repo and leaves its tip in place.
-
-**Refusal output.** When `ForeignTip` fires, abort emits to stderr (per
-repo): a one-line noise summary (skipped/untouched repos), per-refused-repo
-blocking commits (`git log savepoint..tip`, capped at 5 with a remainder
-count) plus a shape line (strictly-ahead vs diverged), and the
-recovery-options block printed exactly once at the end. The options block
-contains only operator-facing choices: a tip the op itself converged is
-attributable through `advanced_tips` and `converged_tips`, so it needs no
-option.
-
-### Abandoned tips
-
-Abandoning a foreign tip is the one place abort writes a ref. The backup is
-named for the branch HEAD is attached to (`HEAD` when detached) and the tip's
-abbreviated id behind the `abandoned` mark, so it is the same backup however
-many times abort is re-run against that tip, and a foreign agent that moved
-the tip between runs gets a second backup beside the first rather than
-displacing it. The reset to the savepoint runs only once the backup exists: a
-backup that cannot be written fails that repo's restore with the repo left
-where it was, and abort carries on with the others.
-
-A refused foreign tip writes nothing: the tip is still on its branch, and the
-refusal names none.
+**Journaled backups.** `take_in.backups` holds the `rebased` backups the op
+made and the backups a continue made at its entry. They go when the op
+completes. A clean abort (`settle_journaled_backups`) drops each one its
+repo's restored checkout reaches and names every other, with the command that
+shows it.
 
 ### Checkouts a landing fast-forwarded in place
 
@@ -589,9 +550,8 @@ either side listed before or after the op, and the record's plan, through
 any checkout of the member's store, and for each branch savepoint under the
 target key: a branch at its savepoint is left; one the journal names at the
 tip the op wrote, and checked out nowhere, is put back by compare-and-swap;
-one gone, checked out, or at any other tip is a foreign tip, unless
-`--abandon-foreign-tip` names the repo (the tip is kept as an `abandoned`
-backup, then the branch put back). A branch the journal does not name is
+one at any other tip is put back too, that tip kept as a backup first where
+the savepoint does not reach it; one gone or checked out blocks the plan. A branch the journal does not name is
 left. A branch the op created is then deleted where it sits at its creation
 point, or at the tip the op wrote (put back to the creation point first),
 while another branch reaches it.
@@ -614,13 +574,13 @@ mechanism is:
 |---|---|
 | Durable pre-op snapshot reference | `refs/rwv/pre-op/<op-id>/checkout/<branch>` (`.../detached`) |
 | Target-side pre-op snapshot reference | `refs/rwv/pre-op/<op-id>-target/checkout/<branch>`, and `refs/rwv/pre-op/<op-id>-target/ref/<branch>` for a branch moved as a ref |
-| Backup of an abandoned foreign tip | `refs/rwv/backup/<branch>/abandoned-<short id>` |
+| Backup abort keeps | `refs/rwv/backup/<branch>/<short id>` |
 | VCS-native mid-op state / continue / abort | rebase/cherry-pick state dirs; `--continue` / `--abort` |
 | Atomic source pin (T₀) | one `HEAD` resolution of the source project repo |
 | Read manifest/lock at a revision | `git show <rev>:<path>` (`Vcs::read_file_at_revision`) |
 | ff-advance to converged tip | `git merge --ff-only <rev>` (never `reset --hard`) |
 | Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
-| Verified restore | `git reset --hard <savepoint>` gated on tip ∈ {savepoint, advanced tip, converged tip}; edits backed up first |
+| Restore | `git reset --hard <savepoint>`, a tip neither the savepoint reaches nor the op wrote, and the edits it would discard, kept as backups first |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
 | Lock held through a replay (rebase) | `rwv.lock merge=rwv-lock` in `.gitattributes`; `-c merge.rwv-lock.driver=true` per invocation, overriding the clone's `rwv lock --merge-driver` definition |
 
@@ -672,8 +632,7 @@ as "not this op's tip". When the re-map rewrites the replayed project
 commits, `Vcs::record_replayed` keeps a second record naming the copies beside
 the replay's own, written before the branch moves to them, so `Vcs::replayed`
 describes either tip and a kill between the two writes resumes. The refusal
-prints `rwv abort`, or `rwv abort --abandon-foreign-tip` where the tip named
-is not the one the op journaled.
+prints `rwv abort`.
 The records live as long as the op record does: the op's end and a clean
 `rwv abort` drop every one in the checkouts of the workspaces it ran in
 (`Vcs::forget_replays`), and the scenario harness reports one left in a

@@ -149,13 +149,12 @@ operation out. See
 ## Abort: verified-restore contract
 
 `rwv abort` restores every workspace the operation involved — CWD, and the
-target of a `land` — to its pre-op state from the savepoint refs. A
+target of a `land` — to its pre-op state from its savepoints. A
 `sync` involves only CWD.
 
 **Savepoints.** Before replay moves anything, each ref the op may move gets
-a savepoint under `refs/rwv/pre-op/<op-id>`, and a `land` target's under
-`refs/rwv/pre-op/<op-id>-target`, because worktrees of one repo share a ref
-store: each checkout's, naming the branch it was on, and each branch a
+a savepoint, a `land` target's filed apart from its source's, since the
+checkouts of one repo in both workspaces share its refs: each checkout's, naming the branch it was on, and each branch a
 landing moves without a checkout, at the tip the landing read. Abort puts a
 checkout back on its branch before it resets anything, and puts each such
 branch back once no checkout is left on it.
