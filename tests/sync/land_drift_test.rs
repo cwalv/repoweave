@@ -3662,7 +3662,6 @@ fn an_ignored_file_where_the_move_adds_one_is_moved_aside_then_merged() {
 /// of ignored files and passes every other call to the real one.
 #[cfg(unix)]
 fn run_with_ignored_listing_failing(f: &Fixture, args: &[&str], dir: &Path) -> String {
-    use std::os::unix::fs::PermissionsExt;
     let bin = f.scratch.join("failing-git");
     std::fs::create_dir_all(&bin).unwrap();
     let real = String::from_utf8(
@@ -3674,16 +3673,14 @@ fn run_with_ignored_listing_failing(f: &Fixture, args: &[&str], dir: &Path) -> S
     )
     .unwrap();
     let wrapper = bin.join("git");
-    std::fs::write(
+    common::write_executable(
         &wrapper,
         format!(
             "#!/bin/sh\ncase \" $* \" in *\" --others --ignored --exclude-standard \"*) \
              echo 'fatal: the listing failed' >&2; exit 128;; esac\nexec {} \"$@\"\n",
             real.trim()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
     let out = common::rwv_std()
         .args(args)

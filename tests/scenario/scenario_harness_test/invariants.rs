@@ -364,7 +364,7 @@ pub struct Snapshot {
     pub default_branch: BTreeMap<Repo, String>,
     /// Each replay record kept in a checkout of a place no operation holds.
     replay_records_left: BTreeSet<(Place, Repo, String)>,
-    landing_stands: bool,
+    standing_landings: BTreeSet<(Repo, String)>,
 }
 
 impl Snapshot {
@@ -506,7 +506,7 @@ pub fn snapshot(sandbox: &Sandbox) -> Snapshot {
     }
 
     snap.replay_records_left = replay_records_left(sandbox);
-    snap.landing_stands = a_landing_stands(sandbox);
+    snap.standing_landings = standing_landings(sandbox);
     for place in sandbox.live_places() {
         for project in [Repo::Proj, Repo::Proj2] {
             let checkout = sandbox.checkout(&place, project);
@@ -764,13 +764,43 @@ fn git_dir_of(checkout: &Path) -> Option<PathBuf> {
     })
 }
 
-fn a_landing_stands(sandbox: &Sandbox) -> bool {
-    sandbox.live_places().iter().any(|place| {
-        std::fs::read_to_string(sandbox.place_root(place).join(".rwv-op"))
+/// The branch each standing landing moves in each repo: the receiving
+/// branches its record names.
+fn standing_landings(sandbox: &Sandbox) -> BTreeSet<(Repo, String)> {
+    let mut standing = BTreeSet::new();
+    for place in sandbox.live_places() {
+        let Some(record) = std::fs::read_to_string(sandbox.place_root(&place).join(".rwv-op"))
             .ok()
             .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-            .is_some_and(|record| record["verb"] == "land")
-    })
+        else {
+            continue;
+        };
+        if record["verb"] != "land" {
+            continue;
+        }
+        let Some(receiving) = record["take_in"]["receiving"].as_object() else {
+            continue;
+        };
+        for (key, receiving) in receiving {
+            let repo = if key == "(project)" {
+                match Repo::ALL
+                    .into_iter()
+                    .find(|r| r.is_project() && Some(r.name()) == record["project"].as_str())
+                {
+                    Some(project) => project,
+                    None => continue,
+                }
+            } else if let Some(member) = Repo::MEMBERS.into_iter().find(|r| r.rel_path() == *key) {
+                member
+            } else {
+                continue;
+            };
+            if let Some(branch) = receiving["branch"].as_str() {
+                standing.insert((repo, branch.to_owned()));
+            }
+        }
+    }
+    standing
 }
 
 fn replay_records_left(sandbox: &Sandbox) -> BTreeSet<(Place, Repo, String)> {
@@ -1075,7 +1105,9 @@ pub fn first_parents_broken(
             })
             .collect();
         let followed_its_landing = receiving_tips.contains(&to);
-        let composed_onto_its_landing = (before.landing_stands || after.landing_stands)
+        let landing_it = (repo, branch.to_owned());
+        let composed_onto_its_landing = (before.standing_landings.contains(&landing_it)
+            || after.standing_landings.contains(&landing_it))
             && receiving_tips.contains(&first_parent.trim());
         if !on_first_parents
             && !merged_with_its_upstream

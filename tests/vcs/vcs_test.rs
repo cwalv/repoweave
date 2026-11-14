@@ -2149,17 +2149,14 @@ fn a_named_path_commit_before_the_first_commit_leaves_other_staged_work_staged()
 #[cfg(unix)]
 #[test]
 fn a_replayed_commit_copied_under_commit_gpgsign_is_signed() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = init_repo();
     let p = dir.path();
     let signer = p.join(".git").join("fake-gpg");
-    fs::write(
+    common::write_executable(
         &signer,
         "#!/bin/sh\ncat >/dev/null\necho '[GNUPG:] SIG_CREATED D 1 8 00 1700000000 A' >&2\n\
          printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nZmFrZQ==\\n-----END PGP SIGNATURE-----\\n'\n",
-    )
-    .unwrap();
-    fs::set_permissions(&signer, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let base = common::git_in(p, &["rev-parse", "HEAD"]).trim().to_owned();
     fs::write(p.join("more.txt"), "more").unwrap();
     common::git_in(p, &["add", "."]);

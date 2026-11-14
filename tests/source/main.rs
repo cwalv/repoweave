@@ -50,6 +50,7 @@ mod origin_dir_single_read_test;
 mod output_mode_compile_fail_test;
 mod output_mode_resolved_once_test;
 mod pre_push_hook_test;
+mod program_fixtures_are_written_by_the_helper_test;
 mod project_name_separator_is_explicit_test;
 mod push_mode_compile_fail_test;
 mod ref_origin_compile_fail_test;
