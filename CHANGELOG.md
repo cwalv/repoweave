@@ -74,6 +74,14 @@ checkout was mid-merge or mid-rebase.
 does: it refreshes the checkout, or refuses with the choice that clears it. A
 merge or copy stopped in a checkout whose branch moved is refused, since
 concluding it would record the move's reverse; `rwv abort` is the way out.
+A landing that wrote its target and finds it moved at `--continue` offers
+`rwv abort --leave-target`, the abort that runs there. `--continue` takes in a
+member merge `pull` began and the operator committed by hand, pinning it, and a
+port's copy finished by hand with commits on top of it, copying nothing again.
+`--keep` keeps no backup of the `rwv.toml` it writes over, which held only the
+stop's own text. `rwv doctor` in a workweave stopped mid-operation does not
+report, or `--fix`, a member the operation has yet to place. A failed VCS
+command is printed as the command line that ran.
 A landing's target that something else moved since is refused;
 `rwv abort --leave-target` ends the landing and leaves the target as it
 stands.
