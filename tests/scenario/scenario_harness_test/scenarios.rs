@@ -13580,6 +13580,54 @@ pub fn update_remote_reset_killed_after_the_move(detached: bool) -> Scenario {
     scenario("update --remote reset killed after the move", steps)
 }
 
+/// `pull --reset-to-upstream projects/proj` killed at `point`, machine B's
+/// project commit diverged from its upstream's: `pull --continue` finishes
+/// the reset and ends the operation, and abort puts the commit back.
+pub fn pull_reset_killed(point: &'static str, continued: bool) -> Scenario {
+    let mut steps = vec![
+        Step::new_machine(Machine::B),
+        Step::commit(&a(), Repo::Proj, "alpha-proj"),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+        Step::commit(&b(), Repo::Proj, "beta-proj"),
+        Step::rwv_paused(
+            &b(),
+            &["pull", "--reset-to-upstream", "projects/proj"],
+            point,
+            "pull",
+        )
+        .may_rewrite(&[Repo::Proj]),
+        Step::kill("pull"),
+    ];
+    if continued {
+        steps.extend([
+            Step::rwv(&b(), &["pull", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::Proj]),
+            Step::git(&b(), Repo::Proj, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("alpha-proj"))
+                .claim(Claim::OutputLacks("beta-proj")),
+            Step::rwv(&b(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ]);
+    } else {
+        steps.extend([
+            Step::rwv(&b(), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_restore(&[Repo::Proj]),
+            Step::git(&b(), Repo::Proj, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("beta-proj"))
+                .claim(Claim::OutputLacks("alpha-proj")),
+        ]);
+    }
+    steps.push(Step::rwv(&b(), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)));
+    scenario(
+        "pull --reset-to-upstream killed, then continued or aborted",
+        steps,
+    )
+}
+
 /// `update --remote --merge-upstream --reset-to-upstream lib` resets
 /// `lib`'s `main` to its upstream as a ref, `lib` being detached on machine
 /// A, and stops on its conflict in `app`; someone then commits onto `lib`'s

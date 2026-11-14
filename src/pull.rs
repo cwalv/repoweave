@@ -302,6 +302,21 @@ fn take_in_project(
     output: OutputMode,
     how: &How,
 ) -> anyhow::Result<ProjectTakeInOutput> {
+    let taken = take_in_project_branch(ctx, project, output, how)?;
+    if let Some((op, _)) = &how.resumed {
+        if crate::op_state::read_owner(&op.workspace)?.is_some() {
+            op.finish(&savepoint_repos(ctx, project));
+        }
+    }
+    Ok(taken)
+}
+
+fn take_in_project_branch(
+    ctx: &WorkspaceContext,
+    project: &ProjectName,
+    output: OutputMode,
+    how: &How,
+) -> anyhow::Result<ProjectTakeInOutput> {
     let dir = project_dir(ctx.active_path(), project);
     let path = project_rel_path(project);
     let vcs = project_vcs();
@@ -581,17 +596,16 @@ fn reset_project(
     report.into_result()?;
     let repos = savepoint_repos(ctx, project);
     let op = match &how.resumed {
-        Some(_) => None,
-        None => Some(Op::begin(
+        Some((op, _)) => Op::adopt(op),
+        None => Op::begin(
             ctx.active_path(),
             project,
             OpVerb::Pull,
             None,
             how.flags.to_record(),
             &repos,
-        )?),
+        )?,
     };
-    let op = op.context("an op that reset the project repo has nothing left to resume")?;
     op.record_upstream(RepoKey::Project, upstream.id())?;
     let backup = crate::merge_upstream::reset_to_upstream(
         ctx.active_path(),

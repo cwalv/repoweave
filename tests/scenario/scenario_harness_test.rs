@@ -1348,6 +1348,9 @@ every_scenario!(
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::PullMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::CherryPickMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::UpdateRemoteMember),
+    pull_reset_killed("op-savepoint-taken", true),
+    pull_reset_killed("reset-to-upstream", true),
+    pull_reset_killed("reset-to-upstream", false),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncLinear),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncMerge),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandLinear),
@@ -8422,4 +8425,18 @@ fn manifest_stop_inline_table() {
         scenarios::ManifestSettle::InlineTable,
     ))
     .assert_fully_decided_green();
+}
+
+holding_rwv! {
+    /// `pull --reset-to-upstream` killed before and after its reset: the
+    /// continue finishes and clears the record, and abort puts the commit
+    /// back.
+    fn pull_reset_killed_then_continued_or_aborted() {
+        for point in ["op-savepoint-taken", "reset-to-upstream"] {
+            for continued in [true, false] {
+                runner::run(scenarios::pull_reset_killed(point, continued))
+                    .assert_fully_decided_green();
+            }
+        }
+    }
 }
