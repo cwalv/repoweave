@@ -1021,10 +1021,22 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::KeepsLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::ForeignMerge),
-    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::SyncMerge),
-    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::SyncLinear),
-    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::LandMerge),
-    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::LandLinear),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::ListAdds,
+        scenarios::TakingIn::SyncMerge
+    ),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::ListAdds,
+        scenarios::TakingIn::SyncLinear
+    ),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::ListAdds,
+        scenarios::TakingIn::LandMerge
+    ),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::ListAdds,
+        scenarios::TakingIn::LandLinear
+    ),
     an_entry_both_sides_changed(
         scenarios::BothChanged::AlreadyUpstream,
         scenarios::TakingIn::SyncMerge

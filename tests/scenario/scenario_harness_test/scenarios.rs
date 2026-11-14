@@ -12734,8 +12734,9 @@ pub fn cherry_pick_a_table_both_sides_changed_takes_the_text_merge() -> Scenario
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("ported"))
             .claim(Claim::OutputLacks("differs from the merge")),
-        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-            .claim(Claim::OutputContains("[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputContains(
+            "[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]",
+        )),
     ]);
     scenario("cherry-pick a table both sides changed", steps)
 }
@@ -20421,9 +20422,9 @@ pub fn an_entry_both_sides_changed(shape: BothChanged, taking_in: TakingIn) -> S
     }
     let start = Step::rwv(&ww("w"), &start);
     let held = |step: Step| {
-        holds.iter().fold(step, |step, holds| {
-            step.claim(Claim::OutputContains(holds))
-        })
+        holds
+            .iter()
+            .fold(step, |step, holds| step.claim(Claim::OutputContains(holds)))
     };
     let conflicts = matches!(shape, BothChanged::AlreadyUpstream) && !taking_in.linear();
     if conflicts {

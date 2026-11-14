@@ -143,7 +143,11 @@ impl Sides {
 
     fn merged_with(
         &self,
-        in_conflict: impl Fn(&[String], Option<&toml::Value>, Option<&toml::Value>) -> Option<toml::Value>,
+        in_conflict: impl Fn(
+            &[String],
+            Option<&toml::Value>,
+            Option<&toml::Value>,
+        ) -> Option<toml::Value>,
     ) -> anyhow::Result<Manifest> {
         let [base, ours, theirs] = self.tables()?;
         let mut merged = ours.clone();
