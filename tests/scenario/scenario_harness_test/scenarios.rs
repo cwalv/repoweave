@@ -5665,6 +5665,25 @@ pub fn a_landing_that_cannot_prune_the_target_prints_the_removal_there() -> Scen
     )
 }
 
+/// `w` changes a member's role and a feature `d` is opened onto `w`, so `d`'s
+/// entries match `w`'s: `d` is no target `w` could be rebound onto, since it
+/// lands into `w`. The refusal offers no `set-mode` onto it.
+pub fn a_branchs_dependent_is_no_rebind_candidate() -> Scenario {
+    scenario(
+        "a branch's dependent is no rebind candidate",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["workweave", "create", "--project", "proj", "d"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "merge"])
+                .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+                .claim(Claim::OutputLacks("--target candidates"))
+                .claim(Claim::OutputLacks("set-mode")),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

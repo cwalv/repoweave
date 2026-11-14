@@ -1711,6 +1711,7 @@ every_scenario!(
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
     a_target_judged_alignment_choice_runs_in_the_target,
+    a_branchs_dependent_is_no_rebind_candidate,
     a_landing_that_cannot_prune_the_target_prints_the_removal_there,
     a_landings_unpinned_target_member_offers_only_what_runs,
     squashed_pin_off_remote_offers_the_reset,
@@ -5473,6 +5474,12 @@ fn a_landings_pin_unpinned_offers_the_lock_alone() {
 #[test]
 fn a_blocked_prune_prints_the_removal_in_the_blocking_workspace() {
     runner::run(scenarios::a_landing_that_cannot_prune_the_target_prints_the_removal_there())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dependent_is_left_out_of_the_rebind_candidates() {
+    runner::run(scenarios::a_branchs_dependent_is_no_rebind_candidate())
         .assert_fully_decided_green();
 }
 

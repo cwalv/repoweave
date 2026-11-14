@@ -77,8 +77,8 @@ fn writer_text(store: &Store<'_>, branch: &BranchName) -> anyhow::Result<String>
 }
 
 /// The branches `branch` could land into: each other weave branch with a
-/// record that reads as one value, the ones sharing the most history with
-/// `branch` first.
+/// record that reads as one value and no chain of targets leading to
+/// `branch`, the ones sharing the most history with `branch` first.
 pub(crate) fn target_candidates(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -95,7 +95,10 @@ pub(crate) fn target_candidates(
         let Ok(name) = BranchName::parse(vcs, &other.name) else {
             continue;
         };
-        if &name == branch || !matches!(view.lookup(&name), Lookup::Value(_)) {
+        if &name == branch
+            || !matches!(view.lookup(&name), Lookup::Value(_))
+            || view.chain_back_to(branch, vec![name.clone()]).is_some()
+        {
             continue;
         }
         let tip = ResolvedRevisionId::from(other.tip.clone());
@@ -221,10 +224,6 @@ pub(crate) fn target_gone(
     let candidates: Vec<String> = target_candidates(vcs, dir, &view, feature)?
         .into_iter()
         .filter(|name| name != target.as_str())
-        .filter(|name| {
-            BranchName::parse(vcs, name)
-                .is_ok_and(|name| view.chain_back_to(feature, vec![name]).is_none())
-        })
         .collect();
     let judging = State::TargetGone
         .of(label(project))
