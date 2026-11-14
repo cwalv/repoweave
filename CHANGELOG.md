@@ -95,6 +95,23 @@ stands.
 - `update --remote --continue` concludes a member merge whose conflicts are
   marked resolved, as `pull --continue` does, instead of refusing it as
   `edits mid-operation`.
+- `pull --reset-to-upstream` killed before or after its reset is finished by
+  `pull --continue`, which ends the operation instead of exiting 0 with it
+  still recorded.
+- A landing killed once it leased a workspace whose checkout it moves in place
+  is finished by `land --continue`, which no longer refuses on its own lease.
+- Plain `rwv abort` of a landing that carried a dependent, killed once landed,
+  puts the dependent back with the rest instead of refusing over the pin its
+  carry wrote.
+- A merge stopped in a checkout whose own record of where it stood is gone
+  still refuses at `--continue` where its branch moved, reading the tip the
+  merge began from.
+- `rwv status` reports a checkout held as `edits` `drift left in place` with
+  the choice that clears it, instead of a pin choice that refuses.
+- `sync --continue` names `rwv abort` alone where the branch its rebase moves
+  was deleted.
+- `cherry-pick --continue` names each path staged by hand that the ported
+  commit records beyond its own change.
 
 ### A conflict in `rwv.toml` stops with the entries it concerns
 
