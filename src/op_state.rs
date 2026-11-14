@@ -1469,15 +1469,55 @@ pub fn discard_unreadable_record_at(workspace: &Path) -> String {
 }
 
 fn unreadable_record(path: &StatePath, why: &str) -> anyhow::Error {
+    let discard = discard_unreadable_record_at(path.dir());
+    let migrations = migrations_before_discard(path.dir());
+    let ends = if migrations.is_empty() {
+        format!(
+            "This ends the operation, removing the record and releasing what the operation \
+             holds; it moves nothing back and lists what it leaves:\n  {discard}"
+        )
+    } else {
+        format!(
+            "An earlier release left the workspace holding it, so it is migrated first, then \
+             the last line ends the operation, removing the record and releasing what the \
+             operation holds; it moves nothing back and lists what it leaves:\n  {}\n  \
+             {discard}",
+            migrations.join("\n  ")
+        )
+    };
     crate::refusal::refusal(
         RefusalKind::UnreadableOpRecord,
-        format!(
-            "the operation record at {path} cannot be read: {why}. This ends the operation, \
-             removing the record and releasing what the operation holds; it moves nothing \
-             back and lists what it leaves:\n  {discard}",
-            discard = discard_unreadable_record_at(path.dir()),
-        ),
+        format!("the operation record at {path} cannot be read: {why}. {ends}"),
     )
+}
+
+/// The migrations an earlier release's workspace at `dir` needs before the
+/// discard there can run and name every member it leaves: its marker, which
+/// the primary migrates, then each manifest of a project repo stopped in no
+/// VCS operation, which it migrates itself. A stopped project repo is listed
+/// by the discard whatever its manifest holds.
+fn migrations_before_discard(dir: &Path) -> Vec<String> {
+    let mut verbs = Vec::new();
+    if let Some(primary) = crate::workspace::legacy_marker_primary(dir) {
+        verbs.push(doctor_fix_in(&primary));
+    }
+    let vcs = crate::vcs::project_vcs();
+    let earlier_manifest = crate::workspace::discover_projects(dir)
+        .iter()
+        .map(|project| crate::workspace::project_dir(dir, project))
+        .filter(|project_dir| vcs.mid_operation(project_dir).is_none())
+        .filter_map(|project_dir| {
+            std::fs::read_to_string(project_dir.join(crate::manifest::Manifest::FILE_NAME)).ok()
+        })
+        .any(|text| !crate::manifest::pre_schema_keys(&text).is_empty());
+    if earlier_manifest {
+        verbs.push(doctor_fix_in(dir));
+    }
+    verbs
+}
+
+fn doctor_fix_in(workspace: &Path) -> String {
+    format!("rwv -C {} doctor --fix", workspace.display())
 }
 
 /// The release a record names as its writer, as a message names it.
@@ -1490,7 +1530,7 @@ fn writer_of(json: &str) -> String {
             format!("another build of rwv {release}")
         }
         Some(release) => format!("rwv {release}"),
-        None => format!("an rwv release before {}", crate::rwv_version()),
+        None => "an rwv release that records no version in it".to_owned(),
     }
 }
 

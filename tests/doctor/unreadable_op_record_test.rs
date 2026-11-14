@@ -396,3 +396,73 @@ fn a_record_that_names_no_op_is_ended_by_the_verb_its_error_names() {
     assert_no_op_residue(&parked);
     assert_doctor_reports_no_op_state(&parked);
 }
+
+/// What an earlier release leaves of a parked landing: a record with no
+/// schema, the seat's marker with no name, the index at the project
+/// checkout's old path, and manifests keyed `version`. The record's refusal
+/// lists the migrations before the discard, in the order they run; each runs
+/// verbatim, and the discard then names the member left mid-rebase.
+#[test]
+fn a_record_an_earlier_release_left_is_ended_by_the_lines_its_refusal_prints_in_order() {
+    let parked = park();
+    let target = parked.primary.root.clone();
+    rewrite_record(&parked, |record| {
+        let record = record.as_object_mut().unwrap();
+        record.remove("schema");
+        record.remove("release");
+    });
+    let marker = parked.seat.root.join(".rwv-workweave");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&marker).unwrap()).unwrap();
+    json.as_object_mut().unwrap().remove("name").unwrap();
+    std::fs::write(&marker, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    let index = common::index_file_of(&parked.primary.project);
+    std::fs::remove_file(&index).unwrap();
+    std::fs::write(
+        parked.primary.project.join(".rwv-workweave-index"),
+        serde_json::json!({
+            "workweaves": { "s1": parked.seat.root.to_string_lossy() },
+            "receipts": {},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    for project in [&parked.primary.project, &parked.seat.project] {
+        let manifest = project.join("rwv.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(&manifest, text.replace("branch = ", "version = ")).unwrap();
+    }
+
+    let out = rwv(&target, &["status"]);
+    let said = String::from_utf8_lossy(&out.stdout).into_owned();
+    let lines: Vec<&str> = said
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("rwv -C "))
+        .collect();
+    let expected = [
+        format!("rwv -C {} doctor --fix", target.display()),
+        format!("rwv -C {} doctor --fix", parked.seat.root.display()),
+        format!(
+            "rwv -C {} abort --discard-unreadable-record",
+            parked.seat.root.display()
+        ),
+    ];
+    assert_eq!(lines, expected, "{}", transcript(&out));
+
+    let mut last = None;
+    for line in &expected {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        last = Some(succeed(&target, &words[1..]));
+    }
+    let stderr = stderr_of(&last.unwrap());
+    assert!(
+        stderr.contains(&format!(
+            "{}: left stopped in a rebase",
+            parked.seat.lib.display()
+        )),
+        "the discard must name the member it leaves mid-rebase:\n{stderr}"
+    );
+    assert!(!record_path(&parked).exists());
+    assert!(!target.join(".rwv-op-lease").exists());
+}
