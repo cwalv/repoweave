@@ -1243,8 +1243,12 @@ every_scenario!(
         scenarios::LandedStop::Retire,
         scenarios::AbortFrom::Target
     ),
-    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
-    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
+    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(
+        scenarios::LandedStop::Landed
+    ),
+    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(
+        scenarios::LandedStop::Retire
+    ),
     abort_sets_aside_an_untracked_file_in_the_way_in_the_target,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
@@ -1285,6 +1289,8 @@ every_scenario!(
         "merge",
         scenarios::LandStopCommit::ResolutionOnly
     ),
+    a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort("sync", "linear"),
+    a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort("land", "merge"),
     abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Landed),
     abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Retire),
     cherry_pick_abort_keeps_edits_made_after_the_stop,
@@ -3901,6 +3907,22 @@ fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
 fn update_remote_abort_over_a_ref_moved_since_keeps_the_new_tip() {
     runner::run(scenarios::update_remote_abort_over_a_ref_moved_since())
         .assert_fully_decided_green();
+}
+
+/// A commit made at a stop in a repo the `--continue` then takes in is kept
+/// as a backup by abort, under either history, for a sync and a landing.
+#[test]
+fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort() {
+    for verb in ["sync", "land"] {
+        for history in ["linear", "merge"] {
+            runner::run(
+                scenarios::a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort(
+                    verb, history,
+                ),
+            )
+            .assert_fully_decided_green();
+        }
+    }
 }
 
 /// A commit the operator adds on top of a rebase they finished by hand is
@@ -6665,8 +6687,7 @@ fn a_stopped_carry_under_update_refs_moves_no_dependent_and_aborts_clean() {
 
 #[test]
 fn abort_keeps_a_tip_amended_during_a_stop_as_a_backup() {
-    runner::run(scenarios::abort_keeps_a_tip_amended_during_a_stop())
-        .assert_fully_decided_green();
+    runner::run(scenarios::abort_keeps_a_tip_amended_during_a_stop()).assert_fully_decided_green();
 }
 
 #[cfg(unix)]
@@ -7811,7 +7832,8 @@ fn a_land_stop_linear_at_a_member_stop_aborts_keeping_what_the_operation_did_not
 }
 
 #[test]
-fn a_land_stop_linear_after_resolving_the_project_stop_aborts_keeping_what_the_operation_did_not_make() {
+fn a_land_stop_linear_after_resolving_the_project_stop_aborts_keeping_what_the_operation_did_not_make(
+) {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "linear",
@@ -7844,7 +7866,8 @@ fn a_land_stop_merge_at_a_member_stop_aborts_keeping_what_the_operation_did_not_
 }
 
 #[test]
-fn a_land_stop_merge_after_resolving_the_project_stop_aborts_keeping_what_the_operation_did_not_make() {
+fn a_land_stop_merge_after_resolving_the_project_stop_aborts_keeping_what_the_operation_did_not_make(
+) {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "merge",

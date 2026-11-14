@@ -1696,7 +1696,7 @@ fn act(
     let repos = savepoint_repos(sync);
     let kept = crate::op_state::read_owner(&op.workspace)?
         .and_then(|owner| owner.take_in)
-        .map(|take_in| take_in.rebased_backups)
+        .map(|take_in| take_in.backups)
         .unwrap_or_default();
     crate::landing_claim::LandingClaim::release_held_by(sync.vcs.as_ref(), &sync.dir, &op.id)?;
     op.finish(&repos);

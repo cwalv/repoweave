@@ -426,7 +426,8 @@ mod tests {
     fn a_mark_is_part_of_the_name_and_is_read_back() {
         let p = repo();
         let tip = commit(p.path(), "work");
-        for mark in [None, Some(BackupMark::Rebased)] {
+        let every = [None, Some(BackupMark::Rebased)];
+        for mark in every {
             GitVcs
                 .write_backup(p.path(), &feature("b"), &tip, mark)
                 .unwrap();
@@ -438,10 +439,10 @@ mod tests {
             .collect();
         assert_eq!(
             marks.len(),
-            3,
-            "one tip backed up three ways is three backups: {marks:?}"
+            every.len(),
+            "one tip backed up under each mark is one backup each: {marks:?}"
         );
-        for expected in [None, Some(BackupMark::Rebased)] {
+        for expected in every {
             assert!(
                 marks.contains(&expected),
                 "{expected:?} not read back: {marks:?}"

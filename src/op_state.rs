@@ -524,10 +524,12 @@ pub struct TakeInRecord {
     /// The repos the op integrates by a merge commit rather than a rebase.
     #[serde(default)]
     pub merged: Vec<RepoKey>,
-    /// The `rebased` backups the op made of branches it found unpublished,
-    /// which go when it completes.
+    /// The backups the op made: `rebased` ones of branches it found
+    /// unpublished, and each tip a branch moved to during a stop. They go
+    /// when it completes; an abort keeps and names each one the restored
+    /// branch does not reach.
     #[serde(default)]
-    pub rebased_backups: Vec<KeptBackup>,
+    pub backups: Vec<KeptBackup>,
     /// Each merge the op started, by its repo and the commit it merges in,
     /// written before it starts.
     #[serde(default)]
@@ -1895,9 +1897,9 @@ pub fn created_by(
         }))
 }
 
-/// Record a `rebased` backup the op made of an unpublished branch, so it goes
-/// when the op completes.
-pub fn journal_rebased_backup(workspace_dir: &Path, kept: KeptBackup) -> anyhow::Result<()> {
+/// Record a backup the op made, so it goes when the op completes and an
+/// abort names it where the restored branch does not reach it.
+pub fn journal_backup(workspace_dir: &Path, kept: KeptBackup) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
         crate::untokened!(
             InternalInvariant,
@@ -1906,8 +1908,8 @@ pub fn journal_rebased_backup(workspace_dir: &Path, kept: KeptBackup) -> anyhow:
         )
     })?;
     if let Some(take_in) = record.take_in.as_mut() {
-        if !take_in.rebased_backups.contains(&kept) {
-            take_in.rebased_backups.push(kept);
+        if !take_in.backups.contains(&kept) {
+            take_in.backups.push(kept);
         }
     }
     write_owner(workspace_dir, &record)

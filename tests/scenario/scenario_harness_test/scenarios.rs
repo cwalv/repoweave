@@ -21994,6 +21994,59 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
     )
 }
 
+/// `verb` (`sync` or `land`) under `history` stops on `app`'s conflict
+/// before it reaches `lib`; the operator resolves `app` and commits a fix in
+/// `lib`, and the `--continue` takes `lib` in, fix included, and stops again
+/// on the project repo. `rwv abort` puts `lib` back, keeping the tip that
+/// held the fix as a backup it names, whose printed show line returns it.
+pub fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort(
+    verb: &'static str,
+    history: &'static str,
+) -> Scenario {
+    let at = ww("w");
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Proj, "shared"),
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "w-app"]),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&ww("w"), Repo::Proj, "shared.txt", "shared", "beta"),
+        Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "w-proj"]),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::commit(&a(), Repo::Lib, "main-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::Proj, "shared.txt", "shared", "alpha"),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "main-proj"]),
+        Step::rwv(&at, &[verb])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib]),
+        Step::git(&at, Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&at, Repo::App, &["add", "README"]),
+        Step::commit(&at, Repo::Lib, "hand-fix"),
+        Step::rwv(&at, &[verb, "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib]),
+        Step::rwv(&at, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj])
+            .claim(Claim::OutputContains("local/remotes/lib: "))
+            .claim(Claim::OutputContains("kept as backup")),
+        kept_backup_shown(&at, "remotes/lib log ", "hand-fix"),
+        Step::git(&at, Repo::Lib, &["log", "--format=%s", "-1"]).claim(Claim::OutputLine("w-lib")),
+    ];
+    scenario(
+        "a commit at a stop the continue runs past is kept by abort",
+        steps,
+    )
+}
+
 /// A landing stopped in `app`'s rebase, finished by the VCS's own continue,
 /// and then the operator commits on top: abort puts `app` back to its
 /// savepoint, keeping that tip as a backup first, whose printed show line
@@ -26102,12 +26155,16 @@ pub fn a_carried_fix_killed_part_way(
                 &[Repo::Lib],
             ));
             match point {
-                "remap-recorded" => {
-                    steps.push(kept_backup_shown(&ww("w"), "projects/proj diff ", "rwv.toml"))
-                }
-                "remap-moved" => {
-                    steps.push(kept_backup_shown(&ww("w"), "projects/proj log ", "rwv.toml"))
-                }
+                "remap-recorded" => steps.push(kept_backup_shown(
+                    &ww("w"),
+                    "projects/proj diff ",
+                    "rwv.toml",
+                )),
+                "remap-moved" => steps.push(kept_backup_shown(
+                    &ww("w"),
+                    "projects/proj log ",
+                    "rwv.toml",
+                )),
                 _ => {}
             }
         }

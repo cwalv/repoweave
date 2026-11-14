@@ -814,8 +814,7 @@ fn an_untracked_file_in_a_cancels_way_is_kept_before_it_is_cleared() {
     let VerifiedRestoreOutcome::Kept { kept, .. } = &outcome else {
         panic!("expected the working copy kept, got {outcome:?}");
     };
-    let Some(KeptWork::Edits(edits)) = kept.iter().find(|k| matches!(k, KeptWork::Edits(_)))
-    else {
+    let Some(KeptWork::Edits(edits)) = kept.iter().find(|k| matches!(k, KeptWork::Edits(_))) else {
         panic!("expected the working copy kept, got {outcome:?}");
     };
     let tip = edits.backup().tip.id().as_str().to_owned();

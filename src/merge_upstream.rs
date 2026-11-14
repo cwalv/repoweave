@@ -128,6 +128,7 @@ impl Op {
         let take_in = record
             .take_in
             .context("the op record holds no take-in to resume")?;
+        crate::sync::keep_what_moved_at_the_stop(resolved.owner_workspace.as_path())?;
         Ok((
             Self {
                 workspace: resolved.owner_workspace.as_path().to_path_buf(),

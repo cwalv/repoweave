@@ -481,7 +481,7 @@ pub(crate) fn keep_rebased(
         Some(BackupMark::Rebased),
     )?;
     let name = kept.backup().name.as_str().to_owned();
-    crate::op_state::journal_rebased_backup(
+    crate::op_state::journal_backup(
         workspace,
         crate::op_state::KeptBackup {
             repo,

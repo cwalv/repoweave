@@ -981,7 +981,7 @@ impl Carrier<'_> {
         })?;
         let kept = format!("{}/rebased-{}", carrying.branch, carrying.from.short());
         let backup = record
-            .rebased_backups
+            .backups
             .iter()
             .find(|b| b.repo == carrying.repo && b.name.starts_with(&kept))?
             .name
@@ -1097,7 +1097,7 @@ impl Carrier<'_> {
                 Some(BackupMark::Rebased),
             )?;
             let backup = kept.backup().name.as_str().to_owned();
-            crate::op_state::journal_rebased_backup(
+            crate::op_state::journal_backup(
                 self.workspace,
                 crate::op_state::KeptBackup {
                     repo: carrying.repo.clone(),

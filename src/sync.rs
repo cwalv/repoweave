@@ -4684,6 +4684,7 @@ fn load_continuing_context<'a>(
     // landing that had released its target and cannot go on leaves it free.
     let under_claim = (|| -> anyhow::Result<(op_state::TakeInRecord, _)> {
         let mut take_in = take_in;
+        keep_what_moved_at_the_stop(&owner_workspace_dir)?;
         // A target that moved after the landing composed is a plan the landing no
         // longer describes: only `rwv abort` and a fresh landing judge the new
         // tips.
@@ -5774,25 +5775,18 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 "internal: owner record missing after Phase 1'"
             )
         })?;
-        let rebases = owner
-            .take_in
-            .as_ref()
-            .map(|take_in| take_in.rebases.as_slice())
-            .unwrap_or_default();
-        if project_tip_is_this_ops(ctx, rebases, project_tip.id()) {
-            owner
-                .tips
-                .advanced_mut()
-                .ok_or_else(|| {
-                    crate::untokened!(
-                        InternalInvariant,
-                        "internal: advanced_tips write after convergence post Phase 1'"
-                    )
-                })?
-                .insert(RepoKey::Project, project_tip.id().clone());
-            op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-                .context("failed to write advanced_tips after Phase 1'")?;
-        }
+        owner
+            .tips
+            .advanced_mut()
+            .ok_or_else(|| {
+                crate::untokened!(
+                    InternalInvariant,
+                    "internal: advanced_tips write after convergence post Phase 1'"
+                )
+            })?
+            .insert(RepoKey::Project, project_tip.id().clone());
+        op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+            .context("failed to write advanced_tips after Phase 1'")?;
     }
 
     // === Member set: decided against the manifest Phase 1' produced ===
@@ -8178,7 +8172,7 @@ fn drop_rebased_backups(ctx: &OpContext<'_>) {
         .ok()
         .flatten()
         .and_then(|owner| owner.take_in)
-        .map(|take_in| take_in.rebased_backups)
+        .map(|take_in| take_in.backups)
         .unwrap_or_default();
     let primary = ctx.cwd_ctx.primary_path();
     crate::backup::drop_rebased(
@@ -9107,13 +9101,18 @@ fn abort_op(
             let kept = record
                 .take_in
                 .as_ref()
-                .map(|take_in| take_in.rebased_backups.clone())
+                .map(|take_in| take_in.backups.clone())
                 .unwrap_or_default();
-            crate::backup::drop_rebased(
+            settle_journaled_backups(
                 ctx.primary_path(),
                 owner_workspace.as_path(),
+                if owner_workspace.as_path() == ctx.active_root().as_path() {
+                    ""
+                } else {
+                    AbortSide::Replay.label()
+                },
                 &op_project_name,
-                kept.iter(),
+                &kept,
             );
         }
         for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
@@ -9139,6 +9138,126 @@ fn abort_op(
     }
 
     Ok(())
+}
+
+/// At a `--continue`'s entry, while the op replays: each repo of the op's
+/// own workspace whose checkout moved during the stop off both its savepoint
+/// and the tip the op journaled for it, onto a commit its savepoint does not
+/// reach, has that tip kept as a backup the op journals, and the tip
+/// journaled as where the op left it. Whatever the continue then does over
+/// it, an abort puts the branch back and names the backup.
+pub(crate) fn keep_what_moved_at_the_stop(owner_workspace: &Path) -> anyhow::Result<()> {
+    let Some(record) = op_state::read_owner(owner_workspace)? else {
+        return Ok(());
+    };
+    let Some(journaled) = record.tips.advanced() else {
+        return Ok(());
+    };
+    let key = SavepointKey::Op(record.id.clone());
+    let workspace = record.source.as_path();
+    let project_dir = project_dir(workspace, &record.project);
+    let mut members = OpMembers::default();
+    let pvcs = project_vcs();
+    if let Some(saved) = pvcs.resolve_savepoint(&project_dir, &key) {
+        if let Ok(manifest) = manifest_at_revision(pvcs.as_ref(), &project_dir, &saved) {
+            members.take_manifest(&manifest);
+        }
+    }
+    if let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) {
+        members.take_manifest(&manifest);
+    }
+    let repos = members
+        .0
+        .iter()
+        .map(|(path, vcs_type)| {
+            (
+                RepoKey::Member(path.clone()),
+                OpMembers::vcs(*vcs_type),
+                workspace.join(path.as_path()),
+            )
+        })
+        .chain(std::iter::once((
+            RepoKey::Project,
+            pvcs,
+            project_dir.clone(),
+        )));
+    for (repo, vcs, dir) in repos {
+        if !vcs.is_repo(&dir) || vcs.mid_op(&dir).is_some() {
+            continue;
+        }
+        let Some(saved) = vcs.resolve_savepoint(&dir, &key) else {
+            continue;
+        };
+        let head = vcs.head_revision(&dir)?;
+        if head.id() == saved.id()
+            || journaled.get(&repo) == Some(head.id())
+            || vcs.is_ancestor(&dir, &head, &saved)?
+        {
+            continue;
+        }
+        let source = vcs.head_backup_source(&dir)?;
+        let kept = vcs.create_backup(&dir, &source, &head, None)?;
+        op_state::journal_backup(
+            owner_workspace,
+            op_state::KeptBackup {
+                repo: repo.clone(),
+                name: kept.backup().name.as_str().to_owned(),
+                published: false,
+            },
+        )?;
+        op_state::journal_tip(owner_workspace, repo, head.id())?;
+    }
+    Ok(())
+}
+
+/// The backups the op journaled in `root`, once abort restored it: each one
+/// its repo's restored checkout reaches goes, and every other stays, named
+/// with the command that shows what it holds beyond that checkout.
+fn settle_journaled_backups(
+    primary: &Path,
+    root: &Path,
+    label: &str,
+    project: &ProjectName,
+    kept: &[op_state::KeptBackup],
+) {
+    let mut reached = Vec::new();
+    for one in kept {
+        let (dir, vcs) = match &one.repo {
+            RepoKey::Project => (project_dir(root, project), project_vcs()),
+            RepoKey::Member(path) => (root.join(path.as_path()), crate::vcs::probe_vcs()),
+        };
+        let Some(found) = vcs
+            .list_backups(&dir, crate::vcs::RemoteTracking::Counted)
+            .ok()
+            .and_then(|listed| {
+                listed
+                    .into_iter()
+                    .find(|listed| listed.backup.name.as_str() == one.name)
+            })
+        else {
+            continue;
+        };
+        let restored = vcs.head_revision(&dir).ok();
+        let reaches = restored.as_ref().is_some_and(|restored| {
+            vcs.is_ancestor(&dir, &found.backup.tip, restored)
+                .unwrap_or(false)
+        });
+        if reaches {
+            reached.push(one);
+        } else {
+            outln!(
+                "{}",
+                kept_line(
+                    &format!("{label}{}", RepoOperand::of(&one.repo, project)),
+                    "a tip it held during this operation, which the restore does not reach, is",
+                    &dir,
+                    &one.name,
+                    restored.as_ref().map(ResolvedRevisionId::id),
+                )
+            );
+        }
+    }
+    crate::backup::drop_rebased(primary, root, project, reached.into_iter());
 }
 
 /// The line naming a backup abort kept in `dir` and the command that shows
@@ -10957,10 +11076,18 @@ fn abort_leaving_target(
         print_abort_recovery_options(&tally, "rwv abort --leave-target");
     }
     if tally.clean() {
-        let kept = take_in
-            .map(|t| t.rebased_backups.clone())
-            .unwrap_or_default();
-        crate::backup::drop_rebased(ctx.primary_path(), owner.as_path(), project, kept.iter());
+        let kept = take_in.map(|t| t.backups.clone()).unwrap_or_default();
+        settle_journaled_backups(
+            ctx.primary_path(),
+            owner.as_path(),
+            if owner.as_path() == ctx.active_root().as_path() {
+                ""
+            } else {
+                AbortSide::Replay.label()
+            },
+            project,
+            &kept,
+        );
         for dir in std::iter::once(source_dir.as_path())
             .chain(record.target.as_ref().map(CanonicalPath::as_path))
         {
@@ -11684,64 +11811,6 @@ fn execute_ref_step(
             tally.any_failure = true;
         }
     }
-}
-
-/// Whether `head`, the project repo's tip once its composition ran, is a
-/// commit this op made or was handed: its savepoint, the source tip, the
-/// replay of the commits the op rebased (as it ran or as the operator
-/// finished it), or the merge of the source tip into the savepoint.
-fn project_tip_is_this_ops(
-    ctx: &OpContext<'_>,
-    rebases: &[op_state::Rebasing],
-    head: &CommitId,
-) -> bool {
-    let vcs = ctx.project_vcs.as_ref();
-    let dir = &ctx.cwd_project_dir;
-    let source = ctx.snapshot.source_project_tip.id();
-    let saved = vcs
-        .resolve_savepoint(dir, &ctx.savepoint_key())
-        .map(|saved| saved.id().clone());
-    head == source
-        || saved.as_ref() == Some(head)
-        || replay_of(vcs, dir, rebases, &RepoKey::Project, head).is_some()
-        || saved.is_some_and(|saved| {
-            vcs.parents(dir, head)
-                .is_ok_and(|parents| parents == [saved, source.clone()])
-        })
-}
-
-/// `head` where it is the tip of a rebase the op journaled in `repo`, as the
-/// op ran it or as the operator finished it by hand: every commit from the
-/// rebase's base to `head` is the replay of one the rebase started from.
-fn replay_of(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    rebases: &[op_state::Rebasing],
-    repo: &RepoKey,
-    head: &CommitId,
-) -> Option<CommitId> {
-    rebases
-        .iter()
-        .filter(|rebase| &rebase.repo == repo)
-        .find(|rebase| {
-            vcs.is_ancestor(
-                dir,
-                &ResolvedRevisionId::from(rebase.onto.clone()),
-                &ResolvedRevisionId::from(head.clone()),
-            )
-            .unwrap_or(false)
-                && vcs
-                    .replayed(dir, &rebase.base, &rebase.from, &rebase.onto, head)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|replayed| {
-                        replayed
-                            .written
-                            .iter()
-                            .all(|written| replayed.original(written).is_some())
-                    })
-        })
-        .map(|_| head.clone())
 }
 
 /// Accumulated counts for non-actionable per-repo abort outcomes. Gathered
