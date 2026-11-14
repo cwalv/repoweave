@@ -5622,6 +5622,27 @@ pub fn a_target_judged_alignment_choice_runs_in_the_target() -> Scenario {
     )
 }
 
+/// The target's `app` holds a commit no lock records, so a landing refuses
+/// it `pin unpinned`: the landing's own branch is the dependent that
+/// `update --remote` refuses on, so only the lock is offered, and it runs as
+/// printed.
+pub fn a_landings_unpinned_target_member_offers_only_what_runs() -> Scenario {
+    scenario(
+        "a landing's unpinned target member offers only what runs",
+        vec![
+            create("w"),
+            Step::commit(&a(), Repo::App, "app-unrecorded"),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned))
+                .claim(Claim::OutputContains(" lock --commit"))
+                .claim(Claim::OutputLacks("--reset-to-upstream")),
+            Step::rwv_printed_holding(&ww("w"), "rwv -C", " lock --commit").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

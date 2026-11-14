@@ -1711,6 +1711,7 @@ every_scenario!(
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
     a_target_judged_alignment_choice_runs_in_the_target,
+    a_landings_unpinned_target_member_offers_only_what_runs,
     squashed_pin_off_remote_offers_the_reset,
     landed_pin_diverged_offers_the_reset,
 );
@@ -5459,6 +5460,12 @@ fn a_reset_to_target_in_syncs_own_lock_commit_waives_the_merge_it_abandons() {
 #[test]
 fn a_target_judged_choice_carries_the_targets_workspace() {
     runner::run(scenarios::a_target_judged_alignment_choice_runs_in_the_target())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landings_pin_unpinned_offers_the_lock_alone() {
+    runner::run(scenarios::a_landings_unpinned_target_member_offers_only_what_runs())
         .assert_fully_decided_green();
 }
 

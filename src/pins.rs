@@ -220,7 +220,7 @@ pub(crate) fn judge_elsewhere(
     judging(repo, dir, vcs, standing, head, pin, None).map(|judging| {
         judging
             .elsewhere(workspace)
-            .only_forms(&[Form::C5Lock, Form::C3UpdateRemote])
+            .only_forms(&[Form::C5Lock])
             .by_verb("land")
             .judge(vcs)
     })
