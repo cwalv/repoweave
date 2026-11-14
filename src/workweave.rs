@@ -3968,7 +3968,7 @@ enum Deleter {
 fn name_foreign_root_entries(workweave_dir: &Path, project: &ProjectName, primary: &Manifest) {
     let own = load_manifest(workweave_dir, project).ok();
     let mut made: std::collections::BTreeSet<String> =
-        std::collections::BTreeSet::from(["projects".to_owned()]);
+        std::collections::BTreeSet::from([crate::workspace::PROJECTS_DIR.to_owned()]);
     for manifest in [Some(primary), own.as_ref()].into_iter().flatten() {
         made.extend(manifest.iter_entries().filter_map(|(path, _)| {
             path.as_path()
