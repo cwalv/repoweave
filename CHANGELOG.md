@@ -91,6 +91,18 @@ each token. Refusals removed with the removal of what they judged include
 `filesystem-without-exclusive-publish`, `savepoint-unfiled`,
 `replay-unrecorded` and `abort-in-its-workspace` are new.
 
+A choice judged in another workspace runs there, spelled with `-C`: the target's
+member on a branch of its own, a checkout that blocks a prune (freed with
+`rwv member remove <path> --delete` in the workspace holding it), and a stranded
+checkout, each printed with its path. A landing's `pin unpinned` offers the lock
+alone, a branch's dependents are no `--target` candidates, `update --remote` at
+a diverged pin offers `--reset-to-upstream`, and a stopped operation whose
+`rwv.lock` is unresolved prints the mark-resolved, the continue and the abort.
+A merge the VCS resolved from its own recorded resolution stops as a conflict,
+`rwv backup list` reads the checked-out commit's members while the working
+`rwv.toml` is not a manifest, and a landing onto an unparseable target manifest
+refuses as a sync does.
+
 ### Branches are recorded by weave branch, not by ephemeral names
 
 A workweave's branch is the project repo's `<project>--<name>` branch, with a
