@@ -4108,6 +4108,11 @@ fn guard_and_mark<'a>(
         project_vcs().as_ref(),
         &cwd_project_dir,
     )?;
+    let leased_in_place: Vec<PathBuf> = resumes
+        .iter()
+        .flat_map(|record| record.take_in.iter())
+        .flat_map(op_state::TakeInRecord::in_place_workspaces)
+        .collect();
     let owned = match &resumes {
         None => op_state::acquire_op(
             &op_state::TouchedWorkspaces::of(initial_record.verb, &owner_workspace_dir, None),
@@ -4115,11 +4120,14 @@ fn guard_and_mark<'a>(
         )?,
         Some(resumed) => {
             let recorded_target = resumed.target.as_ref().map(|t| t.as_path().to_path_buf());
-            let owned = op_state::AcquiredOp::of(op_state::TouchedWorkspaces::of(
-                initial_record.verb,
-                &owner_workspace_dir,
-                recorded_target.as_deref(),
-            ));
+            let owned = op_state::AcquiredOp::of(
+                op_state::TouchedWorkspaces::of(
+                    initial_record.verb,
+                    &owner_workspace_dir,
+                    recorded_target.as_deref(),
+                )
+                .leasing(leased_in_place.iter().cloned()),
+            );
             if let Err(e) = op_state::write_owner(&owner_workspace_dir, &initial_record) {
                 op_state::release_acquired(&owned);
                 return Err(e);
@@ -4177,7 +4185,8 @@ fn guard_and_mark<'a>(
         initial_record.verb,
         &owner_workspace_dir,
         dest_workspace_dir.as_deref(),
-    );
+    )
+    .leasing(leased_in_place);
     let acquired = (|| -> anyhow::Result<op_state::AcquiredOp> {
         if let Some(dest) = &dest_workspace_dir {
             refuse_symlinked_members(dest, &cwd_project_name)?;

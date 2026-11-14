@@ -1481,6 +1481,7 @@ every_scenario!(
     in_place_fast_forward(scenarios::InPlaceEnd::Dirty),
     in_place_fast_forward(scenarios::InPlaceEnd::Drifted),
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlan),
+    in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlanContinued),
     a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards,
     a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(false),
     a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(true),
@@ -8438,5 +8439,16 @@ holding_rwv! {
                     .assert_fully_decided_green();
             }
         }
+    }
+}
+
+holding_rwv! {
+    /// An in-place landing killed once it leased the primary is finished by
+    /// `--continue`, which takes its own leases up again.
+    fn an_in_place_landing_killed_before_its_plan_is_continued() {
+        runner::run(scenarios::in_place_fast_forward(
+            scenarios::InPlaceEnd::KilledBeforeThePlanContinued,
+        ))
+        .assert_fully_decided_green();
     }
 }

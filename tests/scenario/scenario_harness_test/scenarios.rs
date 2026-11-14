@@ -16769,6 +16769,9 @@ pub enum InPlaceEnd {
     /// Killed once it released its leases, then continued: the primary is
     /// leased again until the landing ends.
     ContinuedAfterRelease,
+    /// Killed once it leased the primary, before it recorded its plan, then
+    /// continued: the landing starts again on its own leases and lands.
+    KilledBeforeThePlanContinued,
 }
 
 /// The primary detached on the project, its members still on `main`: a
@@ -16860,6 +16863,37 @@ pub fn in_place_fast_forward(end: InPlaceEnd) -> Scenario {
             ]);
             steps.extend(left_clean());
             return scenario("in-place fast-forward: killed before the plan", steps);
+        }
+        InPlaceEnd::KilledBeforeThePlanContinued => {
+            steps.extend([
+                Step::rwv_paused(
+                    &ww("w"),
+                    &["land", "--history", "linear"],
+                    "leased-in-place",
+                    "landing",
+                ),
+                Step::kill("landing"),
+                lands_on_main(
+                    Step::rwv(&ww("w"), &["land", "--continue"]),
+                    Repo::App,
+                    "w-app",
+                )
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("in place in"))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "HEAD",
+                    mark: "w-app",
+                }),
+                Step::rwv(&ww("w"), &["abort"])
+                    .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+            ]);
+            steps.extend(left_clean());
+            return scenario(
+                "in-place fast-forward: killed before the plan, continued",
+                steps,
+            );
         }
         InPlaceEnd::Rewound => {
             steps.extend([
