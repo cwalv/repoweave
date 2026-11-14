@@ -659,16 +659,28 @@ fn commit_addition(
         ),
         None => format!("member add {repo_path}\n\n  - {repo_path}: no pin"),
     };
-    let authored = crate::activate::owned_paths(ctx.active_path(), project, manifest);
-    crate::lock::commit_project_lock(
-        &crate::lock::PendingLockCommit::new(
-            project.clone(),
-            project_dir.to_path_buf(),
-            new,
-            crate::lock::CommitMessage::Given(message),
-        ),
-        &authored,
-    )?;
+    let authored = crate::manifest_commit::authored_across(ctx, project, &[manifest]);
+    let member = repo_path.clone();
+    let added = entry.clone();
+    let edit_manifest = move |committed: &mut Manifest| {
+        committed.insert_repo(member.clone(), added.clone());
+    };
+    let pinned = new.get_entry(repo_path).cloned();
+    let member = repo_path.clone();
+    let edit_lock = move |lock: &mut LockFile| {
+        if let Some(pinned) = &pinned {
+            lock.insert_entry(member.clone(), pinned.clone());
+        }
+    };
+    crate::manifest_commit::commit(&crate::manifest_commit::MemberCommit {
+        project,
+        project_dir,
+        edit_manifest: &edit_manifest,
+        edit_lock: Some(&edit_lock),
+        authored: &authored,
+        message: &message,
+        naming: crate::repin::Naming::Unnamed,
+    })?;
     match &pin {
         Some(pin) => eprintln!("Pinned '{repo_path}' at {}", pin.id().short()),
         None => {

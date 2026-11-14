@@ -393,3 +393,47 @@ fn member_remove_of_the_last_member_works_when_members_are_root_dotted_keys() {
     assert!(!now.contains(APP) && !now.contains(LIB), "{now}");
     assert_eq!(manifest(&w).trim_end(), now);
 }
+
+#[test]
+fn add_commits_the_member_and_its_pin_and_leaves_another_hand_edit_of_the_file_uncommitted() {
+    let w = two_members();
+    hand_edit_app_role(&w);
+    let before = commits(&w);
+    let docs = w._tmp.path().join("docs.git");
+    common::init_bare_repo_with_commit(&docs);
+
+    succeeded(&run(&w, &["member", "add", &common::file_url(&docs)]));
+
+    assert_eq!(commits(&w), before + 1);
+    let committed = committed_manifest(&w);
+    assert!(committed.contains("docs"), "{committed}");
+    assert!(
+        !committed.contains("role = \"dependency\""),
+        "the hand edit of app's role was committed:\n{committed}"
+    );
+    assert!(manifest(&w).contains("role = \"dependency\""));
+    let lock = git_in(project(&w), &["show", "HEAD:rwv.lock"]);
+    assert!(
+        lock.contains("docs") && lock.contains(APP) && lock.contains(LIB),
+        "{lock}"
+    );
+}
+
+#[test]
+fn add_on_an_emptied_manifest_refuses_and_commits_nothing() {
+    let w = two_members();
+    std::fs::write(project(&w).join("rwv.toml"), "").unwrap();
+    let before = commits(&w);
+    let docs = w._tmp.path().join("docs.git");
+    common::init_bare_repo_with_commit(&docs);
+
+    let text = refused(&run(&w, &["member", "add", &common::file_url(&docs)]));
+
+    assert!(text.contains("holds no `repositories` table"), "{text}");
+    assert_eq!(commits(&w), before);
+    let committed = committed_manifest(&w);
+    assert!(
+        committed.contains(APP) && committed.contains(LIB),
+        "{committed}"
+    );
+}
