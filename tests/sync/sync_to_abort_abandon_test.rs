@@ -154,7 +154,7 @@ fn plant_sync_to_owner_record(
     let body = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \
+         \"phase\": \"advance-target\", \
          \"converged_tips\": {{\"{SERVER_PATH}\": \"{landed_server}\", \"(project)\": \"{landed_project}\"}}, \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(owner),

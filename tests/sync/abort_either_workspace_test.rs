@@ -1,11 +1,8 @@
 //! `rwv abort` of a parked `land` gives the same verdict on every repo
 //! whichever of the op's two workspaces it is invoked from.
 //!
-//! Each repo is judged by the side it sits on in the owner record: the
-//! workweave the op replayed in, whose replay journal (`advanced_tips`)
-//! attributes the tips replay moved it to, and the target, which nothing
-//! journals before relock. Which workspace abort runs in decides only which
-//! side's lines go unlabeled.
+//! Which workspace abort runs in decides only which side's lines go
+//! unlabeled.
 
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -211,8 +208,8 @@ fn abort_restores_both_workspaces(from: Invoked) {
     assert_ne!(
         head(&parked.seat.project),
         pre.seat_project,
-        "replay must have moved the seat's project repo, or nothing journaled \
-         in advanced_tips is under test"
+        "replay must have moved the seat's project repo, or no restore is \
+         under test"
     );
 
     let out = parked.abort(from);

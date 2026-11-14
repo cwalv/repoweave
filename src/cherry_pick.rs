@@ -1659,11 +1659,6 @@ fn copy_members(
             };
             match copied {
                 Copied::Commit(to) => {
-                    crate::op_state::journal_tip(
-                        &op.workspace,
-                        RepoKey::Member(path.clone()),
-                        &to,
-                    )?;
                     say(
                         output,
                         &format!("{path}: copied {} as {}", next.short(), to.short()),
@@ -1805,7 +1800,6 @@ fn commit_project(
         ProjectCopy::Applied(paths) => (paths, true),
         ProjectCopy::Conflicted(paths) => (paths, false),
         ProjectCopy::Made(tip) => {
-            crate::op_state::journal_tip(&op.workspace, RepoKey::Project, &tip)?;
             return Ok(Some(tip));
         }
     };
@@ -1959,7 +1953,6 @@ fn commit_project(
     }
     crate::test_pause::point("cherry-pick-project-committed");
     let tip = vcs.head_revision(dir)?.id().clone();
-    crate::op_state::journal_tip(&op.workspace, RepoKey::Project, &tip)?;
     let before = pins_of(held_lock.as_ref());
     for (key, to) in &record.carried {
         let RepoKey::Member(path) = key else {

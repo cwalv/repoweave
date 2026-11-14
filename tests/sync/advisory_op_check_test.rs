@@ -114,7 +114,7 @@ fn owner_record_json(ws: &Path) -> String {
     format!(
         "{{\"id\": \"planted-op-1234\", \"verb\": \"land\", \"history\": null, \
          \"project\": \"app\", \"source\": \"{ws}\", \"target\": \"{ws}\", \"retire\": false, \
-         \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"phase\": \"replay\", \"converged_tips\": {{}}, \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         ws = common::json_escaped(ws),
     )

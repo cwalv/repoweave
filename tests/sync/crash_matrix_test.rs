@@ -264,8 +264,6 @@ struct OwnerRecordFixture {
     target: String,
     retire: bool,
     phase: &'static str,
-    /// (repo-path-or-"(project)", sha) entries — replay-phase intent.
-    advanced_tips: Vec<(String, String)>,
     /// (repo-path-or-"(project)", sha) entries.
     converged_tips: Vec<(String, String)>,
     /// The target repos a landing journaled as moved. `None` journals what a
@@ -284,12 +282,11 @@ fn tip_map_json(tips: &[(String, String)]) -> String {
 }
 
 fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
-    let advanced_json = tip_map_json(&rec.advanced_tips);
     let converged_json = tip_map_json(&rec.converged_tips);
     let body = format!(
         "{{\"id\": \"{id}\", \"verb\": \"{verb}\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
-         \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
+         \"phase\": \"{phase}\", \
          \"converged_tips\": {{{converged_json}}}, \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         take_in = if rec.verb_str == "land" {
@@ -2193,30 +2190,11 @@ fn cell_continue_after_the_target_moved_refuses_and_abort_ends_it() {
 }
 
 // ===========================================================================
-// ADVANCEMENT-INTENT JOURNAL CELLS
+// REPLAY AND RELOCK KILL CELLS
 //
-// Seven (phase × kill-point) cells for the `advanced_tips` journal field.
-// Each cell
-// synthesizes the exact on-disk state a kill at that point would leave,
-// then asserts real end states (repo tips, marker/op-state presence, exit
-// code) — never implementation echoes.
-//
-// Fixture design:
-//   Cells 1, 2, 7 use a "primary ahead, ww behind" sync scenario where
-//   primary's server moved one commit ahead of ww's server. ww's server is
-//   therefore a genuine ff-mover during replay, so write 1 records it in
-//   advanced_tips before the advance fan-out.
-//
-//   Cells 3, 4 use ww-ahead-of-primary (land) where ww's project has a
-//   local commit. Phase 1' rebases that commit onto the source project tip,
-//   landing at a fresh T1. Write 2 captures T1 into advanced_tips[(project)].
-//
-//   Cell 5 reuses the standard land fixture but models the post-relock
-//   state: advanced_tips cleared, converged_tips populated, project at T2.
-//
-//   Cell 6 extends the cell-2 scenario with a second manifest repo carrying
-//   a genuinely-foreign operator commit. Only that repo refuses; the
-//   intent-attributed repo auto-restores.
+// Each cell synthesizes the on-disk state a kill in the replay or at relock
+// leaves, then asserts real end states (repo tips, backups, op-state
+// presence, exit code).
 // ===========================================================================
 
 /// Fixture: primary's server is one commit AHEAD of ww's server.
@@ -2243,23 +2221,12 @@ fn make_primary_ahead_sync(parent: &Path) -> (Workspace, Workspace, String, Stri
     (primary, ww, initial_sha, primary_server_tip)
 }
 
-// ---------------------------------------------------------------------------
-// Cell 1: entry advanced_tips write done, no repos advanced yet.
-//
-// Synthesizes: crash AFTER write 1 (advanced_tips = {SERVER_PATH ->
-// primary_server_tip}) but BEFORE any repo advances. All repos remain at
-// their savepoint tips.
-//
-// Abort: every repo is Untouched (HEAD == savepoint). Zero refusals.
-// ---------------------------------------------------------------------------
-
-/// Cell 1 (§8.1): crash after entry advanced_tips write, before any
-/// advance. Every repo is at its savepoint; abort classifies all as Untouched.
-/// Zero refusals, success exit.
+/// A kill before any repo advances: every repo is at its savepoint, and
+/// abort leaves each untouched.
 #[test]
-fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
+fn cell_replay_no_advances_abort_all_untouched() {
     let tmp = common::tempdir().unwrap();
-    let (primary, ww, initial_sha, primary_server_tip) = make_primary_ahead_sync(tmp.path());
+    let (primary, ww, initial_sha, _) = make_primary_ahead_sync(tmp.path());
 
     let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
     let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
@@ -2275,9 +2242,6 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
-            // write 1 has run: server repo is pre-written as ff-mover.
-            advanced_tips: vec![(SERVER_PATH.to_owned(), primary_server_tip.clone())],
-            // converged_tips empty: relock hasn't run yet.
             ..Default::default()
         },
     );
@@ -2303,29 +2267,12 @@ fn cell_advanced_tips_entry_write_no_advances_abort_all_untouched() {
         !ww.root.join(".rwv-op").exists(),
         "[cell1] owner record must be cleared"
     );
-    // primary_server_tip was only a planned target; ww never advanced there.
-    let _ = primary_server_tip;
 }
 
-// ---------------------------------------------------------------------------
-// Cell 2: crash mid-fan-out — server advanced, project still at savepoint.
-//
-// Synthesizes: write 1 populated advanced_tips = {SERVER_PATH ->
-// primary_server_tip}; the fan-out ran the server repo task first (now at
-// primary_server_tip) but was killed before the project task ran. Project repo
-// remains at savepoint.
-//
-// Abort: server = advanced_tips entry → RestoredFromIntent (reset to pre-op).
-//        project = savepoint tip → Untouched (no-op reset).
-//        Zero refusals.
-// ---------------------------------------------------------------------------
-
-/// Cell 2 (§8.2): crash mid-fan-out with server advanced to its
-/// advanced_tips target and project still at savepoint. Abort attributes the
-/// server via intent (RestoredFromIntent) and the project as Untouched.
-/// Zero refusals, success exit.
+/// A kill mid-fan-out, the server fast-forwarded and the project at its
+/// savepoint: abort puts the server back and leaves the project untouched.
 #[test]
-fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero_refusals() {
+fn cell_replay_mid_fanout_server_advanced_abort_restores_it() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, initial_sha, primary_server_tip) = make_primary_ahead_sync(tmp.path());
 
@@ -2355,11 +2302,6 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
-            // write 1 pre-wrote the server target; write 3 may not have run (crash
-            // happened during the fan-out, before post-join). We model write 1 only
-            // (the planned target entry) since the actual tip equals the planned target
-            // for a pure ff — the entry is both a WAL and the final captured tip.
-            advanced_tips: vec![(SERVER_PATH.to_owned(), primary_server_tip.clone())],
             ..Default::default()
         },
     );
@@ -2369,13 +2311,11 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
 
     run_abort_ok(&ww.root, "cell2/mid-fanout");
 
-    // Server restored to pre-op (RestoredFromIntent: head==advanced_tips entry).
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
         ww_server_pre,
-        "[cell2] abort must restore ww's server to pre-op tip (intent attribution)"
+        "[cell2] abort must restore ww's server to pre-op tip"
     );
-    // Project unchanged at pre-op (Untouched: head==savepoint).
     assert_eq!(
         common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
@@ -2387,120 +2327,16 @@ fn cell_advanced_tips_mid_fanout_server_advanced_project_at_savepoint_abort_zero
     );
 }
 
-// ---------------------------------------------------------------------------
-// Cell 3: rebase captured — project at T1, advanced_tips[(project)] = T1.
-//
-// Synthesizes: Phase 1' rebased ww's project commits onto the source project
-// tip, landing at fresh SHA T1. Write 2 immediately overwrote
-// advanced_tips[(project)] with T1. Then crash.
-//
-// Abort: project head == advanced_tips[(project)] == T1 → RestoredFromIntent.
-//        Server at savepoint (no manifest advance in this scenario) → Untouched.
-//        Zero refusals.
-// ---------------------------------------------------------------------------
-
-/// Cell 3 (§8.3): rebase captured — project at fresh T1, write 2
-/// persisted advanced_tips[(project)] = T1. Abort attributes T1 via intent,
-/// restores to savepoint. Zero refusals.
+/// A kill after the project's rebase, the project at the tip it made: abort
+/// keeps that tip in the branch's slot and puts the project back.
 #[test]
-fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
-    let tmp = common::tempdir().unwrap();
-    // Use ww-ahead-of-primary land context. ww's project has a local commit
-    // (from make_ww_ahead_sync_to), so Phase 1' would rebase it.
-    // We model the state AFTER Phase 1' succeeded: ww's project is at T1.
-    let (primary, ww, _ww_server_tip, ww_project_tip_before_rebase) =
-        make_ww_ahead_sync_to(tmp.path());
-
-    // The source project tip (what ww's project would rebase onto in sync):
-    // primary's project is at its initial tip (unmodified in make_ww_ahead_sync_to).
-    let source_project_tip = common::git_in(&primary.project_dir, &["rev-parse", "HEAD"]);
-
-    // ww's project currently has: init commit -> "lock: pin ww server tip".
-    // Simulate Phase 1': rebase ww's project commits onto primary's project tip.
-    // Since both share the same history (worktrees), we cherry-pick ww's unique
-    // commit onto source_project_tip to manufacture T1.
-    // ww's project tip before rebase is ww_project_tip_before_rebase.
-    // ww's project's unique commit is the "lock: pin ww server tip" commit.
-    // After rebase onto source_project_tip (which equals the shared init SHA),
-    // the result would be a new SHA (T1) with the same content.
-    //
-    // We cannot do a real `git rebase` across worktrees easily, so we manually
-    // create T1: cherry-pick ww's unique commit onto source_project_tip.
-    // But ww's project worktree shares the object store with primary's project.
-    // Simplest: just make a new commit on ww's project that represents T1.
-    let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
-    // T1 is a "new" tip — it's what the rebase produced. We simulate it by
-    // advancing ww's project by another commit (in reality the rebase would
-    // replay the lock-pin commit; here we just need a new SHA the savepoint
-    // doesn't equal).
-    let t1 = advance_one(
-        &ww.project_dir,
-        "rebased-marker.txt",
-        "rebase output\n",
-        "phase1prime: rebased onto source",
-    );
-
-    let op_id = "crash-matrix-cell3-rebase-captured";
-    plant_owner_record(
-        &ww.root,
-        &OwnerRecordFixture {
-            id: op_id.to_owned(),
-            verb_str: PlantedVerb::Land.wire(),
-            source: ww.root.display().to_string(),
-            target: primary.root.display().to_string(),
-            phase: "replay",
-            // write 2 captured T1 into advanced_tips[(project)].
-            advanced_tips: vec![("(project)".to_owned(), t1.clone())],
-            ..Default::default()
-        },
-    );
-    // Savepoints record PRE-OP tips (before Phase 1').
-    plant_savepoint_at(
-        &ww.server_dir,
-        op_id,
-        &common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-    );
-    plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
-
-    run_abort_ok(&ww.root, "cell3/rebase-captured");
-
-    // Project restored to pre-op (head was T1, matched advanced_tips entry).
-    assert_eq!(
-        common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
-        ww_project_pre,
-        "[cell3] abort must restore ww's project to pre-op (intent attribution of T1)"
-    );
-    assert!(
-        !ww.root.join(".rwv-op").exists(),
-        "[cell3] owner record must be cleared"
-    );
-    // The _ suppresses "unused" warnings for variables captured in setup.
-    let _ = (source_project_tip, ww_project_tip_before_rebase, t1);
-}
-
-// ---------------------------------------------------------------------------
-// Cell 4: rebase one-write window — project at T1, advanced_tips[(project)]
-// ABSENT.
-//
-// Synthesizes: Phase 1' completed, landing at T1. But write 2 (the capture)
-// had not run before the crash — advanced_tips[(project)] is absent.
-// T1 is not in {savepoint, mid-op, advanced_tips, converged_tips} → foreign.
-//
-// Abort: project head = T1 → ForeignTip refusal. Nonzero exit, op-state
-//        retained, no ref written. Asserts the documented floor (§6).
-// ---------------------------------------------------------------------------
-
-/// Cell 4 (§8.4): rebase one-write window — project at T1 but
-/// advanced_tips[(project)] absent. T1 is not journaled, so abort keeps it
-/// as a backup before it puts the project back: nothing is lost.
-#[test]
-fn cell_advanced_tips_one_write_window_project_at_t1_is_kept() {
+fn cell_replay_project_at_its_rebased_tip_is_kept() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
     let ww_project_pre = common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]);
 
-    let op_id = "crash-matrix-cell4-one-write-window";
+    let op_id = "crash-matrix-cell4-rebased";
     let t1_after_record = || {
         advance_one(
             &ww.project_dir,
@@ -2517,8 +2353,6 @@ fn cell_advanced_tips_one_write_window_project_at_t1_is_kept() {
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
-            // write 2 did NOT run: advanced_tips is empty (crash in the window).
-            advanced_tips: vec![],
             ..Default::default()
         },
     );
@@ -2532,7 +2366,6 @@ fn cell_advanced_tips_one_write_window_project_at_t1_is_kept() {
     // Phase 1' completes after the record holds the tip it started from.
     let t1 = t1_after_record();
 
-    // T1 is not journaled: it is kept as a backup, and the project put back.
     let out = rwv()
         .args(["abort"])
         .current_dir(&ww.root)
@@ -2556,22 +2389,10 @@ fn cell_advanced_tips_one_write_window_project_at_t1_is_kept() {
     assert!(!ww.root.join(".rwv-op").exists(), "[cell4] {said}");
 }
 
-// ---------------------------------------------------------------------------
-// Cell 5: crash after relock — project at T2, attributed via converged_tips.
-//
-// Synthesizes: relock completed; converged_tips populated with T2 for the
-// project and the server tip; advanced_tips cleared (same persist). Project
-// is at T2.
-//
-// Abort: project head == converged_tips[(project)] == T2 → RestoredFromConverged.
-//        Zero refusals.
-// ---------------------------------------------------------------------------
-
-/// Cell 5 (§8.5): crash after relock with advanced_tips cleared and
-/// converged_tips populated. Project at T2. Abort attributes T2 via
-/// converged_tips (existing behavior, no regression).
+/// A kill after relock, the project at the relock commit: abort puts every
+/// repo back.
 #[test]
-fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
+fn cell_after_relock_project_at_t2_abort_restores() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
@@ -2596,8 +2417,6 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "relock",
-            // advanced_tips cleared at relock (same persist as converged_tips write).
-            advanced_tips: vec![],
             // converged_tips populated with T2 for the project and current server tip.
             converged_tips: vec![
                 ("(project)".to_owned(), t2.clone()),
@@ -2614,11 +2433,10 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 
     run_abort_ok(&ww.root, "cell5/after-relock");
 
-    // Project restored to pre-op (RestoredFromConverged: head was T2).
     assert_eq!(
         common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
         ww_project_pre,
-        "[cell5] abort must restore ww's project to pre-op (converged_tips attribution of T2)"
+        "[cell5] abort must restore ww's project to pre-op"
     );
     // Server restored to pre-op.
     assert_eq!(
@@ -2632,25 +2450,10 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Cell 6: mixed — a repo at a tip the op did not write is kept, every repo restored.
-//
-// Synthesizes the 2026-06-10 incident as a regression test. The server repo
-// was advanced to its advanced_tips target (op's own ff). An operator commit
-// was then added on top of the server tip after the crash, making the server's
-// current HEAD genuinely foreign.
-// A second manifest repo (simulated via a worktree of the server shared repo
-// used as a second logical repo) is at its advanced_tips target and stays where it is.
-// Practically: server at foreign_tip, project at advanced_tips[(project)] target.
-// The foreign repo blocks the abort, so nothing is restored, the project
-// included.
-// ---------------------------------------------------------------------------
-
-/// Cell 6 (§8.6): mixed — server carries a post-crash operator commit;
-/// project advanced to its advanced_tips target. The server's tip is kept as
-/// a backup and both repos are put back, the record cleared.
+/// A kill mid-replay, then an operator commit on the server: the server's
+/// tip is kept in its slot and both repos are put back, the record cleared.
 #[test]
-fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
+fn cell_replay_operator_commit_on_the_server_is_kept_and_both_restored() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, primary_server_tip, _ww_project_tip) = make_primary_ahead_sync(tmp.path());
 
@@ -2660,7 +2463,7 @@ fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
     // Advance ww's project to simulate it was ff'd or rebased by the op.
     // (In the incident scenario, the project was the op-advanced repo that
     // should auto-restore; the server is the one with a foreign operator commit.)
-    let project_target = advance_one(
+    advance_one(
         &ww.project_dir,
         "op-project-advance.txt",
         "op advanced project\n",
@@ -2693,12 +2496,6 @@ fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
             source: ww.root.display().to_string(),
             target: primary.root.display().to_string(),
             phase: "replay",
-            // advanced_tips: server was pre-written as ff-mover to primary_server_tip;
-            // project was captured at project_target after Phase 1'.
-            advanced_tips: vec![
-                (SERVER_PATH.to_owned(), primary_server_tip.clone()),
-                ("(project)".to_owned(), project_target.clone()),
-            ],
             ..Default::default()
         },
     );
@@ -2740,29 +2537,21 @@ fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
     assert!(!ww.root.join(".rwv-op").exists(), "[cell6] {said}");
 }
 
-// ---------------------------------------------------------------------------
-// Cell 7: a `.rwv-op` record missing the `advanced_tips` key.
-//
-// Schema v2 carries no default for it — a record missing the key is
-// malformed, not old. Abort never reads it as an empty map: it reads the
-// header alone, says so, and attributes no tip the record would have.
-// ---------------------------------------------------------------------------
-
 fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
     format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"replay\", \"converged_tips\": {{}}, \
+         \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     )
 }
 
-/// Cell 7 (§8.7): a record with no `advanced_tips` key does not parse whole,
-/// and abort restores from its header, naming the parse failure.
+/// A record still carrying the retired `advanced_tips` key does not parse
+/// whole, and abort restores from its header, naming the parse failure.
 #[test]
-fn cell_owner_record_missing_advanced_tips_key_aborts_from_its_header() {
+fn cell_owner_record_carrying_a_retired_key_aborts_from_its_header() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 

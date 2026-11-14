@@ -261,7 +261,6 @@ pub(crate) fn reset_to_upstream(
     let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &tip, None)?;
     match on {
         Some(on) => {
-            op_state::journal_tip(workspace, key, upstream.id())?;
             vcs.reset_attached_ref_keeping(on, upstream, &kept)?;
         }
         None => {

@@ -210,13 +210,6 @@ pub(crate) fn merge_member(
     derived: DerivedContentPolicy,
 ) -> Result<Joined, MemberStop> {
     let vcs = vcs_for(entry.vcs_type);
-    let journal = |tip: &CommitId| {
-        op_state::journal_tip(
-            workspace,
-            crate::manifest::RepoKey::Member(repo.clone()),
-            tip,
-        )
-    };
     if let Some(in_flight) = vcs.merge_in_flight(dir)? {
         if in_flight == *source {
             let paths = vcs.unmerged_paths(dir)?;
@@ -237,7 +230,6 @@ pub(crate) fn merge_member(
                 None,
                 &crate::repin::Naming::Unnamed,
             )?;
-            journal(&tip)?;
             return Ok(Joined::Merged(tip));
         }
     }
@@ -265,7 +257,6 @@ pub(crate) fn merge_member(
         return Ok(Joined::Nothing);
     }
     if !matches!(order, Order::HeadFirstAlwaysMerge) && vcs.is_ancestor(dir, &head, &source_rev)? {
-        journal(source)?;
         vcs.advance_attached_ref(&attached, &source_rev)?;
         return Ok(Joined::Moved(source.clone()));
     }
@@ -299,7 +290,6 @@ pub(crate) fn merge_member(
         None,
         &crate::repin::Naming::Unnamed,
     )?;
-    journal(&tip)?;
     Ok(Joined::Merged(tip))
 }
 
@@ -669,11 +659,6 @@ impl ProjectMerge<'_> {
             Some(&lock),
             &crate::repin::Naming::Unnamed,
             jumps.iter().map(crate::repin::Repin::annotation).collect(),
-        )?;
-        op_state::journal_tip(
-            self.ctx.active_path(),
-            crate::manifest::RepoKey::Project,
-            &commit,
         )?;
         Ok((commit, pruning))
     }

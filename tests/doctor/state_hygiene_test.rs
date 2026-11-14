@@ -152,7 +152,7 @@ fn write_op_state_for_verb(workspace_dir: &Path, op_id: &str, verb: &str) {
     let json = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"{verb}\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"/tmp/src\", \"target\": \"/tmp/tgt\", \"retire\": false, \
-         \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"phase\": \"replay\", \"converged_tips\": {{}}, \
          \"started_at\": \"2026-01-01T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
     );
     std::fs::write(workspace_dir.join(".rwv-op"), json).unwrap();
@@ -872,8 +872,8 @@ fn a_record_whose_header_parses_keeps_its_savepoints_under_fix() {
     write_op_state(&root, op_id);
     let record = root.join(".rwv-op");
     let unparseable = std::fs::read_to_string(&record).unwrap().replace(
-        "\"advanced_tips\": {}",
-        "\"advanced_tips\": {\"(project)\": \"v1.0\"}",
+        "\"converged_tips\": {}",
+        "\"converged_tips\": {\"(project)\": \"v1.0\"}",
     );
     std::fs::write(&record, unparseable).unwrap();
     add_savepoint(&repo_abs, op_id, &head_sha);

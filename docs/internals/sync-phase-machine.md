@@ -517,8 +517,8 @@ before its write:
 
 `Attribution` carries only what decides whether a stopped operation is the
 op's to cancel (`Integrates`, the journaled `OwnStep`s); the tips the record
-journals (`advanced_tips`, `converged_tips`) are read by `--continue` and by
-the landing's target judgment, never by a keep.
+journals (`converged_tips`) are read by `--continue` and by the landing's
+target judgment, never by a keep.
 
 **The target is judged from the record, toward refusing.** `judge_target`
 compares each branch the landing moved in its target with the tip the record
@@ -580,13 +580,12 @@ mechanism is:
 |---|---|
 | Durable pre-op snapshot reference | `refs/rwv/pre-op/<op-id>/checkout/<branch>` (`.../detached`) |
 | Target-side pre-op snapshot reference | `refs/rwv/pre-op/<op-id>-target/checkout/<branch>`, and `refs/rwv/pre-op/<op-id>-target/ref/<branch>` for a branch moved as a ref |
-| Backup abort keeps | `refs/rwv/backup/<branch>/<short id>` |
+| Backup abort keeps | `refs/rwv/backup/<branch>/aborted` and `refs/rwv/backup/<branch>/aborted-working-copy`, each written with a reflog that holds what the slot held before |
 | VCS-native mid-op state / continue / abort | rebase/cherry-pick state dirs; `--continue` / `--abort` |
 | Atomic source pin (T₀) | one `HEAD` resolution of the source project repo |
 | Read manifest/lock at a revision | `git show <rev>:<path>` (`Vcs::read_file_at_revision`) |
 | ff-advance to converged tip | `git merge --ff-only <rev>` (never `reset --hard`) |
-| Capture post-rebase tip for `advanced_tips` | `HEAD` resolution immediately after `git rebase` succeeds |
-| Restore | `git reset --hard <savepoint>`, a tip neither the savepoint reaches nor the op wrote, and the edits it would discard, kept as backups first |
+| Restore | `git reset --hard <savepoint>`, a tip holding a commit nothing else reaches, and the working copy it would discard, kept in the slots first |
 | Object transfer of pinned revisions | shared object store (worktrees: no-op) |
 | Lock held through a replay (rebase) | `rwv.lock merge=rwv-lock` in `.gitattributes`; `-c merge.rwv-lock.driver=true` per invocation, overriding the clone's `rwv lock --merge-driver` definition |
 

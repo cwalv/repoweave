@@ -1804,14 +1804,10 @@ fn take_member(
     let head = vcs.head_revision(dir)?;
     let branch = RawRefName::new(attached.to_string());
     let src = rev(source);
-    let journal = |tip: &CommitId| {
-        crate::op_state::journal_tip(workspace, RepoKey::Member(path.clone()), tip)
-    };
     if reset {
         if head.id() != source {
             let kept =
                 vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
-            journal(source)?;
             vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             say(
                 output,
@@ -1894,7 +1890,6 @@ fn take_member(
         };
     }
     if vcs.is_ancestor(dir, &head, &src)? {
-        journal(source)?;
         vcs.advance_attached_ref(&attached, &src)?;
         say(
             output,
@@ -1914,7 +1909,6 @@ fn take_member(
             },
         )?;
         let kept = vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &head, None)?;
-        journal(source)?;
         vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
         crate::test_pause::point("sync-member-followed");
         say(
@@ -1961,7 +1955,6 @@ fn take_member(
         .map_err(|e| rebase_refusal(sync, path.as_str(), dir, vcs, e))?;
     report_dropped_derived(path.as_str(), dir, vcs, &src, &head);
     let tip = vcs.head_revision(dir)?.id().clone();
-    journal(&tip)?;
     say(output, &format!("{path}: rebased onto {}", source.short()));
     Ok(tip)
 }
@@ -2113,7 +2106,6 @@ fn take_project(
         if head != source {
             let kept =
                 vcs.create_backup(dir, &BackupSource::Branch(branch.clone()), &here, None)?;
-            crate::op_state::journal_tip(sync.ctx.active_path(), RepoKey::Project, source)?;
             vcs.reset_attached_ref_keeping(&attached, &src, &kept)?;
             say(
                 output,
@@ -2131,7 +2123,6 @@ fn take_project(
         return Ok(());
     }
     if vcs.is_ancestor(dir, &here, &src)? {
-        crate::op_state::journal_tip(sync.ctx.active_path(), RepoKey::Project, source)?;
         vcs.advance_attached_ref(&attached, &src)?;
         say(
             output,
@@ -2170,11 +2161,6 @@ fn take_project(
     )?;
     vcs.rebase(dir, &src, &src, DerivedContentPolicy::rewritten_after())
         .map_err(|e| rebase_refusal(sync, &label, dir, vcs, e))?;
-    crate::op_state::journal_tip(
-        sync.ctx.active_path(),
-        RepoKey::Project,
-        vcs.head_revision(dir)?.id(),
-    )?;
     say(output, &format!("{label}: rebased onto {}", source.short()));
     Ok(())
 }
@@ -2356,10 +2342,6 @@ fn relock(
     )?;
     if committed {
         crate::test_pause::point("sync-relock-committed");
-    }
-    let head = vcs.head_revision(dir)?;
-    if head.id() != pre_head {
-        crate::op_state::journal_tip(sync.ctx.active_path(), RepoKey::Project, head.id())?;
     }
     Ok(())
 }

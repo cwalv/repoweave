@@ -531,7 +531,7 @@ fn write_sync_to_owner_record_at_advance_target(workspace: &Path, target: &Path)
     let body = format!(
         "{{\"id\": \"{RESUMED_OP_ID}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"advance-target\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"phase\": \"advance-target\", \"converged_tips\": {{}}, \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {plan}}}",
         src = common::json_escaped(workspace),
         tgt = common::json_escaped(target),

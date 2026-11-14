@@ -109,8 +109,8 @@ pub struct UnreadableProject {
 /// The in-flight op recorded at this workspace (owner) or the workspace this
 /// one leases to (owner elsewhere), disclosed read-only on `rwv status`.
 ///
-/// The record minus the tip tables (`advanced_tips`/`converged_tips`): those
-/// are replay bookkeeping an operator deciding `--continue` vs `abort`
+/// The record minus its tip table (`converged_tips`): that is replay
+/// bookkeeping an operator deciding `--continue` vs `abort`
 /// doesn't need. `verb` and `phase` are the op-state crate's own types, not a
 /// re-encoding of them — a second vocabulary for the same facts is the thing
 /// this disclosure must not become.
@@ -1020,7 +1020,7 @@ mod tests {
         assert!(decoded.op.is_none());
     }
 
-    /// An in-flight op discloses the record minus the tip tables, keyed by
+    /// An in-flight op discloses the record minus its tip table, keyed by
     /// the op-state crate's own `verb`/`phase` types.
     #[test]
     fn status_json_op_field_round_trips() {
@@ -1056,8 +1056,6 @@ mod tests {
         assert_eq!(v["op"]["owner"], "/abs/ws/target");
         assert_eq!(v["op"]["source"], "/abs/ws/source");
         assert!(v["op"].get("overrides").is_none());
-        // The record minus the tip tables: neither key exists on the wire.
-        assert!(v["op"].get("advanced_tips").is_none());
         assert!(v["op"].get("converged_tips").is_none());
 
         let decoded: StatusJsonOutput = serde_json::from_str(&json).expect("deserializes");

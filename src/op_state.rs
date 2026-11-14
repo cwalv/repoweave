@@ -21,7 +21,6 @@
 //!   "target": "/abs/path/tgt",
 //!   "retire": false,
 //!   "phase": "replay",
-//!   "advanced_tips": {},
 //!   "converged_tips": {},
 //!   "started_at": "2026-06-10T21:14:03Z"
 //! }
@@ -31,10 +30,8 @@
 //! both `source` and `target` are resolved under. `verb` is `sync` or
 //! `land`; `history` is the one-run `--history` (`linear`, `merge`,
 //! `ff-only`), or `null`; `phase` is `replay`, `relock`,
-//! `advance-target`, or `retire`. `advanced_tips` is replay-phase intent (repo
-//! → planned/actual tip): empty before replay entry, cleared at relock in the
-//! same write that populates `converged_tips`, which is written at relock
-//! completion and empty before.
+//! `advance-target`, or `retire`. `converged_tips` is each repo's tip as the
+//! replay left it, written at relock completion and empty before.
 //!
 //! ## Thin lease (`.rwv-op-lease`)
 //!
@@ -357,88 +354,6 @@ pub enum OpPhase {
 impl std::fmt::Display for OpPhase {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&wire_token(self))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// PhaseTips — phase-scoped tip table
-// ---------------------------------------------------------------------------
-
-/// The op's per-repo tip table, scoped to the lifecycle half that owns it.
-///
-/// Background: the abort-intent journal records two disjoint tip tables —
-/// `advanced_tips` (replay-phase intent) and `converged_tips` (written at
-/// relock completion). The original schema carried both as flat `BTreeMap`
-/// fields on [`OwnerRecord`], governed only by a comment-enforced temporal
-/// invariant ("advanced_tips valid only during replay; cleared in the same
-/// write that populates converged_tips"). That left the illegal
-/// *both-populated* state representable, ruled out only by convention.
-///
-/// `PhaseTips` makes that state **structurally unrepresentable**: a record
-/// holds exactly one table at a time, and the only transition from the replay
-/// table to the converged table is the atomic [`PhaseTips::converge`] swap.
-///
-/// Wire format: this ADT is *in-memory only*. The persisted `.rwv-op` JSON
-/// keeps the historical flat shape (two independent top-level keys
-/// `advanced_tips` / `converged_tips`) via the [`OwnerRecord`] serde shim,
-/// so persisted op-state round-trips byte-for-byte across this change.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PhaseTips {
-    /// Replay-phase intent table (`advanced_tips`). Empty before replay entry;
-    /// extended/overwritten as repos advance; consumed by `abort`.
-    Replay(BTreeMap<RepoKey, CommitId>),
-    /// Converged table (`converged_tips`) written at relock completion.
-    /// Consumed by advance-target and abort's HEAD check.
-    Converged(BTreeMap<RepoKey, CommitId>),
-}
-
-impl Default for PhaseTips {
-    /// A fresh op starts in the replay half with no recorded tips.
-    fn default() -> Self {
-        Self::Replay(BTreeMap::new())
-    }
-}
-
-impl PhaseTips {
-    /// The replay-phase intent table, or `None` once converged.
-    ///
-    /// Readers that want the journal entry for a repo during replay use this;
-    /// it yields `None` after [`PhaseTips::converge`], by which point the
-    /// replay table no longer exists.
-    pub fn advanced(&self) -> Option<&BTreeMap<RepoKey, CommitId>> {
-        match self {
-            Self::Replay(m) => Some(m),
-            Self::Converged(_) => None,
-        }
-    }
-
-    /// The converged table, or `None` while still in the replay half.
-    pub fn converged(&self) -> Option<&BTreeMap<RepoKey, CommitId>> {
-        match self {
-            Self::Converged(m) => Some(m),
-            Self::Replay(_) => None,
-        }
-    }
-
-    /// Mutable access to the replay-phase intent table during replay.
-    ///
-    /// Returns `None` if the record has already converged — replay-phase
-    /// writes after convergence are a logic error and the type refuses them.
-    pub fn advanced_mut(&mut self) -> Option<&mut BTreeMap<RepoKey, CommitId>> {
-        match self {
-            Self::Replay(m) => Some(m),
-            Self::Converged(_) => None,
-        }
-    }
-
-    /// Atomically swap the replay table out and the converged table in.
-    ///
-    /// This is the *single guarded place* the temporal invariant lives now:
-    /// converging discards the replay table and installs `converged` in one
-    /// move, so a record can never hold both. Idempotent re-convergence (a
-    /// `--continue` re-running relock) simply replaces the converged table.
-    pub fn converge(&mut self, converged: BTreeMap<RepoKey, CommitId>) {
-        *self = Self::Converged(converged);
     }
 }
 
@@ -999,13 +914,6 @@ pub struct RefMove {
 /// The owner op record written to `.rwv-op` at the initiating workspace.
 ///
 /// All path fields are absolute. `started_at` is RFC3339 UTC.
-///
-/// The replay-intent (`advanced_tips`) and converged (`converged_tips`) tip
-/// tables are carried by the [`PhaseTips`] ADT in `tips`, which makes the
-/// illegal *both-populated* state unrepresentable (see [`PhaseTips`]). The
-/// persisted `.rwv-op` JSON keeps the historical flat shape — two independent
-/// top-level keys `advanced_tips` / `converged_tips` — via a serde shim
-/// (`WireOwnerRecord`), so on-disk op-state round-trips unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "WireOwnerRecord", into = "WireOwnerRecord")]
 pub struct OwnerRecord {
@@ -1033,10 +941,9 @@ pub struct OwnerRecord {
     pub retire: bool,
     /// Current phase.
     pub phase: OpPhase,
-    /// The op's per-repo tip table, scoped to exactly one lifecycle half at a
-    /// time (see [`PhaseTips`]). Replay-phase intent during replay; converged
-    /// tips after the atomic [`PhaseTips::converge`] swap at relock completion.
-    pub tips: PhaseTips,
+    /// Each repo's tip as the replay left it, written at relock; empty
+    /// before.
+    pub converged_tips: BTreeMap<RepoKey, CommitId>,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
     /// What a `pull` or `update --remote` op was asked to do.
@@ -1047,15 +954,8 @@ pub struct OwnerRecord {
 // WireOwnerRecord — flat persisted shape for OwnerRecord (serde shim)
 // ---------------------------------------------------------------------------
 
-/// On-disk representation of [`OwnerRecord`]: the historical flat JSON with
-/// two independent tip maps. Exists solely to keep the persisted `.rwv-op`
-/// shape stable while the in-memory model uses the [`PhaseTips`] ADT.
-///
-/// The flat↔ADT mapping is driven by which table is populated, preserving the
-/// temporal invariant: a converged record (non-empty `converged_tips`) maps to
-/// [`PhaseTips::Converged`]; otherwise the record is still in the replay half
-/// and maps to [`PhaseTips::Replay`], carrying `advanced_tips`. A both-empty
-/// record canonicalizes to the empty replay half and serializes identically.
+/// On-disk representation of [`OwnerRecord`], which adds the schema and the
+/// release that wrote it.
 ///
 /// No field here has a default: every write goes through the full struct, so
 /// a record missing a key is malformed, not old, and [`read_owner`] surfaces
@@ -1074,7 +974,6 @@ struct WireOwnerRecord {
     target: Option<CanonicalPath>,
     retire: bool,
     phase: OpPhase,
-    advanced_tips: BTreeMap<RepoKey, CommitId>,
     converged_tips: BTreeMap<RepoKey, CommitId>,
     started_at: String,
     take_in: Option<TakeInRecord>,
@@ -1082,15 +981,6 @@ struct WireOwnerRecord {
 
 impl From<WireOwnerRecord> for OwnerRecord {
     fn from(w: WireOwnerRecord) -> Self {
-        // Reconstruct the phase-scoped ADT from the two flat maps. A populated
-        // converged table is the unambiguous signal that the op has crossed the
-        // relock boundary (the swap clears advanced_tips in the same write), so
-        // it wins; otherwise the record is still in the replay half.
-        let tips = if !w.converged_tips.is_empty() {
-            PhaseTips::Converged(w.converged_tips)
-        } else {
-            PhaseTips::Replay(w.advanced_tips)
-        };
         Self {
             id: w.id,
             verb: w.verb,
@@ -1100,7 +990,7 @@ impl From<WireOwnerRecord> for OwnerRecord {
             target: w.target,
             retire: w.retire,
             phase: w.phase,
-            tips,
+            converged_tips: w.converged_tips,
             started_at: w.started_at,
             take_in: w.take_in,
         }
@@ -1109,11 +999,6 @@ impl From<WireOwnerRecord> for OwnerRecord {
 
 impl From<OwnerRecord> for WireOwnerRecord {
     fn from(r: OwnerRecord) -> Self {
-        // Flatten the ADT back to two maps; the inactive half serializes empty.
-        let (advanced_tips, converged_tips) = match r.tips {
-            PhaseTips::Replay(m) => (m, BTreeMap::new()),
-            PhaseTips::Converged(m) => (BTreeMap::new(), m),
-        };
         Self {
             schema: OP_RECORD_SCHEMA,
             release: crate::rwv_version().to_string(),
@@ -1125,8 +1010,7 @@ impl From<OwnerRecord> for WireOwnerRecord {
             target: r.target,
             retire: r.retire,
             phase: r.phase,
-            advanced_tips,
-            converged_tips,
+            converged_tips: r.converged_tips,
             started_at: r.started_at,
             take_in: r.take_in,
         }
@@ -1153,7 +1037,7 @@ impl OwnerRecord {
             target: Some(CanonicalPath::of(cwd_workspace)),
             retire: false,
             phase: OpPhase::Replay,
-            tips: PhaseTips::default(),
+            converged_tips: BTreeMap::new(),
             started_at: utc_now_rfc3339(),
             take_in: None,
         }
@@ -1216,7 +1100,7 @@ impl OwnerRecord {
             target: target_workspace.map(CanonicalPath::of),
             retire,
             phase: OpPhase::Replay,
-            tips: PhaseTips::default(),
+            converged_tips: BTreeMap::new(),
             started_at: utc_now_rfc3339(),
             take_in: None,
         }
@@ -1240,7 +1124,7 @@ impl OwnerRecord {
             target: Some(CanonicalPath::of(workspace)),
             retire: false,
             phase: OpPhase::Replay,
-            tips: PhaseTips::default(),
+            converged_tips: BTreeMap::new(),
             started_at: utc_now_rfc3339(),
             take_in: Some(take_in),
         }
@@ -1424,13 +1308,6 @@ impl OwnerReading {
         match self {
             Self::Whole(record) => record.header(),
             Self::HeaderOnly { header, .. } => header.clone(),
-        }
-    }
-
-    pub fn tips(&self) -> Option<&PhaseTips> {
-        match self {
-            Self::Whole(record) => Some(&record.tips),
-            Self::HeaderOnly { .. } => None,
         }
     }
 }
@@ -1758,22 +1635,6 @@ pub fn set_phase(workspace_dir: &Path, new_phase: OpPhase) -> anyhow::Result<()>
         )
     })?;
     record.phase = new_phase;
-    write_owner(workspace_dir, &record)
-}
-
-/// Journal `tip` as where this op moved `repo`, so `rwv abort` attributes the
-/// tip to the op.
-pub fn journal_tip(workspace_dir: &Path, repo: RepoKey, tip: &CommitId) -> anyhow::Result<()> {
-    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "no owner record at {} to journal in",
-            workspace_dir.display()
-        )
-    })?;
-    if let Some(advanced) = record.tips.advanced_mut() {
-        advanced.insert(repo, tip.clone());
-    }
     write_owner(workspace_dir, &record)
 }
 
@@ -2773,7 +2634,7 @@ mod tests {
         let record = format!(
             "{{{schema_fields}\"id\": \"1\", \"verb\": \"sync\", \"history\": null, \
              \"project\": \"p\", \"source\": \"{d}\", \"target\": \"{d}\", \
-             \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
+             \"retire\": false, \"phase\": \"replay\", \
              \"converged_tips\": {{}}, \"started_at\": \"2026-01-01T00:00:00Z\", \
              \"take_in\": null}}",
             d = dir.display()
@@ -2785,21 +2646,24 @@ mod tests {
     /// is one this release does not read, so such a record is unreadable and
     /// refused with the exit every unreadable record gets.
     #[test]
-    fn a_record_still_carrying_the_retired_overrides_field_is_unreadable() {
-        let tmp = crate::tempdir().unwrap();
-        a_record_in(
-            tmp.path(),
-            "\"schema\": 7, \"release\": \"0.25.0\", \"overrides\": [], ",
-        );
-        let refused = read_owner(tmp.path()).unwrap_err();
-        assert_eq!(
-            crate::refusal::kind_of(&refused),
-            Some(RefusalKind::UnreadableOpRecord)
-        );
-        assert!(
-            format!("{refused:#}").contains(&discard_unreadable_record_at(tmp.path())),
-            "{refused:#}"
-        );
+    fn a_record_still_carrying_a_retired_field_is_unreadable() {
+        for retired in ["\"overrides\": [], ", "\"advanced_tips\": {}, "] {
+            let tmp = crate::tempdir().unwrap();
+            a_record_in(
+                tmp.path(),
+                &format!("\"schema\": 7, \"release\": \"0.25.0\", {retired}"),
+            );
+            let refused = read_owner(tmp.path()).unwrap_err();
+            assert_eq!(
+                crate::refusal::kind_of(&refused),
+                Some(RefusalKind::UnreadableOpRecord),
+                "{retired}"
+            );
+            assert!(
+                format!("{refused:#}").contains(&discard_unreadable_record_at(tmp.path())),
+                "{refused:#}"
+            );
+        }
     }
 
     #[test]
@@ -2985,7 +2849,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[test]
-    fn a_record_with_both_kinds_of_tip_key_is_rewritten_byte_for_byte() {
+    fn a_record_with_its_tips_is_rewritten_byte_for_byte() {
         let tip = |c: char| c.to_string().repeat(40);
         let tmp = crate::tempdir().unwrap();
         let place = |name: &str| {
@@ -3005,13 +2869,12 @@ mod tests {
   "source": {source},
   "target": {target},
   "retire": false,
-  "phase": "replay",
-  "advanced_tips": {{
+  "phase": "relock",
+  "converged_tips": {{
     "(project)": "{d}",
     "github/acme/api": "{a}",
     "github/acme/web": "{b}"
   }},
-  "converged_tips": {{}},
   "started_at": "2026-06-10T21:14:03Z",
   "take_in": null
 }}"#,
@@ -3022,10 +2885,9 @@ mod tests {
         );
 
         let read: OwnerRecord = serde_json::from_str(&record).unwrap();
-        let advanced = read.tips.advanced().unwrap();
-        assert_eq!(advanced.len(), 3);
-        assert!(advanced.contains_key(&RepoKey::Project));
-        assert!(advanced.contains_key(&member("github/acme/api")));
+        assert_eq!(read.converged_tips.len(), 3);
+        assert!(read.converged_tips.contains_key(&RepoKey::Project));
+        assert!(read.converged_tips.contains_key(&member("github/acme/api")));
         assert_eq!(serde_json::to_string_pretty(&read).unwrap(), record);
     }
 
@@ -3178,73 +3040,7 @@ mod tests {
         assert_eq!(read_back.project, test_project());
         assert_eq!(read_back.phase, OpPhase::Replay);
         assert!(!read_back.retire);
-        // Fresh record is in the replay half with an empty intent table.
-        assert_eq!(read_back.tips, PhaseTips::Replay(BTreeMap::new()));
-        assert!(read_back.tips.advanced().unwrap().is_empty());
-        assert!(read_back.tips.converged().is_none());
-    }
-
-    // -----------------------------------------------------------------------
-    // advanced_tips field round-trip tests
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn advanced_tips_populated_roundtrip() {
-        // Write a record with advanced_tips populated, read it back, verify the
-        // map survives serialization/deserialization unchanged.
-        let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
-        let op_id = OpId::new_now();
-        let mut record = OwnerRecord::new_sync(
-            &op_id,
-            None,
-            test_project(),
-            Path::new("/src/ws"),
-            Path::new("/cwd/ws"),
-        );
-        let advanced = record.tips.advanced_mut().unwrap();
-        advanced.insert(member("github/foo/bar"), tip('a'));
-        advanced.insert(RepoKey::Project, tip('d'));
-        write_owner(dir, &record).unwrap();
-        let read_back = read_owner(dir).unwrap().unwrap();
-        let advanced = read_back.tips.advanced().expect("still in replay half");
-        assert_eq!(advanced.len(), 2);
-        assert_eq!(
-            advanced.get(&member("github/foo/bar")).cloned(),
-            Some(tip('a')),
-        );
-        assert_eq!(advanced.get(&RepoKey::Project).cloned(), Some(tip('d')),);
-        // No converged table while in the replay half.
-        assert!(read_back.tips.converged().is_none());
-    }
-
-    #[test]
-    fn wire_record_missing_advanced_tips_key_is_rejected() {
-        // Schema v2 carries no default for any WireOwnerRecord field — every
-        // write goes through the full struct, so a record missing a key is
-        // malformed, not old, and must fail to parse rather than silently
-        // filling it in.
-        let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
-        let json = r#"{
-  "id": "9999999999999999999",
-  "verb": "sync",
-  "history": null,
-  "project": "web-app",
-  "source": "/src/ws",
-  "target": "/cwd/ws",
-  "retire": false,
-  "phase": "replay",
-  "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
-}
-"#;
-        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
-        let err = read_owner(dir).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to parse owner record"),
-            "a record missing advanced_tips must fail to parse; got: {err}"
-        );
+        assert!(read_back.converged_tips.is_empty());
     }
 
     #[test]
@@ -3262,7 +3058,6 @@ mod tests {
   "target": "/cwd/ws",
   "retire": false,
   "phase": "replay",
-  "advanced_tips": {},
   "converged_tips": {},
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
@@ -3292,7 +3087,6 @@ mod tests {
   "target": "/cwd/ws",
   "retire": false,
   "phase": "replay",
-  "advanced_tips": {},
   "converged_tips": {},
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
@@ -3316,7 +3110,6 @@ mod tests {
   "target": "/cwd/ws",
   "retire": false,
   "phase": "replay",
-  "advanced_tips": {{}},
   "converged_tips": {{}},
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }}
@@ -3371,7 +3164,6 @@ mod tests {
   "target": "/cwd/ws",
   "retire": false,
   "phase": "replay",
-  "advanced_tips": {},
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
@@ -3383,50 +3175,8 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // PhaseTips ADT — phase-scoped tip table
-    // -----------------------------------------------------------------------
-
     #[test]
-    fn phase_tips_converge_is_atomic_swap() {
-        // The illegal "both populated" state is unrepresentable: converging
-        // discards the replay table and installs the converged one in a single
-        // move, so no value of `PhaseTips` ever holds both.
-        let mut tips = PhaseTips::default();
-        tips.advanced_mut()
-            .unwrap()
-            .insert(member("github/foo/bar"), tip('a'));
-        assert!(tips.advanced().is_some());
-        assert!(tips.converged().is_none());
-
-        let mut converged = BTreeMap::new();
-        converged.insert(member("github/foo/bar"), tip('c'));
-        tips.converge(converged);
-
-        // After the swap the replay table is gone — replay-phase reads/writes
-        // now yield None, and only the converged table is visible.
-        assert!(tips.advanced().is_none());
-        assert!(tips.advanced_mut().is_none());
-        assert_eq!(
-            tips.converged()
-                .and_then(|m| m.get(&member("github/foo/bar")))
-                .cloned(),
-            Some(tip('c')),
-        );
-
-        // Re-convergence (idempotent --continue replay) just replaces the table.
-        let mut again = BTreeMap::new();
-        again.insert(RepoKey::Project, tip('e'));
-        tips.converge(again);
-        assert!(tips.advanced().is_none());
-        assert_eq!(tips.converged().map(BTreeMap::len), Some(1));
-    }
-
-    #[test]
-    fn converged_tips_wire_roundtrip_and_clears_advanced() {
-        // A converged record serializes with a populated `converged_tips:` and
-        // an empty `advanced_tips:` (the swap cleared it) — and reads back as
-        // the Converged half. This mirrors the J(relock) crash-matrix state.
+    fn converged_tips_wire_roundtrip() {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
@@ -3437,25 +3187,14 @@ mod tests {
             Path::new("/src/ws"),
             Path::new("/cwd/ws"),
         );
-        // Populate the replay half, then converge (the atomic swap).
         record
-            .tips
-            .advanced_mut()
-            .unwrap()
-            .insert(member("github/foo/bar"), tip('a'));
-        let mut converged = BTreeMap::new();
-        converged.insert(member("github/foo/bar"), tip('c'));
-        converged.insert(RepoKey::Project, tip('d'));
-        record.tips.converge(converged);
+            .converged_tips
+            .insert(member("github/foo/bar"), tip('c'));
+        record.converged_tips.insert(RepoKey::Project, tip('d'));
         record.phase = OpPhase::Relock;
 
         write_owner(dir, &record).unwrap();
-        // The persisted JSON keeps the flat shape with advanced_tips emptied.
         let raw = std::fs::read_to_string(dir.join(OP_STATE_FILE)).unwrap();
-        assert!(
-            raw.contains("\"advanced_tips\": {}"),
-            "expected emptied flat advanced_tips key, got:\n{raw}"
-        );
         assert!(
             raw.contains("\"converged_tips\""),
             "expected converged_tips key, got:\n{raw}"
@@ -3463,8 +3202,7 @@ mod tests {
 
         let read_back = read_owner(dir).unwrap().unwrap();
         assert_eq!(read_back, record);
-        assert!(read_back.tips.advanced().is_none());
-        let converged = read_back.tips.converged().expect("converged half");
+        let converged = &read_back.converged_tips;
         assert_eq!(converged.len(), 2);
         assert_eq!(
             converged.get(&member("github/foo/bar")).cloned(),
@@ -3473,51 +3211,22 @@ mod tests {
     }
 
     #[test]
-    fn both_empty_tip_maps_canonicalize_to_replay() {
-        // Both maps empty is ambiguous on the wire: it's the common at-entry
-        // state (a fresh op, still in replay), but it is *also* what
-        // Converged(empty) — relock with zero repos — flattens to, since the
-        // From<OwnerRecord> impl always empties the inactive half. The
-        // canonicalization always resolves that ambiguity to the replay half,
-        // regardless of the recorded `phase`.
-        let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
-        let json = r#"{
-  "id": "1",
-  "verb": "sync",
-  "history": null,
-  "project": "web-app",
-  "source": "/src/ws",
-  "target": "/cwd/ws",
-  "retire": false,
-  "phase": "relock",
-  "advanced_tips": {},
-  "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
-}
-"#;
-        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
-        let record = read_owner(dir).unwrap().unwrap();
-        assert_eq!(record.tips, PhaseTips::Replay(BTreeMap::new()));
-    }
-
-    #[test]
-    fn a_tag_name_in_either_tip_slot_is_refused_at_load() {
-        let tagged = r#"{"github/a/b": "v2.0"}"#;
-        for (advanced, converged) in [(tagged, "{}"), ("{}", tagged)] {
+    fn a_tag_name_as_a_tip_is_refused_at_load() {
+        let converged = r#"{"github/a/b": "v2.0"}"#;
+        {
             let tmp = crate::tempdir().unwrap();
             let dir = tmp.path();
             let json = format!(
                 r#"{{"id": "1", "verb": "sync", "history": null, "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
-                "advanced_tips": {advanced}, "converged_tips": {converged},
+                "converged_tips": {converged},
                 "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");
             assert!(
                 format!("{err:#}").contains("'v2.0' is not a commit id"),
-                "advanced {advanced}, converged {converged}: {err:#}"
+                "converged {converged}: {err:#}"
             );
         }
     }
@@ -4118,7 +3827,7 @@ mod tests {
         let path = OwnerRecord::path_in(dir);
         let mut json: serde_json::Value =
             serde_json::from_str(&path.read_to_string().unwrap()).unwrap();
-        json["advanced_tips"]["(project)"] = "v1.0".into();
+        json["converged_tips"]["(project)"] = "v1.0".into();
         path.publish(json.to_string().as_bytes()).unwrap();
 
         let err = read_owner(dir).unwrap_err().to_string();

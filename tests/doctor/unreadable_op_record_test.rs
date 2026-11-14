@@ -245,7 +245,7 @@ fn assert_doctor_reports_no_op_state(parked: &Parked) {
 fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     let parked = park();
     rewrite_record(&parked, |record| {
-        record["advanced_tips"]["(project)"] = "v1.0".into();
+        record["converged_tips"]["(project)"] = "v1.0".into();
     });
 
     let out = rwv(&parked.seat.root, &["land", "--continue"]);

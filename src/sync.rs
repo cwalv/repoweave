@@ -1358,33 +1358,9 @@ struct ReplayVerdicts {
     source_position: Option<Containment>,
 }
 
-/// The tip a repo's replay lands on, when that is knowable before it moves:
-/// a genuine fast-forward, whose verdict is `Behind`. Written to the op record
-/// at replay entry so abort can attribute the repo the instant it advances.
-///
-/// A function of the task's data and nothing else: it holds no `Vcs`, so it
-/// cannot ask the filesystem again after the verdict was taken.
-///
-/// `Equal` and `Ahead` land nothing: the savepoint already attributes the
-/// no-op, and recording an unreached target for an already-ahead repo is
-/// forgeable. A `Diverged` repo's fresh rebased tip is captured after the join.
-fn entry_tip(
-    repo_path: &RepoPath,
-    verdicts: &ReplayVerdicts,
-    target: &ResolvedRevisionId,
-) -> Option<(RepoKey, CommitId)> {
-    match verdicts.containment {
-        Some(Containment::Behind(_)) => {
-            Some((RepoKey::Member(repo_path.clone()), target.id().clone()))
-        }
-        _ => None,
-    }
-}
-
 /// `verdicts.containment` is HEAD's verdict against `target`, read by the
-/// caller at replay entry — the same value the op record's intent write
-/// consumed, so a commit landing here between the two makes the strategy fail
-/// rather than re-classifying the repo behind the record's back.
+/// caller at replay entry, so a commit landing here between the two makes
+/// the strategy fail rather than re-classifying the repo.
 fn sync_one_repo(
     vcs: &dyn Vcs,
     repo: &Path,
@@ -4688,7 +4664,7 @@ fn load_continuing_context<'a>(
         // longer describes: only `rwv abort` and a fresh landing judge the new
         // tips.
         if !matches!(record.phase, op_state::OpPhase::Retire) {
-            let composed = record.tips.converged().filter(|tips| !tips.is_empty());
+            let composed = Some(&record.converged_tips).filter(|tips| !tips.is_empty());
             if let Some(moved) = target_moved(
                 &cwd_project_name,
                 dest_workspace_dir.as_deref(),
@@ -5762,32 +5738,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    // === advanced_tips write 2: the project repo tip this replay made ===
-    {
-        let project_tip = ctx
-            .project_vcs
-            .head_revision(&ctx.cwd_project_dir)
-            .context("failed to read project HEAD after Phase 1'")?;
-        let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-            crate::untokened!(
-                InternalInvariant,
-                "internal: owner record missing after Phase 1'"
-            )
-        })?;
-        owner
-            .tips
-            .advanced_mut()
-            .ok_or_else(|| {
-                crate::untokened!(
-                    InternalInvariant,
-                    "internal: advanced_tips write after convergence post Phase 1'"
-                )
-            })?
-            .insert(RepoKey::Project, project_tip.id().clone());
-        op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-            .context("failed to write advanced_tips after Phase 1'")?;
-    }
-
     // === Member set: decided against the manifest Phase 1' produced ===
     //
     // Checkouts are added and removed only below this point, and removed only
@@ -5978,39 +5928,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    // === advanced_tips write 1: pre-write planned targets for genuine ff-movers ===
-    {
-        let entry_tips: std::collections::BTreeMap<RepoKey, CommitId> = sync_tasks
-            .iter()
-            .filter_map(|task| entry_tip(&task.repo_path, &task.verdicts, &task.target))
-            .collect();
-        if !entry_tips.is_empty() {
-            let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-                crate::untokened!(
-                    InternalInvariant,
-                    "internal: owner record missing during replay entry write"
-                )
-            })?;
-            owner
-                .tips
-                .advanced_mut()
-                .ok_or_else(|| {
-                    crate::untokened!(
-                        InternalInvariant,
-                        "internal: advanced_tips write after convergence at replay entry"
-                    )
-                })?
-                .extend(entry_tips);
-            op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-                .context("failed to write advanced_tips at replay entry")?;
-        }
-    }
-
-    // Return type: (is_failure, Option<actual_head_if_converged>).
-    // The actual HEAD is read inside the closure (single-repo reads, no shared
-    // state) and returned for the post-join batch write.  No write to the owner
-    // record happens inside this closure — that would be a race.
-    let task_results: Vec<(bool, Option<CommitId>)> =
+    let failed: Vec<bool> =
         run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
             let outcome = sync_one_repo(
                 task.vcs.as_ref(),
@@ -6021,17 +5939,6 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 task.pre_replay_tip.as_ref(),
             );
             let is_failure = outcome.is_failure();
-            // Capture the actual post-advance HEAD if this task converged.
-            // For ff-movers this equals the pre-written target (idempotent
-            // overwrite in write 3); for rebased repos it is the fresh SHA.
-            let converged_head = if matches!(outcome, RepoSyncOutcome::Converged { .. }) {
-                task.vcs
-                    .head_revision(&task.abs)
-                    .ok()
-                    .map(|h| h.id().clone())
-            } else {
-                None
-            };
             if !is_failure {
                 refresh_drift_after(ctx.verb, &task.repo_path, task.vcs.as_ref(), &task.abs);
             }
@@ -6041,48 +5948,10 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 &outcome,
                 ContainmentOutput::observed(task.verdicts.containment, task.verdicts.baseline),
             );
-            (is_failure, converged_head)
+            is_failure
         });
 
-    // === advanced_tips write 3: batch-write actual tips of converged manifest repos ===
-    //
-    // Single-threaded post-join, so no race against write_owner.  Overwrites the
-    // ff-pre-written entries (same value, idempotent) and captures fresh rebased
-    // SHAs for manifest repos that had local commits to replay.
-    // Must precede the any_failure bail so partially-advanced repos are captured
-    // even when the overall fan-out fails.
-    {
-        let post_join_tips: Vec<(RepoKey, CommitId)> = sync_tasks
-            .iter()
-            .zip(task_results.iter())
-            .filter_map(|(task, (_, head_opt))| {
-                head_opt
-                    .as_ref()
-                    .map(|h| (RepoKey::Member(task.repo_path.clone()), h.clone()))
-            })
-            .collect();
-        if !post_join_tips.is_empty() {
-            let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-                crate::untokened!(
-                    InternalInvariant,
-                    "internal: owner record missing during post-fan-out write"
-                )
-            })?;
-            let advanced = owner.tips.advanced_mut().ok_or_else(|| {
-                crate::untokened!(
-                    InternalInvariant,
-                    "internal: advanced_tips write after convergence post fan-out"
-                )
-            })?;
-            for (repo_path, tip) in post_join_tips {
-                advanced.insert(repo_path, tip);
-            }
-            op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-                .context("failed to write advanced_tips after fan-out join")?;
-        }
-    }
-
-    if task_results.iter().any(|(f, _)| *f) {
+    if failed.contains(&true) {
         any_failure = true;
     }
 
@@ -6194,17 +6063,7 @@ fn remap_landing(ctx: &OpContext<'_>, fix: Option<&str>) -> anyhow::Result<()> {
             },
         )?;
     }
-    let tip = ctx.project_vcs.head_revision(&ctx.cwd_project_dir)?;
-    let mut owner = op_state::read_owner(&ctx.owner_workspace_dir)?.ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "internal: owner record missing after the pin re-map"
-        )
-    })?;
-    if let Some(advanced) = owner.tips.advanced_mut() {
-        advanced.insert(RepoKey::Project, tip.id().clone());
-    }
-    op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+    Ok(())
 }
 
 /// Keep the branch checked out in `dir` as a `rebased` backup before a rebase
@@ -6292,11 +6151,6 @@ fn follow_receiving(
         &crate::vcs::BackupSource::Branch(branch.clone()),
         &head,
         None,
-    )?;
-    op_state::journal_tip(
-        &ctx.owner_workspace_dir,
-        RepoKey::Member(repo_path.clone()),
-        source,
     )?;
     vcs.reset_attached_ref_keeping(&attached, &ResolvedRevisionId::from(source.clone()), &kept)?;
     report_landing(
@@ -6834,7 +6688,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     let named = crate::repin::Naming::by_name("land", named_members);
     if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
-        let merge = crate::repin::commit_merge_annotated(
+        crate::repin::commit_merge_annotated(
             vcs,
             dir,
             (target, head.id()),
@@ -6844,7 +6698,6 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             rebased,
         )?;
         crate::test_pause::point("relock-merge-committed");
-        op_state::journal_tip(&ctx.owner_workspace_dir, RepoKey::Project, &merge)?;
         if ctx.handler.emit_text() {
             eprintln!(
                 "  {}: merged with {}, re-locked in the merge",
@@ -6863,10 +6716,6 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     )?;
     if committed {
         crate::test_pause::point("relock-committed");
-    }
-    let head = vcs.head_revision(dir)?;
-    if head.id() != source {
-        op_state::journal_tip(&ctx.owner_workspace_dir, RepoKey::Project, head.id())?;
     }
     if committed && ctx.handler.emit_text() {
         eprintln!(
@@ -6910,7 +6759,6 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
             "internal: owner record missing during relock"
         )
     })?;
-    // Build the converged table from post-replay HEADs...
     let mut converged: std::collections::BTreeMap<RepoKey, CommitId> =
         std::collections::BTreeMap::new();
     for (repo_path, entry) in cwd_project.manifest.iter_entries() {
@@ -6925,12 +6773,7 @@ fn record_converged_tips(ctx: &OpContext<'_>, cwd_project: &Project) -> anyhow::
     if let Ok(rev) = ctx.project_vcs.head_revision(&ctx.cwd_project_dir) {
         converged.insert(RepoKey::Project, rev.id().clone());
     }
-    // ...then swap atomically: `PhaseTips::converge` discards the replay-phase
-    // advanced_tips and installs converged_tips in one move, so they land in the
-    // SAME persist. The ADT makes the both-populated state
-    // unrepresentable, so the prior "clear advanced before populating converged"
-    // ordering hazard cannot recur.
-    owner.tips.converge(converged);
+    owner.converged_tips = converged;
     op_state::write_owner(&ctx.owner_workspace_dir, &owner)
         .context("failed to write converged_tips back to owner record")?;
     Ok(())
@@ -6972,7 +6815,9 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             "internal: owner record missing at advance-target"
         )
     })?;
-    let composed = owner.tips.converged().cloned().ok_or_else(|| {
+    let composed = Some(owner.converged_tips.clone())
+        .filter(|tips| !tips.is_empty())
+        .ok_or_else(|| {
         crate::untokened!(
             InternalInvariant,
             "internal: advance-target reached before the landing recorded its composed tips"
@@ -8453,7 +8298,7 @@ fn retire_stopped(reading: &op_state::OwnerReading) -> bool {
 #[derive(Clone, Copy)]
 enum AbortSide {
     /// The workspace the op replayed in: the owner, savepointed under the base
-    /// op id, whose replay journals `advanced_tips`.
+    /// op id.
     Replay,
     /// The workspace a `land` advanced, savepointed under
     /// [`SavepointKey::LandTarget`] so that worktree pairs sharing one refdb
@@ -9564,12 +9409,6 @@ impl AbortPlan {
 /// its project repo, then settle its members. `label` prefixes every
 /// per-repo line; the workspace abort was invoked from carries none.
 ///
-/// The op's tip table is phase-scoped (`PhaseTips`): `advanced_tips` during
-/// replay, `converged_tips` after relock, keyed by repo path for member repos
-/// and by `RepoKey::Project` for the project repo. The replay journal applies
-/// to the replay side only; converged tips apply to both, because
-/// advance-target lands the target on them.
-///
 /// `moved_in_target` is the landing's journal of the target repos whose branch
 /// it moved, `None` where the record could not be read. On the target side a
 /// repo the journal does not name, at neither its savepoint nor its converged
@@ -9964,7 +9803,7 @@ impl OpMembers {
             .take_in
             .iter()
             .flat_map(|take_in| take_in.receiving.keys());
-        let composed = record.tips.converged().into_iter().flat_map(|t| t.keys());
+        let composed = record.converged_tips.keys();
         for key in planned.chain(composed) {
             if let RepoKey::Member(path) = key {
                 self.0.entry(path.clone()).or_insert(None);
@@ -11064,7 +10903,7 @@ fn plan_landing_refs(
         })
         .collect();
     let freed = plan.switched();
-    let wrote = record.tips.converged().cloned();
+    let wrote = Some(record.converged_tips.clone()).filter(|tips| !tips.is_empty());
     let left = crate::land::undo_created(
         |path| dirs.get(path).cloned(),
         &created,
@@ -12495,18 +12334,6 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // The entry tip is a function of the task's data and nothing else
-    // -----------------------------------------------------------------------
-
-    fn entry_verdicts(containment: Option<Containment>) -> ReplayVerdicts {
-        ReplayVerdicts {
-            baseline: ReplayBaseline::SourceCommittedTip,
-            containment,
-            source_position: None,
-        }
-    }
-
     fn step_at() -> RepoAt {
         RepoAt {
             label: "github/acme/server".to_owned(),
@@ -12603,47 +12430,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn only_a_fast_forward_has_an_entry_tip() {
-        let repo = RepoPath::new("github/acme/server").unwrap();
-        let target = ResolvedRevisionId::from_canonical(
-            crate::vcs::CommitId::parse("00000000000000000000000000000000000000a1").unwrap(),
-            None,
-        );
-
-        assert_eq!(
-            entry_tip(
-                &repo,
-                &entry_verdicts(Some(Containment::Behind(2))),
-                &target
-            ),
-            Some((RepoKey::Member(repo.clone()), target.id().clone()))
-        );
-        for containment in [
-            None,
-            Some(Containment::Equal),
-            Some(Containment::Ahead(1)),
-            Some(Containment::Diverged {
-                ahead: 1,
-                behind: 1,
-            }),
-        ] {
-            assert_eq!(
-                entry_tip(&repo, &entry_verdicts(containment), &target),
-                None,
-                "{containment:?} lands on no tip knowable before the move"
-            );
-        }
-    }
-
     // -----------------------------------------------------------------------
     // sync_one_repo consumes the entry verdict; it does not re-read HEAD
     // -----------------------------------------------------------------------
     //
-    // The op record's intent write and the move it records are two consumers of
-    // one classification. A second HEAD read here is what let them disagree, so
-    // these hand `sync_one_repo` a verdict that CONTRADICTS the disk: an outcome
-    // that follows the disk is a re-read that has grown back.
+    // These hand `sync_one_repo` a verdict that CONTRADICTS the disk: an
+    // outcome that follows the disk is a re-read that has grown back.
 
     #[test]
     fn the_repo_outcome_follows_the_carried_verdict_not_the_disk() {

@@ -98,7 +98,7 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | `repin` (`src/repin.rs`) | The `Rwv-Repin` record of a re-pin by name: `Naming`, `Repin`'s one-line format, and `commit` / `commit_merge`, the only callers of the seam's commit operations, which derive each record from the lock change itself. `unmerged` reads it back with `recorded`. [`docs/internals/repin-record.md`](docs/internals/repin-record.md). |
 | `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
 | `workweave_index` (`src/workweave_index.rs`) | The workweave index a project clone keeps in the directory its worktrees share: the basedir setting and, per workweave, its path and the workspace it was forked from. Converts an index an earlier release kept at the old path. |
-| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `PhaseTips`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
+| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
 | `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. A state file reaches it only through `StatePath`. |
 | `liveness` (`src/liveness.rs`) | The one answer to whether a process still holds a file: an advisory lock the kernel drops with the process, and where the filesystem has none a pid and host the next process on that host can check. Temps, short claims and the git-dir scratch owner (`Scratch`, `src/git/scratch.rs`) all ask it. |
@@ -441,26 +441,27 @@ loop. There are no resume flags threaded through call stacks
 
 ### What the record holds, and what it deliberately does not
 
-`OwnerRecord` (`src/op_state.rs`) is YAML, written only at the initiating
+`OwnerRecord` (`src/op_state.rs`) is JSON, written only at the initiating
 workspace; other mutated workspaces get a `LeaseRecord` that is an id
 plus a pointer. `resolve_to_owner` follows the pointer, so `--continue`
 and `abort` behave identically from either side.
 
 Per-repo *progress* is not in the record — savepoint refs and the VCS's own
-mid-operation state already are that. What the record holds is per-repo
-*intent*, which the VCS cannot: `PhaseTips` is a two-state enum,
-`Replay(map)` before relock and `Converged(map)` after, swapped at a single
-point by `PhaseTips::converge`. It has no serde impls of its own; the
-`WireOwnerRecord` shim flattens it into two independent YAML keys,
-`advanced_tips` and `converged_tips`.
+mid-operation state already are that. What the record holds is the plan the
+VCS cannot: what a `--continue` re-applies, and for a landing the tips it
+composed (`converged_tips`, written at relock) and wrote in its target.
 
-That distinction is what `abort` consumes. `run_abort` (`src/sync.rs`) performs
-a **verified restore** per repo — resetting to the savepoint only when the
-observed tip is attributable to the operation. `VerifiedRestoreOutcome`
-(`src/vcs.rs`) enumerates the answers, including `ForeignTip`, which is
-reported rather than reset and blocks the record from being cleared
-(`src/sync.rs`). A foreign tip the operator consents to abandon is first kept
-as a backup, and the outcome carries the `BackupWitness` that proves it.
+`abort` does not read the record to decide what to keep. `run_abort`
+(`src/sync.rs`) performs a **verified restore** per repo: it resets to the
+savepoint, keeping first, whoever made it, a tip holding a commit nothing
+else reaches in the branch's one slot and a working copy it discards in the
+checkout's one slot (`Vcs::keep_in_slot` for the first); each
+slot's earlier values stay in the VCS's history of the slot ref. The
+record decides only which stopped operation is the op's to cancel and, for a
+landing, whether its target moved since, toward refusing.
+`VerifiedRestoreOutcome` (`src/vcs.rs`) enumerates the answers, including
+`ForeignTip`, a repo moved between plan and write, which is reported rather
+than reset and keeps the record.
 
 Savepoints are git refs under `refs/rwv/pre-op/<key>`; backups, which outlive
 any operation, are refs under `refs/rwv/backup/<branch>/<id>` (see

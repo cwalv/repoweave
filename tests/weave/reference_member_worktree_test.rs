@@ -416,11 +416,11 @@ fn abort_restores_a_reference_member_like_any_other() {
     let op_id = "1700000000000000000";
     let start = common::git_in(&ww.ref_checkout, &["rev-parse", "HEAD"]);
     common::savepoint::plant_at(&ww.ref_checkout, op_id, &start);
-    let advanced = commit_file(&ww.ref_checkout, "R", "r\n", "op: advance");
+    commit_file(&ww.ref_checkout, "R", "r\n", "op: advance");
     let record = format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"{PROJECT}\", \
          \"source\": \"{root}\", \"target\": \"{target}\", \"retire\": false, \"phase\": \"replay\", \
-         \"advanced_tips\": {{\"{REF_PATH}\": \"{advanced}\"}}, \"converged_tips\": {{}}, \
+         \"converged_tips\": {{}}, \
          \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         root = common::json_escaped(&ww.root),
         target = common::json_escaped(&primary.root),
