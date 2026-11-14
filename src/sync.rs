@@ -2532,6 +2532,14 @@ fn publish_or_drop(repo_path: &RepoPath, held: &[Held]) -> String {
             backups.join(" ")
         ));
     }
+    if own().any(|h| h.kind == crate::vcs::HeldKind::Savepoint) {
+        ways.push(
+            "keep a savepoint no operation holds as a backup (`rwv doctor --fix`)".to_owned(),
+        );
+    }
+    ways.push(
+        "delete with the VCS what you do not keep (a branch, a tag, edits set aside)".to_owned(),
+    );
     ways.join(", ")
 }
 

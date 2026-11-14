@@ -514,6 +514,40 @@ pub fn landing_prune_refuses_a_store_holding(held: StoreHolds) -> Scenario {
     )
 }
 
+/// A clone holding the only copy of a commit in a savepoint no operation
+/// holds refuses its removal naming `rwv doctor --fix`, which keeps it as a
+/// backup; the backup's drop it then prints runs as printed, and the removal
+/// goes through.
+pub fn store_removal_offers_an_exit_for_a_savepoint_it_holds() -> Scenario {
+    scenario(
+        "a store removal offers an exit for a savepoint it holds",
+        vec![
+            Step::commit(&a(), Repo::App, "savepoint-only"),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["update-ref", "refs/rwv/pre-op/1779769917405921588", "HEAD"],
+            ),
+            Step::git(&a(), Repo::App, &["reset", "-q", "--hard", "HEAD~1"])
+                .may_rewrite(&[Repo::App]),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+                .claim(Claim::OutputContains("(`rwv doctor --fix`)"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::rwv_printed_quoted(&a(), "rwv doctor --fix", "").expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+                .claim(Claim::OutputContains("rwv backup drop local/remotes/app ")),
+            Step::rwv_printed_quoted(&a(), "rwv backup drop ", "")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App]),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+        ],
+    )
+}
+
 /// A landing's prune of the target's clone asks each submodule store inside
 /// it what it holds that no remote has, and names it with the submodule's
 /// path; the per-path removal the landing prints refuses the same way until
