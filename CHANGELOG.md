@@ -92,6 +92,10 @@ A landing's target that something else moved since is refused;
 `rwv abort --leave-target` ends the landing and leaves the target as it
 stands.
 
+- `update --remote --continue` concludes a member merge whose conflicts are
+  marked resolved, as `pull --continue` does, instead of refusing it as
+  `edits mid-operation`.
+
 ### A conflict in `rwv.toml` stops with the entries it concerns
 
 A merge or rebase that conflicts in `rwv.toml`, or whose result differs from
