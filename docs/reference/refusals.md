@@ -1434,6 +1434,22 @@ refuses names that *do* dispatch.
 
 **Where this sits.** [Plugin boundary](../explanation/joints/plugin-boundary.md).
 
+### `unreadable-op-lease`
+
+**Condition.** A workspace holds an `.rwv-op-lease` this rwv cannot read, so
+which operation holds the workspace, and where its record is, cannot be told.
+Every verb that reads op-state there refuses; `rwv status` reports it instead.
+
+**Why.** A lease is what keeps a second operation out of a workspace an
+operation is moving. One that names no operation cannot be followed to a record
+to resume or abort, and nothing can tell whether its operation still runs.
+
+**Exits.** The message prints `rwv -C <workspace> abort --discard-unreadable-record`,
+which removes that lease and nothing else. An operation that still runs loses
+its hold on the workspace; a readable lease is never removed this way. The
+operation the lease belonged to, if its record still stands elsewhere, keeps
+its own exits there.
+
 ### `unreadable-status`
 
 **Condition.** A dirty-state read failed, so the operation failed closed.

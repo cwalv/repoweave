@@ -1248,6 +1248,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 backups: status_backups(),
                 resolution: Some(resolution()),
                 op: None,
+                unreadable_op: None,
             }),
         ),
         (
@@ -1263,6 +1264,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 backups: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
+                unreadable_op: None,
             }),
         ),
         (
@@ -1278,6 +1280,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 backups: Vec::new(),
                 resolution: None,
                 op: None,
+                unreadable_op: None,
             }),
         ),
         (
@@ -1296,6 +1299,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 backups: Vec::new(),
                 resolution: Some(resolution()),
                 op: None,
+                unreadable_op: Some("the operation record at /w/.rwv-op cannot be read".into()),
             }),
         ),
     ];
@@ -1331,6 +1335,7 @@ fn status_corpus() -> Vec<(&'static str, Value)> {
                 backups: Vec::new(),
                 resolution: Some(primary_resolution()),
                 op: Some(op_status(verb, phase)),
+                unreadable_op: None,
             }),
         ));
     }

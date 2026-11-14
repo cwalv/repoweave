@@ -1895,7 +1895,7 @@ fn claude_hook_remove_warning_carries_the_index_parse_cause() {
 
     let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
     assert!(
-        stderr.contains("failed to parse"),
+        stderr.contains("does not read (key must be a string"),
         "expected the index-read context in stderr, got: {stderr}"
     );
     assert!(

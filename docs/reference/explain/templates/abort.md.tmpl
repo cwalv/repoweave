@@ -178,6 +178,20 @@ The consent applies to the tip abort finds when it runs. If a foreign agent
 committed on top of a tip an earlier abort refused, or reset the branch and
 built something else, the rerun keeps the tip as it now stands.
 
+### A record this rwv cannot read
+
+A `.rwv-op` whose op id does not parse, or that another release wrote in a
+record schema this one does not read, is refused by every verb that reads it
+as `unreadable-op-record`, plain `abort` included; `rwv status` reports it.
+`rwv abort --discard-unreadable-record`, run in the workspace holding the
+record or in one the operation leases, ends the operation: it removes the
+record, the leases it holds on other workspaces and its landing claims, and
+moves nothing back, since only the record says which tips are the
+operation's. It lists each repo left stopped in a VCS operation and each
+savepoint and backup the repos hold. Once no record claims a savepoint,
+`rwv doctor --fix` keeps each tip it holds that no branch reaches as a backup
+and drops it. Where the record reads, the flag is refused.
+
 ### A savepoint left after its operation ended
 
 A savepoint an earlier release kept after its operation completed (a
@@ -192,6 +206,7 @@ drops; nothing reads a tombstone as a backup before then.
 rwv abort
 rwv abort --abandon-foreign-tip <repo> [--abandon-foreign-tip <repo> ...]
 rwv abort --leave-target [--abandon-foreign-tip <repo> ...]
+rwv abort --discard-unreadable-record
 ```
 
 `abort` reads everything else it needs from `.rwv-op`. `--abandon-foreign-tip` is

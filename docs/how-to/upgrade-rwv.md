@@ -196,7 +196,7 @@ The refusal is `legacy-workweave-index` in state `old path`, listing the file an
 rwv doctor --fix
 ```
 
-If the old file was committed to the project repo, the conversion removes the working file and leaves the deletion for you to commit. A file that does not parse is reported as `unreadable-workweave-index` and left alone: delete it and run `rwv doctor --fix`, which lists the workweaves on disk again.
+If the old file was committed to the project repo, the conversion removes the working file and leaves the deletion for you to commit. A file that does not parse is reported as `unreadable-workweave-index`, and `rwv doctor --fix` replaces it with an index rebuilt from the workweaves on disk.
 
 ## Step 9 — the lock merge driver an earlier release set up
 

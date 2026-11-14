@@ -291,54 +291,68 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     assert_doctor_reports_no_op_state(&parked);
 }
 
-/// A record that names no op cannot be aborted. Its error tells the operator
-/// to remove it and names each thing removal leaves behind with the command
-/// that clears it; following each in turn ends in a usable weave, and the
-/// lease left behind refuses with that same remedy rather than sending the
-/// operator back to `rwv abort`.
+/// A record that names no op refuses every verb that reads it, `rwv abort`
+/// included, naming the verb that ends it; `rwv status` reports it on both
+/// sides. That verb, run from the workspace the landing leases, removes the
+/// record, the lease and the claim, moves nothing back and names the member
+/// left stopped in the landing's rebase; following what it prints ends in a
+/// usable weave.
 #[test]
-fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
+fn a_record_that_names_no_op_is_ended_by_the_verb_its_error_names() {
     let parked = park();
     let target = parked.primary.root.clone();
     std::fs::write(record_path(&parked), "{ not json").unwrap();
-
-    let out = rwv(&parked.seat.root, &["abort"]);
-    let stderr = stderr_of(&out);
-    assert!(!out.status.success(), "{}", transcript(&out));
-    for advice in [
-        "Removing the file discards the op",
-        "`rwv status` marks",
-        "`rebase --abort`",
-        "the workspace the record names as `target`, which `rwv doctor --fix` run there releases",
-        "`rwv doctor` lists",
-    ] {
-        assert!(
-            stderr.contains(advice),
-            "the error must say {advice:?}:\n{}",
-            transcript(&out)
-        );
-    }
-
-    std::fs::remove_file(record_path(&parked)).unwrap();
+    let discard = format!(
+        "rwv -C {} abort --discard-unreadable-record",
+        parked.seat.root.display()
+    );
 
     for (dir, args) in [
-        (&parked.seat.root, &["land"][..]),
+        (&parked.seat.root, &["abort"][..]),
+        (&parked.seat.root, &["land", "--continue"][..]),
         (&target, &["abort"][..]),
-        (&target, &["status"][..]),
     ] {
         let out = rwv(dir, args);
         let stderr = stderr_of(&out);
         assert!(!out.status.success(), "{}", transcript(&out));
-        assert_routes_to(&stderr, "dead-op-lease");
+        assert_routes_to(&stderr, "unreadable-op-record");
         assert!(
-            stderr.contains(&format!(
-                "`rwv doctor --fix` run in {} releases the lease",
-                target.display()
-            )),
-            "rwv {args:?} must name the lease's own remedy, not `rwv abort`:\n{}",
+            stderr.contains(&discard),
+            "rwv {args:?} must name the verb that ends the op:\n{}",
             transcript(&out)
         );
     }
+    for dir in [&parked.seat.root, &target] {
+        let out = succeed(dir, &["status"]);
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains(&discard),
+            "{}",
+            transcript(&out)
+        );
+    }
+
+    let lib_tip = head(&parked.seat.lib);
+    let out = succeed(&target, &["abort", "--discard-unreadable-record"]);
+    let stderr = stderr_of(&out);
+    for said in [
+        "Nothing the operation moved was put back",
+        "stopped in a rebase",
+        "released the lease on",
+        "savepoint",
+    ] {
+        assert!(
+            stderr.contains(said),
+            "it must say {said:?}:\n{}",
+            transcript(&out)
+        );
+    }
+    assert!(!record_path(&parked).exists());
+    assert!(!target.join(".rwv-op-lease").exists());
+    assert!(
+        mid_op(&parked.seat.lib),
+        "nothing is canceled without the record"
+    );
+    assert_eq!(head(&parked.seat.lib), lib_tip, "nothing is moved back");
 
     let status = succeed(&parked.seat.root, &["status"]);
     let marked: Vec<String> = String::from_utf8_lossy(&status.stdout)
@@ -354,7 +368,12 @@ fn removing_a_record_that_names_no_op_leaves_only_what_its_error_names() {
         );
     }
 
-    succeed(&target, &["doctor", "--fix"]);
+    let out = succeed(&target, &["doctor", "--fix"]);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("orphaned-savepoint"),
+        "the savepoints it left are doctor's to drop once no record claims them:\n{}",
+        transcript(&out)
+    );
 
     assert_no_op_residue(&parked);
     let out = rwv(&parked.seat.root, &["land", "--history", "linear"]);

@@ -8538,6 +8538,157 @@ pub fn run_abort(
     aborted
 }
 
+/// Execute `rwv abort --discard-unreadable-record`: end the operation whose
+/// record, in this workspace or the one this workspace's lease names, this
+/// rwv cannot read. Nothing it moved is put back, since only the record says
+/// which tips are its own. The record goes last, so a run stopped part way
+/// is run again.
+pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<()> {
+    let here = ctx.active_root();
+    let owner = if OwnerRecord::path_in(here.as_path()).exists() {
+        here.clone()
+    } else {
+        match op_state::read_lease(here.as_path()) {
+            Ok(Some(lease)) => lease.owner,
+            Ok(None) => crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress"),
+            Err(e) if crate::refusal::kind_of(&e) == Some(RefusalKind::UnreadableOpLease) => {
+                eprintln!("{e:#}");
+                op_state::clear_lease(here.as_path());
+                eprintln!(
+                    "removed the unreadable lease at {}",
+                    op_state::LeaseRecord::path_in(here.as_path())
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+    };
+    let record = OwnerRecord::path_in(owner.as_path());
+    match op_state::read_owner_for_abort(owner.as_path()) {
+        Err(e) if crate::refusal::kind_of(&e) == Some(RefusalKind::UnreadableOpRecord) => {
+            eprintln!("{e:#}");
+        }
+        Err(e) => return Err(e),
+        Ok(Some(_)) => crate::refuse!(
+            RefusalKind::InapplicableFlag,
+            "--discard-unreadable-record ends an operation whose record cannot be read, and \
+             the record at {record} names its operation; drop the flag, and `rwv abort` \
+             restores from it"
+        ),
+        Ok(None) => {
+            op_state::resolve_for_abort(here.as_path())?;
+            crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
+        }
+    }
+    let header = op_state::read_owner_header_of_any_schema(owner.as_path());
+    let mut workspaces = vec![owner.clone()];
+    let others = std::iter::once(CanonicalPath::of(ctx.primary_path())).chain(
+        recorded_workweaves(ctx.primary_path())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, root)| root),
+    );
+    for other in others {
+        if !workspaces.contains(&other)
+            && op_state::read_lease(other.as_path())
+                .ok()
+                .flatten()
+                .is_some_and(|lease| lease.owner == owner)
+        {
+            workspaces.push(other);
+        }
+    }
+    let keys = header.as_ref().map(OwnerHeader::savepoint_keys);
+    let mut left = Vec::new();
+    let mut released = Vec::new();
+    let mut stores = std::collections::BTreeSet::new();
+    for workspace in &workspaces {
+        let projects = match &header {
+            Some(header) => vec![header.project.clone()],
+            None => crate::workspace::discover_projects(workspace.as_path()),
+        };
+        for project in projects {
+            let dir = project_dir(workspace.as_path(), &project);
+            let vcs = project_vcs();
+            if !vcs.is_repo(&dir) {
+                continue;
+            }
+            released.extend(crate::landing_claim::LandingClaim::release_owned_by(
+                vcs.as_ref(),
+                &dir,
+                owner.as_path(),
+            )?);
+            let mut repos = vec![(dir.clone(), project_vcs())];
+            if let Ok(loaded) = Project::from_dir_skip_lock(&dir, project.clone()) {
+                repos.extend(loaded.manifest.iter_entries().map(|(path, entry)| {
+                    (
+                        workspace.as_path().join(path.as_path()),
+                        vcs_for(entry.vcs_type),
+                    )
+                }));
+            }
+            for (repo, vcs) in repos {
+                if !vcs.is_repo(&repo) {
+                    continue;
+                }
+                if let Some(stopped) = vcs.mid_operation(&repo) {
+                    left.push(format!(
+                        "  {}: stopped in a {}, which `rwv status` marks",
+                        repo.display(),
+                        stopped.operation()
+                    ));
+                }
+                let store = vcs.store_of(&repo).unwrap_or_else(|| repo.clone());
+                if !stores.insert(store) {
+                    continue;
+                }
+                let Ok(listing) = vcs.list_savepoints(&repo) else {
+                    continue;
+                };
+                for key in listing.keys {
+                    if keys.as_ref().is_none_or(|keys| keys.contains(&key)) {
+                        left.push(format!("  {}: savepoint {key}", repo.display()));
+                    }
+                }
+                for listed in vcs
+                    .list_backups(&repo, crate::vcs::RemoteTracking::Counted)
+                    .unwrap_or_default()
+                {
+                    left.push(format!(
+                        "  {}: backup {} at {}",
+                        repo.display(),
+                        listed.backup.name,
+                        listed.backup.tip.short_display()
+                    ));
+                }
+            }
+            forget_replays_in(workspace.as_path(), &project);
+        }
+    }
+    for workspace in &workspaces[1..] {
+        op_state::clear_lease_owned_by(workspace.as_path(), owner.as_path());
+        eprintln!("released the lease on {}", workspace.as_path().display());
+    }
+    for claim in &released {
+        eprintln!("released the landing claim {}", claim.display());
+    }
+    op_state::clear_owner(owner.as_path());
+    eprintln!(
+        "discarded the operation record at {record}. Nothing the operation moved was put \
+         back: without its record, which tips are its own cannot be told."
+    );
+    if !left.is_empty() {
+        eprintln!(
+            "left as they stand, to look at:\n{}\n`rwv doctor` reports each savepoint no \
+             record claims, and `rwv doctor --fix` keeps each tip one holds that no branch \
+             reaches as a backup, then drops it; `rwv backup list` and `rwv backup drop` \
+             act on the backups.",
+            left.join("\n")
+        );
+    }
+    Ok(())
+}
+
 /// The project an abort enumerates. Where the working `rwv.toml` does not
 /// parse, conflict markers or a merge or replay's unparseable result
 /// included, its manifest is read at the checked-out commit while the

@@ -80,6 +80,13 @@
         }
       ]
     },
+    "unreadable_op": {
+      "description": "Why the operation record this workspace holds, or the one its lease names, cannot be read, as the refusal every other verb prints says it, naming the verb that ends the operation. Absent when there is no such record or it reads.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "unreadable_projects": {
       "description": "Projects whose `rwv.toml` or `rwv.lock` did not load: none of their repos is in `repos`.",
       "type": "array",

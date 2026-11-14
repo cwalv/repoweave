@@ -1,6 +1,6 @@
 //! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv land`.
 //!
-//! # Schema v6 (no back-compat with v5)
+//! # Schema v7 (no back-compat with v6)
 //!
 //! A record carries its `schema`. One that carries another, or none, is
 //! refused by every reader, naming the release that wrote it: it is finished
@@ -96,7 +96,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// The schema every record this release writes carries.
-pub(crate) const OP_RECORD_SCHEMA: u32 = 6;
+pub(crate) const OP_RECORD_SCHEMA: u32 = 7;
 
 /// Name of the owner op-state file at the initiating workspace.
 pub(crate) const OP_STATE_FILE: &str = ".rwv-op";
@@ -492,6 +492,7 @@ impl FromIterator<Override> for Overrides {
 /// What `pull` and `update --remote` were asked to do, kept so `--continue`
 /// re-applies it and so a resumed op acts on the tips the first run planned.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TakeInRecord {
     pub merge_upstream: bool,
     /// The repos named by `--reset-to-upstream`, spelled as an operand.
@@ -605,6 +606,7 @@ pub struct TakeInRecord {
 
 /// A merge of `source` into the checkout of `repo`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Merging {
     pub repo: RepoKey,
     pub source: CommitId,
@@ -614,6 +616,7 @@ pub struct Merging {
 /// replayed onto `onto`; a branch moved to `onto` with nothing replayed has
 /// `base` at `from`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Rebasing {
     pub repo: RepoKey,
     pub branch: String,
@@ -626,6 +629,7 @@ pub struct Rebasing {
 /// `base..from` replayed onto `onto`, composed at `composed` once the replay
 /// ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Carrying {
     pub repo: RepoKey,
     pub branch: String,
@@ -644,6 +648,7 @@ pub struct Carrying {
 /// A pin of `member` a carried project commit held on a dropped commit, moved
 /// from `was` to `now`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CarryRemap {
     pub member: crate::manifest::RepoPath,
     pub was: CommitId,
@@ -827,6 +832,7 @@ impl LandingReport {
 
 /// A member's pin as a landing's take-in of `T`'s upstream changed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PinTakenIn {
     pub repo: RepoKey,
     pub was: Option<String>,
@@ -837,6 +843,7 @@ pub struct PinTakenIn {
 
 /// A member's entry as a landing's take-in of `T`'s upstream changed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EntryTakenIn {
     pub repo: RepoKey,
     pub change: crate::pull::EntryChange,
@@ -846,6 +853,7 @@ pub struct EntryTakenIn {
 
 /// The commits a declared-branch change leaves on the old branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct LeftBehind {
     pub repo: RepoKey,
     pub vcs_type: crate::manifest::VcsType,
@@ -862,6 +870,7 @@ pub struct LeftBehind {
 
 /// The port a `cherry-pick` planned, and each member's copies so far.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PickRecord {
     /// The project commit ported.
     pub rev: CommitId,
@@ -884,6 +893,7 @@ pub struct PickRecord {
 /// One member's copies: the commits to copy, oldest first, each against
 /// `mainline` where set, and what each copy came to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MemberPick {
     pub repo: RepoKey,
     pub commits: Vec<CommitId>,
@@ -915,6 +925,7 @@ impl MemberPick {
 
 /// A backup an op made, by the repo holding it and the name it is dropped by.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeptBackup {
     pub repo: RepoKey,
     pub name: String,
@@ -927,6 +938,7 @@ pub struct KeptBackup {
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
 /// the landing read it, and how the landing moves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Receiving {
     pub branch: String,
     pub tip: CommitId,
@@ -958,6 +970,7 @@ pub enum Moves {
 /// A checkout a landing fast-forwards in place in `workspace`, and the tip it
 /// writes there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct InPlaceMove {
     pub workspace: PathBuf,
     pub repo: RepoKey,
@@ -966,6 +979,7 @@ pub struct InPlaceMove {
 
 /// A branch a landing moves as a ref, and the tip it writes there.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RefWrite {
     pub repo: RepoKey,
     pub branch: String,
@@ -974,6 +988,7 @@ pub struct RefWrite {
 
 /// A branch the op created, checked out nowhere.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CreatedRef {
     pub repo: RepoKey,
     pub branch: String,
@@ -992,6 +1007,7 @@ pub enum SyncFrom {
 
 /// A branch checked out nowhere that the op moved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RefMove {
     pub repo: RepoKey,
     pub branch: String,
@@ -1068,11 +1084,12 @@ pub struct OwnerRecord {
 /// and maps to [`PhaseTips::Replay`], carrying `advanced_tips`. A both-empty
 /// record canonicalizes to the empty replay half and serializes identically.
 ///
-/// Schema v2 carries no default for any field here: every write goes through
-/// the full struct, so a record missing a key is malformed, not old, and
-/// [`read_owner`] surfaces that as a parse error rather than silently filling
-/// it in.
+/// No field here has a default: every write goes through the full struct, so
+/// a record missing a key is malformed, not old, and [`read_owner`] surfaces
+/// that as a parse error rather than silently filling it in. A key it does
+/// not know is another release's, and is refused rather than dropped.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WireOwnerRecord {
     schema: u32,
     release: String,
@@ -1650,21 +1667,61 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
         Ok(record) => return Ok(Some(OwnerReading::Whole(Box::new(record)))),
         Err(e) => e,
     };
+    if whole_error.to_string().starts_with("unknown field") {
+        return Err(unreadable_record(
+            &path,
+            &format!(
+                "{writer} wrote it with a field this release does not read ({whole_error:#}), \
+                 so neither `--continue` nor `rwv abort` acts on it: what that field records \
+                 would not be put back. The release that wrote it resumes or aborts it",
+                writer = writer_of(&json),
+            ),
+        ));
+    }
     match serde_json::from_str::<OwnerHeader>(&json) {
         Ok(header) => Ok(Some(OwnerReading::HeaderOnly {
             header,
             parse_error: format!("{whole_error:#}"),
         })),
-        Err(_) => Err(unparseable_record(
+        Err(_) => Err(unreadable_record(
             &path,
-            &format!("{whole_error:#}"),
-            "It names no op this rwv can read, so neither resuming nor `rwv abort` can use \
-             it. Removing the file discards the op and leaves what it did in place: repos it \
-             left mid-rebase or mid-merge, which `rwv status` marks and git's own \
-             `rebase --abort` or `merge --abort` returns to their branch; the lease it holds \
-             on the workspace the record names as `target`, which `rwv doctor --fix` run \
-             there releases; and its savepoints, which `rwv doctor` lists",
+            &format!(
+                "it names no operation this rwv can read ({whole_error:#}), so nothing can \
+                 resume it or restore from it"
+            ),
         )),
+    }
+}
+
+/// The verb that ends an operation whose record cannot be read, run in the
+/// workspace holding the record.
+pub fn discard_unreadable_record_at(workspace: &Path) -> String {
+    format!(
+        "rwv -C {} abort --discard-unreadable-record",
+        workspace.display()
+    )
+}
+
+fn unreadable_record(path: &StatePath, why: &str) -> anyhow::Error {
+    crate::refusal::refusal(
+        RefusalKind::UnreadableOpRecord,
+        format!(
+            "the operation record at {path} cannot be read: {why}. This ends the operation, \
+             removing the record and releasing what the operation holds; it moves nothing \
+             back and lists what it leaves:\n  {discard}",
+            discard = discard_unreadable_record_at(path.dir()),
+        ),
+    )
+}
+
+/// The release a record names as its writer, as a message names it.
+fn writer_of(json: &str) -> String {
+    let release = serde_json::from_str::<serde_json::Value>(json)
+        .ok()
+        .and_then(|record| record.get("release")?.as_str().map(str::to_owned));
+    match release {
+        Some(release) => format!("rwv {release}"),
+        None => format!("an rwv release before {}", crate::rwv_version()),
     }
 }
 
@@ -1676,16 +1733,19 @@ fn refuse_other_schema(path: &StatePath, json: &str) -> anyhow::Result<()> {
     {
         return Ok(());
     }
-    let writer = match record.get("release").and_then(serde_json::Value::as_str) {
-        Some(release) => format!("rwv {release}"),
-        None => format!("an rwv release before {}", crate::rwv_version()),
+    let writer = writer_of(json);
+    let schema = match record.get("schema") {
+        Some(schema) => format!("record schema {schema}"),
+        None => "a record with no schema".to_owned(),
     };
-    crate::refuse!(
-        RefusalKind::OpParked,
-        "the operation recorded at {path} was written by {writer}, in a record schema this \
-         release does not read, so neither `--continue` nor `rwv abort` acts on it. Finish or \
-         abort it with the release that wrote it, then rerun"
-    )
+    Err(unreadable_record(
+        path,
+        &format!(
+            "{writer} wrote it, in {schema}, and this release reads schema {OP_RECORD_SCHEMA} \
+             alone, so neither `--continue` nor `rwv abort` acts on it. The release that wrote \
+             it resumes or aborts it"
+        ),
+    ))
 }
 
 /// The header of the `.rwv-op` file in `workspace_dir`, whether or not the
@@ -1989,9 +2049,16 @@ pub fn read_lease(workspace_dir: &Path) -> anyhow::Result<Option<LeaseRecord>> {
     let json = path
         .read_to_string()
         .with_context(|| format!("failed to read lease from {path}"))?;
-    let lease: LeaseRecord =
-        serde_json::from_str(&json).with_context(|| format!("failed to parse lease at {path}"))?;
-    Ok(Some(lease))
+    match serde_json::from_str::<LeaseRecord>(&json) {
+        Ok(lease) => Ok(Some(lease)),
+        Err(e) => crate::refuse!(
+            RefusalKind::UnreadableOpLease,
+            "the lease at {path} cannot be read ({e:#}), so which operation holds this \
+             workspace cannot be told. This removes it, and nothing else; an operation that \
+             still runs loses its hold on this workspace:\n  {discard}",
+            discard = discard_unreadable_record_at(path.dir()),
+        ),
+    }
 }
 
 /// Remove the `.rwv-op-lease` lease file from `workspace_dir`. No-op if absent.
@@ -2739,9 +2806,139 @@ mod tests {
             read_owner_for_abort(tmp.path()).map(|_| ()),
             read_owner_header(tmp.path()).map(|_| ()),
         ] {
-            let message = format!("{:#}", refused.unwrap_err());
+            let refused = refused.unwrap_err();
+            assert_eq!(
+                crate::refusal::kind_of(&refused),
+                Some(RefusalKind::UnreadableOpRecord)
+            );
+            let message = format!("{refused:#}");
             assert!(
-                message.contains("an rwv release before") && message.contains("abort it with"),
+                message.contains("an rwv release before")
+                    && message.contains("resumes or aborts it")
+                    && message.contains(&discard_unreadable_record_at(tmp.path())),
+                "{message}"
+            );
+        }
+    }
+
+    /// The record's wire shape at [`OP_RECORD_SCHEMA`], as this file declares
+    /// it: a field added, removed, renamed, retyped or given a serde
+    /// attribute in any type the record reaches changes the digest, and the
+    /// change ships with a new schema number and the digest it has there.
+    ///
+    /// Structural, since no record either release writes tells the two
+    /// apart. It reads the declarations in this file reachable from
+    /// `WireOwnerRecord`, attributes and fields, comments and blank lines
+    /// left out; a type declared in another module that a field names is
+    /// read by its name alone, so a change inside one is not seen here.
+    const PINNED_SHAPE: (u32, &str) = (7, "a9f183df538a93ef");
+
+    fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
+        let start = source.iter().position(|line| {
+            let line = line.trim_start().trim_start_matches("pub ");
+            ["struct ", "enum "].iter().any(|kw| {
+                line.strip_prefix(kw).is_some_and(|rest| {
+                    rest.strip_prefix(name)
+                        .is_some_and(|after| after.starts_with([' ', '{', '(', '<']))
+                })
+            })
+        })?;
+        let first = (0..start)
+            .rev()
+            .take_while(|&i| source[i].trim_start().starts_with("#["))
+            .last()
+            .unwrap_or(start);
+        let mut depth = 0i32;
+        let mut lines = Vec::new();
+        for line in &source[first..] {
+            let code = line.trim();
+            if code.is_empty() || code.starts_with("//") {
+                continue;
+            }
+            lines.push(code);
+            depth += code.matches('{').count() as i32 - code.matches('}').count() as i32;
+            if depth == 0 && (code.ends_with('}') || code.ends_with(';')) && lines.len() > 1 {
+                break;
+            }
+        }
+        Some(lines)
+    }
+
+    fn shape_digest() -> String {
+        let source: Vec<&str> = include_str!("op_state.rs")
+            .split("\n#[cfg(test)]\nmod tests")
+            .next()
+            .unwrap()
+            .lines()
+            .collect();
+        let mut seen = std::collections::BTreeMap::new();
+        let mut pending = vec!["WireOwnerRecord".to_owned()];
+        while let Some(name) = pending.pop() {
+            if seen.contains_key(&name) {
+                continue;
+            }
+            let Some(lines) = declaration_of(&source, &name) else {
+                continue;
+            };
+            for word in lines
+                .iter()
+                .flat_map(|line| line.split(|c: char| !c.is_ascii_alphanumeric() && c != '_'))
+                .filter(|word| word.starts_with(|c: char| c.is_ascii_uppercase()))
+            {
+                pending.push(word.to_owned());
+            }
+            seen.insert(name, lines.join("\n"));
+        }
+        assert!(seen.contains_key("TakeInRecord") && seen.contains_key("Carrying"));
+        let shape = seen.into_values().collect::<Vec<_>>().join("\n");
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for byte in shape.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        format!("{hash:016x}")
+    }
+
+    #[test]
+    fn the_record_schema_number_moves_with_its_shape() {
+        assert_eq!(
+            (OP_RECORD_SCHEMA, shape_digest().as_str()),
+            PINNED_SHAPE,
+            "the op record's shape and its schema number move together: a shape change \
+             bumps OP_RECORD_SCHEMA and pins the new digest beside it"
+        );
+    }
+
+    #[test]
+    fn a_field_this_release_does_not_read_is_refused_naming_its_writer() {
+        let tmp = crate::tempdir().unwrap();
+        let record = OwnerRecord::new_take_in(
+            &"1".parse().unwrap(),
+            OpVerb::Pull,
+            test_project(),
+            tmp.path(),
+            TakeInRecord::default(),
+        );
+        write_owner(tmp.path(), &record).unwrap();
+        let path = OwnerRecord::path_in(tmp.path());
+        let mut json: serde_json::Value =
+            serde_json::from_str(&path.read_to_string().unwrap()).unwrap();
+        json["release"] = "9.9.9".into();
+        json["take_in"]["moved_somewhere_new"] = serde_json::json!(["x"]);
+        path.publish(json.to_string().as_bytes()).unwrap();
+        for refused in [
+            read_owner(tmp.path()).map(|_| ()),
+            read_owner_for_abort(tmp.path()).map(|_| ()),
+        ] {
+            let refused = refused.unwrap_err();
+            assert_eq!(
+                crate::refusal::kind_of(&refused),
+                Some(RefusalKind::UnreadableOpRecord)
+            );
+            let message = format!("{refused:#}");
+            assert!(
+                message.contains("rwv 9.9.9 wrote it with a field")
+                    && message.contains("moved_somewhere_new"),
                 "{message}"
             );
         }
@@ -2794,7 +2991,7 @@ mod tests {
         let (source, target) = (place("src"), place("tgt"));
         let record = format!(
             r#"{{
-  "schema": 6,
+  "schema": 7,
   "release": "{release}",
   "id": "1779769917405921588",
   "verb": "land",
@@ -3037,7 +3234,7 @@ mod tests {
   "phase": "replay",
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3066,13 +3263,13 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
         let err = read_owner(dir).unwrap_err();
         assert!(
-            err.to_string().contains("failed to parse owner record"),
+            crate::refusal::kind_of(&err) == Some(RefusalKind::UnreadableOpRecord),
             "a record missing project must fail to parse; got: {err}"
         );
     }
@@ -3097,13 +3294,13 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
         let err = read_owner(dir).unwrap_err();
         assert!(
-            err.to_string().contains("failed to parse owner record"),
+            crate::refusal::kind_of(&err) == Some(RefusalKind::UnreadableOpRecord),
             "a record whose project name fails validation must fail to parse; got: {err}"
         );
     }
@@ -3122,7 +3319,7 @@ mod tests {
   "advanced_tips": {{}},
   "converged_tips": {{}},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }}
 "#
         )
@@ -3177,7 +3374,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3203,7 +3400,7 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3325,7 +3522,7 @@ mod tests {
   "advanced_tips": {},
   "converged_tips": {},
   "overrides": [],
-  "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3343,7 +3540,7 @@ mod tests {
                 r#"{{"id": "1", "verb": "sync", "history": null, "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "advanced_tips": {advanced}, "converged_tips": {converged},
-                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 6, "release": "0.0.0", "take_in": null}}"#
+                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");
@@ -3970,8 +4167,17 @@ mod tests {
         }
 
         path.publish(b"{ not json").unwrap();
-        let err = read_owner_for_abort(dir).unwrap_err().to_string();
-        assert!(err.contains("It names no op this rwv can read"), "{err}");
+        let refused = read_owner_for_abort(dir).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::UnreadableOpRecord)
+        );
+        assert!(
+            refused
+                .to_string()
+                .contains(&discard_unreadable_record_at(dir)),
+            "{refused}"
+        );
     }
 
     #[test]

@@ -299,7 +299,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \"advanced_tips\": {{{advanced_json}}}, \
          \"converged_tips\": {{{converged_json}}}, \"overrides\": [{overrides_json}], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         take_in = if rec.verb_str == "land" {
             let mut plan: repoweave::op_state::TakeInRecord = serde_json::from_str(
                 &common::land_plan_json(workspace, Path::new(&rec.target), "web-app"),
@@ -2815,7 +2815,7 @@ fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     )
@@ -2938,7 +2938,8 @@ fn cell_owner_record_without_a_readable_header_is_refused() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "[cell7b] stderr:\n{stderr}");
     assert!(
-        stderr.contains("It names no op this rwv can read"),
+        stderr.contains("it names no operation this rwv can read")
+            && stderr.contains("rwv explain unreadable-op-record"),
         "[cell7b] refusal must say the record names no op; stderr:\n{stderr}"
     );
     assert_eq!(

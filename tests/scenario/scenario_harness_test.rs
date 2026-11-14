@@ -1233,6 +1233,11 @@ every_scenario!(
     a_continued_retire_releases_the_target_first,
     a_landing_records_its_op_before_it_claims,
     a_switch_refuses_to_align_a_member_onto_a_claimed_branch,
+    an_unreadable_op_record_is_ended_by_its_verb,
+    an_unreadable_workweave_index_is_rebuilt_by_doctor("garbage{"),
+    an_unreadable_workweave_index_is_rebuilt_by_doctor("{\"workweaves\":{},\"future\":1}"),
+    discarding_a_readable_op_record_is_refused,
+    an_unreadable_op_lease_is_removed_by_its_verb,
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Switch),
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::SwitchDetached),
     a_verb_refuses_a_branch_a_stopped_landing_claims(scenarios::ClaimedMove::Rename),
@@ -6466,6 +6471,32 @@ fn a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues() {
         scenarios::a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues(),
     )
     .assert_fully_decided_green();
+}
+
+#[test]
+fn an_unreadable_op_record_is_ended_by_its_verb() {
+    runner::run(scenarios::an_unreadable_op_record_is_ended_by_its_verb())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn an_unreadable_workweave_index_is_rebuilt_by_doctor() {
+    for content in ["garbage{", "{\"workweaves\":{},\"future\":1}"] {
+        runner::run(scenarios::an_unreadable_workweave_index_is_rebuilt_by_doctor(content))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn an_unreadable_op_lease_is_removed_by_its_verb() {
+    runner::run(scenarios::an_unreadable_op_lease_is_removed_by_its_verb())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn discarding_a_readable_op_record_is_refused() {
+    runner::run(scenarios::discarding_a_readable_op_record_is_refused())
+        .assert_fully_decided_green();
 }
 
 #[test]

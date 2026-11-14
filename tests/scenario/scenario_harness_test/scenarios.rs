@@ -15678,6 +15678,178 @@ pub fn a_switch_refuses_to_align_a_member_onto_a_claimed_branch() -> Scenario {
     )
 }
 
+/// A landing killed holding its lease and claim, whose record is then
+/// overwritten with text no parser reads: every verb that reads it refuses
+/// naming the verb that ends it, `status` reports it, doctor keeps the
+/// operation's savepoints, and the printed verb ends the operation, its lease
+/// and claim with it, moving nothing back and listing the savepoints it
+/// leaves, which doctor then reports and drops.
+pub fn an_unreadable_op_record_is_ended_by_its_verb() -> Scenario {
+    let refused = |step: Step| {
+        step.expect(Exit::refuses_kind(RefusalKind::UnreadableOpRecord))
+            .claim(Claim::OutputContains("abort --discard-unreadable-record"))
+    };
+    let steps = vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::tamper("garble w's op record", Tamper::CorruptOpRecord(ww("w"))),
+        Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("abort --discard-unreadable-record")),
+        refused(Step::rwv(&ww("w"), &["land", "--continue"])),
+        refused(Step::rwv(&ww("w"), &["abort"])),
+        refused(Step::rwv(&a(), &["abort"])),
+        refused(Step::rwv(&a(), &["sync"])),
+        Step::rwv(&ww("w"), &["doctor", "--fix"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("unreadable-op-record"))
+            .claim(Claim::OutputLacks("orphaned-savepoint")),
+        refused(Step::rwv(&ww("w"), &["abort"])),
+        Step::rwv_printed(&ww("w"), "rwv -C")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("released the lease on"))
+            .claim(Claim::OutputContains("released the landing claim"))
+            .claim(Claim::OutputContains("savepoint"))
+            .claim(Claim::OutputContains(
+                "Nothing the operation moved was put back",
+            ))
+            .claim(Claim::LocalStateUnchanged(ww("w")))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("operation record")),
+        Step::rwv(&a(), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        Step::rwv(&ww("w"), &["abort", "--discard-unreadable-record"])
+            .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        Step::rwv(
+            &ww("w"),
+            &[
+                "abort",
+                "--discard-unreadable-record",
+                "--abandon-foreign-tip",
+                "local/remotes/app",
+            ],
+        )
+        .expect(Exit::Code(2)),
+        Step::rwv(&ww("w"), &["doctor", "--fix"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("orphaned-savepoint")),
+    ];
+    scenario("an unreadable op record is ended by its verb", steps)
+}
+
+/// A landing killed holding its lease on the primary, whose lease is then
+/// overwritten with text no parser reads: every verb there refuses naming
+/// the verb that removes it, `status` reports it, and the printed line run
+/// verbatim removes that lease alone; the landing's record still ends it.
+pub fn an_unreadable_op_lease_is_removed_by_its_verb() -> Scenario {
+    let refused = |step: Step| {
+        step.expect(Exit::refuses_kind(RefusalKind::UnreadableOpLease))
+            .claim(Claim::OutputContains("abort --discard-unreadable-record"))
+    };
+    let steps = vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::tamper("garble the primary's lease", Tamper::CorruptOpLease(a())),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("abort --discard-unreadable-record")),
+        refused(Step::rwv(&a(), &["sync"])),
+        refused(Step::rwv(&a(), &["abort"])),
+        Step::rwv_printed(&a(), "rwv -C")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("removed the unreadable lease"))
+            .claim(Claim::LocalStateUnchanged(a()))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv(&a(), &["abort"])
+            .expect(Exit::refuses_kind(RefusalKind::AbortInItsWorkspace))
+            .claim(Claim::OutputContains("abort it from its own workspace")),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+    ];
+    scenario("an unreadable op lease is removed by its verb", steps)
+}
+
+/// A landing killed with its record intact: `--discard-unreadable-record`
+/// refuses, naming the plain `rwv abort` that restores from the record, run
+/// in the landing's workspace or in the one its readable lease holds, and
+/// that lease still holds the workspace after it.
+pub fn discarding_a_readable_op_record_is_refused() -> Scenario {
+    let steps = vec![
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::rwv(&ww("w"), &["abort", "--discard-unreadable-record"])
+            .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+            .claim(Claim::OutputContains("`rwv abort` restores from it"))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv(&a(), &["abort", "--discard-unreadable-record"])
+            .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(&a(), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpInProgress)),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+    ];
+    scenario("discarding a readable op record is refused", steps)
+}
+
+/// The index of a project with two workweaves, one stopped mid-landing, is
+/// overwritten with `content`, which this rwv does not read: every verb run
+/// in a workweave refuses naming the verb that rebuilds it, `rwv doctor
+/// --fix` run in the workweave rebuilds it from the workweaves on disk, and
+/// the stopped landing then aborts.
+pub fn an_unreadable_workweave_index_is_rebuilt_by_doctor(content: &'static str) -> Scenario {
+    let refused = |step: Step| {
+        step.expect(Exit::refuses_kind(RefusalKind::UnreadableWorkweaveIndex))
+            .claim(Claim::OutputContains("doctor --fix"))
+    };
+    let steps = vec![
+        create("w"),
+        create("v"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::rwv_paused(&ww("w"), &["land"], "composed", "landing"),
+        Step::kill("landing"),
+        Step::tamper(
+            "make the index unreadable",
+            Tamper::CorruptIndex(Machine::A, content),
+        ),
+        refused(Step::rwv(&ww("w"), &["status"])),
+        refused(Step::rwv(&ww("v"), &["status"])),
+        refused(Step::rwv(&ww("w"), &["abort"])),
+        Step::rwv_printed(&ww("w"), "rwv -C")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rebuilt it listing 2 workweave(s)"))
+            .claim(Claim::IndexLists {
+                machine: Machine::A,
+                name: "w",
+                parent: a(),
+            })
+            .claim(Claim::IndexLists {
+                machine: Machine::A,
+                name: "v",
+                parent: a(),
+            }),
+        Step::rwv(&ww("v"), &["status"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj]),
+    ];
+    scenario("an unreadable workweave index is rebuilt by doctor", steps)
+}
+
 /// How a landing killed while it waited on its target's claim is ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KilledWaiter {

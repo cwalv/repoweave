@@ -243,7 +243,13 @@ pub enum Tamper {
     CorruptMarker(Place),
     /// Point the marker's `parent` at a directory the index does not record.
     RepointMarkerParent(Place),
+    /// Overwrite the operation record with text no parser reads.
+    CorruptOpRecord(Place),
+    /// Overwrite the op-state lease with text no parser reads.
+    CorruptOpLease(Place),
     DeleteIndex(Machine),
+    /// Overwrite the index with what `content` holds.
+    CorruptIndex(Machine, &'static str),
     /// Write the index as an earlier release kept it: at the top of the
     /// project checkout, `container` for `basedir`, bare paths, an empty
     /// `receipts`, and the container somewhere the current default is not.
@@ -1774,6 +1780,20 @@ impl Run<'_> {
                 let marker = sb.place_root(at).join(".rwv-workweave");
                 std::fs::write(&marker, "{ not a marker").map_err(|e| io(&marker, e))
             }
+            Tamper::CorruptOpRecord(at) => {
+                let record = sb.place_root(at).join(".rwv-op");
+                if !record.is_file() {
+                    return Err(format!("{}: no operation record", record.display()));
+                }
+                std::fs::write(&record, "{ not a record").map_err(|e| io(&record, e))
+            }
+            Tamper::CorruptOpLease(at) => {
+                let lease = sb.place_root(at).join(".rwv-op-lease");
+                if !lease.is_file() {
+                    return Err(format!("{}: no lease", lease.display()));
+                }
+                std::fs::write(&lease, "{ not a lease").map_err(|e| io(&lease, e))
+            }
             Tamper::RepointMarkerParent(at) => {
                 let marker = sb.place_root(at).join(".rwv-workweave");
                 let text = std::fs::read_to_string(&marker).map_err(|e| io(&marker, e))?;
@@ -1782,6 +1802,13 @@ impl Run<'_> {
                 value["parent"] = serde_json::json!(sb.root.join("nowhere"));
                 std::fs::write(&marker, serde_json::to_string_pretty(&value).unwrap())
                     .map_err(|e| io(&marker, e))
+            }
+            Tamper::CorruptIndex(machine, content) => {
+                let index = sb.index_file(*machine);
+                if !index.is_file() {
+                    return Err(format!("{}: no index", index.display()));
+                }
+                std::fs::write(&index, content).map_err(|e| io(&index, e))
             }
             Tamper::DeleteIndex(machine) => {
                 let index = sb.index_file(*machine);

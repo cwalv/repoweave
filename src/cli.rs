@@ -359,6 +359,9 @@ pub enum Commands {
         /// End a landing whose target something else has moved since (another landing built on it, a commit, a branch deleted or checked out): its source is restored and its whole target left as it stands, each tip the landing wrote there first kept as a backup where no branch reaches it, its savepoints dropped. Refused where abort can restore the target.
         #[arg(long = "leave-target")]
         leave_target: bool,
+        /// End the operation whose record this rwv cannot read: remove the record, the leases it holds on other workspaces and its landing claims, and move nothing back. Lists the repos it leaves stopped in a VCS operation and the savepoints it leaves for `rwv doctor` to keep or drop. Refused where the record reads, which plain `rwv abort` restores from.
+        #[arg(long = "discard-unreadable-record", conflicts_with_all = ["abandon_foreign_tip", "leave_target"])]
+        discard_unreadable_record: bool,
     },
     /// List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved
     #[command(arg_required_else_help = true)]

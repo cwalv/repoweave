@@ -2088,6 +2088,34 @@
         {
           "type": "object",
           "required": [
+            "error",
+            "kind",
+            "workspace_dir"
+          ],
+          "properties": {
+            "error": {
+              "description": "Why it cannot be read, naming the verb that ends the operation.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unreadable-op-record"
+              ]
+            },
+            "workspace_dir": {
+              "description": "Absolute path to the workspace dir that holds the `.rwv-op` file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "kind",
             "op_id",
             "recorded_owner",

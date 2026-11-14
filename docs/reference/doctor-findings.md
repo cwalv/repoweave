@@ -87,7 +87,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`legacy-workweave-marker`](#legacy-workweave-marker) | Warning | Auto-fixable |
 | [`legacy-workweave-index`](#legacy-workweave-index) (`before-receipts`, `old-path`) | Warning | Auto-fixable |
 | [`unreadable-owned-state`](#unreadable-owned-state) | Warning | Report-only |
-| [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Report-only |
+| [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
 | [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
@@ -115,6 +115,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`orphaned-savepoint`](#orphaned-savepoint) / `live` | Warning | Auto-fixable |
 | [`unrecognized-savepoint-ref`](#unrecognized-savepoint-ref) | Warning | Report-only |
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
+| [`unreadable-op-record`](#unreadable-op-record) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
 | [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--release-unreadable-claims`) |
@@ -720,19 +721,27 @@ current content matters, inspect it before you re-derive.
 
 ### `unreadable-workweave-index`
 
-**Error. Report-only.** A workweave index that exists and does not parse, in
-the project clone's shared directory or at the old path. Everything derived
-from it is unevaluated: the recorded placements and, for a file at the old
-path, whether it can be converted by the `legacy-workweave-index` repair.
+**Error. Auto-fixable.** A workweave index that exists and does not parse, in
+the project clone's shared directory or at the old path: a corrupt file, or
+one a newer release wrote with a field this one does not know. Everything
+derived from it is unevaluated: the recorded placements and, for a file at the
+old path, whether it can be converted by the `legacy-workweave-index` repair.
+Every verb that reads it, which is every verb run in one of the project's
+workweaves, refuses with this kind, naming `rwv -C <primary> doctor --fix`.
 
 While the index cannot be parsed, `unregistered-workweave` and
 `stale-registry-entry` are suppressed for the project because attempting to
 adopt or prune against an unreadable index would fail on the same parse error.
 
-**What to do:** repair the file, or delete it and re-run `rwv doctor --fix`,
-which re-adopts the workweaves on disk into a fresh index. `--fix` never
-rewrites it for you: a corrupt index gives no way to tell which entries it
-meant to hold.
+**What to do:** `rwv doctor --fix`, run in the primary or in any of the
+project's workweaves, rebuilds the index from what the workweaves on disk
+record: each `.rwv-workweave` marker in the containers doctor scans holds the
+workweave's project and parent, and its directory name, `<project>--<name>`,
+holds its name. What no marker holds is not rebuilt: the basedir the index
+recorded (`rwv workweave set-default-create-basedir` records it again), and a workweave
+outside the scanned containers, which the next rwv run inside it lists again
+where its directory name spells its name. A file at the old path is not
+rebuilt over.
 
 ### `workweave-tree-integrity`
 
@@ -1547,7 +1556,9 @@ text output prints that command filled in.
 The finding reports the file's age, its path, and the `verb` that started the
 op (`sync` or `land`). A file whose op id, verb, project, workspaces and
 start time parse is reported, and its savepoints held live, even when the
-rest of it does not parse, since `rwv abort` can still restore from them.
+rest of it does not parse, since `rwv abort` can still restore from them. A
+file whose op id does not parse, or that another release's record schema
+wrote, is [`unreadable-op-record`](#unreadable-op-record) instead.
 
 `--fix` has no arm here and will not grow one: another terminal may be
 mid-conflict-resolution, and rwv has no daemon that could know which workspace
@@ -1556,6 +1567,29 @@ the op state legitimately belongs to.
 **What to do:** inspect it, then either resume with the `--continue` the
 finding names — an op is only resumable under the verb that started it — or
 `rwv abort` to roll back.
+
+### `unreadable-op-record`
+
+**Warning. Report-only.** A `.rwv-op` file this rwv cannot read: not even the
+operation it names parses, or another release wrote it in a record schema this
+one does not read. Nothing can resume the operation or restore from its
+savepoints, and every verb that reads the record, run in its workspace or in a
+workspace the operation leases, refuses with this kind and the same message.
+`rwv status` reports it instead of refusing.
+
+Without the record, which savepoints are the operation's cannot be told, so
+while one stands no savepoint whose operation it may name is reported as
+`orphaned-savepoint`, and `--fix` drops none of them.
+
+**What to do:** if another release wrote it, that release resumes or aborts
+the operation. Otherwise `rwv abort --discard-unreadable-record`, run in the
+workspace the message names or in one the operation leases, ends it: it
+removes the record, the leases it holds on other workspaces and its landing
+claims, and moves nothing back, since only the record says which tips are the
+operation's own. It lists each repo it leaves stopped in a VCS operation and
+each savepoint it leaves; once no record claims a savepoint, `rwv doctor`
+reports it as `orphaned-savepoint`, and `rwv doctor --fix` keeps each tip it
+holds that no branch reaches as a backup before dropping it.
 
 ### `dead-op-lease`
 

@@ -39,6 +39,12 @@ pub enum RefusalKind {
     OpInProgress,
     /// A phase stopped and op-state is held there, awaiting resume or abort.
     OpParked,
+    /// An operation record this rwv cannot read: not even the op it names
+    /// parses, or another release's schema wrote it.
+    UnreadableOpRecord,
+    /// An op-state lease this rwv cannot read: which operation holds the
+    /// workspace cannot be told.
+    UnreadableOpLease,
     /// A name spells a character the flat rendering reserves.
     UnrenderableName,
     /// A name is not usable as a ref-name component.
@@ -129,6 +135,9 @@ pub enum RefusalKind {
     /// Two paths both claim to be this workweave.
     RegistryPathDisagreement,
 
+    /// A project's workweave index does not parse; `rwv doctor --fix`
+    /// rebuilds it.
+    UnreadableWorkweaveIndex,
     /// A marker-bearing workweave no registry entry records.
     UnregisteredWorkweave,
     /// A recorded name → path that no longer round-trips.

@@ -257,6 +257,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             }
         },
         CheckViolation::StaleOpState { .. } => "stale-op-state".into(),
+        CheckViolation::UnreadableOpRecord { .. } => "unreadable-op-record".into(),
         CheckViolation::DeadOpLease { sub_kind, .. } => match sub_kind {
             DeadOpLeaseKind::OwnerRecordAbsent => "dead-op-lease/owner-record-absent".into(),
             DeadOpLeaseKind::OwnerOpIdMismatch { .. } => {
@@ -755,6 +756,10 @@ pub fn corpus() -> Vec<CheckViolation> {
             workspace_dir: path("/ws"),
             verb: OpVerb::Land,
             started_at: "2026-01-01T00:00:00Z".into(),
+        },
+        CheckViolation::UnreadableOpRecord {
+            workspace_dir: path("/ws"),
+            error: "the operation record at /ws/.rwv-op cannot be read".into(),
         },
         CheckViolation::DeadOpLease {
             workspace_dir: path("/ws"),

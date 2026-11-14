@@ -49,7 +49,7 @@ const EXCEPTIONS: &[Exception] = &[
     Exception {
         file: "check.rs",
         function: "into_text_issue",
-        count: 8,
+        count: 9,
         reason: "each `error` is a `String` field of a `CheckViolation`, rendered from \
                  the error where the violation was built",
     },

@@ -246,7 +246,7 @@ impl LandingClaim {
 
     /// Remove the claim, if it still names this op.
     pub fn release(self) -> anyhow::Result<()> {
-        release_if_held(&self.path, &self.op)
+        release_if_held(&self.path, &|holder| holder.op == self.op).map(|_| ())
     }
 
     /// Undo this take: release the claim unless its op held it before it.
@@ -261,12 +261,37 @@ impl LandingClaim {
     /// whatever target it is on: what `rwv abort` does, whether or not the
     /// op's record names its target.
     pub fn release_held_by(vcs: &dyn Vcs, project_dir: &Path, op: &OpId) -> anyhow::Result<()> {
-        for claim in claim_dirs(&claims_dir(vcs, project_dir)?)? {
-            release_takeovers_held_by(&claim, op)?;
-            release_if_held(&StateFile::LandingClaim.in_dir(&claim), op)?;
-        }
-        Ok(())
+        release_matching(vcs, project_dir, &|holder| holder.op == *op).map(|_| ())
     }
+
+    /// Remove every landing claim in the store of `project_dir` whose op
+    /// `owner` records, whatever op that is: what ending an operation whose
+    /// record cannot be read does, since a workspace records one op at a time.
+    /// Returns each claim file it removed.
+    pub fn release_owned_by(
+        vcs: &dyn Vcs,
+        project_dir: &Path,
+        owner: &Path,
+    ) -> anyhow::Result<Vec<std::path::PathBuf>> {
+        let owner = CanonicalPath::of(owner);
+        release_matching(vcs, project_dir, &|holder| holder.owner == owner)
+    }
+}
+
+fn release_matching(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    held: &dyn Fn(&Holder) -> bool,
+) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let mut released = Vec::new();
+    for claim in claim_dirs(&claims_dir(vcs, project_dir)?)? {
+        release_takeovers_held_by(&claim, held)?;
+        let path = StateFile::LandingClaim.in_dir(&claim);
+        if release_if_held(&path, held)? {
+            released.push(path.reported());
+        }
+    }
+    Ok(released)
 }
 
 /// Refuse moving, deleting, renaming or re-pointing any of `branches` of
@@ -963,12 +988,12 @@ fn sweep_dead_takeovers(dir: &Path, mine: &Holder) {
 
 /// Remove each takeover guard in `dir` that `op` holds, left by a landing
 /// killed while it took over a dead claim.
-fn release_takeovers_held_by(dir: &Path, op: &OpId) -> anyhow::Result<()> {
+fn release_takeovers_held_by(dir: &Path, held: &dyn Fn(&Holder) -> bool) -> anyhow::Result<()> {
     for guard in takeover_guards(dir) {
         if std::fs::read(&guard)
             .ok()
-            .and_then(|held| Holder::parse(&held))
-            .is_some_and(|holder| holder.op == *op)
+            .and_then(|bytes| Holder::parse(&bytes))
+            .is_some_and(|holder| held(&holder))
         {
             crate::durable_file::remove_named(&guard)?;
         }
@@ -976,17 +1001,18 @@ fn release_takeovers_held_by(dir: &Path, op: &OpId) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn release_if_held(path: &StatePath, op: &OpId) -> anyhow::Result<()> {
+fn release_if_held(path: &StatePath, held: &dyn Fn(&Holder) -> bool) -> anyhow::Result<bool> {
     let seen = match path.read() {
         Ok(seen) => seen,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(e) => {
             return Err(anyhow::Error::new(e).context(format!("failed to read the claim {path}")))
         }
     };
-    if Holder::parse(&seen).is_none_or(|holder| holder.op != *op) {
-        return Ok(());
-    }
+    let Some(holder) = Holder::parse(&seen).filter(|holder| held(holder)) else {
+        return Ok(false);
+    };
+    let op = holder.op;
     match path.remove() {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -998,7 +1024,7 @@ fn release_if_held(path: &StatePath, op: &OpId) -> anyhow::Result<()> {
         }
     }
     let _ = std::fs::remove_dir(path.dir());
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]

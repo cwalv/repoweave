@@ -1470,6 +1470,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["workweave-tree-integrity/stale-registry-entry"]),
         ),
         (
+            "unreadable-workweave-index of project",
+            Findings(&["unreadable-workweave-index"]),
+        ),
+        (
             "adopted workweave",
             Findings(&["workweave-tree-integrity/unregistered-workweave"]),
         ),

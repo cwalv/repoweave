@@ -1429,6 +1429,10 @@ mod doctor_json {
             workspace_dir: String,
             started_at: String,
         },
+        UnreadableOpRecord {
+            workspace_dir: String,
+            error: String,
+        },
         DeadOpLease {
             workspace_dir: String,
             op_id: String,

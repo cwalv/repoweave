@@ -62,6 +62,12 @@ pub struct StatusJsonOutput {
     /// attempt a mutation to learn it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub op: Option<OpStatus>,
+    /// Why the operation record this workspace holds, or the one its lease
+    /// names, cannot be read, as the refusal every other verb prints says it,
+    /// naming the verb that ends the operation. Absent when there is no such
+    /// record or it reads.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unreadable_op: Option<String>,
 }
 
 /// What a project's workspace last aligned its members for.
@@ -630,7 +636,10 @@ pub fn run_status(
         }
     }
 
-    let op = op_state::resolve_to_owner(&workspace_dir)?;
+    let (op, unreadable_op) = match op_state::resolve_to_owner(&workspace_dir) {
+        Ok(op) => (op, None),
+        Err(e) => (None, Some(format!("{e:#}"))),
+    };
     let backups = match ctx.active_project() {
         Some(active) if !unreadable_projects.iter().any(|u| &u.project == active) => {
             crate::backup::held_by_project(ctx)?
@@ -650,6 +659,7 @@ pub fn run_status(
             backups,
             resolution: Some(ctx.resolution()),
             op: op.as_ref().map(OpStatus::from),
+            unreadable_op,
         };
         let out = serde_json::to_string_pretty(&envelope)
             .context("failed to serialize status to JSON")?;
@@ -662,6 +672,9 @@ pub fn run_status(
         }
         if let Some(op) = &op {
             print_op_header(op);
+        }
+        if let Some(why) = &unreadable_op {
+            outln!("{why}");
         }
         print_table(&entries);
         let mut lines: Vec<String> = records.iter().map(|record| record.line()).collect();
@@ -959,6 +972,7 @@ mod tests {
             }],
             resolution: None,
             op: None,
+            unreadable_op: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");
@@ -1022,6 +1036,7 @@ mod tests {
                 ))),
                 overrides: Vec::new(),
             }),
+            unreadable_op: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");
@@ -1081,6 +1096,7 @@ mod tests {
             }],
             resolution: None,
             op: None,
+            unreadable_op: None,
         };
 
         let json = serde_json::to_string(&envelope).expect("serializes");

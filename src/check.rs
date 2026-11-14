@@ -437,6 +437,18 @@ pub enum CheckViolation {
         started_at: String,
     },
 
+    /// A `.rwv-op` file this rwv cannot read: not even the op it names
+    /// parses, or another release's schema wrote it. Every verb that reads it
+    /// refuses with the same token. While one stands no savepoint whose op it
+    /// may name is reported as orphaned, so `--fix` drops none of them.
+    UnreadableOpRecord {
+        /// Absolute path to the workspace dir that holds the `.rwv-op` file.
+        workspace_dir: PathBuf,
+        /// The refusal a verb reading it prints, naming the verb that ends
+        /// the operation.
+        error: String,
+    },
+
     /// A `.rwv-op-lease` file whose recorded owner workspace has no matching
     /// `.rwv-op` with the same op id — the **structural dead-lease** case.
     ///
@@ -693,6 +705,7 @@ impl CheckViolation {
             | CheckViolation::HistoryDisagreement { .. }
             | CheckViolation::LegacyManifestFormat { .. }
             | CheckViolation::StaleOpState { .. }
+            | CheckViolation::UnreadableOpRecord { .. }
             | CheckViolation::CargoVersionSkew { .. }
             | CheckViolation::CargoPatchShadowing { .. }
             | CheckViolation::MissingCanonicalClone { .. }
@@ -703,10 +716,10 @@ impl CheckViolation {
             | CheckViolation::UnnameableProject { .. }
             | CheckViolation::LockPinnedByName { .. }
             | CheckViolation::UnreadableOwnedState { .. }
-            | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
             CheckViolation::DanglingActiveProject { .. }
+            | CheckViolation::UnreadableWorkweaveIndex { .. }
             | CheckViolation::UnreadableActiveProject { .. }
             | CheckViolation::LegacyWorkweaveMarker { .. }
             | CheckViolation::DeadOpLease { .. }
@@ -822,6 +835,7 @@ impl CheckViolation {
             | CheckViolation::Alignment { .. }
             | CheckViolation::StaleWorktreeRegistration { .. }
             | CheckViolation::StaleOpState { .. }
+            | CheckViolation::UnreadableOpRecord { .. }
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::ClaimUnreadable { .. }
@@ -901,6 +915,7 @@ impl CheckViolation {
                 ViolationKind::StaleWorktreeRegistration
             }
             CheckViolation::StaleOpState { .. } => ViolationKind::StaleOpState,
+            CheckViolation::UnreadableOpRecord { .. } => ViolationKind::UnreadableOpRecord,
             CheckViolation::DeadOpLease { .. } => ViolationKind::DeadOpLease,
             CheckViolation::ClaimOwnerUnreachable { .. } => ViolationKind::ClaimOwnerUnreachable,
             CheckViolation::ClaimUnreadable { .. } => ViolationKind::ClaimUnreadable,
@@ -957,6 +972,7 @@ pub enum ViolationKind {
     Alignment,
     StaleWorktreeRegistration,
     StaleOpState,
+    UnreadableOpRecord,
     DeadOpLease,
     ClaimOwnerUnreachable,
     ClaimUnreadable,
@@ -973,7 +989,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1006,6 +1022,7 @@ impl ViolationKind {
         Self::Alignment,
         Self::StaleWorktreeRegistration,
         Self::StaleOpState,
+        Self::UnreadableOpRecord,
         Self::DeadOpLease,
         Self::ClaimOwnerUnreachable,
         Self::ClaimUnreadable,
@@ -2226,6 +2243,12 @@ pub enum ViolationOutput {
         /// Raw `started_at` string from the op-state file (RFC3339 UTC).
         started_at: String,
     },
+    UnreadableOpRecord {
+        /// Absolute path to the workspace dir that holds the `.rwv-op` file.
+        workspace_dir: WirePath,
+        /// Why it cannot be read, naming the verb that ends the operation.
+        error: String,
+    },
     DeadOpLease {
         /// Absolute path to the workspace dir holding the dangling lease.
         workspace_dir: WirePath,
@@ -2711,6 +2734,13 @@ impl ViolationOutput {
                 workspace_dir: WirePath::of(&ws_dir),
                 verb,
                 started_at,
+            },
+            CheckViolation::UnreadableOpRecord {
+                workspace_dir: ws_dir,
+                error,
+            } => Self::UnreadableOpRecord {
+                workspace_dir: WirePath::of(&ws_dir),
+                error,
             },
             CheckViolation::DeadOpLease {
                 workspace_dir: ws_dir,
@@ -3507,6 +3537,35 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
     }
 
     violations
+}
+
+/// Rebuild `project`'s unreadable workweave index from the markers of the
+/// workweaves in the containers doctor scans: the names it lists, or `None`
+/// where the index read by the time its claim was held.
+pub fn rebuild_workweave_index(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+) -> anyhow::Result<Option<Vec<WorkweaveName>>> {
+    let mut found = Vec::new();
+    for container in workweave_containers_for_scan(ws_root) {
+        for (workweave, dir) in
+            crate::workweave::doctor_scan_container(ws_root, container.as_path())
+        {
+            if workweave.project != *project {
+                continue;
+            }
+            let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) else {
+                continue;
+            };
+            found.push((
+                workweave.name,
+                CanonicalPath::of(&dir),
+                marker.parent().clone(),
+            ));
+        }
+    }
+    let names = found.iter().map(|(name, ..)| name.clone()).collect();
+    Ok(crate::workweave_index::rebuild(ws_root, project, &found)?.then_some(names))
 }
 
 /// Adopt an on-disk workweave into its project's workweave index, with the
@@ -5687,21 +5746,28 @@ pub fn scan_state_hygiene(
     // is in flight) and must not be reported as orphaned.
     let mut live_savepoints: std::collections::HashSet<SavepointKey> =
         std::collections::HashSet::new();
+    let mut every_savepoint_live = false;
     for target in op_state_targets {
-        // A record whose header parses still owns its savepoints, since
-        // `rwv abort` restores from them; one whose header does not is
-        // surfaced by the verbs that read it, with its own advice.
-        let header = match crate::op_state::read_owner_header(&target.workspace_dir) {
-            Ok(header) => header,
-            Err(_) => crate::op_state::read_owner_header_of_any_schema(&target.workspace_dir),
-        };
-        if let Some(state) = header {
-            violations.push(CheckViolation::StaleOpState {
-                workspace_dir: target.workspace_dir.clone(),
-                verb: state.verb,
-                started_at: state.started_at.clone(),
-            });
-            live_savepoints.extend(state.savepoint_keys());
+        match crate::op_state::read_owner_header(&target.workspace_dir) {
+            Ok(None) => {}
+            Ok(Some(state)) => {
+                violations.push(CheckViolation::StaleOpState {
+                    workspace_dir: target.workspace_dir.clone(),
+                    verb: state.verb,
+                    started_at: state.started_at.clone(),
+                });
+                live_savepoints.extend(state.savepoint_keys());
+            }
+            Err(e) => {
+                violations.push(CheckViolation::UnreadableOpRecord {
+                    workspace_dir: target.workspace_dir.clone(),
+                    error: format!("{e:#}"),
+                });
+                match crate::op_state::read_owner_header_of_any_schema(&target.workspace_dir) {
+                    Some(state) => live_savepoints.extend(state.savepoint_keys()),
+                    None => every_savepoint_live = true,
+                }
+            }
         }
         // Dead-lease check: a workspace holding an `.rwv-op-lease` whose
         // recorded owner has no matching `.rwv-op` (or has one with a
@@ -5818,7 +5884,7 @@ pub fn scan_state_hygiene(
         for key in listing.keys {
             // Skip savepoints whose op-id matches an in-flight `.rwv-op`.
             // The owning sync may still need to roll back.
-            if live_savepoints.contains(&key) {
+            if every_savepoint_live || live_savepoints.contains(&key) {
                 continue;
             }
             let sub_kind = match unreached_savepoint_tips(vcs, &repo.abs, &key) {
@@ -6636,10 +6702,11 @@ impl CheckViolation {
                 error,
             } => format!(
                 "{}: workweave index does not parse ({error}); the recorded \
-                     workweaves for project `{project}` are \
-                     unevaluated, and every `rwv doctor --fix` arm that writes this \
-                     file fails until it parses — repair or delete the file, then \
-                     re-run `rwv doctor --fix` to re-adopt the workweaves on disk",
+                     workweaves for project `{project}` are unevaluated. `rwv doctor \
+                     --fix` rebuilds it from the markers of the workweaves in its \
+                     containers; it cannot rebuild the basedir the index recorded, \
+                     and a workweave outside those containers is listed again by the \
+                     next rwv run inside it",
                 index_path.display()
             ),
             // Relayed, not narrated: the loader states which file failed
@@ -7034,6 +7101,14 @@ impl CheckViolation {
                 workspace_dir.display(),
                 resume = crate::op_state::resume_command_at(verb, &workspace_dir),
                 abort = crate::op_state::abort_rolls_back_at(&workspace_dir),
+            ),
+            CheckViolation::UnreadableOpRecord {
+                workspace_dir,
+                error,
+            } => format!(
+                "{}/.rwv-op: unreadable-op-record — {error}. Its savepoints are kept while \
+                     it stands.",
+                workspace_dir.display(),
             ),
             CheckViolation::DeadOpLease {
                 workspace_dir,
@@ -8807,6 +8882,45 @@ fn apply_finding_repairs(
                             "workweave-index --fix failed: prune of stale entry `{}` in `{}` \
                              failed: {e:#}",
                             workweave_name, project
+                        ));
+                        false
+                    }
+                }
+            }
+
+            CheckViolation::UnreadableWorkweaveIndex {
+                project,
+                index_path,
+                ..
+            } if *index_path
+                == crate::workweave_index::legacy_index_path(ctx.primary_path(), project)
+                    .reported() =>
+            {
+                false
+            }
+            CheckViolation::UnreadableWorkweaveIndex { project, .. } => {
+                match rebuild_workweave_index(ctx.primary_path(), project) {
+                    Ok(Some(names)) => {
+                        outln!(
+                            "[fixed] core: unreadable-workweave-index of project `{project}`: \
+                             rebuilt it listing {} workweave(s) found on disk{}{}; the basedir \
+                             it recorded is not rebuilt, and a workweave outside the scanned \
+                             containers is listed again by the next rwv run inside it",
+                            names.len(),
+                            if names.is_empty() { "" } else { ": " },
+                            names
+                                .iter()
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join(", "),
+                        );
+                        true
+                    }
+                    Ok(None) => true,
+                    Err(e) => {
+                        fix_errors.push(format!(
+                            "workweave-index --fix failed: rebuild of project `{project}`'s \
+                             index failed: {e:#}"
                         ));
                         false
                     }

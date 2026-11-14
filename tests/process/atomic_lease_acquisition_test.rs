@@ -429,7 +429,7 @@ fn doctor_leaves_live_lease_alone() {
         "{{\"id\": \"{op_id}\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&owner_ws),
         tgt = common::json_escaped(&ww.root),
     );
@@ -478,7 +478,7 @@ fn doctor_reports_dead_op_lease_on_op_id_mismatch() {
         "{{\"id\": \"fresh-op\", \"verb\": \"land\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \"phase\": \"replay\", \
          \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \"overrides\": [], \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 6, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&owner_ws),
         tgt = common::json_escaped(&ww.root),
     );

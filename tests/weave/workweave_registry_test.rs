@@ -391,9 +391,10 @@ fn doctor_kinds(ws: &Path) -> Vec<String> {
 /// first is the control: the same workweave, the same empty registry, an index
 /// that parses — `unregistered-workweave`, and `--fix` performs the adoption
 /// it names. Without it a scan that reported nothing at all would satisfy the
-/// second arm's absence assertion.
+/// second arm's absence assertion. In the second arm `--fix` rebuilds the
+/// index from the workweave's marker, as the adoption recorded it.
 #[test]
-fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run() {
+fn an_unparseable_index_reports_itself_and_doctor_fix_rebuilds_it() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path(), "web-app");
 
@@ -427,6 +428,8 @@ fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run()
         .current_dir(&ws)
         .assert()
         .stdout(predicate::str::contains("[fixed] core: adopted workweave"));
+    let emptied_then_adopted: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&idx_p).unwrap()).unwrap();
 
     std::fs::write(&idx_p, "{ this is not json").unwrap();
 
@@ -449,11 +452,18 @@ fn an_unparseable_index_reports_itself_rather_than_an_adoption_that_cannot_run()
         .args(["doctor", "--fix"])
         .current_dir(&ws)
         .assert()
-        .stdout(predicate::str::contains("[fixed] core: adopted workweave").not());
+        .stdout(
+            predicate::str::contains(
+                "[fixed] core: unreadable-workweave-index of project `web-app`: rebuilt it \
+                 listing 1 workweave(s) found on disk: feat",
+            )
+            .and(predicate::str::contains("[fixed] core: adopted workweave").not()),
+        );
+    let rebuilt: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&idx_p).unwrap()).unwrap();
     assert_eq!(
-        std::fs::read_to_string(&idx_p).unwrap(),
-        "{ this is not json",
-        "--fix must not rewrite an index it cannot read"
+        rebuilt["workweaves"], emptied_then_adopted["workweaves"],
+        "--fix rebuilds the index the workweave on disk records"
     );
 }
 

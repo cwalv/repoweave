@@ -199,10 +199,10 @@ sub-kind — the name `rwv explain <token>` serves the finding's entry under. Un
 ```
 
 The `$schema` URL points to the committed schema artifact. Variants are
-discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `claim-format-unknown`, `claim-owner-unreachable`, `claim-unopenable`, `claim-unreadable`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-merge-driver-unreadable`, `lock-pinned-by-name`, `member-permissions`, `missing-canonical-clone`, `missing-lock-merge-driver`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `record-drift`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
+discriminated by the `kind` tag — `alignment`, `cargo-patch-shadowing`, `cargo-version-skew`, `claim-format-unknown`, `claim-owner-unreachable`, `claim-unopenable`, `claim-unreadable`, `clone-topology`, `confusable-siblings`, `dangling-active-project`, `dangling-reference`, `dead-op-lease`, `head-unreadable`, `history-disagreement`, `index-drift`, `legacy-manifest-format`, `legacy-workweave-index`, `legacy-workweave-marker`, `lock-merge-driver-unreadable`, `lock-pinned-by-name`, `member-permissions`, `missing-canonical-clone`, `missing-lock-merge-driver`, `orphaned-clone`, `orphaned-savepoint`, `phantom-merge-driver`, `pin`, `projectless-dir`, `projects-dir-unreadable`, `provenance`, `role-disagreement`, `stale-op-state`, `stale-worktree-registration`, `uninitialized-submodule`, `unknown-segment-clone`, `unnameable-project`, `unparseable-project`, `unreadable-active-project`, `unreadable-op-record`, `unreadable-owned-state`, `unreadable-workweave-index`, `unrecognized-savepoint-ref`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`.
 Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
-(`alignment`, `clone-topology`, `dead-op-lease`, `legacy-workweave-index`, `member-permissions`, `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`, `record-drift`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
+(`alignment`, `clone-topology`, `dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`, `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
 (`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
@@ -647,6 +647,25 @@ Schema:
           "type": "string",
           "enum": [
             "ff-only"
+          ]
+        }
+      ]
+    },
+    "IndexDriftKind": {
+      "description": "How a stale index should be treated.",
+      "oneOf": [
+        {
+          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
+          "type": "string",
+          "enum": [
+            "safe-to-fix"
+          ]
+        },
+        {
+          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
+          "type": "string",
+          "enum": [
+            "live-staged"
           ]
         }
       ]
@@ -1195,25 +1214,6 @@ Schema:
         }
       ]
     },
-    "RecordDriftKind": {
-      "description": "How a stale index should be treated.",
-      "oneOf": [
-        {
-          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
-          "type": "string",
-          "enum": [
-            "safe-to-fix"
-          ]
-        },
-        {
-          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
-          "type": "string",
-          "enum": [
-            "live-recorded"
-          ]
-        }
-      ]
-    },
     "RegistrationDirectoryKind": {
       "description": "What stands at a stale worktree registration's path.",
       "oneOf": [
@@ -1627,14 +1627,14 @@ Schema:
             "kind": {
               "type": "string",
               "enum": [
-                "record-drift"
+                "index-drift"
               ]
             },
             "path": {
               "type": "string"
             },
             "sub_kind": {
-              "$ref": "#/definitions/RecordDriftKind"
+              "$ref": "#/definitions/IndexDriftKind"
             },
             "workweave": {
               "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",
@@ -2308,6 +2308,34 @@ Schema:
                 {
                   "$ref": "#/definitions/OpVerb"
                 }
+              ]
+            },
+            "workspace_dir": {
+              "description": "Absolute path to the workspace dir that holds the `.rwv-op` file.",
+              "allOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "error",
+            "kind",
+            "workspace_dir"
+          ],
+          "properties": {
+            "error": {
+              "description": "Why it cannot be read, naming the verb that ends the operation.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unreadable-op-record"
               ]
             },
             "workspace_dir": {

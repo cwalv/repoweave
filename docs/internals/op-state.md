@@ -26,15 +26,24 @@ It is the sole copy of mutable op state. Cleared on success, precondition
 refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
 
-Schema v6. Every reader refuses a record whose `schema` is another number or
-absent, naming the release that wrote it (`release`, or "a release before" the
-running one for a record that has none): it is finished or aborted with that
-release, and nothing of it is read. JSON, every field mandatory — a record
-missing a key fails to parse rather than defaulting.
+Schema v7. The number moves with the record's shape: a test in `op_state`
+pins a digest of the declarations the wire record reaches in that file beside
+`OP_RECORD_SCHEMA`, so a field added, removed, renamed, retyped or given a
+serde attribute there without a new number fails it. Every reader refuses a record whose `schema` is another number or
+absent, and one carrying a field this release does not know (every struct of
+the record denies unknown fields), as `unreadable-op-record`, naming the
+release that wrote it (`release`, or "a release before" the running one for a
+record that has none): it is finished or aborted with that release, or ended
+here by `rwv abort --discard-unreadable-record`, and nothing of it is read. A
+record whose op id, verb, project and workspaces do not parse is refused the
+same way. JSON. The top-level keys are mandatory, so a record missing one fails
+to parse rather than defaulting, and abort reads it header-only; inside
+`take_in`, fields marked `serde(default)` in `TakeInRecord` read as empty when
+absent.
 
 ```json
 {
-  "schema": 6,
+  "schema": 7,
   "release": "0.25.0",
   "id": "1779769917405921588",
   "verb": "sync",
@@ -54,7 +63,7 @@ missing a key fails to parse rather than defaulting.
 
 | Field | Description |
 |---|---|
-| `schema` | The record schema, `5`. A record carrying another, or none, is refused |
+| `schema` | The record schema, `7`. A record carrying another, or none, is refused as `unreadable-op-record` |
 | `release` | The rwv release that wrote the record |
 | `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
 | `verb` | Which top-level verb started this op: `sync`, `land`, `pull`, `update-remote` or `cherry-pick` |

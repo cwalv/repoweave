@@ -228,9 +228,55 @@ pub(crate) fn read_current(
     let content = path
         .read_to_string()
         .with_context(|| format!("failed to read {path}"))?;
-    let index: WorkweaveIndex =
-        serde_json::from_str(&content).with_context(|| format!("failed to parse {path}"))?;
-    Ok(Some(index))
+    match serde_json::from_str::<WorkweaveIndex>(&content) {
+        Ok(index) => Ok(Some(index)),
+        Err(e) => crate::refuse!(
+            RefusalKind::UnreadableWorkweaveIndex,
+            "the workweave index of project {project} at {path} does not read ({e:#}). This \
+             rebuilds it from the workweaves on disk:\n  {rebuild}",
+            rebuild = rebuild_command(primary_root),
+        ),
+    }
+}
+
+/// The verb that rebuilds an unreadable index of the primary at
+/// `primary_root`.
+pub fn rebuild_command(primary_root: &Path) -> String {
+    format!("rwv -C {} doctor --fix", primary_root.display())
+}
+
+/// Replace the unreadable index of `(primary_root, project)` with one listing
+/// `found`, each workweave with the parent its marker records. Nothing is
+/// written where the index reads by the time the claim is held.
+pub fn rebuild(
+    primary_root: &Path,
+    project: &ProjectName,
+    found: &[(WorkweaveName, CanonicalPath, CanonicalPath)],
+) -> anyhow::Result<bool> {
+    IndexClaim::hold(primary_root, project, |claim| {
+        match read_for_edit(claim) {
+            Err(e)
+                if crate::refusal::kind_of(&e) == Some(RefusalKind::UnreadableWorkweaveIndex) => {}
+            _ => return Ok(false),
+        }
+        let index = WorkweaveIndex {
+            basedir: None,
+            workweaves: found
+                .iter()
+                .map(|(name, path, parent)| {
+                    (
+                        name.clone(),
+                        IndexedWorkweave {
+                            path: path.clone(),
+                            parent: parent.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        };
+        write(claim, &index)?;
+        Ok(true)
+    })
 }
 
 /// Atomically and **durably** write `index` for the pair `claim` covers.
