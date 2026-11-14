@@ -277,7 +277,6 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 |---|---|---|---|---|
 | `here` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | here | commits only the rewrite; other edits stay uncommitted |
 | `at` | rewrite the keys an earlier release wrote, committing only that | `rwv doctor --fix` | where `<b>` is checked out | commits only the rewrite; other edits stay uncommitted |
-| `mid-operation` | write the merge of both sides' values in place of the text merge | the stopped operation's `--continue` | here | written as an edit of the text merge, whose comments and layout stay; the file as it stood is kept in a backup first |
 | `mid-operation` | keep the text merge as the VCS made it | the stopped operation's `--continue --keep text-merge` | here | writes nothing; the text merge is not judged again in this operation |
 | `mid-operation` | edit rwv.toml into what you mean and mark it resolved, then continue | VCS action (git: `git -C <checkout> add -- <paths>`); the stopped operation's `--continue` | the checkout | the resolved file is taken whole and not judged again |
 | `mid-operation` | edit rwv.toml until it parses, then mark it resolved | VCS action (git: `git -C <checkout> add -- <paths>`) | the checkout | marks the working file resolved as it stands; the operation is still in progress |
