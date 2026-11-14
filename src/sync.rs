@@ -8600,7 +8600,7 @@ pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<(
                 }
                 if let Some(stopped) = vcs.mid_operation(&repo) {
                     left.push(format!(
-                        "  {}: stopped in a {}, which `rwv status` marks",
+                        "  {}: left stopped in a {}",
                         repo.display(),
                         stopped.operation()
                     ));

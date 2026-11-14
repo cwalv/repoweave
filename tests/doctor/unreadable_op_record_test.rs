@@ -327,6 +327,11 @@ fn a_record_that_names_no_op_is_ended_by_the_verb_its_error_names() {
             transcript(&out)
         );
     }
+    assert!(
+        !stderr.contains("`rwv status` marks"),
+        "the project repo it lists is one `rwv status` does not mark:\n{}",
+        transcript(&out)
+    );
     assert!(!record_path(&parked).exists());
     assert!(!target.join(".rwv-op-lease").exists());
     assert!(

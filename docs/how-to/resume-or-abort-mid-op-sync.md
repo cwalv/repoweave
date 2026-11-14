@@ -68,7 +68,7 @@ If every verb refuses with `unreadable-op-record`, the operation record cannot b
 rwv -C <workspace> abort --discard-unreadable-record
 ```
 
-It removes the record, the leases the operation holds on other workspaces and its landing claims, and moves nothing back: only the record says which tips are the operation's. It lists each repository left stopped in a rebase or merge, which `rwv status` also marks, and each savepoint and backup the repositories hold. `rwv doctor --fix` then keeps each savepoint tip no branch reaches as a backup and drops the savepoint.
+It removes the record, the leases the operation holds on other workspaces and its landing claims, and moves nothing back: only the record says which tips are the operation's. It lists each repository left stopped in a rebase or merge, and each savepoint and backup the repositories hold. `rwv doctor --fix` then keeps each savepoint tip no branch reaches as a backup and drops the savepoint.
 
 ### Handling a `foreign-tip` refusal
 
