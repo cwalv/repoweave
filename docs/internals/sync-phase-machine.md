@@ -514,9 +514,13 @@ executor re-reads each checkout before its write:
 fast-forward before the fan-out, and the tip of each rebase right after it
 succeeds; the project tip after its composition is journaled without
 judging whose it is. It is cleared in the same persist that writes
-`converged_tips` at relock completion. A tip the op wrote but did not get to
-journal (killed between the two) is kept as a backup by the row above rather
-than reset silently.
+`converged_tips` at relock completion. Before its relock commit, the
+landing (its linear relock and its merge arm) and the sync journal the
+commit's parents in `take_in.relocking`; a project tip on exactly those
+parents that changes only `rwv.lock` over its one parent, or merges the two,
+is the op's (`GitVcs::relock_of`), so a kill between the commit and the
+journal of its tip leaves abort nothing to keep. Any other tip the op wrote
+but did not get to journal is kept as a backup rather than reset silently.
 
 **At a `--continue`'s entry**, while the op replays
 (`sync::keep_what_moved_at_the_stop`, called from `Op::resume` and the
