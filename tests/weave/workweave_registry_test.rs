@@ -934,6 +934,175 @@ fn a_workweave_moved_by_hand_is_recorded_where_it_stands_under_its_marker_name()
     assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
 
+/// Two markers claiming one name: `rwv doctor --fix` adopts neither over the
+/// other however often it runs, `workweave delete <name>` deletes nothing,
+/// and the verb each refusal prints, run verbatim, names the other one.
+#[test]
+fn a_name_two_markers_claim_is_neither_adopted_nor_deleted_until_one_is_named_otherwise() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let create = |name: &str, dir: Option<&Path>| {
+        let mut cmd = rwv();
+        cmd.args(["workweave", "create", "--project", "web-app", name]);
+        if let Some(dir) = dir {
+            cmd.arg("--dir").arg(dir);
+        }
+        cmd.current_dir(&ws).assert().success();
+    };
+    create("a", None);
+    let a = tmp.path().join(".workweaves").join("web-app--a");
+    let b = tmp.path().join("elsewhere").join("b");
+    create("b", Some(&b));
+    let mut index = read_index(&ws, "web-app");
+    index["workweaves"].as_object_mut().unwrap().remove("b");
+    std::fs::write(
+        index_path(&ws, "web-app"),
+        serde_json::to_string_pretty(&index).unwrap(),
+    )
+    .unwrap();
+    let marker = b.join(".rwv-workweave");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&marker).unwrap()).unwrap();
+    json["name"] = serde_json::json!("a");
+    std::fs::write(&marker, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    let recorded_a = || {
+        read_index(&ws, "web-app")["workweaves"]["a"]["path"]
+            .as_str()
+            .map(|path| repoweave::path_spelling::resolve(Path::new(path)).unwrap())
+    };
+    let a_canonical = repoweave::path_spelling::resolve(&a).ok();
+
+    for _ in 0..2 {
+        rwv()
+            .args(["doctor", "--fix", "--project", "web-app"])
+            .current_dir(&ws)
+            .output()
+            .unwrap();
+        assert_eq!(recorded_a(), a_canonical);
+    }
+    assert!(
+        doctor_kinds(&ws).contains(&"workweave-tree-integrity/duplicate-name".to_string()),
+        "{:?}",
+        doctor_kinds(&ws)
+    );
+    let out = rwv().args(["status"]).current_dir(&b).output().unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(recorded_a(), a_canonical);
+
+    let out = rwv()
+        .args(["workweave", "delete", "--project", "web-app", "a"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let refusal = common::cli::refused(&out, RefusalKind::RegistryPathDisagreement);
+    assert!(a.is_dir() && b.is_dir());
+    let line = refusal
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv ") && line.contains("workweave create"))
+        .unwrap_or_else(|| panic!("no naming verb printed:\n{refusal}"));
+    let words = shell_words(line);
+    let out = rwv().args(&words[1..]).current_dir(&ws).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{line}:\n{}",
+        common::cli::describe(&out)
+    );
+
+    assert_eq!(marker_name(&b).as_deref(), Some("b"));
+    assert_eq!(recorded_a(), a_canonical);
+    assert_eq!(listed_workweaves(&ws), ["a", "b"]);
+}
+
+/// A linked checkout of the project clone that no workweave holds, an
+/// operator's own, is no workweave: the index rebuild lists none for it, and
+/// doctor neither adopts nor reports it, with the index whole or rebuilt.
+#[test]
+fn an_operators_own_checkout_of_the_project_clone_is_left_alone() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "ww"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let own = tmp.path().join("own-checkout");
+    common::git_in(
+        ws.join("projects/web-app"),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "mine",
+            &own.to_string_lossy(),
+        ],
+    );
+    let before = read_index(&ws, "web-app");
+    for kind in doctor_kinds(&ws) {
+        assert!(!kind.starts_with("workweave-tree-integrity"), "{kind}");
+    }
+    rwv()
+        .args(["doctor", "--fix", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert_eq!(read_index(&ws, "web-app"), before);
+
+    std::fs::write(index_path(&ws, "web-app"), "garbage{").unwrap();
+    rwv()
+        .args(["doctor", "--fix", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert_eq!(listed_workweaves(&ws), ["ww"]);
+    assert!(!own.join(".rwv-workweave").exists());
+    assert_eq!(
+        common::git_in(&own, &["rev-parse", "--abbrev-ref", "HEAD"]).trim(),
+        "mine"
+    );
+}
+
+/// A workweave whose branch is gone from the project clone keeps its name
+/// and its entry: doctor reports it once, as a project repo on no branch, and
+/// `--fix` changes neither its marker nor the index.
+#[test]
+fn a_workweave_whose_branch_is_gone_is_left_alone_and_reported_once() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "ww"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let ww = tmp.path().join(".workweaves").join("web-app--ww");
+    common::git_in(ww.join("projects/web-app"), &["checkout", "-q", "--detach"]);
+    common::git_in(
+        ws.join("projects/web-app"),
+        &["branch", "-D", "web-app--ww"],
+    );
+    let index = read_index(&ws, "web-app");
+    let marker = std::fs::read_to_string(ww.join(".rwv-workweave")).unwrap();
+
+    let reported: Vec<String> = doctor_kinds(&ws)
+        .into_iter()
+        .filter(|kind| {
+            kind.starts_with("workweave-tree-integrity") || kind.starts_with("alignment")
+        })
+        .collect();
+    assert_eq!(reported, ["alignment"]);
+    rwv()
+        .args(["doctor", "--fix", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert_eq!(read_index(&ws, "web-app"), index);
+    assert_eq!(
+        std::fs::read_to_string(ww.join(".rwv-workweave")).unwrap(),
+        marker
+    );
+}
+
 fn shell_words(line: &str) -> Vec<String> {
     line.split_whitespace()
         .map(|word| word.trim_matches('`').to_owned())

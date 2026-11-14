@@ -209,6 +209,7 @@ pub fn case_token(v: &CheckViolation) -> String {
                 }
                 WorkweaveTreeIntegrityKind::UnreadableMarker { .. } => "unreadable-marker",
                 WorkweaveTreeIntegrityKind::MisnamedDir { .. } => "misnamed-dir",
+                WorkweaveTreeIntegrityKind::DuplicateName { .. } => "duplicate-name",
                 WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. } => "nested-workweave-dir",
             };
             format!("workweave-tree-integrity/{tail}")
@@ -607,6 +608,17 @@ pub fn corpus() -> Vec<CheckViolation> {
                          records for this path is `feat-a`, so the records expect \
                          `proj--feat-a`"
                     .into(),
+            },
+        },
+        CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: path("/elsewhere/b"),
+            sub_kind: WorkweaveTreeIntegrityKind::DuplicateName {
+                project: project(),
+                workweave_name: WorkweaveName::new("feat-a").unwrap(),
+                claimants: vec![path("/ws/.workweaves/proj--feat-a"), path("/elsewhere/b")],
+                settle: vec![
+                    "rwv -C /ws workweave create b --project proj --dir /elsewhere/b".into(),
+                ],
             },
         },
         CheckViolation::WorkweaveTreeIntegrity {

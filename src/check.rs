@@ -759,7 +759,8 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
                 | WorkweaveTreeIntegrityKind::UnreadableMarker { .. }
                 | WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. }
-                | WorkweaveTreeIntegrityKind::MisnamedDir { .. } => ReportOnly,
+                | WorkweaveTreeIntegrityKind::MisnamedDir { .. }
+                | WorkweaveTreeIntegrityKind::DuplicateName { .. } => ReportOnly,
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
@@ -1712,6 +1713,19 @@ pub enum WorkweaveTreeIntegrityKind<P> {
         /// What disagrees: which half, and with which record.
         detail: String,
     },
+    /// The markers of more than one directory claim one workweave name, as
+    /// a hand-copied or hand-edited marker leaves. Report-only: which
+    /// directory is the workweave is the operator's to say, so nothing is
+    /// adopted, rebuilt into the index or deleted by that name meanwhile.
+    DuplicateName {
+        project: ProjectName,
+        workweave_name: WorkweaveName,
+        /// Every directory whose marker claims the name.
+        claimants: Vec<P>,
+        /// The verbs that name each claimant the index does not record
+        /// otherwise, which settles it.
+        settle: Vec<String>,
+    },
 }
 
 impl WorkweaveTreeIntegrityKind<PathBuf> {
@@ -1765,6 +1779,17 @@ impl WorkweaveTreeIntegrityKind<PathBuf> {
             } => Wire::MisnamedDir {
                 expected_dir_name,
                 detail,
+            },
+            Self::DuplicateName {
+                project,
+                workweave_name,
+                claimants,
+                settle,
+            } => Wire::DuplicateName {
+                project,
+                workweave_name,
+                claimants: claimants.iter().map(|dir| WirePath::of(dir)).collect(),
+                settle,
             },
         }
     }
@@ -3454,6 +3479,7 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
     // did not parse has no validated set to be absent from, so "orphan" is
     // not a fact about it — `unreadable-workweave-index` above is.
     let mut seen_orphans = std::collections::HashSet::new();
+    let mut seen_duplicates = std::collections::HashSet::new();
     let linked = crate::workspace::discover_projects(ws_root)
         .into_iter()
         .flat_map(|project| {
@@ -3484,6 +3510,23 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
             continue;
         }
         if !seen_orphans.insert(canonical) {
+            continue;
+        }
+        let claimants = workweave_claimants(ws_root, &workweave.project, &workweave.name);
+        if claimants.len() > 1 {
+            if seen_duplicates.insert(workweave.clone()) {
+                let settle =
+                    settle_duplicate_name(ws_root, &workweave.project, &workweave.name, &claimants);
+                violations.push(CheckViolation::WorkweaveTreeIntegrity {
+                    workweave_dir: dir,
+                    sub_kind: WorkweaveTreeIntegrityKind::DuplicateName {
+                        project: workweave.project.clone(),
+                        workweave_name: workweave.name.clone(),
+                        claimants,
+                        settle,
+                    },
+                });
+            }
             continue;
         }
         violations.push(CheckViolation::WorkweaveTreeIntegrity {
@@ -3532,6 +3575,118 @@ fn linked_roots(ws_root: &Path, project: &crate::manifest::ProjectName) -> Vec<P
         .collect()
 }
 
+/// Every directory of `ws_root`'s `project` whose marker claims `name`: among
+/// the workspaces a linked checkout of the project clone sits in, the
+/// children of each workweave container, and the directory the index records
+/// under that name.
+pub(crate) fn workweave_claimants(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+    name: &WorkweaveName,
+) -> Vec<PathBuf> {
+    let primary = CanonicalPath::of(ws_root);
+    let recorded = crate::workweave_index::read(ws_root, project)
+        .ok()
+        .flatten()
+        .and_then(|index| {
+            index
+                .workweaves
+                .get(name)
+                .map(|entry| entry.path.as_path().to_path_buf())
+        });
+    let in_containers = workweave_containers_for_scan(ws_root)
+        .into_iter()
+        .filter_map(|container| std::fs::read_dir(container.as_path()).ok())
+        .flat_map(|entries| entries.flatten().map(|entry| entry.path()));
+    let mut seen = BTreeSet::new();
+    let mut found = Vec::new();
+    for dir in linked_roots(ws_root, project)
+        .into_iter()
+        .chain(in_containers)
+        .chain(recorded)
+    {
+        if !dir.is_dir() || !seen.insert(CanonicalPath::of(&dir)) {
+            continue;
+        }
+        let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) else {
+            continue;
+        };
+        if marker.names_primary(&primary) && marker.project() == project && marker.name() == name {
+            found.push(dir);
+        }
+    }
+    found.sort();
+    found
+}
+
+/// What settles a name more than one directory's marker claims: for each
+/// claimant but the one the index records (or, recording none, the first), the
+/// verb that names it otherwise, or, for a copy whose checkouts the VCS
+/// records in another directory, that it is one.
+pub(crate) fn settle_duplicate_name(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+    name: &WorkweaveName,
+    claimants: &[PathBuf],
+) -> Vec<String> {
+    let recorded = crate::workweave_index::read(ws_root, project)
+        .ok()
+        .flatten()
+        .and_then(|index| index.workweaves.get(name).map(|entry| entry.path.clone()));
+    let kept = recorded
+        .filter(|recorded| claimants.iter().any(|dir| recorded.same_directory(dir)))
+        .map(|recorded| recorded.as_path().to_path_buf())
+        .or_else(|| claimants.first().cloned());
+    claimants
+        .iter()
+        .filter(|dir| {
+            kept.as_deref()
+                .is_none_or(|kept| CanonicalPath::of(kept) != CanonicalPath::of(dir))
+        })
+        .map(|dir| {
+            let checkout = project_dir(dir, project);
+            if let Some(original) = crate::vcs::project_vcs().checkout_recorded_elsewhere(&checkout)
+            {
+                if original.exists() {
+                    return format!(
+                        "{} is a copy: its project checkout is the one at {}, so no verb \
+                         names it; remove the directory",
+                        dir.display(),
+                        original.display()
+                    );
+                }
+            }
+            let parent = crate::workspace::WorkweaveMarker::read(dir)
+                .ok()
+                .flatten()
+                .map(|marker| marker.parent().as_path().to_path_buf())
+                .unwrap_or_else(|| ws_root.to_path_buf());
+            let other = other_name_for(project, name, dir);
+            format!(
+                "rwv -C {} workweave create {other} --project {project} --dir {}",
+                parent.display(),
+                dir.display()
+            )
+        })
+        .collect()
+}
+
+/// A name for `dir` other than `name`: the one its directory's name spells,
+/// else `<name>-2`.
+fn other_name_for(
+    project: &crate::manifest::ProjectName,
+    name: &WorkweaveName,
+    dir: &Path,
+) -> WorkweaveName {
+    let base = dir.file_name().and_then(|base| base.to_str());
+    base.and_then(|base| {
+        crate::workspace::workweave_name_in(project, base).or_else(|| WorkweaveName::new(base).ok())
+    })
+    .filter(|other| other != name)
+    .or_else(|| WorkweaveName::new(format!("{}-2", name.as_str())).ok())
+    .unwrap_or_else(|| name.clone())
+}
+
 /// Rebuild `project`'s unreadable workweave index from the markers of the
 /// workweaves the project clone's linked checkouts sit in, wherever their
 /// directories are: the names it lists, or `None` where the index read by the
@@ -3551,6 +3706,12 @@ pub fn rebuild_workweave_index(
         })
         .collect();
     found.sort();
+    let claimed_twice: BTreeSet<WorkweaveName> = found
+        .windows(2)
+        .filter(|pair| pair[0].0 == pair[1].0)
+        .map(|pair| pair[0].0.clone())
+        .collect();
+    found.retain(|(name, ..)| !claimed_twice.contains(name));
     let names = found.iter().map(|(name, ..)| name.clone()).collect();
     Ok(crate::workweave_index::rebuild(ws_root, project, &found)?.then_some(names))
 }
@@ -6942,6 +7103,24 @@ impl CheckViolation {
                             workweave_dir.display(),
                         ),
                     },
+                    WorkweaveTreeIntegrityKind::DuplicateName {
+                        project,
+                        workweave_name,
+                        claimants,
+                        settle,
+                    } => format!(
+                        "{}: the markers of {} directories claim workweave `{workweave_name}` \
+                         of project `{project}`: {}. Nothing is adopted or deleted by that \
+                         name until one claim stands; this names the others:\n  {}",
+                        workweave_dir.display(),
+                        claimants.len(),
+                        claimants
+                            .iter()
+                            .map(|dir| dir.display().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", "),
+                        settle.join("\n  "),
+                    ),
                 };
                 msg
             }

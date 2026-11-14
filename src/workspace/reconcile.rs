@@ -232,7 +232,15 @@ pub fn disagreement_at(root: &Path) -> anyhow::Result<Option<Disagreement>> {
                 }
             }
             (None, MarkerPresence::Usable(marker))
-                if marker.names_primary(&primary) && marker.project() == &project =>
+                if marker.names_primary(&primary)
+                    && marker.project() == &project
+                    && crate::check::workweave_claimants(
+                        primary.as_path(),
+                        &project,
+                        marker.name(),
+                    )
+                    .len()
+                        <= 1 =>
             {
                 Repair::ListRoot {
                     name: marker.name().clone(),

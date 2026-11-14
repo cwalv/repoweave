@@ -353,7 +353,7 @@ src/workweave.rs	name taken	-	1
 src/workweave.rs	no-active-project	tests/weave/project_and_source_spelling_test.rs	1
 src/workweave.rs	no-such-workweave	-	1
 src/workweave.rs	pre-flat-branch-shape	-	1
-src/workweave.rs	registry-path-disagreement	-	1
+src/workweave.rs	registry-path-disagreement	tests/weave/workweave_registry_test.rs	2
 src/workweave.rs	repo-without-commits	-	1
 src/workweave.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	5
 src/workweave.rs	standalone-in-workweave	-	3

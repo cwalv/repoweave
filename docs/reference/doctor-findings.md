@@ -88,7 +88,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`unreadable-owned-state`](#unreadable-owned-state) | Warning | Report-only |
 | [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
-| [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
+| [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir`, `duplicate-name` | Warning | Report-only |
 | [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
 | [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
 | [`workweave-drift`](#workweave-drift) / `dangling-link-unfetched` | Error | Report-only by default (`--abandon-lost-pins`) |
@@ -832,9 +832,8 @@ this finding reports is that the directory's name now lies about those
 records, which misleads operators and collides with any future workweave
 whose records genuinely mint this basename. Where no registry entry names the
 path there is no recorded name to disagree with, and the question narrows to
-whether the basename is one the marker's project could have rendered at all:
-when it is not, identity is unrecoverable, the scans skip the directory
-entirely, and this finding is the only signal.
+whether the basename is one the marker's project could have rendered at all;
+the scans name the workweave by its marker either way.
 
 **What to do:** rename the directory to the name the finding reports (the
 checkouts inside were registered under the recorded name, so restoring it
@@ -842,6 +841,27 @@ also restores their worktree back-pointers). When no record pins the intended
 name, rename it to the `<project>--<name>` you intend, or remove the
 directory. Never auto-fixed: a directory rename under live checkouts is not
 rwv's to perform, and in the unrecoverable case the target is not derivable.
+
+#### `duplicate-name`
+
+**Warning. Report-only.** The markers of more than one directory claim one
+workweave name, as a hand-copied or hand-edited marker leaves. The finding
+lists every claimant. Until one claim stands, `rwv doctor --fix` adopts none of
+them over the entry the index holds, the index rebuild lists none of them, a
+command run inside one does not record it, and `rwv workweave delete <name>`
+refuses as `registry-path-disagreement`, deleting nothing.
+
+**What to do:** the finding prints, for each claimant but the one the index
+records, the command that names it otherwise:
+
+```bash
+rwv -C <parent> workweave create <other-name> --project <project> --dir <claimant>
+```
+
+It writes the new name into that marker and records the workweave, changing
+nothing else there. A claimant that is a copy of another workweave, whose
+project checkout the VCS records in the other directory, is named as one: no
+verb names it, and removing the directory leaves the original whole.
 
 #### `nested-workweave-dir`
 

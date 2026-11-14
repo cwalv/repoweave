@@ -791,7 +791,7 @@ Create an isolated workweave for the project the invocation resolves to (see [Pr
 
 With no branch flag the project repo is on a feature under the minted name `<project>--<name>`, onto the branch the parent has checked out; the minted name is never published. `--new-branch <W>` creates `W` as `rwv branch create` does (bare: a feature onto the parent's branch; `--target <T>`: onto `T`; `--declared`), refusing a name any repo already has (`name` exists). `--branch <W>` opens `W` by its record; a branch with no record needs `--target` or `--declared`, and a spelling that differs from the record is refused (`target` conflict). A branch checked out in another workspace is refused (`checkout`); `--detach <rev>` makes a detached workspace at any revision, such a branch included, and writes no record. Each `--set-branch` and `--set-new-branch` sets a member's declared branch in the new branch's first commit, as `rwv member set-branch` does; every one is judged before anything is written.
 
-Re-running an identical spelling on a clean workweave whose marker matches returns it, reported; any difference is refused (`name` taken) and changes nothing.
+Re-running an identical spelling on a clean workweave whose marker matches returns it, reported; any difference is refused (`name` taken) and changes nothing. With `--dir` naming a workweave whose marker no record settles, one an earlier release wrote without a name or one whose name another directory's marker claims too, the create writes `<NAME>` into that marker, records the workweave and returns it as it stands; this is the command `rwv doctor` prints for either.
 
 1. **Manifest worktrees**
 

@@ -1997,7 +1997,8 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             &CanonicalPath::of(primary_root),
             project,
             name,
-        )? {
+        )? || rename_duplicate_claimant(primary_root, project, name, &workweave_dir)?
+        {
             let marker = WorkweaveMarker::read(&workweave_dir)?.ok_or_else(|| {
                 crate::untokened!(
                     InternalInvariant,
@@ -2013,8 +2014,8 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
                 marker.parent().clone(),
             )?;
             eprintln!(
-                "rwv workweave create: named the workweave an earlier release made at {} `{name}`, \
-                 and returned it as it is",
+                "rwv workweave create: named the workweave at {} `{name}`, which no other \
+                 record claims, and returned it as it is",
                 workweave_dir.display()
             );
             return Ok(workweave_dir);
@@ -2639,6 +2640,41 @@ pub fn hand_over_seat(created: anyhow::Result<PathBuf>) -> anyhow::Result<PathBu
         },
         created => created,
     }
+}
+
+/// Write `name` into the marker at `dir` where its own name is one another
+/// directory's marker claims too and the index records `dir` under none, and
+/// its project checkout is a checkout of the project clone recorded there:
+/// what settles a duplicated name.
+fn rename_duplicate_claimant(
+    primary_root: &Path,
+    project: &ProjectName,
+    name: &WorkweaveName,
+    dir: &Path,
+) -> anyhow::Result<bool> {
+    let Ok(Some(marker)) = WorkweaveMarker::read(dir) else {
+        return Ok(false);
+    };
+    let vcs = project_vcs();
+    let checkout = project_dir(dir, project);
+    let renames = marker.name() != name
+        && marker.names_primary(&CanonicalPath::of(primary_root))
+        && marker.project() == project
+        && vcs.is_repo(&checkout)
+        && vcs.checkout_recorded_elsewhere(&checkout).is_none()
+        && workweave_index::read(primary_root, project)?
+            .is_none_or(|index| index.entry_at(dir).is_none())
+        && crate::check::workweave_claimants(primary_root, project, marker.name()).len() > 1;
+    if renames {
+        WorkweaveMarker::new(
+            primary_root,
+            project.clone(),
+            name.clone(),
+            marker.parent().as_path(),
+        )
+        .write(dir)?;
+    }
+    Ok(renames)
 }
 
 /// The spelling of a create, as an existing workweave is compared against it.
@@ -3675,6 +3711,23 @@ pub fn delete_workweave(
     remote_deletes: &crate::deletion::RemoteDeletes,
 ) -> anyhow::Result<WorkweaveDeletion> {
     let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
+    let claimants = crate::check::workweave_claimants(ws_root, project, name);
+    if claimants.len() > 1 {
+        crate::refuse!(
+            RefusalKind::RegistryPathDisagreement,
+            "the markers of {count} directories claim workweave `{name}` of project \
+             `{project}`: {listed}. A delete by that name could remove any of them, so it \
+             removes nothing. This names the others:\n  {settle}",
+            count = claimants.len(),
+            listed = claimants
+                .iter()
+                .map(|dir| dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", "),
+            settle = crate::check::settle_duplicate_name(ws_root, project, name, &claimants)
+                .join("\n  "),
+        );
+    }
     if let Some(expected) = expected_dir {
         let expected = CanonicalPath::of(expected);
         if CanonicalPath::of(&workweave_dir) != expected {

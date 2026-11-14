@@ -1181,7 +1181,11 @@ set the remote once the repository exists elsewhere.
 **Why.** The index maps a name to one path. Two claimants mean a delete could
 remove either, and the one it removes is not the one the operator addressed.
 
-**Exits.** Inspect both directories and retire the stale one, then re-run.
+**Exits.** Where two markers claim the name, the refusal prints the
+`rwv workweave create <other-name> --project <project> --dir <claimant>` that
+names the other claimant; run it, then re-run. Where the caller reached the
+workweave through another path, inspect both directories and retire the stale
+one, then re-run.
 
 ### `repair-target-changed`
 

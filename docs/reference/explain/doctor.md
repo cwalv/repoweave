@@ -204,7 +204,7 @@ Every per-repo variant carries `path` (manifest-relative) and
 `absolute_path` (fully resolved). Variants with subkinds
 (`alignment`, `clone-topology`, `dead-op-lease`, `member-permissions`, `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`, `record-drift`, `stale-worktree-registration`, `uninitialized-submodule`, `unparseable-project`, `weave-root-identity-conflict`, `working-tree-drift`, `workweave-drift`, `workweave-tree-integrity`) carry an additional `sub_kind` field.
 `workweave-tree-integrity` carries `workweave_dir` and a `sub_kind`
-(`dangling-parent`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
+(`dangling-parent`, `duplicate-name`, `foreign-primary`, `foreign-primary-other-workspace`, `misnamed-dir`, `nested-workweave-dir`, `parent-chain-anomaly`, `stale-registry-entry`, `unreadable-marker`, `unregistered-dir`, `unregistered-workweave`).
 
 The `plugins` array is the PATH inventory of `rwv-*` executables found at
 run time. Each record carries `name` (the verb typed as `rwv <verb>`: the file
@@ -3184,6 +3184,47 @@ Schema:
                     "string",
                     "null"
                   ]
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "description": "The markers of more than one directory claim one workweave name, as a hand-copied or hand-edited marker leaves. Report-only: which directory is the workweave is the operator's to say, so nothing is adopted, rebuilt into the index or deleted by that name meanwhile.",
+          "type": "object",
+          "required": [
+            "duplicate-name"
+          ],
+          "properties": {
+            "duplicate-name": {
+              "type": "object",
+              "required": [
+                "claimants",
+                "project",
+                "settle",
+                "workweave_name"
+              ],
+              "properties": {
+                "claimants": {
+                  "description": "Every directory whose marker claims the name.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/WirePath"
+                  }
+                },
+                "project": {
+                  "type": "string"
+                },
+                "settle": {
+                  "description": "The verbs that name each claimant the index does not record otherwise, which settles it.",
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "workweave_name": {
+                  "type": "string"
                 }
               }
             }
