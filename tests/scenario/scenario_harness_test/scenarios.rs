@@ -12570,6 +12570,9 @@ enum PortedText {
     TwoTables,
     TableMovedOnOneSide,
     TablesChangedAtDifferentKeys,
+    /// [`PortedText::TablesChangedAtDifferentKeys`] where the picked commit
+    /// changes `rwv.toml` alone.
+    TablesChangedAtDifferentKeysAlone,
     /// `main` adds `enabled` to `cargo-workspace` below a blank line, the
     /// feature adds a `go-work` table under it: git's text merge puts the key
     /// in `go-work`.
@@ -12583,7 +12586,10 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
     let base_table = "[workweave]\nlink = [\"a\"]\n# gap\ncopy = [\"b\"]\n\n";
     if !matches!(shape, PortedText::TwoTables) {
         let edited = match shape {
-            PortedText::TablesChangedAtDifferentKeys => format!("{base_table}{VSCODE_TABLE}"),
+            PortedText::TablesChangedAtDifferentKeys
+            | PortedText::TablesChangedAtDifferentKeysAlone => {
+                format!("{base_table}{VSCODE_TABLE}")
+            }
             PortedText::KeyMovedUnderANewTable => {
                 format!("{VSCODE_TABLE}\n[integrations.cargo-workspace]\n{CARGO_EXCLUDES}")
             }
@@ -12619,7 +12625,8 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
                 &format!("{VSCODE_TABLE}\n[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]\n"),
             ),
         ]),
-        PortedText::TablesChangedAtDifferentKeys => steps.push(Step::hand_edit(
+        PortedText::TablesChangedAtDifferentKeys
+        | PortedText::TablesChangedAtDifferentKeysAlone => steps.push(Step::hand_edit(
             &a(),
             Repo::Proj,
             "rwv.toml",
@@ -12634,10 +12641,13 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
             &format!("{CARGO_EXCLUDES}\nenabled = false\n"),
         )),
     }
-    steps.extend([
-        Step::git(&a(), Repo::Proj, &["add", "rwv.toml"]),
-        Step::commit(&a(), Repo::Proj, "port-table"),
-    ]);
+    steps.push(Step::git(&a(), Repo::Proj, &["add", "rwv.toml"]));
+    steps.push(match shape {
+        PortedText::TablesChangedAtDifferentKeysAlone => {
+            Step::git(&a(), Repo::Proj, &["commit", "-qm", "port-table"])
+        }
+        _ => Step::commit(&a(), Repo::Proj, "port-table"),
+    });
     steps.extend(feature_onto_stable());
     match shape {
         PortedText::TwoTables => steps.push(Step::hand_edit(
@@ -12654,7 +12664,8 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
             "[workweave]\nlink = [\"a\"]\n\n",
             "",
         )),
-        PortedText::TablesChangedAtDifferentKeys => steps.push(Step::hand_edit(
+        PortedText::TablesChangedAtDifferentKeys
+        | PortedText::TablesChangedAtDifferentKeysAlone => steps.push(Step::hand_edit(
             &ww("p"),
             Repo::Proj,
             "rwv.toml",
@@ -12820,8 +12831,12 @@ pub fn cherry_pick_a_key_the_text_merge_moved_aborts() -> Scenario {
 
 /// Both sides change keys of one `[workweave]` table, apart: git's text
 /// merge is the merge of the values, so the port takes it with no stop.
-pub fn cherry_pick_text_merge_matching_the_values_passes() -> Scenario {
-    let mut steps = text_merged_port(PortedText::TablesChangedAtDifferentKeys);
+pub fn cherry_pick_text_merge_matching_the_values_passes(alone: bool) -> Scenario {
+    let mut steps = text_merged_port(if alone {
+        PortedText::TablesChangedAtDifferentKeysAlone
+    } else {
+        PortedText::TablesChangedAtDifferentKeys
+    });
     steps.extend([
         Step::rwv(&ww("p"), &["cherry-pick", "main"])
             .expect(Exit::Succeeds)

@@ -1558,7 +1558,8 @@ every_scenario!(
     cherry_pick_a_table_both_sides_changed_takes_the_text_merge,
     cherry_pick_a_key_the_text_merge_moved_stops,
     cherry_pick_a_key_the_text_merge_moved_aborts,
-    cherry_pick_text_merge_matching_the_values_passes,
+    cherry_pick_text_merge_matching_the_values_passes(false),
+    cherry_pick_text_merge_matching_the_values_passes(true),
     cherry_pick_port_landing_merge,
     cherry_pick_conflict,
     cherry_pick_conflict_aborts,
@@ -6047,8 +6048,10 @@ fn cherry_pick_a_table_both_sides_changed_takes_the_text_merge() {
 
 #[test]
 fn cherry_pick_text_merge_matching_the_values_passes() {
-    runner::run(scenarios::cherry_pick_text_merge_matching_the_values_passes())
-        .assert_fully_decided_green();
+    for alone in [false, true] {
+        runner::run(scenarios::cherry_pick_text_merge_matching_the_values_passes(alone))
+            .assert_fully_decided_green();
+    }
 }
 
 #[test]

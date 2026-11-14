@@ -1204,7 +1204,8 @@ fn project_files_move(
             return Ok(true);
         }
     }
-    Ok(!ported_tables(base, theirs, ours).taken.is_empty())
+    let tables = ported_tables(base, theirs, ours);
+    Ok(!tables.taken.is_empty() || !tables.conflicted.is_empty())
 }
 
 /// The tables of `rwv.toml` that port as content, each as JSON.
