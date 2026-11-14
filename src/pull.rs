@@ -361,6 +361,20 @@ fn take_in_project(
         ));
         return Ok(taken);
     }
+    if how.resumed.is_none() {
+        let upstream_name = match vcs.upstream(&attached)? {
+            Some(named) => format!("{}/{}", named.remote, named.branch),
+            None => format!("the upstream of {attached}"),
+        };
+        crate::cherry_pick::branch_tip_manifest(
+            vcs.as_ref(),
+            &path,
+            &dir,
+            &upstream,
+            upstream_name,
+            "pull",
+        )?;
+    }
     if reset {
         return reset_project(
             ctx, project, &dir, &attached, &upstream, &head, how, taken, &say,

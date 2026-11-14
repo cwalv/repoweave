@@ -90,6 +90,7 @@ src/cherry_pick.rs	port merge in range	-	1
 src/cherry_pick.rs	port not listed	-	1
 src/cherry_pick.rs	savepoint-unfiled	tests/sync/sync_prune_direction_test.rs	1
 src/cherry_pick.rs	target no target	tests/sync/land_drift_test.rs	1
+src/cherry_pick.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/cherry_pick.rs	unparseable-project commit	-	1
 src/cherry_pick.rs	untracked-collision	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
@@ -108,7 +109,6 @@ src/deletion.rs	name no-such-branch	-	1
 src/deletion.rs	protected declared	tests/sync/protection_test.rs	1
 src/deletion.rs	protected declared mode	-	1
 src/deletion.rs	target dependents	-	1
-src/deletion.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/diagnosis.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	1
 src/diagnosis.rs	edits drift left in place	tests/sync/land_drift_test.rs	4
 src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3

@@ -186,6 +186,39 @@ pub(crate) fn unparseable_commit(
         .refused()
 }
 
+/// `rwv.toml` at `tip`, the tip of `branch` a verb acts on in the project
+/// repo `label` at `dir`, judged before anything moves: `None` where the tip
+/// has none; one that does not parse, or names keys an earlier release wrote,
+/// refuses the verb.
+pub(crate) fn branch_tip_manifest(
+    vcs: &dyn Vcs,
+    label: impl std::fmt::Display,
+    dir: &Path,
+    tip: &ResolvedRevisionId,
+    branch: impl std::fmt::Display,
+    verb: &'static str,
+) -> anyhow::Result<Option<Manifest>> {
+    let text = match vcs.read_file_at_revision(dir, tip, Path::new(Manifest::FILE_NAME)) {
+        Ok(text) => text,
+        Err(crate::vcs::VcsError::RevisionNotFound { .. }) => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+    let branch = branch.to_string();
+    match Manifest::from_toml_str(&text) {
+        Ok(manifest) => Ok(Some(manifest)),
+        Err(e) => Err(State::UnparseableProjectAt
+            .of(label)
+            .project_repo()
+            .subject(&branch)
+            .listing([format!("{e:#}")])
+            .bind("<b>", &branch)
+            .doctor_fix_for(Some(&text), &branch)
+            .by_verb(verb)
+            .judge(vcs)
+            .refused()),
+    }
+}
+
 /// `manifest`, read at `commit` in the project repo `label` at `dir`, with a
 /// file that is there and does not parse, and is no earlier release's,
 /// refused as [`unparseable_commit`].

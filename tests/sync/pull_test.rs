@@ -367,3 +367,54 @@ fn pull_stops_before_taking_anything_in_when_a_fetch_could_not_complete() {
     assert_eq!(weave.git_project(&["rev-parse", "HEAD"]), before);
     let _ = &weave.project_origin;
 }
+
+/// The upstream commit's `rwv.toml` is judged before the project branch moves:
+/// one that does not parse refuses the take-in, as sync refuses the same
+/// commit, and nothing moves.
+fn pull_refuses_an_upstream_whose_manifest_does_not_parse(manifest: &str, args: &[&str]) {
+    let weave = weave();
+    if args.contains(&"--reset-to-upstream") || args.contains(&"--merge-upstream") {
+        std::fs::write(weave.project().join("local.txt"), "mine\n").unwrap();
+        weave.git_project(&["add", "local.txt"]);
+        weave.git_project(&["commit", "-m", "mine"]);
+    }
+    let before = weave.git_project(&["rev-parse", "HEAD"]);
+    weave.forge_project_commit(Some(manifest.to_owned()), None);
+
+    let out = weave.rwv(args);
+
+    common::cli::refused(&out, repoweave::diagnosis::State::UnparseableProjectAt);
+    assert!(
+        stderr(&out).contains("a commit on origin/main that makes its rwv.toml parse fixes it"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(weave.git_project(&["rev-parse", "HEAD"]), before);
+    assert!(weave.rwv(&["status"]).status.success());
+}
+
+#[test]
+fn pull_refuses_an_emptied_upstream_manifest_before_it_moves() {
+    pull_refuses_an_upstream_whose_manifest_does_not_parse("", &["pull"]);
+}
+
+#[test]
+fn pull_refuses_an_upstream_manifest_cut_mid_line_before_it_moves() {
+    pull_refuses_an_upstream_whose_manifest_does_not_parse(
+        "[repositories]\n[repositories.\"github/example/server\"]\ntype = \"gi",
+        &["pull"],
+    );
+}
+
+#[test]
+fn pull_reset_to_upstream_refuses_an_emptied_upstream_manifest_before_it_moves() {
+    pull_refuses_an_upstream_whose_manifest_does_not_parse(
+        "",
+        &["pull", "--reset-to-upstream", "projects/web-app"],
+    );
+}
+
+#[test]
+fn pull_merge_upstream_refuses_an_emptied_upstream_manifest_before_it_moves() {
+    pull_refuses_an_upstream_whose_manifest_does_not_parse("", &["pull", "--merge-upstream"]);
+}

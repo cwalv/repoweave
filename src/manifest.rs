@@ -2064,7 +2064,7 @@ impl Manifest {
                     "{} holds no `repositories` table, which every manifest declares: where \
                      every member was removed, add the line `[repositories]`, as `rwv init` \
                      writes it for a project with no members; an emptied or truncated file is no \
-                     manifest, to restore from the VCS",
+                     manifest: put back the content of a commit whose rwv.toml parses",
                     Self::FILE_NAME
                 ))
             } else if suggestion.is_empty() {

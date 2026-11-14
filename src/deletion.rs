@@ -338,11 +338,11 @@ impl<'a> Rule<'a> {
             home.as_ref(),
         )?
         .expect("the branch was listed");
-        let manifest = w_manifest(
+        let manifest = crate::cherry_pick::branch_tip_manifest(
             repos[0].vcs.as_ref(),
+            project_rel_path(request.project),
             &project_path,
             &w_tip,
-            request.project,
             &request.branch,
             request.verb,
         )?;
@@ -993,36 +993,6 @@ impl<'a> Rule<'a> {
                 .map(|s| s.line(&change))
                 .collect(),
         )
-    }
-}
-
-/// `W`'s `rwv.toml` at its tip: `None` where the tip has none; a pre-schema
-/// one refuses the rule, which acts on that branch.
-fn w_manifest(
-    vcs: &dyn Vcs,
-    dir: &Path,
-    tip: &ResolvedRevisionId,
-    project: &crate::manifest::ProjectName,
-    branch: &crate::records::BranchName,
-    verb: &'static str,
-) -> anyhow::Result<Option<Manifest>> {
-    let text = match vcs.read_file_at_revision(dir, tip, Path::new(Manifest::FILE_NAME)) {
-        Ok(text) => text,
-        Err(crate::vcs::VcsError::RevisionNotFound { .. }) => return Ok(None),
-        Err(e) => return Err(e.into()),
-    };
-    match Manifest::from_toml_str(&text) {
-        Ok(manifest) => Ok(Some(manifest)),
-        Err(e) => Err(State::UnparseableProjectAt
-            .of(project_rel_path(project))
-            .project_repo()
-            .subject(branch)
-            .listing([format!("{e:#}")])
-            .bind("<b>", branch)
-            .doctor_fix_for(Some(&text), branch)
-            .by_verb(verb)
-            .judge(vcs)
-            .refused()),
     }
 }
 
