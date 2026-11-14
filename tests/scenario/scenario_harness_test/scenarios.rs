@@ -12537,6 +12537,243 @@ pub fn cherry_pick_conflict_aborts() -> Scenario {
     scenario("cherry-pick conflict aborted", steps)
 }
 
+const VSCODE_TABLE: &str = "[integrations.vscode-workspace]\nenabled = false\n";
+
+/// Where the port's two sides of `rwv.toml` each touch a `[workweave]` table
+/// git merges with no conflict. The pick is of `main`'s commit; the feature
+/// is off `stable`.
+enum PortedText {
+    TwoTables,
+    TableMovedOnOneSide,
+    TablesChangedAtDifferentKeys,
+}
+
+fn text_merged_port(shape: PortedText) -> Vec<Step> {
+    let mut steps = Vec::new();
+    let base_table = "[workweave]\nlink = [\"a\"]\n# gap\ncopy = [\"b\"]\n\n";
+    if !matches!(shape, PortedText::TwoTables) {
+        let table = match shape {
+            PortedText::TablesChangedAtDifferentKeys => base_table,
+            _ => "[workweave]\nlink = [\"a\"]\n\n",
+        };
+        steps.extend([
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                VSCODE_TABLE,
+                &format!("{table}{VSCODE_TABLE}"),
+            ),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "base-table"]),
+        ]);
+    }
+    steps.extend(stable_lines());
+    match shape {
+        PortedText::TwoTables => steps.push(Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]",
+            "[workweave]\nlink = [\"a\"]\n\n[integrations.vscode-workspace]",
+        )),
+        PortedText::TableMovedOnOneSide => steps.extend([
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                "[workweave]\nlink = [\"a\"]\n\n",
+                "",
+            ),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                "rwv.toml",
+                VSCODE_TABLE,
+                &format!("{VSCODE_TABLE}\n[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]\n"),
+            ),
+        ]),
+        PortedText::TablesChangedAtDifferentKeys => steps.push(Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            "copy = [\"b\"]",
+            "copy = [\"b2\"]",
+        )),
+    }
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["add", "rwv.toml"]),
+        Step::commit(&a(), Repo::Proj, "port-table"),
+    ]);
+    steps.extend(feature_onto_stable());
+    match shape {
+        PortedText::TwoTables => steps.push(Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            VSCODE_TABLE,
+            &format!("{VSCODE_TABLE}\n[workweave]\ncopy = [\"b\"]\n"),
+        )),
+        PortedText::TableMovedOnOneSide => steps.push(Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "[workweave]\nlink = [\"a\"]\n\n",
+            "",
+        )),
+        PortedText::TablesChangedAtDifferentKeys => steps.push(Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "link = [\"a\"]",
+            "link = [\"a2\"]",
+        )),
+    }
+    steps.push(Step::git(
+        &ww("p"),
+        Repo::Proj,
+        &["commit", "-qam", "feature-table"],
+    ));
+    steps
+}
+
+/// `main`'s commit adds a `[workweave]` table between the members and the
+/// integrations, the feature's adds another after them: git merges the two
+/// into a file with two `[workweave]` tables. The port stops with `rwv.toml`
+/// unmerged and this branch's text in place; the printed staging of a
+/// resolution and the printed continue commit it, and the printed abort puts
+/// the checkout back.
+pub fn cherry_pick_two_tables_stop() -> Scenario {
+    let mut steps = text_merged_port(PortedText::TwoTables);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("does not parse"))
+            .claim(Claim::OutputContains("duplicate key `workweave`"))
+            .claim(Claim::OutputContains("rwv cherry-pick --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::rwv_printed_exactly(&ww("p"), "rwv cherry-pick --continue")
+            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &["diff", "--name-only", "--diff-filter=U"],
+        )
+        .claim(Claim::OutputLine("rwv.toml")),
+        Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "[workweave]\ncopy = [\"b\"]",
+            "[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]",
+        ),
+        Step::rwv_printed_holding(&ww("p"), "git -C", "add").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputContains(
+            "[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]",
+        )),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:port-table.txt"])
+            .claim(Claim::OutputLine("port-table")),
+    ]);
+    scenario("cherry-pick two tables stop", steps)
+}
+
+/// [`cherry_pick_two_tables_stop`], abandoned: the printed abort leaves
+/// the feature's `rwv.toml` as it was and the op exited.
+pub fn cherry_pick_two_tables_stop_aborts() -> Scenario {
+    let mut steps = text_merged_port(PortedText::TwoTables);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::rwv_printed_exactly(&ww("p"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("rwv.toml"))
+            .claim(Claim::OutputLacks("port-table")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputLacks("link = [\"a\"]")),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    scenario("cherry-pick two tables stop aborted", steps)
+}
+
+/// `main`'s commit moves the `[workweave]` table to the end of `rwv.toml`
+/// and adds a key; the feature removes it where it stood. Git merges the
+/// text with no conflict into a file that parses and keeps both keys, where
+/// the values conflict on the table. The port stops listing that, and the
+/// printed staging of a resolution and continue commit it.
+pub fn cherry_pick_text_merge_differing_from_the_values_stops() -> Scenario {
+    let mut steps = text_merged_port(PortedText::TableMovedOnOneSide);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "the VCS merged its text with no conflict, into a manifest that differs from the \
+                 merge of both sides' values",
+            ))
+            .claim(Claim::OutputContains("workweave changed on both sides"))
+            .claim(Claim::OutputContains("rwv cherry-pick --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &["diff", "--name-only", "--diff-filter=U"],
+        )
+        .claim(Claim::OutputLine("rwv.toml")),
+        Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            VSCODE_TABLE,
+            &format!("{VSCODE_TABLE}\n[workweave]\ncopy = [\"b\"]\n"),
+        ),
+        Step::rwv_printed_holding(&ww("p"), "git -C", "add").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains("[workweave]\ncopy = [\"b\"]"))
+            .claim(Claim::OutputLacks("link")),
+    ]);
+    scenario("cherry-pick text merge differing from the values", steps)
+}
+
+/// [`cherry_pick_text_merge_differing_from_the_values_stops`], abandoned.
+pub fn cherry_pick_text_merge_differing_from_the_values_aborts() -> Scenario {
+    let mut steps = text_merged_port(PortedText::TableMovedOnOneSide);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::rwv_printed_exactly(&ww("p"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("rwv.toml")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputLacks("[workweave]")),
+    ]);
+    scenario("cherry-pick text merge differing aborted", steps)
+}
+
+/// Both sides change keys of one `[workweave]` table, apart: git's text
+/// merge is the merge of the values, so the port takes it with no stop.
+pub fn cherry_pick_text_merge_matching_the_values_passes() -> Scenario {
+    let mut steps = text_merged_port(PortedText::TablesChangedAtDifferentKeys);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported"))
+            .claim(Claim::OutputLacks("stopped on a conflict")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputContains(
+            "[workweave]\nlink = [\"a2\"]\n# gap\ncopy = [\"b2\"]",
+        )),
+    ]);
+    scenario("cherry-pick text merge matching the values", steps)
+}
+
 /// `cherry-pick-conflict`, abandoned while the operator is stopped in a
 /// merge of their own in `docs`, a member the port never touches: `rwv
 /// abort` puts back what the port moved and leaves that merge as it is,

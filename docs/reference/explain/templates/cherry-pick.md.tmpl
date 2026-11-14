@@ -68,7 +68,13 @@ stage it in the checkout named, then `rwv cherry-pick --continue`, or
 holds this branch's entries and the ported tables, so `rwv abort` and the
 setters still read it; where a ported table changed on both sides, it holds
 this branch's tables and the stop shows the commit's, to set as wanted and
-stage. A step the VCS refuses once the port has started (an untracked file in
+stage. Where the VCS merged such a table's text with no conflict, the text is
+compared with the merge of both sides' values (the commit's parent, this
+branch's tip and the commit); where it does not parse or differs, the port
+stops the same way, listing what differs. A table only one side changed is
+taken by value, and entries and `history` are never ported, so neither is
+compared. There is no `--keep` at this stop: edit `rwv.toml`, stage it, then
+`rwv cherry-pick --continue`, or `rwv abort`. A step the VCS refuses once the port has started (an untracked file in
 a member's way, a hook) also holds the op (`op-parked`), naming what failed.
 
 `--continue` rechecks every repo the port moves before it moves anything: a

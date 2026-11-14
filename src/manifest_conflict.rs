@@ -274,19 +274,26 @@ fn text_merge_written(working: &str) -> Option<&str> {
 /// the values of `sides`; nothing where it declares that merge, or does not
 /// parse, which the stop for an unparseable result answers.
 fn differences(text_merge: &str, sides: &Sides) -> anyhow::Result<Vec<String>> {
+    let (mut lines, in_conflict) = differing_entries(text_merge, sides)?;
+    if in_conflict {
+        lines.push("  and both sides changed the entries below differently".to_owned());
+    }
+    Ok(lines)
+}
+
+/// [`differences`] without the line about entries in conflict, and whether
+/// any is.
+fn differing_entries(text_merge: &str, sides: &Sides) -> anyhow::Result<(Vec<String>, bool)> {
     let Ok(text_merge) = Manifest::from_toml_str(text_merge) else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
     let conflicts = sides.conflicts()?;
     let merged = sides.merged(false)?;
     if conflicts.is_empty() && text_merge.declares_same(&merged) {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     }
-    let mut lines = listing(&text_merge.declared()?, &merged.declared()?, &conflicts);
-    if !conflicts.is_empty() {
-        lines.push("  and both sides changed the entries below differently".to_owned());
-    }
-    Ok(lines)
+    let lines = listing(&text_merge.declared()?, &merged.declared()?, &conflicts);
+    Ok((lines, !conflicts.is_empty()))
 }
 
 /// The lines naming each entry, outside `conflicts`, where `text_merge` and
@@ -382,6 +389,52 @@ pub(crate) fn check_text_merge(
     crate::durable_file::replace(&dir.join(Manifest::FILE_NAME), working.as_bytes())
         .context("failed to write rwv.toml")?;
     Ok(true)
+}
+
+/// Check `text_merge`, the text the VCS merged `rwv.toml` into in `dir` with
+/// no conflict, for a port that carries the tables of `rwv.toml` and keeps
+/// `ours`' entries and `history`: it is judged against the merge of the
+/// values of `sides` with those standing on every side. Where it does not
+/// parse or differs, record `rwv.toml` as unmerged from `sides` and return
+/// the lines saying how.
+pub(crate) fn check_ported_text_merge(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    sides: &ConflictSides,
+    text_merge: &str,
+    ours: &Manifest,
+) -> anyhow::Result<Option<Vec<String>>> {
+    let hold = |text: &str| -> anyhow::Result<String> {
+        Ok(Manifest::edit_text(text, |m| {
+            m.history = ours.history;
+            m.repositories = ours.repositories.clone();
+        })?
+        .0)
+    };
+    let lines = match Manifest::from_toml_str(text_merge) {
+        Err(error) => std::iter::once(
+            "rwv.toml: the VCS merged its text with no conflict, into a file that does not parse:"
+                .to_owned(),
+        )
+        .chain(format!("{error:#}").lines().map(|line| format!("  {line}")))
+        .collect(),
+        Ok(_) => {
+            let held = ConflictSides {
+                base: sides.base.as_deref().map(hold).transpose()?,
+                ours: sides.ours.as_deref().map(hold).transpose()?,
+                theirs: sides.theirs.as_deref().map(hold).transpose()?,
+            };
+            let Ok(read) = read(&held) else {
+                return Ok(None);
+            };
+            differing_entries(&hold(text_merge)?, &read)?.0
+        }
+    };
+    if lines.is_empty() {
+        return Ok(None);
+    }
+    vcs.record_conflict(dir, Manifest::FILE_NAME, sides)?;
+    Ok(Some(lines))
 }
 
 /// The sides of `rwv.toml` a merge of `theirs` into `ours` over `base`
@@ -699,7 +752,7 @@ fn in_flight_is_the_operations(
     }))
 }
 
-fn mark_resolved(vcs: &dyn Vcs, dir: &Path) -> String {
+pub(crate) fn mark_resolved(vcs: &dyn Vcs, dir: &Path) -> String {
     vcs.hint(VcsAction::MarkResolved)
         .replace("<checkout>", &crate::workspace::quoted(dir))
         .replace("<paths>", Manifest::FILE_NAME)

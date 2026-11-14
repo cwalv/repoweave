@@ -1303,7 +1303,7 @@ fn conflict_stop(
         RefusalKind::OpParked,
         format!(
             "rwv {VERB}: the copy of {what} in {repo} stopped on a conflict ({}) at {}.\n{note}{}\n\
-             then run `{}`, or `rwv abort` to put everything back as it was",
+             then run\n  {}\nor put everything back as it was\n  rwv abort",
             paths.join(", "),
             checkout.display(),
             vcs.conflict_resolution_hint(crate::vcs::ConflictOp::Rebase),
@@ -1754,9 +1754,11 @@ fn set_aside_authored(here: &Here<'_>, ours: &Manifest) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Where the project copy stands: applied, its conflicted paths listed, or
-/// committed by an earlier run that stopped before recording it.
+/// Where the project copy stands: applied by this run, or by an earlier one
+/// that stopped, its conflicted paths listed, or committed by an earlier run
+/// that stopped before recording it.
 enum ProjectCopy {
+    Applied(Vec<String>),
     Conflicted(Vec<String>),
     Made(CommitId),
 }
@@ -1810,7 +1812,7 @@ fn start_project_copy(
     let conflicted = vcs
         .copy_uncommitted(dir, &commit, record.mainline)
         .map_err(|e| held(&label, commit.short(), &e))?;
-    Ok(ProjectCopy::Conflicted(conflicted))
+    Ok(ProjectCopy::Applied(conflicted))
 }
 
 /// The project commit: `<rev>`'s project files, the ported tables of
@@ -1842,8 +1844,9 @@ fn commit_project(
     .unwrap_or_else(|| empty.clone());
     let ported = ported_tables(&base, &theirs, ours);
 
-    let mut conflicted = match start_project_copy(here, op, ours, record)? {
-        ProjectCopy::Conflicted(paths) => paths,
+    let (mut conflicted, applied) = match start_project_copy(here, op, ours, record)? {
+        ProjectCopy::Applied(paths) => (paths, true),
+        ProjectCopy::Conflicted(paths) => (paths, false),
         ProjectCopy::Made(tip) => {
             crate::op_state::journal_tip(&op.workspace, RepoKey::Project, &tip)?;
             return Ok(Some(tip));
@@ -1854,6 +1857,22 @@ fn commit_project(
     let manifest_path = dir.join(Manifest::FILE_NAME);
     let ours_text =
         vcs.read_file_at_revision(dir, &rev(pre_head), Path::new(Manifest::FILE_NAME))?;
+    let mut differs = Vec::new();
+    if applied
+        && !ported.conflicted.is_empty()
+        && !conflicted.iter().any(|p| p == Manifest::FILE_NAME)
+    {
+        let sides =
+            crate::manifest_conflict::sides_at(vcs, dir, parent.as_ref(), pre_head, &commit);
+        let text_merge = std::fs::read_to_string(&manifest_path)
+            .with_context(|| format!("{label}: failed to read the merged rwv.toml"))?;
+        if let Some(lines) =
+            crate::manifest_conflict::check_ported_text_merge(vcs, dir, &sides, &text_merge, ours)?
+        {
+            differs = lines;
+            conflicted.push(Manifest::FILE_NAME.to_owned());
+        }
+    }
     if ported.conflicted.is_empty() {
         conflicted.retain(|p| p != Manifest::FILE_NAME);
         let settled = with_tables(ours, &theirs, &ported.taken);
@@ -1900,11 +1919,13 @@ fn commit_project(
                     )
                 })
                 .collect();
+            let listed: String = differs.iter().map(|line| format!("{line}\n")).collect();
             format!(
-                "rwv.toml holds this branch's tables, and {} changed on both sides; set them as \
-                 wanted there and stage it ({}).\n",
+                "{listed}rwv.toml holds this branch's tables, and {} changed on both sides; set \
+                 them as wanted there ({}), then stage it:\n  {}\n",
                 ported.conflicted.join(", "),
                 shown.join("; "),
+                crate::manifest_conflict::mark_resolved(vcs, dir),
             )
         } else {
             String::new()

@@ -1449,6 +1449,11 @@ every_scenario!(
     cherry_pick_onto_stable,
     cherry_pick_port,
     cherry_pick_port_edits_a_hand_ordered_manifest_in_place,
+    cherry_pick_two_tables_stop,
+    cherry_pick_two_tables_stop_aborts,
+    cherry_pick_text_merge_differing_from_the_values_stops,
+    cherry_pick_text_merge_differing_from_the_values_aborts,
+    cherry_pick_text_merge_matching_the_values_passes,
     cherry_pick_port_landing_merge,
     cherry_pick_conflict,
     cherry_pick_conflict_aborts,
@@ -5905,6 +5910,34 @@ fn land_refuses_a_target_checkout_diverged_from_its_pin_scenario() {
 #[test]
 fn cherry_pick_port_copies_member_ranges_carries_dependencies_and_reports_entries_not_ported() {
     runner::run(scenarios::cherry_pick_port()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_two_tables_stop() {
+    runner::run(scenarios::cherry_pick_two_tables_stop()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_two_tables_stop_aborts() {
+    runner::run(scenarios::cherry_pick_two_tables_stop_aborts()).assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_text_merge_differing_from_the_values_stops() {
+    runner::run(scenarios::cherry_pick_text_merge_differing_from_the_values_stops())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_text_merge_differing_from_the_values_aborts() {
+    runner::run(scenarios::cherry_pick_text_merge_differing_from_the_values_aborts())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_text_merge_matching_the_values_passes() {
+    runner::run(scenarios::cherry_pick_text_merge_matching_the_values_passes())
+        .assert_fully_decided_green();
 }
 
 #[test]
