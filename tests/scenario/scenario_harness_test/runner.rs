@@ -2015,7 +2015,11 @@ impl Run<'_> {
             }
             let listed = sb.git_ok(
                 &dir,
-                &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"],
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/heads",
+                ],
             );
             for line in listed.lines() {
                 if let Some((name, sha)) = line.split_once(' ') {
@@ -2604,7 +2608,7 @@ impl Run<'_> {
 }
 
 /// What a finished operation left in every live place, with each commit
-/// named by its subject and tree rather than its id, so two sandboxes that
+/// named by its subject and depth rather than its id, so two sandboxes that
 /// ran the same steps at different times read alike when they ended alike.
 pub fn end_state(sb: &Sandbox) -> String {
     let mut text = String::new();
@@ -2617,10 +2621,15 @@ pub fn end_state(sb: &Sandbox) -> String {
         let named = |sha: &str| -> String {
             dirs.iter()
                 .find_map(|dir| {
-                    let out = sb.git(dir, &["log", "-1", "--format=%s %T", sha]);
-                    out.status
-                        .success()
-                        .then(|| rendered(&out).trim_end().to_owned())
+                    let subject = sb.git(dir, &["log", "-1", "--format=%s", sha]);
+                    let depth = sb.git(dir, &["rev-list", "--count", sha]);
+                    (subject.status.success() && depth.status.success()).then(|| {
+                        format!(
+                            "{} #{}",
+                            rendered(&subject).trim_end(),
+                            rendered(&depth).trim_end()
+                        )
+                    })
                 })
                 .unwrap_or_else(|| sha.to_owned())
         };
@@ -2657,7 +2666,11 @@ pub fn end_state(sb: &Sandbox) -> String {
             for args in [
                 &["rev-parse", "HEAD"][..],
                 &["symbolic-ref", "-q", "HEAD"][..],
-                &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"][..],
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/heads",
+                ][..],
                 &["status", "--porcelain"][..],
             ] {
                 text.push_str(&renamed(&rendered(&sb.git(&dir, args))));
@@ -2668,6 +2681,21 @@ pub fn end_state(sb: &Sandbox) -> String {
                 }
             }
         }
+    }
+    let mut text = text.replace(sb.root.to_string_lossy().as_ref(), "<sandbox>");
+    while let Some(at) = text
+        .match_indices("Merge ")
+        .map(|(at, _)| at + "Merge ".len())
+        .find(|at| {
+            let run = text[*at..]
+                .bytes()
+                .take_while(u8::is_ascii_hexdigit)
+                .count();
+            run >= 7 && run < 40
+        })
+    {
+        let run = text[at..].bytes().take_while(u8::is_ascii_hexdigit).count();
+        text.replace_range(at..at + run, "<id>");
     }
     text
 }
