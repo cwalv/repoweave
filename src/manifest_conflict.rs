@@ -715,10 +715,11 @@ pub(crate) fn continue_at_stop(
 }
 
 /// At the stop where the replayed tip's `rwv.toml` in `dir` differs from the
-/// merge of the values: a staged `rwv.toml` is the operator's and is taken
-/// whole; `--keep text-merge` keeps the tip as the VCS made it; otherwise
-/// the merge of the values is written and staged, the file as it stood kept
-/// in a backup first. Each settles the tip for the rest of the operation.
+/// merge of the values: a staged `rwv.toml` that parses is the operator's and
+/// is taken whole; `--keep text-merge` keeps the tip as the VCS made it;
+/// otherwise the merge of the values is written and staged. Where either
+/// writes over a staged file, the file as it stood is kept in a backup first.
+/// Each settles the tip for the rest of the operation.
 fn settle_tip(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -731,12 +732,16 @@ fn settle_tip(
     let committed = vcs
         .read_file_at_revision(dir, &head, Path::new(Manifest::FILE_NAME))
         .ok();
-    let staged = vcs.staged_file(dir, Manifest::FILE_NAME)?;
-    match keep {
-        _ if staged != committed => {}
-        Some(Side::TextMerge) => {
-            eprintln!("{done}: kept the replayed tip's rwv.toml as the VCS merged it");
-        }
+    let staged = vcs
+        .staged_file(dir, Manifest::FILE_NAME)?
+        .filter(|staged| Some(staged) != committed.as_ref());
+    let unparsed = match staged.as_deref().map(Manifest::from_toml_str) {
+        Some(Ok(_)) => return crate::op_state::journal_tip_settled(workspace, rebase),
+        Some(Err(error)) => Some(error),
+        None => None,
+    };
+    let text = match keep {
+        Some(Side::TextMerge) => committed.filter(|_| unparsed.is_some()),
         Some(side) => {
             eprintln!(
                 "{done}: no entry of rwv.toml is in conflict, so `--keep {}` takes nothing",
@@ -744,19 +749,33 @@ fn settle_tip(
             );
             return Ok(());
         }
-        None => {
+        None => Some(differs.values),
+    };
+    if let Some(error) = &unparsed {
+        eprintln!(
+            "{done}: the rwv.toml marked resolved does not parse ({error:#}), so it is not taken"
+        );
+    }
+    let kept = match text {
+        Some(text) => {
             let kept = vcs.backup_edits(dir)?;
-            crate::durable_file::replace(&dir.join(Manifest::FILE_NAME), differs.values.as_bytes())
+            crate::durable_file::replace(&dir.join(Manifest::FILE_NAME), text.as_bytes())
                 .context("failed to write rwv.toml")?;
             vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
-            eprintln!(
-                "{done}: wrote the merge of both sides' values in place of the text \
-                 merge of rwv.toml, marked resolved"
-            );
-            for line in kept.iter().flat_map(|kept| kept_lines(vcs, dir, kept)) {
-                eprintln!("{line}");
-            }
+            kept
         }
+        None => None,
+    };
+    if keep == Some(Side::TextMerge) {
+        eprintln!("{done}: kept the replayed tip's rwv.toml as the VCS merged it");
+    } else {
+        eprintln!(
+            "{done}: wrote the merge of both sides' values in place of the text merge of \
+             rwv.toml, marked resolved"
+        );
+    }
+    for line in kept.iter().flat_map(|kept| kept_lines(vcs, dir, kept)) {
+        eprintln!("{line}");
     }
     crate::op_state::journal_tip_settled(workspace, rebase)
 }

@@ -1066,6 +1066,14 @@ every_scenario!(
     check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::Values),
     check_a_replayed_tip(
         scenarios::TipVerb::Sync,
+        scenarios::TipSettle::StagedUnparseable
+    ),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::StagedUnparseableKeepTextMerge
+    ),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
         scenarios::TipSettle::KeepTextMerge
     ),
     check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::ByHand),
@@ -7681,6 +7689,26 @@ fn replayed_tip_then_member_conflict() {
         scenarios::TipSettle::ThenMemberConflict,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn replayed_tip_staged_unparseable() {
+    for (verb, settle) in [
+        (
+            scenarios::TipVerb::Sync,
+            scenarios::TipSettle::StagedUnparseable,
+        ),
+        (
+            scenarios::TipVerb::Land,
+            scenarios::TipSettle::StagedUnparseable,
+        ),
+        (
+            scenarios::TipVerb::Sync,
+            scenarios::TipSettle::StagedUnparseableKeepTextMerge,
+        ),
+    ] {
+        runner::run(scenarios::check_a_replayed_tip(verb, settle)).assert_fully_decided_green();
+    }
 }
 
 #[test]

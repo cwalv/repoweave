@@ -20109,7 +20109,7 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .claim(Claim::OutputLacks("--keep yours")),
                 Step::rwv(&ww("w"), &["sync", "--continue"])
                     .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("wrote and staged the merge")),
+                    .claim(Claim::OutputContains("wrote the merge")),
                 app_history(&ww("w")),
                 Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
                     .expect(Exit::Succeeds)
@@ -20204,6 +20204,12 @@ pub enum TipSettle {
     /// The printed bare continue, then a conflict in a member the landing
     /// replays after the project, resolved and continued.
     ThenMemberConflict,
+    /// An `rwv.toml` that does not parse staged, then the printed bare
+    /// continue: it writes the merge of the values, the staged file kept in a
+    /// backup.
+    StagedUnparseable,
+    /// The same, then the printed `--keep text-merge`: the tip's own text.
+    StagedUnparseableKeepTextMerge,
 }
 
 /// `main` sets `app`'s role and adds `docs` in two commits; the workweave
@@ -20421,6 +20427,49 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
                         .claim(Claim::OutputLacks("local/remotes/docs")),
                 ]);
                 "a continue killed after it settled the replayed tip is aborted"
+            }
+        }
+        TipSettle::StagedUnparseable | TipSettle::StagedUnparseableKeepTextMerge => {
+            steps.extend([
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "recurse-submodules = false\n",
+                    "recurse-submodules = \n",
+                ),
+                Step::git(&ww("w"), Repo::Proj, &["add", "--", "rwv.toml"]).expect(Exit::Succeeds),
+            ]);
+            if matches!(settle, TipSettle::StagedUnparseable) {
+                steps.extend([
+                    Step::rwv_printed_exactly(&ww("w"), bare)
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj])
+                        .claim(Claim::OutputContains(
+                            "the rwv.toml marked resolved does not parse",
+                        ))
+                        .claim(Claim::OutputContains(
+                            "wrote the merge of both sides' values",
+                        ))
+                        .claim(Claim::OutputContains("is kept in backup")),
+                    settled(&at),
+                    once(&at),
+                ]);
+                "a staged rwv.toml that does not parse is not taken: the bare continue writes \
+                 the merge of the values"
+            } else {
+                steps.extend([
+                    Step::rwv_printed_holding(&ww("w"), bare, "--keep text-merge")
+                        .expect(Exit::Succeeds)
+                        .may_strand(&[Repo::Proj])
+                        .claim(Claim::OutputContains("kept the replayed tip's rwv.toml")),
+                    Step::git(&at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+                        .expect(Exit::Succeeds)
+                        .claim(Claim::OutputContains(
+                            "role = \"owned\"\nrecurse-submodules = false",
+                        )),
+                ]);
+                "a staged rwv.toml that does not parse leaves --keep text-merge the tip's text"
             }
         }
         TipSettle::KeepYours => {
