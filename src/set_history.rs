@@ -194,6 +194,7 @@ pub(crate) fn contradicted(
     };
     Some(
         scoped(State::HistoryContradicted)
+            .on_target(vcs)
             .subject(format!(
                 "`--history {one_run}` for one run, where the target records {recorded}"
             ))
@@ -227,6 +228,7 @@ pub(crate) fn governing(
         (None, Some(one_run)) => Ok(one_run),
         (None, None) => Err(Box::new(
             scoped(State::HistoryUnset)
+                .on_target(vcs)
                 .subject("the target records no history for it")
                 .only_forms(&[set, Form::C23Rerun])
                 .judge(vcs),

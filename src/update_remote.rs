@@ -803,19 +803,21 @@ fn fetch_and_resolve(item: &WorkItem, reporter: &Reporter<'_>, use_reporter: boo
     // `branch`, this resolution will now correctly fail rather than
     // resolving against a ghost ref. The error below names the state and
     // the two actionable exits so the operator knows what to do.
-    vcs.resolve_branch_on_remote(repo_dir, &planned.remote, &branch)
-        .map(Some)
-        .map_err(|_| {
-            format!(
-                "{repo}: branch '{branch}' does not resolve on the remote \
-                 — renamed or deleted upstream, or `branch` was never a \
-                 branch (it tracks a branch only; it cannot pin a tag or \
-                 SHA). To fix: update rwv.toml's `branch` field to the \
-                 current branch name.",
-                repo = repo_path.as_str(),
-                branch = branch.branch(),
-            )
-        })
+    match vcs.resolve_branch_on_remote(repo_dir, &planned.remote, &branch) {
+        Ok(tip) => Ok(Some(tip)),
+        Err(_) => {
+            let local = RawRefName::new(entry.branch.local_counterpart().as_str());
+            match vcs.resolve_local_branch_tip(repo_dir, &local) {
+                Ok(Some(_)) => Ok(None),
+                _ => Err(format!(
+                    "{repo}: branch '{branch}' does not resolve on the remote, nor here: \
+                     `rwv member set-branch {repo} <branch>` declares the branch it tracks",
+                    repo = repo_path.as_str(),
+                    branch = branch.branch(),
+                )),
+            }
+        }
+    }
 }
 
 /// The tip of the feature branch's own upstream as last fetched: the remote

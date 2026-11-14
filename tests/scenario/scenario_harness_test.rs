@@ -867,6 +867,9 @@ every_scenario!(
     history_rebase_pin_remap,
     stack_carried,
     stack_cycle,
+    update_remote_after_a_new_declared_branch_advances_nothing,
+    a_push_after_an_amend_of_a_published_commit_offers_what_clears_it,
+    status_and_doctor_at_a_parked_sync_offer_no_choice_that_cannot_run,
     a_choice_for_a_state_in_the_targets_workspace_runs_there,
     a_reset_refused_for_a_dependent_prints_choices_that_clear_it,
     stack_remote_dependent,
@@ -4202,7 +4205,7 @@ holding_rwv! {
                 }),
             Step::rwv(&ww("held"), &["land"])
                 .expect(Exit::refuses(Repo::App, State::PinUnpinned))
-                .claim(Claim::OutputContains("rwv lock --commit")),
+                .claim(Claim::OutputContains(" lock --commit")),
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("held"), &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
@@ -6613,6 +6616,24 @@ fn a_reset_refused_for_a_dependent_prints_choices_that_clear_it_is_green() {
 #[test]
 fn a_choice_for_a_state_in_the_targets_workspace_runs_there_is_green() {
     runner::run(scenarios::a_choice_for_a_state_in_the_targets_workspace_runs_there())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn status_and_doctor_at_a_parked_sync_offer_no_choice_that_cannot_run_is_green() {
+    runner::run(scenarios::status_and_doctor_at_a_parked_sync_offer_no_choice_that_cannot_run())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_push_after_an_amend_of_a_published_commit_offers_what_clears_it_is_green() {
+    runner::run(scenarios::a_push_after_an_amend_of_a_published_commit_offers_what_clears_it())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_after_a_new_declared_branch_advances_nothing_is_green() {
+    runner::run(scenarios::update_remote_after_a_new_declared_branch_advances_nothing())
         .assert_fully_decided_green();
 }
 

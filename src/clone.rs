@@ -180,7 +180,7 @@ pub fn run_clone(
             return Err(aborted.error);
         }
     };
-    let left = judge_left(&run.pins);
+    let left = judge_left(&run.pins, workspace_root);
     let mut report = run.report;
     crate::alignment::record(workspace_root, &name)?;
 
@@ -227,7 +227,7 @@ pub fn run_clone(
 
 /// Each member the clone placed without its pin, judged: `pin` `none` where
 /// the lock has no entry, `unreachable` where no ref reaches the entry.
-fn judge_left(pins: &[MemberPin]) -> Vec<Judged> {
+fn judge_left(pins: &[MemberPin], workspace: &std::path::Path) -> Vec<Judged> {
     pins.iter()
         .filter_map(|pin| {
             let state = match pin.outcome {
@@ -240,6 +240,7 @@ fn judge_left(pins: &[MemberPin]) -> Vec<Judged> {
                 state
                     .of(&pin.path)
                     .bind("<m>", &pin.path)
+                    .checkout(&workspace.join(pin.path.as_path()))
                     .judge(vcs.as_ref()),
             )
         })

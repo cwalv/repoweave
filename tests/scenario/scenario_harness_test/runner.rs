@@ -1184,6 +1184,14 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         if let Err(why) = outcome.meets(step.expect.exit) {
             report.unmet.push((step.label.clone(), why));
         }
+        if step.action.runs_rwv() {
+            if let Some(line) = unbound_placeholder_line(&output) {
+                report.unmet.push((
+                    step.label.clone(),
+                    format!("a printed line holds a placeholder the judgement binds:\n{line}"),
+                ));
+            }
+        }
         for claim in &step.expect.claims {
             if let Err(why) = run.holds(claim, &after, &output, &unmoved) {
                 report.unmet.push((step.label.clone(), why));
@@ -1205,6 +1213,33 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     }
     report.marks = std::mem::take(&mut run.marks);
     report
+}
+
+/// The placeholders a judgement always binds from what it judged: one left
+/// in a printed choice is a line nothing filled. The ones the operator
+/// chooses (`<T>`, `<W>`, `<b>`, `<rev>`, `<h>`, `<role>`, `<url>`) are not
+/// among them.
+const BOUND_PLACEHOLDERS: &[&str] = &[
+    "<dep>",
+    "<m>",
+    "<repo>",
+    "<checkout>",
+    "<target>",
+    "<primary>",
+    "<other>",
+    "<b-checkout>",
+    "<changed>",
+    "<resume>",
+    "<abort>",
+];
+
+fn unbound_placeholder_line(output: &str) -> Option<&str> {
+    output.lines().find(|line| {
+        let line = line.trim_start();
+        !line.starts_with("Error:")
+            && !line.starts_with("cd ")
+            && BOUND_PLACEHOLDERS.iter().any(|p| line.contains(p))
+    })
 }
 
 /// How a step ended, as its expected [`Exit`] reads it.

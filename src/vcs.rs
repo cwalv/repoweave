@@ -413,6 +413,7 @@ pub struct RangeListing {
 /// commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum VcsAction {
+    AddAll,
     Commit,
     Stash,
     StashUntracked,
@@ -447,7 +448,8 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 31] = [
+    pub const ALL: [VcsAction; 32] = [
+        Self::AddAll,
         Self::Commit,
         Self::Stash,
         Self::StashUntracked,

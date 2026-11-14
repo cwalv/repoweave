@@ -841,8 +841,8 @@ pub fn inactive_landing_refusal_spelled_for_its_project() -> Scenario {
             Step::commit(&side, Repo::Lib, "side-lib"),
             Step::rwv(&side, &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Docs, State::PinUnpinned))
-                .claim(Claim::OutputContains("rwv lock --commit --project proj2")),
-            Step::rwv_printed(&a(), "rwv lock --commit")
+                .claim(Claim::OutputContains(" lock --commit --project proj2")),
+            Step::rwv_printed_holding(&side, "rwv -C", " lock --commit")
                 .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch))
                 .claim(Claim::OutputContains("rwv update --project proj2")),
             Step::rwv_printed(&a(), "rwv update --project proj2")
@@ -857,7 +857,7 @@ pub fn inactive_landing_refusal_spelled_for_its_project() -> Scenario {
             Step::rwv(&side, &["land", "--history", "linear"])
                 .expect(Exit::refuses(Repo::Docs, State::PinUnpinned))
                 .claim(Claim::OutputLacks("--project")),
-            Step::rwv_printed(&a(), "rwv lock --commit").expect(Exit::Succeeds),
+            Step::rwv_printed_holding(&side, "rwv -C", " lock --commit").expect(Exit::Succeeds),
             Step::rwv(&side, &["land", "--history", "linear"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
@@ -21693,6 +21693,97 @@ pub fn a_choice_for_a_state_in_the_targets_workspace_runs_there() -> Scenario {
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::Succeeds)
                 .may_rewrite(&[Repo::App, Repo::Proj]),
+        ],
+    )
+}
+
+/// A sync stopped on a conflict in `lib` after rebasing `app`: `status` and
+/// `doctor` judge the rebased member as stopped, and print no choice the
+/// stop makes unable to run; the header names the continue and the abort.
+pub fn status_and_doctor_at_a_parked_sync_offer_no_choice_that_cannot_run() -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w"),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::hand_edit(&ww("w"), Repo::Lib, "README", "lib\n", "lib in w\n"),
+        Step::git(&ww("w"), Repo::Lib, &["commit", "-qam", "readme-w"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::hand_edit(&a(), Repo::Lib, "README", "lib\n", "lib on main\n"),
+        Step::git(&a(), Repo::Lib, &["commit", "-qam", "readme-main"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rwv sync --continue"))
+            .claim(Claim::OutputLacks("rwv update"))
+            .claim(Claim::OutputLacks("rwv member pin"))
+            .claim(Claim::OutputLacks("rwv lock --commit")),
+        Step::rwv(&ww("w"), &["doctor"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rwv sync --continue"))
+            .claim(Claim::OutputLacks("commit them if they are yours"))
+            .claim(Claim::OutputLacks("rwv member pin"))
+            .claim(Claim::OutputLacks("rwv update")),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Lib])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+    ];
+    scenario(
+        "status and doctor at a parked sync offer no choice that cannot run",
+        steps,
+    )
+}
+
+/// A published member commit amended on a feature: the push refuses
+/// `pin diverged` and offers the by-name re-pin, which run as printed clears
+/// it; the merge of the upstream, which would refuse `pin backwards`, is not
+/// offered.
+pub fn a_push_after_an_amend_of_a_published_commit_offers_what_clears_it() -> Scenario {
+    scenario(
+        "a push after an amend of a published commit offers what clears it",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["branch", "rename", "feat-w"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&ww("w"), &["push"]))
+                .pushes(Remote::origin(Repo::App), "feat-w")
+                .pushes(Remote::origin(Repo::Proj), "feat-w")
+                .expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &["commit", "--amend", "-q", "-m", "w-app amended"],
+            )
+            .may_strand(&[Repo::App])
+            .may_leave_unresolved(&[Repo::App]),
+            Step::rwv(&ww("w"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PinDiverged))
+                .claim(Claim::OutputLacks("--merge-upstream")),
+            Step::rwv_printed_holding(&ww("w"), "rwv member pin", "--commit")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App])
+                .may_leave_unresolved(&[Repo::App]),
+            Step::rwv(&ww("w"), &["push"])
+                .expect(Exit::refuses(Repo::App, State::PushBranchDiverged)),
+        ],
+    )
+}
+
+/// A member declared on a branch the printed `--new` created here and no
+/// remote holds: `update --remote` has nothing to advance for it and says
+/// nothing of editing `rwv.toml`.
+pub fn update_remote_after_a_new_declared_branch_advances_nothing() -> Scenario {
+    scenario(
+        "update --remote after set-branch --new advances nothing for it",
+        vec![
+            Step::rwv(&a(), &["member", "set-branch", LIB, "nowhere", "--new"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["update", "--remote"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("rwv.toml")),
         ],
     )
 }

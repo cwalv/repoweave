@@ -1574,7 +1574,7 @@ impl State {
                 means: "neither the checkout's commit nor the commit the lock pins is an \
                         ancestor of the other",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C25, Form::C2UpdateRemote, Form::C22],
+                offers: &[Form::C25, Form::C3UpdateRemote, Form::C22],
                 verb_offers: &[],
             },
             Self::PinOffLineage => &StateRow {
@@ -1946,6 +1946,9 @@ impl State {
             facts: Vec::new(),
             workspace: None,
             dependents_workspace: None,
+            target_workspace: None,
+            untracked: false,
+            without_at: Vec::new(),
             verb: None,
             only: None,
             only_forms: None,
@@ -2573,6 +2576,7 @@ pub enum Form {
     C12Declared,
     C12RestoreTarget,
     C13,
+    C13Untracked,
     C13WorkweaveDelete,
     C14Keep,
     C14Return,
@@ -2720,6 +2724,7 @@ impl Form {
         Self::C12Declared,
         Self::C12RestoreTarget,
         Self::C13,
+        Self::C13Untracked,
         Self::C13WorkweaveDelete,
         Self::C14Keep,
         Self::C14Return,
@@ -2848,7 +2853,9 @@ impl Form {
             },
             Self::C3UpdateRemote => &FormRow {
                 choice: C::C3,
-                steps: &[Rwv("rwv update --remote --reset-to-upstream <repo>")],
+                steps: &[Rwv(
+                    "rwv update --remote --reset-to-upstream <repo> --commit",
+                )],
                 at: W::WithBranch,
                 shipped: true,
             },
@@ -3033,6 +3040,12 @@ impl Form {
             Self::C13 => &FormRow {
                 choice: C::C13,
                 steps: &[Vcs(A::Commit), Vcs(A::Stash)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C13Untracked => &FormRow {
+                choice: C::C13,
+                steps: &[Vcs(A::AddAll), Vcs(A::Commit), Vcs(A::StashUntracked)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -3698,6 +3711,9 @@ pub struct Judging {
     facts: Vec<Fact>,
     workspace: Option<PathBuf>,
     dependents_workspace: Option<PathBuf>,
+    target_workspace: Option<PathBuf>,
+    untracked: bool,
+    without_at: Vec<Where>,
     verb: Option<&'static str>,
     only: Option<Vec<ChoiceId>>,
     only_forms: Option<Vec<Form>>,
@@ -3824,6 +3840,30 @@ impl Judging {
         self.bind(placeholder, dir.display())
     }
 
+    /// The workspace on the branch `<T>` names, where the choices that belong
+    /// in one run. Where none has it checked out they are not offered.
+    pub fn on_target(mut self, vcs: &dyn Vcs) -> Self {
+        let held = self
+            .bindings
+            .get("<checkout>")
+            .zip(self.bindings.get("<T>"))
+            .and_then(|(dir, target)| {
+                vcs.checkouts_of_branch(Path::new(dir), &crate::vcs::RawRefName::new(target))
+                    .ok()
+            })
+            .and_then(|held| held.into_iter().next())
+            .and_then(|checkout| {
+                crate::workspace::WorkspaceContext::resolve_unbound(&checkout)
+                    .ok()
+                    .map(|ctx| ctx.active_path().to_path_buf())
+            });
+        match held {
+            Some(workspace) => self.target_workspace = Some(workspace),
+            None => self.without_at.push(Where::OnTarget),
+        }
+        self
+    }
+
     /// A branch whose record lands into the judged one: its bindings, and the
     /// workspace holding it where its choices run. One checked out nowhere has
     /// no workspace for them to run in, so they are left out.
@@ -3869,6 +3909,20 @@ impl Judging {
         }
     }
 
+    /// The workspace a form that runs `at` is spelled to run in, where the
+    /// judgement knows one and it is not the workspace the verb runs in.
+    fn addressed_to(&self, at: Where) -> Option<&Path> {
+        match at {
+            Where::CheckoutsWorkspace | Where::WithBranch => self.workspace.as_deref(),
+            Where::OnTarget => self
+                .target_workspace
+                .as_deref()
+                .or(self.workspace.as_deref()),
+            Where::DependentsWorkspace => self.dependents_workspace.as_deref(),
+            _ => None,
+        }
+    }
+
     /// The judged line, its choices spelled by `vcs`.
     pub fn judge(self, vcs: &dyn Vcs) -> Judged {
         let row = self.state.row();
@@ -3884,6 +3938,10 @@ impl Judging {
             .map(|form| form.for_verb(self.verb))
             .chain(verb_offers.copied())
         {
+            let form = match (self.untracked, form) {
+                (true, Form::C13) => Form::C13Untracked,
+                _ => form,
+            };
             if !forms.contains(&form) {
                 forms.push(form);
             }
@@ -3897,6 +3955,18 @@ impl Judging {
                     .is_none_or(|only| only.contains(&form.row().choice))
             })
             .filter(|form| !self.without.contains(&form.row().choice))
+            .filter(|form| !self.without_at.contains(&form.row().at))
+            .filter(|form| {
+                let phrase = form.phrase(&self.bindings);
+                !JUDGED_PLACEHOLDERS.iter().any(|p| phrase.contains(p))
+            })
+            .filter(|form| {
+                form.rwv_commands().iter().all(|command| {
+                    JUDGED_PLACEHOLDERS.iter().all(|placeholder| {
+                        !command.contains(placeholder) || self.bindings.contains_key(placeholder)
+                    })
+                })
+            })
             .filter(|form| {
                 self.only_forms
                     .as_ref()
@@ -3914,18 +3984,9 @@ impl Judging {
                     .lines(vcs, self.verb)
                     .iter()
                     .map(|line| for_spelled_project(fill(line, &self.bindings)))
-                    .map(|line| {
-                        match (&self.workspace, &self.dependents_workspace, form.row().at) {
-                            (
-                                Some(workspace),
-                                _,
-                                Where::CheckoutsWorkspace | Where::WithBranch | Where::OnTarget,
-                            ) => in_workspace(&line, workspace),
-                            (_, Some(workspace), Where::DependentsWorkspace) => {
-                                in_workspace(&line, workspace)
-                            }
-                            _ => line,
-                        }
+                    .map(|line| match self.addressed_to(form.row().at) {
+                        Some(workspace) => in_workspace(&line, workspace),
+                        None => line,
                     })
                     .collect(),
             })
@@ -3956,6 +4017,12 @@ fn in_workspace(line: &str, workspace: &Path) -> String {
         None => line.to_owned(),
     }
 }
+
+/// The placeholders only a judgement can fill, from the repo, branch or
+/// workspace it judged: a form that spells one the judgement did not bind is
+/// not offered, where the operator-chosen ones (`<T>`, `<rev>`, `<h>`) print
+/// for the operator to fill.
+const JUDGED_PLACEHOLDERS: &[&str] = &["<m>", "<target>", "<dep>", "<repo>"];
 
 /// What separates the values [`Judging::bind_each`] binds.
 const EACH: &str = "\u{1f}";
@@ -4192,6 +4259,16 @@ impl Report {
 
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
+    }
+
+    /// Every line as a fact alone: where a stopped operation holds the
+    /// workspace, its own resume and abort are the only way out, and no
+    /// choice a line offers can run.
+    pub fn without_choices(mut self) -> Self {
+        for line in &mut self.lines {
+            line.choices.clear();
+        }
+        self
     }
 
     /// Add `judged` when there is one.
@@ -4470,7 +4547,10 @@ pub fn dirty(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path, files: Vec<Stri
             return held(vcs, repo, dir, &reading);
         }
     }
-    State::EditsDirty.of(repo).listing(files)
+    let tracked = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
+    let mut judging = State::EditsDirty.of(repo);
+    judging.untracked = files.iter().any(|file| !tracked.contains(file));
+    judging.listing(files)
 }
 
 /// [`dirty`] for a verb about to refuse on or write to `dir`: drift its

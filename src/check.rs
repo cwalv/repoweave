@@ -5146,6 +5146,12 @@ fn scan_pins(
     let input = &world.input;
     let mut live = None;
     let mut found = Vec::new();
+    if matches!(
+        crate::op_state::read_owner(&world.workspace_dir),
+        Ok(Some(_))
+    ) {
+        return found;
+    }
     for project in &input.projects {
         let Some(raw) = &project.lock else {
             continue;
@@ -5180,7 +5186,7 @@ fn scan_pins(
             }
             let dir = world.workspace_dir.join(repo.as_path());
             let vcs = crate::vcs::vcs_for(entry.vcs_type);
-            if matches!(vcs.set_back_from(&dir), Ok(Some(_))) {
+            if matches!(vcs.set_back_from(&dir), Ok(Some(_))) || vcs.mid_operation(&dir).is_some() {
                 continue;
             }
             let live =
@@ -10529,7 +10535,9 @@ fn collect_doctor_violations(
             continue;
         }
 
-        if crate::git::repo_is_dirty(repo_abs) == Some(false) {
+        if crate::git::repo_is_dirty(repo_abs) == Some(false)
+            || vcs.mid_operation(repo_abs).is_some()
+        {
             continue;
         }
         let project_repo = project_repos.contains(repo_abs);

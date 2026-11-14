@@ -3352,6 +3352,7 @@ impl Vcs for GitVcs {
 
     fn hint(&self, action: VcsAction) -> &'static str {
         match action {
+            VcsAction::AddAll => "git -C <checkout> add --all",
             VcsAction::Commit => "git -C <checkout> commit",
             VcsAction::Stash => "git -C <checkout> stash push",
             VcsAction::StashUntracked => "git -C <checkout> stash push --include-untracked",

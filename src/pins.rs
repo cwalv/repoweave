@@ -306,12 +306,10 @@ fn judging(
             let mut judging = judging(State::PinDiverged).subject(format!(
                 "neither HEAD nor the pin is an ancestor of the other: {heads}"
             ));
-            let mut only = Vec::new();
-            if push_branch
-                .as_ref()
-                .is_some_and(|tip| vcs.is_ancestor(dir, pin, tip).unwrap_or(false))
-            {
-                only.push(ChoiceId::C2);
+            let mut only = vec![ChoiceId::C25];
+            judging = judging.bind("<rev>", head.id().as_str());
+            if push_branch.is_some() {
+                only.push(ChoiceId::C3);
             }
             if let Some(reset) = reset.filter(|r| r.landed(vcs, dir, pin.id())) {
                 judging = judging.fact(Fact {

@@ -517,7 +517,16 @@ pub fn run_status(
                 judged.add(line);
             }
             let set_back = matches!(vcs.set_back_from(&repo_abs), Ok(Some(_)));
-            if set_back {
+            let mid_operation = vcs.mid_operation(&repo_abs).is_some();
+            if mid_operation {
+                judged.extend(crate::diagnosis::judge_edits(
+                    vcs.as_ref(),
+                    repo_path,
+                    &repo_abs,
+                    Vec::new(),
+                    None,
+                ));
+            } else if set_back {
                 if let Some(line) = crate::diagnosis::judge_edits(
                     vcs.as_ref(),
                     repo_path,
@@ -556,7 +565,7 @@ pub fn run_status(
                 .map(|e| e.version.clone());
 
             let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
-            if let Some(head) = tip.as_ref().filter(|_| !set_back) {
+            if let Some(head) = tip.as_ref().filter(|_| !set_back && !mid_operation) {
                 let judging = match &lock_sha {
                     None => Some(
                         crate::diagnosis::State::PinNone
@@ -640,6 +649,9 @@ pub fn run_status(
         Ok(op) => (op, None),
         Err(e) => (None, Some(format!("{e:#}"))),
     };
+    if op.is_some() {
+        judged = judged.without_choices();
+    }
     let backups = match ctx.active_project() {
         Some(active) if !unreadable_projects.iter().any(|u| &u.project == active) => {
             crate::backup::held_by_project(ctx)?
