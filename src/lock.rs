@@ -429,6 +429,7 @@ pub fn lock(
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
     crate::branch::require_record(ctx)?;
+    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let (project, _) = scope(ctx)?;
     crate::diagnosis::settle_project_drift(
         &project,
@@ -777,9 +778,6 @@ pub(crate) fn relock(
     relocking: &Relocking<'_>,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<Option<PendingLockCommit>> {
-    // `--commit` writes a new lock commit into the history a mid-op replay is
-    // reconciling; a plain lock write is the auto-relock's own input and is
-    // not refused.
     if commit.is_some() && relocking.op == OpHeld::None {
         crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     }

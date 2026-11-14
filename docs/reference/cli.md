@@ -224,6 +224,7 @@ Reads HEAD from each member the run acts on and records its resolved 40-characte
 - A member not where the checked-out branch's record puts it is refused on the `alignment` axis, `rwv update` being the choice that aligns it. A member the record leaves where it was found, with no pin to place it, keeps its pin.
 - A detached workspace, or a detached project repo, refuses (`alignment` `project detached`): there is no branch to record the pins on.
 - Uncommitted changes to tracked files in a member refuse (`edits` `dirty`); use `--dirty` to bypass. Untracked files are fine.
+- An operation in progress in this workspace refuses (`op-in-progress`), with or without `--commit`; the operation's `--continue` or `rwv abort` ends it first.
 
 Every member is judged before `rwv.lock` is written, and all refusals are reported together. Under `--commit`, the project repo's other uncommitted changes stay out of the commit and as they are, named in one line.
 
