@@ -5716,15 +5716,18 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     );
 
     if let Err(e) = phase1_outcome {
-        if emit_text {
-            eprintln!("Phase 1' (project repo) failed: {e:#}");
-        }
         // Only teach the VCS-native resume when the project repo is actually
         // left mid-op: a non-conflict rebase error leaves no in-flight VCS op.
         let live_conflict = ctx
             .project_vcs
             .mid_op(&ctx.cwd_project_dir)
             .map(composed_conflict);
+        if live_conflict.is_some() {
+            return Err(e);
+        }
+        if emit_text {
+            eprintln!("Phase 1' (project repo) failed: {e:#}");
+        }
         crate::refuse!(
             RefusalKind::OpParked,
             "{}",

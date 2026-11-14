@@ -18475,6 +18475,10 @@ pub enum ManifestSettle {
     /// markers and all, and not staged: the continue keeps the edit in a
     /// backup it names.
     LinesOnlyHandEdited,
+    /// [`ManifestSettle::LinesOnly`] with the markers turned into comments by
+    /// hand, not staged: the file declares the merge, and the continue stages
+    /// it as it stands.
+    LinesOnlyDeclaresTheMerge,
     /// [`ManifestSettle::LinesOnly`] resolved by hand into another manifest
     /// and not staged: the continue refuses naming the staging, and once it
     /// is staged the hand resolution is what is committed.
@@ -18888,7 +18892,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 Step::rwv(&ww("w"), start)
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
-                    .claim(Claim::OutputContains(resume_line)),
+                    .claim(Claim::OutputContains(resume_line))
+                    .claim(Claim::OutputLacks("see error above")),
                 Step::rwv(
                     &ww("w"),
                     if land {
@@ -18932,6 +18937,29 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 }
             }
         }
+        S::LinesOnlyDeclaresTheMerge => {
+            steps = lines_only();
+            steps.extend([
+                stop(H::Merge),
+                Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", "<<<<<<< ", "# "),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "=======\n",
+                    "branch = \"main\"\nrole = \"owned\"\n\n",
+                ),
+                Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", ">>>>>>> ", "# "),
+                continues().claim(Claim::OutputContains(
+                    "rwv.toml as it stands declares the merge of both sides; staged it",
+                )),
+                both_members(),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("# HEAD")),
+            ]);
+            "an rwv.toml the operator made declare the merge is staged as it stands"
+        }
         S::LinesOnlyHandEdited => {
             steps = lines_only();
             steps.extend([
@@ -18945,6 +18973,9 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 ),
                 continues()
                     .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains(
+                        "comments and layout the incoming side changed in rwv.toml are not carried",
+                    ))
                     .claim(Claim::OutputContains("kept in backup")),
                 Step::rwv_printed_holding(&ww("w"), "git -C ", "show")
                     .expect(Exit::Succeeds)

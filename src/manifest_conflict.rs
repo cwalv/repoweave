@@ -339,9 +339,8 @@ pub(crate) struct TipDiffers {
     pub(crate) values: String,
 }
 
-/// Judge `tip` against the merge of the values of `sides`. An entry both
-/// sides changed differently was settled where the replay stopped on it, so
-/// the tip's value stands for it; a tip that does not parse is not judged.
+/// Judge `tip` against the merge of the values of `sides`; a tip that does
+/// not parse is not judged.
 pub(crate) fn check_tip(sides: &ConflictSides, tip: &str) -> anyhow::Result<Option<TipDiffers>> {
     if sides.ours == sides.base || sides.theirs == sides.base {
         return Ok(None);
@@ -349,23 +348,12 @@ pub(crate) fn check_tip(sides: &ConflictSides, tip: &str) -> anyhow::Result<Opti
     let (Ok(read), Ok(at_tip)) = (read(sides), Manifest::from_toml_str(tip)) else {
         return Ok(None);
     };
-    let at_tip = at_tip.declared()?;
-    let mut values = read.merged(false)?.declared()?;
-    for conflict in read.conflicts()? {
-        put(
-            &mut values,
-            &conflict.path,
-            at(&at_tip, &conflict.path).cloned(),
-        );
-    }
-    let merged = Manifest::from_toml_str(
-        &toml::to_string(&values).context("failed to serialize the merged rwv.toml")?,
-    )?;
-    if Manifest::from_toml_str(tip)?.declares_same(&merged) {
+    let merged = read.merged(false)?;
+    if at_tip.declares_same(&merged) {
         return Ok(None);
     }
     Ok(Some(TipDiffers {
-        lines: listing(&at_tip, &merged.declared()?, &[]),
+        lines: listing(&at_tip.declared()?, &merged.declared()?, &[]),
         values: Manifest::edit_text(tip, |m| *m = merged)?.0,
     }))
 }
@@ -490,9 +478,6 @@ pub(crate) fn continue_at_stop(
         crate::op_state::resume(ctx.active_path())?;
         return Ok(());
     };
-    if record.verb == OpVerb::CherryPick {
-        return Ok(());
-    }
     let workspace = ctx.active_path();
     let resume = crate::op_state::resume_command_at(record.verb, workspace);
     let refused = |head: &str, lines: Vec<String>| {
@@ -609,9 +594,12 @@ pub(crate) fn continue_at_stop(
             ],
         ));
     }
-    let text = match working.as_deref().and_then(text_merge_written) {
-        Some(text_merge) => Manifest::edit_text(text_merge, |m| *m = merged)?.0,
-        None => sides.text(merged)?,
+    let (text, dropped) = match working.as_deref().and_then(text_merge_written) {
+        Some(text_merge) => (Manifest::edit_text(text_merge, |m| *m = merged)?.0, None),
+        None => (
+            sides.text(merged)?,
+            Some(if replaying { "yours" } else { "incoming" }),
+        ),
     };
     let kept = vcs.backup_edits(&dir)?;
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
@@ -625,6 +613,12 @@ pub(crate) fn continue_at_stop(
         None => String::new(),
     };
     eprintln!("{done}: wrote and staged the merge of both sides of rwv.toml{took}");
+    if let Some(dropped) = dropped {
+        eprintln!(
+            "comments and layout the {dropped} side changed in rwv.toml are not carried; the \
+             file as the VCS left it is in the backup below"
+        );
+    }
     for line in kept.iter().flat_map(|kept| kept_lines(vcs, &dir, kept)) {
         eprintln!("{line}");
     }
@@ -1011,6 +1005,25 @@ mod tests {
         let workweave = merged.workweave.unwrap();
         assert_eq!(workweave.copy, ["t"]);
         assert_eq!(workweave.link, ["l"]);
+    }
+
+    #[test]
+    fn an_integrations_keys_are_each_an_entry() {
+        let table = |enabled: bool, files: &str| {
+            format!(
+                "{}[integrations.static-files]\nenabled = {enabled}\nfiles = [{files}]\n",
+                member("a", "main")
+            )
+        };
+        let sides = sides(
+            &table(true, "\"a\""),
+            &table(false, "\"a\""),
+            &table(true, "\"b\""),
+        );
+        assert!(paths(&sides).is_empty());
+        let merged = toml::to_string(&sides.merged(false).unwrap().declared().unwrap()).unwrap();
+        assert!(merged.contains("enabled = false"), "{merged}");
+        assert!(merged.contains("\"b\""), "{merged}");
     }
 
     #[test]

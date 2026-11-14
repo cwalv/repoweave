@@ -948,6 +948,7 @@ every_scenario!(
         scenarios::ManifestStopHistory::Linear
     )),
     settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnlyHandEdited),
+    settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnlyDeclaresTheMerge),
     settle_a_manifest_stop(scenarios::ManifestSettle::HandResolvedUnstaged),
     settle_a_manifest_stop(scenarios::ManifestSettle::KeepWithNothingInConflict),
     settle_a_manifest_stop(scenarios::ManifestSettle::LinesOnlyReplayed),
@@ -6807,6 +6808,14 @@ fn manifest_stop_lines_only_land_linear() {
 fn manifest_stop_lines_only_hand_edited() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::LinesOnlyHandEdited,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_lines_only_declares_the_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::LinesOnlyDeclaresTheMerge,
     ))
     .assert_fully_decided_green();
 }

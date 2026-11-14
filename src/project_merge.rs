@@ -1067,10 +1067,19 @@ pub(crate) fn settle_replayed_manifest(
     let staged = vcs
         .staged_file(dir, Manifest::FILE_NAME)?
         .filter(|staged| Some(staged) != at_head.as_ref());
-    if unparsed.is_none() && differs.is_none() && !(staged.is_some() && tip_settled(workspace)?) {
+    let rebase = project_rebase(workspace)?;
+    let settled = matches!(rebase, Some((_, true)));
+    if unparsed.is_none() && differs.is_none() && !(staged.is_some() && settled) {
         return Ok(None);
     }
-    let rebase = journaled_project_rebase(dir, workspace, head.id())?;
+    let Some((rebase, _)) = rebase else {
+        return Err(crate::untokened!(
+            InternalInvariant,
+            "{}: its tip {} is no replay this operation journaled",
+            dir.display(),
+            head.id().short()
+        ));
+    };
     let replayed = vcs.replayed(dir, &rebase.base, &rebase.from, &rebase.onto, head.id())?;
     let replayed_tip = replayed.as_ref().and_then(|replayed| {
         replayed
@@ -1169,67 +1178,49 @@ pub(crate) fn replayed_tip_differs(
     dir: &Path,
     workspace: &Path,
 ) -> anyhow::Result<Option<(op_state::Rebasing, crate::manifest_conflict::TipDiffers)>> {
-    let Some(take_in) = op_state::read_owner(workspace)?.and_then(|owner| owner.take_in) else {
+    let Some((rebase, false)) = project_rebase(workspace)? else {
         return Ok(None);
     };
-    let Some(rebase) = take_in
-        .rebases
-        .iter()
-        .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
-    else {
-        return Ok(None);
-    };
-    if take_in.tip_settled.as_ref() == Some(rebase) || vcs.mid_op(dir).is_some() {
+    if vcs.mid_op(dir).is_some() {
         return Ok(None);
     }
-    let head = vcs.head_revision(dir)?;
-    let Some(tip) = manifest_text_at(vcs, dir, head.id()) else {
+    let Some(tip) = manifest_text_at(vcs, dir, vcs.head_revision(dir)?.id()) else {
         return Ok(None);
     };
-    let base = vcs
-        .merge_bases(dir, &rebase.from, &rebase.onto)?
-        .into_iter()
-        .next();
+    let base = vcs.merge_bases(dir, &rebase.from, &rebase.onto)?;
     let sides =
-        crate::manifest_conflict::sides_at(vcs, dir, base.as_ref(), &rebase.onto, &rebase.from);
-    Ok(crate::manifest_conflict::check_tip(&sides, &tip)?.map(|differs| (rebase.clone(), differs)))
+        crate::manifest_conflict::sides_at(vcs, dir, base.first(), &rebase.onto, &rebase.from);
+    Ok(crate::manifest_conflict::check_tip(&sides, &tip)?.map(|differs| (rebase, differs)))
 }
 
 /// Where the project replay journaled in `workspace` stopped in `dir` with
 /// `rwv.toml` unmerged, journal its tip settled: the operator resolves
 /// `rwv.toml` there, and what they make of it is not judged again.
 pub(crate) fn settled_by_hand(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<()> {
-    if vcs.rebase_in_flight(dir)?.is_none()
-        || !vcs
+    let unmerged = vcs.rebase_in_flight(dir)?.is_some()
+        && vcs
             .unmerged_paths(dir)?
             .iter()
-            .any(|path| path == Manifest::FILE_NAME)
-    {
-        return Ok(());
-    }
-    let rebase = op_state::read_owner(workspace)?
-        .and_then(|owner| owner.take_in)
-        .and_then(|take_in| {
-            take_in
-                .rebases
-                .into_iter()
-                .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
-        });
-    match rebase {
-        Some(rebase) => op_state::journal_tip_settled(workspace, rebase),
-        None => Ok(()),
+            .any(|path| path == Manifest::FILE_NAME);
+    match project_rebase(workspace)? {
+        Some((rebase, _)) if unmerged => op_state::journal_tip_settled(workspace, rebase),
+        _ => Ok(()),
     }
 }
 
-/// Whether the operator settled the replayed tip of the operation journaled
-/// in `workspace`.
-fn tip_settled(workspace: &Path) -> anyhow::Result<bool> {
-    Ok(op_state::read_owner(workspace)?
-        .and_then(|owner| owner.take_in)
-        .is_some_and(|take_in| {
-            take_in
-                .tip_settled
-                .is_some_and(|settled| take_in.rebases.contains(&settled))
+/// The project rebase the operation journaled in `workspace`, and whether
+/// the operator settled its tip.
+fn project_rebase(workspace: &Path) -> anyhow::Result<Option<(op_state::Rebasing, bool)>> {
+    let Some(take_in) = op_state::read_owner(workspace)?.and_then(|owner| owner.take_in) else {
+        return Ok(None);
+    };
+    Ok(take_in
+        .rebases
+        .into_iter()
+        .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
+        .map(|rebase| {
+            let settled = take_in.tip_settled.as_ref() == Some(&rebase);
+            (rebase, settled)
         }))
 }
 
@@ -1245,38 +1236,8 @@ fn manifest_text_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Stri
 /// The parser's error for the `rwv.toml` at `commit` in `dir`, and the file,
 /// where it does not parse.
 fn unparseable_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<(anyhow::Error, String)> {
-    let text = vcs
-        .read_file_at_revision(
-            dir,
-            &ResolvedRevisionId::from(commit.clone()),
-            Path::new(Manifest::FILE_NAME),
-        )
-        .ok()?;
+    let text = manifest_text_at(vcs, dir, commit)?;
     Manifest::from_toml_str(&text)
         .err()
         .map(|error| (error, text))
-}
-
-/// The project rebase the operation journaled in `workspace`.
-fn journaled_project_rebase(
-    dir: &Path,
-    workspace: &Path,
-    tip: &CommitId,
-) -> anyhow::Result<op_state::Rebasing> {
-    op_state::read_owner(workspace)?
-        .and_then(|owner| owner.take_in)
-        .and_then(|take_in| {
-            take_in
-                .rebases
-                .into_iter()
-                .find(|rebase| rebase.repo == crate::manifest::RepoKey::Project)
-        })
-        .ok_or_else(|| {
-            crate::untokened!(
-                InternalInvariant,
-                "{}: its tip {} is no replay this operation journaled",
-                dir.display(),
-                tip.short()
-            )
-        })
 }
