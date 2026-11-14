@@ -2541,17 +2541,17 @@ fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
     format!(
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
-         \"phase\": \"replay\", \"advanced_tips\": {{}}, \"converged_tips\": {{}}, \
+         \"phase\": \"replay\", \
          \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     )
 }
 
-/// A record still carrying the retired `advanced_tips` key does not parse
-/// whole, and abort restores from its header, naming the parse failure.
+/// A record with no `converged_tips` key does not parse whole, and abort
+/// restores from its header, naming the parse failure.
 #[test]
-fn cell_owner_record_carrying_a_retired_key_aborts_from_its_header() {
+fn cell_owner_record_missing_its_tip_key_aborts_from_its_header() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, sha) = make_shared_workspaces(tmp.path());
 
@@ -2577,7 +2577,7 @@ fn cell_owner_record_carrying_a_retired_key_aborts_from_its_header() {
     assert!(
         stderr.contains(&format!(
             "does not parse past op {op_id}'s id and workspaces"
-        )) && stderr.contains("advanced_tips"),
+        )) && stderr.contains("converged_tips"),
         "[cell7] abort must name the parse failure it read past; stderr:\n{stderr}"
     );
     assert_eq!(

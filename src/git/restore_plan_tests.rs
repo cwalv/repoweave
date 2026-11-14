@@ -119,6 +119,17 @@ fn a_tip_another_branch_reaches_is_reset_keeping_nothing() {
 }
 
 #[test]
+fn a_tip_only_a_remote_tracking_branch_reaches_is_reset_keeping_nothing() {
+    let p = repo();
+    let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    commit(p.path(), "pushed");
+    git(p.path(), &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
+    assert_eq!(outcome, VerifiedRestoreOutcome::Restored);
+    assert_eq!(&head(p.path()), saved.id());
+}
+
+#[test]
 fn a_tip_holding_a_commit_nothing_else_reaches_is_kept_in_the_branch_slot_whoever_made_it() {
     let p = repo();
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
