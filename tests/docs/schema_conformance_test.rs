@@ -379,6 +379,12 @@ fn backup_corpus() -> Vec<(&'static str, Value)> {
                                 Some(BackupMark::Abandoned),
                                 false,
                             ),
+                            backup(
+                                "origin/main/superseded-ffffffffffff",
+                                'f',
+                                Some(BackupMark::Superseded),
+                                false,
+                            ),
                             backup("proj--old/dddddddddddd", 'd', None, true),
                         ],
                     },
@@ -1229,6 +1235,10 @@ fn status_backups() -> Vec<repoweave::backup::RepoBackupsOutput> {
             backup("main/1", Some(repoweave::vcs::BackupMark::Abandoned)),
             backup("main/2", Some(repoweave::vcs::BackupMark::Rebased)),
             backup("main/3", None),
+            backup(
+                "origin/main/superseded-1",
+                Some(repoweave::vcs::BackupMark::Superseded),
+            ),
         ],
     }]
 }
