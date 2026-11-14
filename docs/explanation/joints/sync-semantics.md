@@ -125,7 +125,7 @@ unique-commit and store-claim refusals. Pruning waits until every repo has
 replayed, so an op that parks has removed nothing — `rwv abort` restores refs
 and cannot bring back a deleted checkout. A refused prune leaves its checkout
 on disk: the op still runs to completion and clears its op record, then exits
-1 naming the checkout to remove by hand. Under `--retire` the dirty check
+1 naming `rwv member remove <path> --delete`, the verb that removes it. Under `--retire` the dirty check
 refuses first if that checkout holds uncommitted changes, so the workweave is
 not deleted over them; what it committed stays on its branch, which the
 deletion rule keeps unless it landed.

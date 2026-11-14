@@ -139,8 +139,9 @@ record per repo and axis (`edits`, `checkout`, `push-branch`, `name`, `publish`,
 `target`, `history`, `protected`, `port`), with the facts and the choices that
 clear it; every printed choice runs as written. `rwv explain <token>` serves
 each token. Refusals removed with the removal of what they judged include
-`dirty-checkout`, `unmerged-commits`, `uncommitted-work`, `mid-operation` and
-`push-from-workweave`; `unsupported-vcs-tool`, `missing-vcs-tool`,
+`dirty-checkout`, `unmerged-commits`, `uncommitted-work`, the `mid-operation`
+refusal (the VCS-error kind of that name, which `rwv explain mid-operation`
+serves, stays) and `push-from-workweave`; `unsupported-vcs-tool`, `missing-vcs-tool`,
 `filesystem-without-exclusive-publish`, `savepoint-unfiled`,
 `replay-unrecorded` and `abort-in-its-workspace` are new.
 
@@ -191,6 +192,15 @@ clone` write; `rwv lock --merge-driver` is the plumbing the config names. The
 `rwv-ours` setup an earlier release wrote is refused as
 `missing-lock-merge-driver`; `rwv doctor --fix` replaces it. `rwv lock --repo`
 records only the members a selector matches, never moving a pin backward.
+
+### Other flags
+
+Also new: `rwv sync --reset-to-target`, `rwv activate --update`, `rwv branch
+set-history --unset`, `rwv cherry-pick --mainline` and `--except`, `rwv clone
+--no-reference`, `rwv member add --no-recurse-submodules`, `rwv member pin
+--commit` and `rwv member set-branch --url`. Removed: `rwv workweave create
+--discard-uncommitted` and `--discard-unmerged-commits`, and `rwv workweave
+delete --discard-unmerged-commits`, whose successor is `--discard-unlanded`.
 
 ### Removed readers of older state
 
