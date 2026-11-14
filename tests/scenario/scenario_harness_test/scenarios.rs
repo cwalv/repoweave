@@ -20550,6 +20550,48 @@ pub fn an_entry_both_sides_changed(shape: BothChanged, taking_in: TakingIn) -> S
     )
 }
 
+/// A criss-cross: the workweave sets `lib`'s `recurse-submodules` and merges
+/// `main` in, `main` merges the workweave's first commit by hand, then sets
+/// it back. The two have two merge bases, and git's merge takes `main`'s
+/// setting back: no check stops it, whichever base git lists first.
+pub fn two_merge_bases_leave_the_text_merge_unchecked() -> Scenario {
+    scenario(
+        "two merge bases leave the text merge unchecked",
+        vec![
+            create("w"),
+            Step::rwv(
+                &ww("w"),
+                &["member", "set-recurse-submodules", LIB, "false"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "merge"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["merge", "--no-ff", "-m", "forge merge", "proj--w^1"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-recurse-submodules", LIB, "true"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["member", "set-role", DOCS, "fork"]).expect(Exit::Succeeds),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["merge-base", "--all", "HEAD", "main"],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("differs from the merge")),
+            Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("recurse-submodules")),
+        ],
+    )
+}
+
 /// What the operator does at a `sync` merge stop on `NOTES.txt`, a file of
 /// the project repo both sides added differently.
 #[derive(Debug, Clone, Copy)]

@@ -1053,6 +1053,7 @@ every_scenario!(
         scenarios::BothChanged::AlreadyUpstream,
         scenarios::TakingIn::LandLinear
     ),
+    two_merge_bases_leave_the_text_merge_unchecked,
     check_a_text_merge(scenarios::TextMerge::SettingMoved),
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
@@ -7509,6 +7510,12 @@ fn an_element_each_side_added_to_one_list_is_kept() {
 #[test]
 fn a_change_again_of_an_entry_already_changed_upstream_is_kept() {
     each_taking_in(scenarios::BothChanged::AlreadyUpstream);
+}
+
+#[test]
+fn two_merge_bases_leave_the_text_merge_unchecked() {
+    runner::run(scenarios::two_merge_bases_leave_the_text_merge_unchecked())
+        .assert_fully_decided_green();
 }
 
 #[test]
