@@ -24220,6 +24220,41 @@ fn abort_keeps_another_seats_commit(
     steps
 }
 
+/// A `linear` sync stopped at the check of its replayed project tip, whose
+/// `rwv.toml` names a member `main` added back that the stop has yet to
+/// place: `rwv doctor` there reports no missing worktree and its `--fix`
+/// makes none; the operation's continue places it.
+pub fn doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places() -> Scenario {
+    let at = ww("w");
+    scenario(
+        "doctor at a stop offers no fix for a member the operation places",
+        vec![
+            create("w"),
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            Step::rwv(&at, &["sync"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::rwv(&at, &["member", "set-recurse-submodules", APP, "false"])
+                .expect(Exit::Succeeds),
+            Step::rwv(&at, &["sync", "--history", "linear"]).expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            )),
+            Step::rwv(&at, &["doctor"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("local/remotes/docs"))
+                .claim(Claim::OutputContains("stale-op-state")),
+            Step::rwv(&at, &["doctor", "--fix"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("local/remotes/docs")),
+            Step::rwv(&at, &["sync", "--continue", "--keep", "text-merge"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj]),
+            Step::git(&at, Repo::Docs, &["rev-parse", "HEAD"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// A sync that prunes a member `main` dropped, then one under `history`
 /// that gives the workweave a checkout of it once `main` adds it back: each
 /// ends with no savepoint of its operation left in the member's store, the

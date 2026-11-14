@@ -5373,6 +5373,7 @@ fn scan_member_gaps(
     let mut gaps = Vec::new();
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
         let branch = crate::vcs::EphemeralRefName::mint(&workweave.flat()).to_raw();
+        let placed_by_its_op = matches!(crate::op_state::read_owner(&workweave_dir), Ok(Some(_)));
         for (repo, entry) in loaded.manifest.iter_entries() {
             let slot_path = workweave_dir.join(repo.as_path());
             let slot = if crate::workweave::is_symlinked_member(&slot_path) {
@@ -5382,7 +5383,7 @@ fn scan_member_gaps(
                     continue;
                 }
                 GapSlot::DanglingLink
-            } else if slot_path.exists() {
+            } else if slot_path.exists() || placed_by_its_op {
                 continue;
             } else {
                 GapSlot::Empty
@@ -10590,11 +10591,14 @@ fn collect_doctor_violations(
 
     // In a workweave the per-repo scans read the slot itself, so a gap there —
     // nothing at the slot, or a link into the canonical clone — would also
-    // surface as their findings, with remedies that do not apply.
+    // surface as their findings, with remedies that do not apply. While the
+    // workweave records an operation, a member not on disk is that
+    // operation's to place.
     if matches!(ctx.checkout, Checkout::Workweave { .. }) {
         let is_gap = |repo: &RepoPath| member_gaps.iter().any(|gap| &gap.repo == repo);
+        let op_places = matches!(crate::op_state::read_owner(workspace_dir), Ok(Some(_)));
         violations.retain(|v| match v {
-            CheckViolation::DanglingReference { repo, .. } => !is_gap(repo),
+            CheckViolation::DanglingReference { repo, .. } => !is_gap(repo) && !op_places,
             CheckViolation::Pin { repo, sub_kind, .. } if *sub_kind != PinKind::None => {
                 !is_gap(repo)
             }

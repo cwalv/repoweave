@@ -1336,6 +1336,7 @@ every_scenario!(
     continue_after_another_seat_moves(scenarios::StoppedMoved::LandMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::PullProject),
     pull_continue_pins_a_member_merge_committed_by_hand,
+    doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places,
     a_sync_taking_in_an_added_member_leaves_no_savepoint("linear"),
     a_sync_taking_in_an_added_member_leaves_no_savepoint("merge"),
     cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit,
@@ -4164,6 +4165,12 @@ fn a_sync_taking_in_an_added_member_leaves_no_savepoint() {
         runner::run(scenarios::a_sync_taking_in_an_added_member_leaves_no_savepoint(history))
             .assert_fully_decided_green();
     }
+}
+
+#[test]
+fn doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places() {
+    runner::run(scenarios::doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places())
+        .assert_fully_decided_green();
 }
 
 #[test]

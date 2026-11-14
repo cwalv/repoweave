@@ -875,6 +875,11 @@ not operate on one, so the verbs that walk a workweave's members refuse with
 this token until it is replaced. Replacing it unlinks the symlink and never
 touches what it pointed at.
 
+While a workweave records an operation in progress, a member it has no
+worktree for is not reported, here or as
+[`dangling-reference`](#dangling-reference), and `--fix` makes none: the
+operation's `--continue` places it.
+
 A checkout whose worktree link names a git directory that is not there also
 counts as no worktree: git cannot open it, though its files stand. Doctor
 reports it as such, never as live edits.
