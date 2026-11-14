@@ -778,7 +778,43 @@ const BEFORE_THE_RECORD: &[&str] = &[
 ];
 
 fn recorded(point: &str) -> bool {
-    !BEFORE_THE_RECORD.contains(&point)
+    !BEFORE_THE_RECORD.contains(&point) && !AFTER_THE_RECORD.contains(&point)
+}
+
+/// Points a verb passes once its operation record is gone: a kill there
+/// leaves nothing to continue or abort, `rwv status` names what the verb
+/// left unaligned with the verb that aligns it, and that verb ends as an
+/// unkilled run does.
+const AFTER_THE_RECORD: &[&str] = &["aligning-source"];
+
+/// Shapes whose verb, at [`AFTER_THE_RECORD`], has yet to make the checkout
+/// of a member the composed manifest added.
+const ALIGNS_A_MEMBER_IT_ADDS: &[&str] =
+    &["land_linear_manifest_stop", "sync_linear_manifest_stop"];
+
+fn converged(shape: &Shape) -> Vec<Step> {
+    let at = (shape.at)();
+    let mut steps = vec![
+        Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        Step::rwv(&at, shape.resume).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ];
+    let status = Step::rwv(&at, &["status"]).claim(Claim::OutputLacks("in progress"));
+    steps.push(status.expect(Exit::Succeeds));
+    if ALIGNS_A_MEMBER_IT_ADDS.contains(&shape.id) {
+        steps.push(
+            Step::rwv(&a(), &["doctor", "--all"])
+                .claim(Claim::OutputContains(
+                    "[error: workweave-drift/missing] core: workweave drift in proj--w: \
+                     missing worktree local/remotes/docs",
+                ))
+                .claim(Claim::OutputContains("`rwv doctor --fix`")),
+        );
+        steps.push(loose(
+            Step::rwv(&at, &["doctor", "--fix"]).expect(Exit::Succeeds),
+        ));
+    }
+    steps.extend(ends_clean(shape, false));
+    steps
 }
 
 fn rerun(shape: &Shape) -> Vec<Step> {
@@ -795,6 +831,9 @@ fn rerun(shape: &Shape) -> Vec<Step> {
 }
 
 fn continued(shape: &Shape, phase: Phase, point: &str) -> Vec<Step> {
+    if AFTER_THE_RECORD.contains(&point) {
+        return converged(shape);
+    }
     let mut steps = Vec::new();
     if !recorded(point) {
         steps.extend(rerun(shape));
@@ -1143,6 +1182,11 @@ pub(super) const POINTS: &[Row] = &[
         elsewhere: "as carry-composed.",
     },
     Row {
+        point: "aligning-source",
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
+        elsewhere: "a landing that retires its seat does not align it, and a landing waiting on its claim is killed while the contender holds it; every other verb aligns nothing once its record is gone.",
+    },
+    Row {
         point: "carry-move",
         cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
         elsewhere: "every sync and landing moves a branch through a carry journal entry; pull, update --remote and cherry-pick journal their moves another way.",
@@ -1382,7 +1426,7 @@ fn cells_of(shape: &Shape) -> Vec<(&'static str, Phase)> {
 }
 
 fn endings(shape: &Shape, phase: Phase, point: &str) -> Vec<Ending> {
-    if already_ended(shape, point) {
+    if already_ended(shape, point) || AFTER_THE_RECORD.contains(&point) {
         return vec![Ending::Continue];
     }
     let mut endings = if phase == DuringAbort {
@@ -1398,20 +1442,14 @@ fn endings(shape: &Shape, phase: Phase, point: &str) -> Vec<Ending> {
 
 /// Cells that fail on this tree, each with the defect it shows. A listed cell
 /// must still fail: one that passes is a stale entry.
-fn known_failing(shape: &Shape, phase: Phase, point: &str, ending: Ending) -> Option<&'static str> {
+fn known_failing(shape: &Shape, point: &str) -> Option<&'static str> {
     if already_ended(shape, point) {
         return Some(
             "a landing with --retire killed once its seat is gone leaves orphaned savepoints \
              that `rwv doctor --all` reports",
         );
     }
-    (shape.id == "land_linear_manifest_stop"
-        && phase == Resumed
-        && matches!(ending, Ending::Abort | Ending::AbortInTarget))
-    .then_some(
-        "abort of a landing stopped on a replayed rwv.toml leaves the checkout of the member \
-         that manifest added in the source workweave",
-    )
+    None
 }
 
 fn run_shape(id: &str) {
@@ -1440,7 +1478,7 @@ fn run_shape(id: &str) {
                                 named(shape, phase, point, ending)
                             ))
                         });
-                match (known_failing(shape, phase, point, ending), failed) {
+                match (known_failing(shape, point), failed) {
                     (None, failed) => failed,
                     (Some(_), Some(_)) => None,
                     (Some(defect), None) => Some(format!(

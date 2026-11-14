@@ -1717,6 +1717,7 @@ fn act(
         &sync.project,
         kept.iter().filter(|k| !k.outlives_op),
     );
+    align(sync, reported, output)?;
     say(output, &format!("took in {}", sync.source_name()));
     Ok(())
 }
@@ -2405,6 +2406,14 @@ fn settle(
             members.push(member);
         }
     }
+    Ok(())
+}
+
+/// Align the workspace once the sync's record is gone: the members its
+/// project branch now names are made and moved only then, so `rwv abort`
+/// never meets a checkout the sync made.
+fn align(sync: &Sync<'_>, reported: &mut Reported, output: OutputMode) -> anyhow::Result<()> {
+    crate::test_pause::point("aligning-source");
     let run = crate::update::align_after_sync(sync.ctx, sync.jobs, output)?;
     reported.placements.extend(run.envelope.placements);
     run.tail

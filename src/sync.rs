@@ -18,7 +18,6 @@ use crate::path_spelling::CanonicalPath;
 use crate::placement::PlacementOutput;
 use crate::refusal::RefusalKind;
 use crate::set_history::Integration;
-use crate::share::FilePlacement;
 use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, Attribution, CheckoutRestorePlan, CommitId, ConflictOp,
@@ -1220,20 +1219,6 @@ pub enum MemberOutput {
         /// discriminant.
         message: String,
     },
-    /// The source's lock names this member and no checkout of it is on disk
-    /// here, but creating one failed. It gets no per-repo outcome, and the op
-    /// parks.
-    MaterializeFailed {
-        path: String,
-        absolute_path: crate::path_spelling::WirePath,
-        /// The refusal token, resolvable with `rwv explain <token>`. Absent
-        /// when the failure carries no classified refusal.
-        #[serde(skip_serializing_if = "Option::is_none")]
-        refusal: Option<String>,
-        /// Free-form display message, the full cause chain. Not a typed
-        /// discriminant.
-        message: String,
-    },
 }
 
 impl MemberOutput {
@@ -1273,15 +1258,6 @@ impl MemberOutput {
                 Some(format!("{path}: prune skipped: {message}"))
             }
             _ => None,
-        }
-    }
-
-    fn materialize_failed(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
-        Self::MaterializeFailed {
-            path: repo_path.to_string(),
-            absolute_path: crate::path_spelling::WirePath::of(checkout),
-            refusal: crate::refusal::kind_of(error).map(RefusalKind::token),
-            message: format!("{error:#}"),
         }
     }
 }
@@ -1909,84 +1885,6 @@ fn manifest_at_revision(
             project_dir.display()
         )
     })
-}
-
-/// Materialize a repo that's listed in the (source) lock but missing from the
-/// CWD workspace on disk.
-///
-/// - In a workweave: a worktree of the canonical clone at primary, born at
-///   `start` ([`crate::workweave::materialize_member`]). A canonical clone
-///   the primary lacks is cloned first, born where the primary's lock pins
-///   it, as `rwv update` in a workweave clones one.
-/// - In a primary weave: `git clone` from the manifest URL (mirrors
-///   `rwv clone`'s member clone).
-///
-/// `entry` carries the manifest URL. Caller is responsible for the
-/// surrounding sync flow (replay will then call `sync_one_repo` to land HEAD
-/// on its target).
-fn materialize_missing_repo(
-    vcs: &dyn Vcs,
-    ctx: &WorkspaceContext,
-    repo_path: &RepoPath,
-    entry: &crate::manifest::RepoEntry,
-    start: &str,
-    project_name: &ProjectName,
-    emit: &dyn Fn(&str),
-) -> anyhow::Result<Option<FilePlacement>> {
-    match &ctx.checkout {
-        Checkout::Workweave {
-            name, dir, project, ..
-        } => {
-            let canonical = ctx.primary_path().join(repo_path.as_path());
-            if !canonical.exists() {
-                let primary_lock = LockFile::path_in(&crate::workspace::project_dir(
-                    ctx.primary_path(),
-                    project_name,
-                ));
-                let primary_lock = if primary_lock.exists() {
-                    Some(LockFile::from_state(&primary_lock)?)
-                } else {
-                    None
-                };
-                crate::update::clone_member(
-                    "land",
-                    vcs,
-                    repo_path,
-                    entry,
-                    &canonical,
-                    primary_lock
-                        .as_ref()
-                        .and_then(|lock| lock.get_entry(repo_path)),
-                    emit,
-                )?;
-            }
-            return Ok(crate::workweave::materialize_member(
-                vcs,
-                ctx.primary_path(),
-                ctx.active_path(),
-                project_name,
-                name.require(dir.as_path(), project)?,
-                repo_path,
-                entry.role,
-                entry.recurse_submodules,
-                start,
-                crate::workweave::BranchPolicy::Restore,
-            )?
-            .files);
-        }
-        Checkout::Primary { .. } => {
-            let clone_url = crate::registry::resolve_to_clone_info(&entry.url)?.url;
-            let dest = ctx.active_path().join(repo_path.as_path());
-            if let Some(parent) = dest.parent() {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("failed to create {}", parent.display()))?;
-            }
-            vcs.clone_repo(&clone_url, &dest)
-                .with_context(|| format!("clone of {repo_path} from {clone_url} failed"))?;
-            crate::settle::settle(vcs, &dest, entry.role)?;
-        }
-    }
-    Ok(None)
 }
 
 /// R4, first half: every live checkout derived from `store`, judged on the
@@ -2916,15 +2814,6 @@ struct SourceSnapshot {
     source_project_tip: ResolvedRevisionId,
     /// Source lock (raw, unresolved), read at `source_project_tip`.
     raw_source_lock: LockFile,
-    /// `raw_source_lock` resolved ONCE, against the SOURCE workspace, at T0.
-    /// A lock entry in tag or branch form names a different commit in a
-    /// different workspace, so the workspace whose lock it is, is the only one
-    /// that can say what it means. A commit id names the same commit in every
-    /// workspace on the store, so one whose checkout the source lacks is
-    /// resolved in the canonical clone instead. Every downstream consumer takes
-    /// its target from here; nothing re-resolves the raw lock in another
-    /// context. An entry neither could resolve is absent, never guessed at.
-    source_lock: crate::manifest::ResolvedLockFile,
     /// The source's member checkouts classified at T0.
     source_class: Option<LockClassification>,
     /// Committed member tips of EVERY source checkout, read at T0 — the
@@ -3329,6 +3218,10 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 release_target(ctx)?;
                 crate::test_pause::point("ending");
                 cleanup(ctx)?;
+                if source_aligns(ctx) {
+                    crate::test_pause::point("aligning-source");
+                    align_after_landing(ctx, &ctx.cwd_ctx, true);
+                }
                 ctx.handler.record_complete();
                 announce_completion(ctx);
                 let stranded: Vec<&str> = stranded.iter().map(RepoPath::as_str).collect();
@@ -6082,74 +5975,17 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
     // === Member set: decided against the manifest Phase 1' produced ===
     //
-    // Checkouts are added and removed only below this point, and removed only
-    // after every manifest repo replayed, so an op that parks leaves every
-    // checkout in place for `rwv abort`, which restores refs and nothing else.
+    // No checkout is made here: the source's new members are made by its
+    // alignment once the record is gone, so `rwv abort`, which restores refs
+    // and nothing else, never meets one. Checkouts are removed only after
+    // every manifest repo replayed.
     let (replayed, fix) = reload_replayed_project(ctx)?;
     if ctx.verb == op_state::OpVerb::Land {
         rejudge_replayed(ctx)?;
     }
     let pre_op_manifest = pre_op_manifest(ctx)?;
 
-    let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
-    for repo_path in snapshot.raw_source_lock.iter_repo_paths() {
-        let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
-        if abs.exists() {
-            continue;
-        }
-        let Some(entry) = replayed.manifest.get_entry(repo_path) else {
-            continue;
-        };
-        // Born where replay will aim it, so the new checkout needs no move.
-        let declared = entry.branch.local_counterpart();
-        let start = snapshot
-            .source_lock
-            .get_entry(repo_path)
-            .map(|e| e.version.id().as_str())
-            .unwrap_or_else(|| declared.as_str());
-        let emit = |line: &str| {
-            if emit_text {
-                outln!("  {line}");
-            } else {
-                eprintln!("  {line}");
-            }
-        };
-        match materialize_missing_repo(
-            vcs_for(entry.vcs_type).as_ref(),
-            &ctx.cwd_ctx,
-            repo_path,
-            entry,
-            start,
-            &ctx.cwd_project_name,
-            &emit,
-        ) {
-            Ok(files) => {
-                if let Some(files) = files {
-                    ctx.handler
-                        .record_placement(PlacementOutput::new(repo_path, &abs, files));
-                }
-                if emit_text {
-                    outln!(
-                        "  {repo_path}: materialized{}",
-                        crate::share::files_note(files)
-                    );
-                }
-            }
-            Err(e) => {
-                if emit_text {
-                    eprintln!("  {repo_path}: materialize failed: {e:#}");
-                    for route in crate::refusal::routes(&e) {
-                        eprintln!("rwv explain {route}");
-                    }
-                }
-                ctx.handler
-                    .record_member(MemberOutput::materialize_failed(repo_path, &abs, &e));
-                materialize_failures.push(repo_path.clone());
-            }
-        }
-    }
-
-    let mut any_failure = !materialize_failures.is_empty();
+    let mut any_failure = false;
 
     struct SyncTask {
         repo_path: crate::manifest::RepoPath,
@@ -6185,7 +6021,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let source = &receiving.tip;
         let abs = ctx.cwd_workspace_dir.join(repo_path.as_path());
         if !abs.exists() {
-            if emit_text && !materialize_failures.contains(repo_path) {
+            if emit_text {
                 outln!("  {repo_path}: skipped (not on disk)");
             }
             continue;
@@ -6658,7 +6494,6 @@ fn pin_source_snapshot(
     Ok(SourceSnapshot {
         source_project_tip,
         raw_source_lock,
-        source_lock,
         source_class,
         source_tips,
         source_workspace_root: source_workspace_root.to_path_buf(),
@@ -7461,7 +7296,6 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     report_target_ahead(ctx)?;
 
-    let cwd_aligns = ctx.switches_primary.is_some() || !ctx.retire;
     if let (Some((dest_workspace_dir, target_ctx)), Some(dest_project_dir)) =
         (in_checkouts, &ctx.dest_project_dir)
     {
@@ -7476,14 +7310,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
         crate::test_pause::point("aligning-target");
         let aligning = journal_alignment(ctx, dest_workspace_dir, dest_project_dir)?;
-        align_after_landing(ctx, target_ctx, !cwd_aligns);
+        align_after_landing(ctx, target_ctx, !source_aligns(ctx));
         unjournal_unmoved(ctx, dest_workspace_dir, &aligning)?;
     }
     if ctx.switches_primary.is_some() {
         switch_primary_to_target(ctx, target_branch)?;
-    }
-    if cwd_aligns {
-        align_after_landing(ctx, &ctx.cwd_ctx, true);
     }
     crate::test_pause::point("landed");
     Ok(())
@@ -8124,6 +7955,12 @@ fn unjournal(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
         take_in.moved_in_target.retain(|moved| moved != key);
         take_in.wrote_in_target.remove(key);
     })
+}
+
+/// Whether the landing's source aligns once the landing ends: it does unless
+/// a retire removed it.
+fn source_aligns(ctx: &OpContext<'_>) -> bool {
+    ctx.verb == op_state::OpVerb::Land && (ctx.switches_primary.is_some() || !ctx.retire)
 }
 
 /// Align the workspace `ctx` names to the branch the landing left it on.
@@ -13706,145 +13543,6 @@ mod tests {
         assert!(
             git_vcs().head_revision(&store).is_ok(),
             "the store the checkout linked into must be left intact"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // materialize_missing_repo — phase 3 births through the chokepoint, which
-    // puts the checkout on the workweave's branch where that branch stands
-    // -----------------------------------------------------------------------
-
-    /// A workweave whose primary holds the canonical clone and whose own
-    /// checkout of that repo is ABSENT — the state phase 3 materializes into.
-    /// Returns the context, the canonical store, the project, and the entry
-    /// whose `version` is the start point the ephemeral ref is cut at.
-    fn workweave_missing_one_repo(
-        tmp: &Path,
-    ) -> (
-        WorkspaceContext,
-        PathBuf,
-        ProjectName,
-        crate::manifest::RepoEntry,
-    ) {
-        let origin = tmp.join("origin");
-        init_repo(&origin);
-
-        let primary = tmp.join("weave");
-        crate::workweave_index::init_project_clone(&primary, &ProjectName::new("web-app").unwrap());
-        std::fs::create_dir_all(primary.join("github/example")).unwrap();
-        let canonical = primary.join("github/example/server");
-        git(
-            &primary,
-            &[
-                "clone",
-                origin.to_str().unwrap(),
-                canonical.to_str().unwrap(),
-            ],
-        );
-        git(&canonical, &["config", "user.email", "t@t"]);
-        git(&canonical, &["config", "user.name", "T"]);
-
-        let ww = primary.join(".workweaves").join("web-app--feat");
-        std::fs::create_dir_all(ww.join("github/example")).unwrap();
-        let primary_canon = resolve(&primary).unwrap();
-        crate::workspace::WorkweaveMarker::new(
-            &primary_canon,
-            ProjectName::new("web-app").unwrap(),
-            crate::manifest::WorkweaveName::new("ww").unwrap(),
-            &primary_canon,
-        )
-        .write(&ww)
-        .unwrap();
-        crate::workweave_index::record_workweave(
-            &primary_canon,
-            &ProjectName::new("web-app").unwrap(),
-            &crate::manifest::WorkweaveName::new("feat").unwrap(),
-            CanonicalPath::of(&ww),
-            CanonicalPath::of(&primary_canon),
-        )
-        .unwrap();
-
-        let ctx = WorkspaceContext::resolve_invocation(&ww, None)
-            .expect("the marker names the primary weave");
-        assert!(
-            matches!(ctx.checkout, Checkout::Workweave { .. }),
-            "the fixture must resolve as a workweave, or materialize takes the clone arm instead"
-        );
-        let entry = crate::manifest::RepoEntry {
-            vcs_type: crate::manifest::VcsType::Git,
-            url: "https://example.com/server.git".parse().unwrap(),
-            branch: crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new("main")).unwrap(),
-            role: crate::manifest::Role::Owned,
-            recurse_submodules: crate::manifest::SubmoduleRecursion::Recurse,
-            history: None,
-        };
-        (ctx, canonical, ProjectName::new("web-app").unwrap(), entry)
-    }
-
-    #[test]
-    fn materialize_missing_repo_authors_the_branch() {
-        // The control. Without it the attach below could be passing on a
-        // fixture that can never materialize anything at all.
-        let tmp = crate::tempdir().unwrap();
-        let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
-
-        materialize_missing_repo(
-            git_vcs().as_ref(),
-            &ctx,
-            &dropped(),
-            &entry,
-            "main",
-            &project,
-            &|_| {},
-        )
-        .expect("a name nothing holds is the ordinary create");
-
-        let checkout = ctx.active_path().join(dropped().as_path());
-        assert!(
-            checkout.join(".git").is_file(),
-            "the materialized repo must be a linked workspace on the ephemeral ref"
-        );
-        assert_eq!(
-            git(&canonical, &["rev-parse", "web-app--feat"]),
-            git(&canonical, &["rev-parse", "main"]),
-            "the branch is created at the revision asked for"
-        );
-    }
-
-    #[test]
-    fn materialize_missing_repo_attaches_a_pre_existing_branch_where_it_stands() {
-        // The workweave's own branch survived its checkout: the member is put
-        // back on it, commits and all, and nothing moves or deletes it.
-        let tmp = crate::tempdir().unwrap();
-        let (ctx, canonical, project, entry) = workweave_missing_one_repo(tmp.path());
-
-        git(&canonical, &["checkout", "-b", "web-app--feat"]);
-        let operator_tip = commit(&canonical, "operators-work");
-        git(&canonical, &["checkout", "main"]);
-
-        materialize_missing_repo(
-            git_vcs().as_ref(),
-            &ctx,
-            &dropped(),
-            &entry,
-            "main",
-            &project,
-            &|_| {},
-        )
-        .expect("the branch is the workweave's, so the member is put back on it");
-
-        let checkout = ctx.active_path().join(dropped().as_path());
-        assert_eq!(
-            git_vcs().head_revision(&checkout).unwrap(),
-            operator_tip,
-            "the checkout stands at the branch's own tip"
-        );
-        assert_eq!(
-            git_vcs()
-                .resolve_revision(&canonical, "web-app--feat")
-                .unwrap(),
-            operator_tip,
-            "the branch survives at its own tip"
         );
     }
 

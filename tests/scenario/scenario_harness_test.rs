@@ -1597,7 +1597,7 @@ every_scenario!(
     land_refuses_a_target_checkout_diverged_from_its_pin,
     land_leaves_a_shared_member_where_the_presented_project_has_it,
     land_into_a_workspace_presenting_another_project,
-    land_names_a_member_composing_cannot_materialize,
+    land_names_a_member_its_alignment_cannot_materialize,
     land_clones_a_member_its_target_took_in_by_fetch_alone,
     cherry_pick_runs_the_printed_merge,
     cherry_pick_runs_the_printed_pin_of_a_dependency_moved_backward,
@@ -6717,8 +6717,8 @@ fn land_into_a_workspace_presenting_another_project_scenario() {
 }
 
 #[test]
-fn land_names_a_member_composing_cannot_materialize_scenario() {
-    runner::run(scenarios::land_names_a_member_composing_cannot_materialize())
+fn land_names_a_member_its_alignment_cannot_materialize_scenario() {
+    runner::run(scenarios::land_names_a_member_its_alignment_cannot_materialize())
         .assert_fully_decided_green();
 }
 

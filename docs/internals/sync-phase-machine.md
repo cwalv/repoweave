@@ -301,10 +301,14 @@ Runs **Phase 1'** (project repo) followed by **Phase 2** (member repos) — the 
 
 **Replay's member set follows the manifest Phase 1' produces.** Once the
 project repo has replayed, its `rwv.toml` is the manifest CWD ends the op
-with, and it alone decides which checkouts replay adds and removes. A
-member the source's lock names, this manifest names, and CWD lacks on disk
-is materialized before Phase 2 advances anything, born at its replay
-target. A member CWD's manifest named when the op started and this
+with, and it alone decides which checkouts the op adds and removes. Replay
+makes none: a member this manifest names that CWD lacks on disk replays
+nothing, keeps its pin through the relock, and gets its checkout from the
+alignment of CWD that runs once the op's record and savepoints are gone, so
+`rwv abort`, which restores refs and nothing else, never meets a checkout
+the op made. A kill during that alignment leaves no operation and a
+workweave `rwv doctor` reports as `workweave-drift` missing, which
+`rwv doctor --fix` makes. A member CWD's manifest named when the op started and this
 manifest no longer names is pruned, behind the dirty, unique-commit and
 store-claim refusals. A member it still names is kept, with a `kept` line
 when the source's lock lacks it. So a member CWD dropped is not brought
@@ -807,8 +811,10 @@ judge-then-act, and it runs under the same op record as `pull
    moved replaced by its new tip; with the project repo reset, the target's
    lock with the moved members at their tips. It is committed as `lock:
    relock after sync from <branch>` when it differs.
-4. **Settle.** Members the new entries drop are pruned, then `update` aligns
-   the workspace, and the op's record and savepoints go.
+4. **Settle.** Members the new entries drop are pruned, the op's record and
+   savepoints go, and only then `update` aligns the workspace, making the
+   members the new entries add, so `rwv abort` never meets a checkout the
+   sync made.
 
 `rwv abort` restores the savepoints and the ref moves as it does for any
 take-in op.

@@ -340,8 +340,8 @@ the project genuinely materializes the member (driven in
 A domain-registry creation's URL is written before anything exists there —
 rwv has no HTTP client to create it — so nothing in the manifest currently
 distinguishes "this URL is real" from "this URL is a hope". Revisit if any
-verb that clones from `entry.url` (not only `rwv clone` and `rwv update` —
-`rwv sync`'s `materialize_missing_repo` does too) fails on a `--new` member's URL in
+verb that clones from `entry.url` (`rwv clone`, and `rwv update`, whose
+alignment `sync` and `land` also run) fails on a `--new` member's URL in
 practice; that is the trigger, not a specific verb.
 
 ## Related

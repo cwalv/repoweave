@@ -14335,13 +14335,13 @@ pub fn land_into_a_workspace_presenting_another_project() -> Scenario {
 
 /// `main` lists `docs`, which another machine added and this machine took in
 /// with git alone, so it has no clone of it, and `docs`' remote does not
-/// answer. Composing the workspace onto `main` cannot make `docs`' clone: the
-/// member's line names the failure, the op parks, and `--json` records it as
-/// `materialize-failed`. Once the remote answers, `land --continue` clones it
-/// and the landing finishes.
-pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
+/// answer. Composing the workspace onto `main` needs no checkout of `docs`, so
+/// the landing finishes; aligning each workspace cannot make `docs`' clone,
+/// and the line naming that prints the `rwv update` that finishes it, which
+/// makes the clone once the remote answers.
+pub fn land_names_a_member_its_alignment_cannot_materialize() -> Scenario {
     scenario(
-        "land names a member composing cannot materialize",
+        "land names a member its alignment cannot materialize",
         vec![
             Step::rwv(&a(), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
@@ -14357,29 +14357,34 @@ pub fn land_names_a_member_composing_cannot_materialize() -> Scenario {
             Step::commit(&ww("w"), Repo::App, "w-app"),
             Step::unreachable(Remote::origin(Repo::Docs)),
             Step::rwv(&ww("w"), &["land", "--history", "linear"])
-                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .expect(Exit::Succeeds)
                 .may_leave_unresolved(&[Repo::Docs])
                 .claim(Claim::OutputContains(
-                    "  local/remotes/docs: materialize failed:",
-                )),
-            Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
-            Step::rwv(&ww("w"), &["land", "--history", "linear", "--json"])
-                .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                .may_leave_unresolved(&[Repo::Docs])
-                .claim(Claim::OutputContains("\"kind\": \"materialize-failed\"")),
-            Step::reachable(Remote::origin(Repo::Docs)),
-            Step::rwv(&ww("w"), &["land", "--continue"])
-                .expect(Exit::Succeeds)
+                    "did not finish aligning; `rwv update --project proj` there finishes it",
+                ))
                 .claim(Claim::Contains {
                     at: a(),
                     repo: Repo::App,
                     rev: "main",
                     mark: "w-app",
-                })
+                }),
+            Step::reachable(Remote::origin(Repo::Docs)),
+            Step::rwv(&a(), &["update", "--project", "proj"])
+                .expect(Exit::Succeeds)
                 .claim(Claim::OnBranch {
                     at: a(),
                     repo: Repo::Docs,
                     branch: "main",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::Docs,
+                }),
+            Step::rwv(&ww("w"), &["update", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::AtPin {
+                    at: ww("w"),
+                    repo: Repo::Docs,
                 }),
         ],
     )

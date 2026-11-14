@@ -120,7 +120,8 @@ holding a repo as a symlink is refused before any phase runs
 
 **Replay's member set follows the replayed manifest.** After Phase 1', CWD's
 `rwv.toml` alone decides which checkouts exist: a member it names that CWD
-lacks is materialized, and a member it dropped is pruned, behind the dirty,
+lacks is checked out by the alignment that runs once the operation has
+ended, and a member it dropped is pruned, behind the dirty,
 unique-commit and store-claim refusals. Pruning waits until every repo has
 replayed, so an op that parks has removed nothing — `rwv abort` restores refs
 and cannot bring back a deleted checkout. A refused prune leaves its checkout

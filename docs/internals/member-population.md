@@ -243,8 +243,8 @@ the hardlink mode on Windows. A Windows declaration needs a link count first.
 Every verb that writes or moves a member's files ends by settling it, in the
 primary and in workweaves alike: `clone` and `update` (through `settle_moved`),
 `add`, `workweave create` and every `materialize_member`, `sync` and `land`
-(materialized members, then `settle_members` over every member after replay
-and after advancing the target), `abort` after its restore, `rwv member set-role`, and
+(`settle_members` over every member after replay and after advancing the
+target, then the alignment that ends each), `abort` after its restore, `rwv member set-role`, and
 `doctor --fix`. In `sync`, `land` and `abort`, a member that cannot be
 settled is named as a warning rather than failing the op, whose own work
 stands. Doctor backstops it with the `member-permissions` finding — a

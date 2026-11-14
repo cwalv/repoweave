@@ -1667,12 +1667,6 @@ fn members() -> Vec<MemberOutput> {
             refused: Vec::new(),
             message: "worktree remove failed".to_owned(),
         },
-        MemberOutput::MaterializeFailed {
-            path: REPO.to_owned(),
-            absolute_path: wire(ABS),
-            refusal: Some("unresolvable-repo-source".to_owned()),
-            message: "cannot resolve '/srv/repos/x.git'".to_owned(),
-        },
     ]
 }
 
