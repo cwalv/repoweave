@@ -4945,6 +4945,18 @@ impl Vcs for GitVcs {
     // The branch model
     // =======================================================================
 
+    fn head_backup_source(&self, repo: &Path) -> Result<crate::vcs::BackupSource, VcsError> {
+        Ok(match self.observe_head(repo)? {
+            HeadObservation::Attached { name } | HeadObservation::Unborn { name } => {
+                crate::vcs::BackupSource::Branch(name)
+            }
+            HeadObservation::Detached { .. } => match Self::rebasing(repo)? {
+                Some(branch) => crate::vcs::BackupSource::Branch(branch),
+                None => crate::vcs::BackupSource::DetachedHead,
+            },
+        })
+    }
+
     fn observe_head(&self, repo: &Path) -> Result<HeadObservation, VcsError> {
         // "Not a repo" is an error, not a state. The shipped `current_ref`
         // folded it into the same `Ok(None)` as "detached", which is how
