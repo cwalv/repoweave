@@ -1,4 +1,4 @@
-//! Integration tests for index-drift detection (`rwv doctor`) and
+//! Integration tests for record-drift detection (`rwv doctor`) and
 //! auto-fix (`rwv doctor --fix`).
 //!
 //! These tests exercise the six acceptance scenarios:

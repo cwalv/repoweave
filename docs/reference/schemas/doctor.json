@@ -416,25 +416,6 @@
         }
       ]
     },
-    "IndexDriftKind": {
-      "description": "How a stale index should be treated.",
-      "oneOf": [
-        {
-          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
-          "type": "string",
-          "enum": [
-            "safe-to-fix"
-          ]
-        },
-        {
-          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
-          "type": "string",
-          "enum": [
-            "live-staged"
-          ]
-        }
-      ]
-    },
     "IssueKindOutput": {
       "description": "[`IssueKind`] on the wire.\n\nExternally tagged, which is the shape the findings page already documents for `sub_kind`: a kind with no fields of its own is a plain string, and one that carries fields is a single-key object whose key is the tag.",
       "oneOf": [
@@ -979,6 +960,25 @@
         }
       ]
     },
+    "RecordDriftKind": {
+      "description": "How a stale index should be treated.",
+      "oneOf": [
+        {
+          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
+          "type": "string",
+          "enum": [
+            "safe-to-fix"
+          ]
+        },
+        {
+          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
+          "type": "string",
+          "enum": [
+            "live-recorded"
+          ]
+        }
+      ]
+    },
     "RegistrationDirectoryKind": {
       "description": "What stands at a stale worktree registration's path.",
       "oneOf": [
@@ -1392,14 +1392,14 @@
             "kind": {
               "type": "string",
               "enum": [
-                "index-drift"
+                "record-drift"
               ]
             },
             "path": {
               "type": "string"
             },
             "sub_kind": {
-              "$ref": "#/definitions/IndexDriftKind"
+              "$ref": "#/definitions/RecordDriftKind"
             },
             "workweave": {
               "description": "The workweave's identity, `<project>--<name>`; `None` for the primary weave.",

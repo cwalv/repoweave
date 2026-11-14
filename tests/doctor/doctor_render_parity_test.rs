@@ -202,7 +202,7 @@ fn the_corpus_covers_every_kind_and_is_not_empty() {
     for expected in [
         "legacy-workweave-index/old-path",
         "legacy-workweave-index/before-receipts",
-        "index-drift/safe-to-fix",
+        "record-drift/safe-to-fix",
         "workweave-tree-integrity/foreign-primary-other-workspace",
     ] {
         assert!(

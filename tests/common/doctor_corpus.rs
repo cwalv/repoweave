@@ -23,11 +23,11 @@
 //! a `BTreeMap<String, _>`.
 
 use repoweave::check::{
-    AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind, IndexDriftKind,
+    AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
     LegacyWorkweaveIndexKind, MissingLockMergeDriverKind, OrphanedSavepointKind, PermissionsKind,
-    PinKind, PlacementConvergence, ProvenanceKind, RegistrationDirectoryKind, SubmoduleCommitKind,
-    UnparseableProjectKind, WeaveRootIdentityConflictKind, WorkingTreeDriftKind,
-    WorkweaveTreeIntegrityKind,
+    PinKind, PlacementConvergence, ProvenanceKind, RecordDriftKind, RegistrationDirectoryKind,
+    SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
+    WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
 use repoweave::integration::{MemberIncompatibility, Observed};
@@ -145,9 +145,9 @@ pub fn case_token(v: &CheckViolation) -> String {
             DriftKind::DanglingLink => "workweave-drift/dangling-link".into(),
             DriftKind::DanglingLinkUnfetched => "workweave-drift/dangling-link-unfetched".into(),
         },
-        CheckViolation::IndexDrift { kind, .. } => match kind {
-            IndexDriftKind::SafeToFix => "index-drift/safe-to-fix".into(),
-            IndexDriftKind::LiveStaged => "index-drift/live-staged".into(),
+        CheckViolation::RecordDrift { kind, .. } => match kind {
+            RecordDriftKind::SafeToFix => "record-drift/safe-to-fix".into(),
+            RecordDriftKind::LiveRecorded => "record-drift/live-recorded".into(),
         },
         CheckViolation::WorkingTreeDrift { kind, .. } => match kind {
             WorkingTreeDriftKind::SafeToFix => "working-tree-drift/safe-to-fix".into(),
@@ -420,15 +420,15 @@ pub fn corpus() -> Vec<CheckViolation> {
             kind: DriftKind::DanglingLinkUnfetched,
             repo: repo(),
         },
-        CheckViolation::IndexDrift {
+        CheckViolation::RecordDrift {
             workweave: Some(workweave()),
             repo: repo(),
-            kind: IndexDriftKind::SafeToFix,
+            kind: RecordDriftKind::SafeToFix,
         },
-        CheckViolation::IndexDrift {
+        CheckViolation::RecordDrift {
             workweave: None,
             repo: repo(),
-            kind: IndexDriftKind::LiveStaged,
+            kind: RecordDriftKind::LiveRecorded,
         },
         CheckViolation::WorkingTreeDrift {
             workweave: Some(workweave()),

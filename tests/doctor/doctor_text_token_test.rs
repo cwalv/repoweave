@@ -161,7 +161,7 @@ fn every_finding_prints_a_token_explain_serves() {
         "the corpus samples a different set of finding kinds from ViolationKind::ALL"
     );
     assert!(
-        tokens.iter().any(|t| t == "index-drift/safe-to-fix")
+        tokens.iter().any(|t| t == "record-drift/safe-to-fix")
             && tokens.iter().any(|t| t == "working-tree-drift/safe-to-fix")
             && tokens.iter().any(|t| t == "tool-missing"),
         "the corpus walk lost a finding it is known to hold: {tokens:?}"

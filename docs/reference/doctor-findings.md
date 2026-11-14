@@ -38,7 +38,7 @@ rwv doctor --json | jq -r '.issues[] |
 ```
 
 Seventeen kinds carry a `sub_kind` — `alignment`, `clone-topology`,
-`dead-op-lease`, `index-drift`, `legacy-workweave-index`, `member-permissions`,
+`dead-op-lease`, `record-drift`, `legacy-workweave-index`, `member-permissions`,
 `missing-lock-merge-driver`, `orphaned-savepoint`, `pin`, `provenance`,
 `stale-worktree-registration`, `unparseable-project`, `uninitialized-submodule`,
 `weave-root-identity-conflict`,
@@ -107,8 +107,8 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`provenance`](#provenance) / `origin-url-mismatch`, `relative-remote`, `placement-disagreement` | Warning | Report-only |
 | [`provenance`](#provenance) / `unresolvable-url` | Error | Report-only |
 | [`alignment`](#alignment) / `on-branch`, `on-branch-with-stray-commits`, `detached`, `detached-with-unpushed-commits`, `unaligned`, `project-detached` | Warning | Report-only |
-| [`index-drift`](#index-drift) / `safe-to-fix` | Warning | Auto-fixable |
-| [`index-drift`](#index-drift) / `live-staged` | Warning | Report-only |
+| [`record-drift`](#record-drift) / `safe-to-fix` | Warning | Auto-fixable |
+| [`record-drift`](#record-drift) / `live-recorded` | Warning | Report-only |
 | [`working-tree-drift`](#working-tree-drift) / `safe-to-fix` | Warning | Auto-fixable |
 | [`working-tree-drift`](#working-tree-drift) / `live-edits` | Warning | Report-only |
 | [`orphaned-savepoint`](#orphaned-savepoint) / `redundant` | Warning | Auto-fixable |
@@ -1413,65 +1413,65 @@ A member's checkout, or the project repo's, is not where the checked-out project
 
 ## Working state and in-flight operations
 
-### `index-drift`
+### `record-drift`
 
-A repo's index does not match its HEAD tree. Where the branch the checkout is
-on was moved forward from outside it (by `git update-ref` run in another
-worktree of the same store, for one), the index still holds the old tip's
-entries. Read path by path, as
+What the VCS records for a repo's paths does not match its HEAD tree. Where the
+branch the checkout is on was moved forward from outside it (for git, by
+`git update-ref` run in another worktree of the same store), the record still
+holds the old tip's content (for git, the index entries). Read path by path, as
 [Shared-refs drift](../explanation/joints/shared-refs-drift.md) describes; one
 checkout can carry both sub-kinds.
 
 #### `safe-to-fix`
 
 **Warning. Auto-fixable.** The checkout's branch moved forward under it, and
-at least one path the move changed still has the old tip's index entry, with
+at least one path the move changed still has the old tip's content recorded, with
 a file holding the old tip's content or already HEAD's.
 
-**What to do:** `rwv doctor --fix` gives those paths HEAD's index entries and
+**What to do:** `rwv doctor --fix` gives those paths HEAD's records and
 files, and reports each one. It reads the checkout again just before writing,
-and git refuses where a path changed after it was read; then nothing is
+and the VCS refuses where a path changed after it was read; then nothing is
 written, the paths are named as drift left in place with the reason, and the
 fix reports an error. Running `rwv doctor --fix` again reads them afresh;
-where the reason is unresolved conflicts in the index, resolve those first.
+where the reason is unresolved conflicts in the checkout, resolve those first.
 
-#### `live-staged`
+#### `live-recorded`
 
-**Warning. Report-only.** At least one index entry differs from HEAD for a
-reason the branch's move does not account for: a staged change of yours, a
-staged deletion or revert included, or a path both the move and you changed.
+**Warning. Report-only.** At least one path's record differs from HEAD for a
+reason the branch's move does not account for: a change of yours recorded for the
+next commit (for git, staged), a deletion or revert included, or a path both the move and you changed.
 It can also be drift rwv cannot show: an old commit's content in a checkout
-whose reflog records no move under it, or one that already took part of the
+whose history records no move under it, or one that already took part of the
 move. `--fix` does not touch it.
 
 **What to do:** when the checkout also has `safe-to-fix` drift, run
-`rwv doctor --fix` first: committing or stashing drift records or sets aside
+`rwv doctor --fix` first: committing or setting aside drift records or sets aside
 the move's reverse with your change. Then commit it if it is your change, or
-stash it (`git -C <checkout> stash push`) if it is not: nothing is committed
+set it aside (for git, `git -C <checkout> stash push`) if it is not: nothing is committed
 and nothing is lost. Then re-run.
 
 Where a path both the move and you changed is among them, `--fix` writes
 nothing to the checkout and refuses it as `edits` `moved and edited`:
-`rwv doctor --fix --merge-edited-drift` keeps the working copy and index as
-a backup and has git merge your edit onto the moved tip, and
-`rwv doctor --fix --set-aside-edited-drift` has git stash your edit against
+`rwv doctor --fix --merge-edited-drift` keeps the working copy and the VCS's record
+of it as a backup and has the VCS merge your edit onto the moved tip, and
+`rwv doctor --fix --set-aside-edited-drift` has the VCS set your edit aside against
 the tip your files held, gives the file the moved tip's content, and prints
-the `git stash apply` that merges it back.
+the VCS action that merges it back (for git, `git stash apply`).
 
 ### `working-tree-drift`
 
 A repo's working-tree files do not match its HEAD tree. Read path by path, as
-for `index-drift`.
+for `record-drift`.
 
 #### `safe-to-fix`
 
 **Warning. Auto-fixable.** The checkout's branch moved forward under it, and
-at least one file the move changed, with its index entry, still holds the old
+at least one file the move changed, with its record, still holds the old
 tip's content, which a commit reachable from HEAD keeps.
 
 **What to do:** `rwv doctor --fix` gives those files HEAD's content, and
 reports each one. What it replaces is the old tip's content, which that tip
-holds. A staged return to the old tip made after a refresh by hand cannot be
+holds. A return to the old tip recorded for the next commit, made after a refresh by hand, cannot be
 told from this drift, and is refreshed the same way; commit such a return
 first to keep it.
 
@@ -1481,21 +1481,21 @@ first to keep it.
 branch's move does not account for: your edit, whatever commit already holds
 its content (a deletion, a file returned to an earlier version, a copy, a mode
 change), or a file both the move and you changed. It can also be drift rwv
-cannot show, as for `live-staged`. `--fix` does not touch it.
+cannot show, as for `live-recorded`. `--fix` does not touch it.
 
 **What to do:** when the checkout also has `safe-to-fix` drift, run
-`rwv doctor --fix` first: committing or stashing drift records or sets aside
+`rwv doctor --fix` first: committing or setting aside drift records or sets aside
 the move's reverse with your edits. Then commit them if they are your changes,
-or stash them (`git -C <checkout> stash push`) if they are not: nothing is
+or set them aside (for git, `git -C <checkout> stash push`) if they are not: nothing is
 committed and nothing is lost. Then re-run.
 
 Where a file both the move and you changed is among them, `--fix` writes
 nothing to the checkout and refuses it as `edits` `moved and edited`:
-`rwv doctor --fix --merge-edited-drift` keeps the working copy and index as
-a backup and has git merge your edit onto the moved tip, and
-`rwv doctor --fix --set-aside-edited-drift` has git stash your edit against
+`rwv doctor --fix --merge-edited-drift` keeps the working copy and the VCS's record
+of it as a backup and has the VCS merge your edit onto the moved tip, and
+`rwv doctor --fix --set-aside-edited-drift` has the VCS set your edit aside against
 the tip your files held, gives the file the moved tip's content, and prints
-the `git stash apply` that merges it back.
+the VCS action that merges it back (for git, `git stash apply`).
 
 ### `orphaned-savepoint`
 

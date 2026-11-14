@@ -173,7 +173,7 @@ fn status(checkout: &Path) -> String {
 }
 
 fn is_live_edit(finding: &str) -> bool {
-    finding.starts_with("index-drift/") || finding.starts_with("working-tree-drift/")
+    finding.starts_with("record-drift/") || finding.starts_with("working-tree-drift/")
 }
 
 // ---------------------------------------------------------------------------

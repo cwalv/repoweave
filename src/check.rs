@@ -111,13 +111,13 @@ pub enum CheckViolation {
         repo: RepoPath,
     },
 
-    /// A git repo's index does not match its HEAD tree: stale entries a
+    /// What the VCS records for a repo's paths does not match its HEAD tree: stale entries a
     /// shared-ref advance from a sibling worktree left, or staged changes.
-    IndexDrift {
+    RecordDrift {
         /// `None` for repos in the primary weave.
         workweave: Option<WorkweaveId>,
         repo: RepoPath,
-        kind: IndexDriftKind,
+        kind: RecordDriftKind,
     },
 
     /// A git repo's working-tree files do not match its HEAD tree: stale files
@@ -736,9 +736,9 @@ impl CheckViolation {
                 }
                 DriftKind::DanglingLinkUnfetched => Consented("--abandon-lost-pins"),
             },
-            CheckViolation::IndexDrift { kind, .. } => match kind {
-                IndexDriftKind::SafeToFix => Auto,
-                IndexDriftKind::LiveStaged => ReportOnly,
+            CheckViolation::RecordDrift { kind, .. } => match kind {
+                RecordDriftKind::SafeToFix => Auto,
+                RecordDriftKind::LiveRecorded => ReportOnly,
             },
             CheckViolation::WorkingTreeDrift { kind, .. } => match kind {
                 WorkingTreeDriftKind::SafeToFix => Auto,
@@ -809,7 +809,7 @@ impl CheckViolation {
             CheckViolation::MemberPermissions { .. }
             | CheckViolation::RoleDisagreement { .. }
             | CheckViolation::HistoryDisagreement { .. }
-            | CheckViolation::IndexDrift { .. }
+            | CheckViolation::RecordDrift { .. }
             | CheckViolation::WorkingTreeDrift { .. }
             | CheckViolation::MissingLockMergeDriver { .. }
             | CheckViolation::LockMergeDriverUnreadable { .. }
@@ -867,7 +867,7 @@ impl CheckViolation {
             CheckViolation::HistoryDisagreement { .. } => ViolationKind::HistoryDisagreement,
             CheckViolation::Pin { .. } => ViolationKind::Pin,
             CheckViolation::WorkweaveDrift { .. } => ViolationKind::WorkweaveDrift,
-            CheckViolation::IndexDrift { .. } => ViolationKind::IndexDrift,
+            CheckViolation::RecordDrift { .. } => ViolationKind::RecordDrift,
             CheckViolation::WorkingTreeDrift { .. } => ViolationKind::WorkingTreeDrift,
             CheckViolation::MissingLockMergeDriver { .. } => ViolationKind::MissingLockMergeDriver,
             CheckViolation::LockMergeDriverUnreadable { .. } => {
@@ -933,7 +933,7 @@ pub enum ViolationKind {
     HistoryDisagreement,
     Pin,
     WorkweaveDrift,
-    IndexDrift,
+    RecordDrift,
     WorkingTreeDrift,
     MissingLockMergeDriver,
     LockMergeDriverUnreadable,
@@ -982,7 +982,7 @@ impl ViolationKind {
         Self::HistoryDisagreement,
         Self::Pin,
         Self::WorkweaveDrift,
-        Self::IndexDrift,
+        Self::RecordDrift,
         Self::WorkingTreeDrift,
         Self::MissingLockMergeDriver,
         Self::LockMergeDriverUnreadable,
@@ -1477,7 +1477,7 @@ pub enum RegistrationDirectoryKind {
 /// How a stale index should be treated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
-pub enum IndexDriftKind {
+pub enum RecordDriftKind {
     /// The checkout's branch moved forward under it, and a path the move
     /// changed still has the moved-from tip's index entry. `--fix` gives it
     /// HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.
@@ -1486,7 +1486,7 @@ pub enum IndexDriftKind {
     /// checkout shows: a staged change, a path both the move and the user
     /// changed, or an old tip's entry nothing records was left behind.
     /// `--fix` must not touch it.
-    LiveStaged,
+    LiveRecorded,
 }
 
 /// How stale working-tree files should be treated.
@@ -2066,13 +2066,13 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: DriftKind,
     },
-    IndexDrift {
+    RecordDrift {
         path: String,
         absolute_path: WirePath,
         /// The workweave's identity, `<project>--<name>`; `None` for the primary weave.
         workweave: Option<WorkweaveId>,
         #[serde(rename = "sub_kind")]
-        sub_kind: IndexDriftKind,
+        sub_kind: RecordDriftKind,
     },
     WorkingTreeDrift {
         path: String,
@@ -2513,11 +2513,11 @@ impl ViolationOutput {
                 workweave: workweave.clone(),
                 sub_kind: kind,
             },
-            CheckViolation::IndexDrift {
+            CheckViolation::RecordDrift {
                 workweave,
                 repo,
                 kind,
-            } => Self::IndexDrift {
+            } => Self::RecordDrift {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
                 workweave: workweave.clone(),
@@ -6518,7 +6518,7 @@ impl CheckViolation {
                         .map_or_else(|| "the primary".to_owned(), WorkweaveId::to_string)
                 )
             }
-            CheckViolation::IndexDrift {
+            CheckViolation::RecordDrift {
                 workweave,
                 repo,
                 kind,
@@ -6528,8 +6528,8 @@ impl CheckViolation {
                     None => format!("{repo}"),
                 };
                 let detail = match kind {
-                    IndexDriftKind::SafeToFix => "recorded state stale (run `rwv doctor --fix` to reset)",
-                    IndexDriftKind::LiveStaged => {
+                    RecordDriftKind::SafeToFix => "recorded state stale (run `rwv doctor --fix` to reset)",
+                    RecordDriftKind::LiveRecorded => {
                         "live changes are marked for commit (once `rwv doctor --fix` has \
                              refreshed what beside them is stale, commit them if they are yours, \
                              or set them aside; not auto-fixed)"
@@ -8017,19 +8017,19 @@ fn carry(
     })
 }
 
-/// The `index-drift` and `working-tree-drift` findings one checkout's reading
+/// The `record-drift` and `working-tree-drift` findings one checkout's reading
 /// yields: safe-to-fix for what a refresh replaces, live for what it keeps.
-pub fn drift_findings(reading: &DriftReading) -> (Vec<IndexDriftKind>, Vec<WorkingTreeDriftKind>) {
+pub fn drift_findings(reading: &DriftReading) -> (Vec<RecordDriftKind>, Vec<WorkingTreeDriftKind>) {
     let mut index = Vec::new();
     let mut working_tree = Vec::new();
     if reading.is_refreshable() {
-        index.push(IndexDriftKind::SafeToFix);
+        index.push(RecordDriftKind::SafeToFix);
     }
     if !reading.stale_files().is_empty() {
         working_tree.push(WorkingTreeDriftKind::SafeToFix);
     }
     if reading.kept().any(|p| p.index != Holds::Head) {
-        index.push(IndexDriftKind::LiveStaged);
+        index.push(RecordDriftKind::LiveRecorded);
     }
     if reading.kept().any(|p| p.file != Holds::Head) {
         working_tree.push(WorkingTreeDriftKind::LiveEdits);
@@ -8443,7 +8443,7 @@ fn settle_held_drift(
     let mut merged_checkouts = std::collections::HashSet::new();
     let mut drifted: Vec<(String, Option<WorkweaveId>, std::path::PathBuf)> = Vec::new();
     for v in violations {
-        if let CheckViolation::IndexDrift {
+        if let CheckViolation::RecordDrift {
             workweave, repo, ..
         }
         | CheckViolation::WorkingTreeDrift {
@@ -8631,7 +8631,7 @@ fn drift_findings_standing(
 ) -> Vec<CheckViolation> {
     let after_merge: std::collections::HashMap<
         std::path::PathBuf,
-        (Vec<IndexDriftKind>, Vec<WorkingTreeDriftKind>),
+        (Vec<RecordDriftKind>, Vec<WorkingTreeDriftKind>),
     > = pass
         .merged
         .iter()
@@ -8657,7 +8657,7 @@ fn drift_findings_standing(
     violations
         .into_iter()
         .filter(|v| match v {
-            CheckViolation::IndexDrift {
+            CheckViolation::RecordDrift {
                 workweave,
                 repo,
                 kind,
@@ -8850,10 +8850,10 @@ fn apply_finding_repairs(
                 }
             }
 
-            CheckViolation::IndexDrift {
+            CheckViolation::RecordDrift {
                 workweave,
                 repo,
-                kind: IndexDriftKind::SafeToFix,
+                kind: RecordDriftKind::SafeToFix,
             }
             | CheckViolation::WorkingTreeDrift {
                 workweave,
@@ -10439,7 +10439,7 @@ fn collect_doctor_violations(
             }
         };
         for kind in index_kinds {
-            violations.push(CheckViolation::IndexDrift {
+            violations.push(CheckViolation::RecordDrift {
                 workweave: ww_label.clone(),
                 repo: repo_path.clone(),
                 kind,

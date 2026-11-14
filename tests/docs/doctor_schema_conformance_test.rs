@@ -31,7 +31,7 @@
 //!     alone passes against a stale artifact the runtime still happens to fit.
 
 use repoweave::check::{
-    CheckViolation, DriftKind, IndexDriftKind, UnparseableProjectKind,
+    CheckViolation, DriftKind, RecordDriftKind, UnparseableProjectKind,
     WeaveRootIdentityConflictKind, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
@@ -113,10 +113,10 @@ fn corpus() -> Vec<CheckViolation> {
             kind: DriftKind::Missing,
             repo: repo(),
         },
-        CheckViolation::IndexDrift {
+        CheckViolation::RecordDrift {
             workweave: Some(workweave()),
             repo: repo(),
-            kind: IndexDriftKind::SafeToFix,
+            kind: RecordDriftKind::SafeToFix,
         },
         CheckViolation::WorkingTreeDrift {
             workweave: None,

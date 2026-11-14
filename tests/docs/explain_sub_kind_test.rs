@@ -2,7 +2,7 @@
 //! included, through a spelling that names it and nothing else.
 //!
 //! A sub-kind is written under its kind, and two kinds may carry the same
-//! sub-kind with different repairs: `safe-to-fix` is one of `index-drift` and
+//! sub-kind with different repairs: `safe-to-fix` is one of `record-drift` and
 //! one of `working-tree-drift`. A bare name serving either entry leaves the
 //! other unreachable, so a finding's `<kind>/<sub-kind>` names its entry, and
 //! a bare name heading entries under two kinds refuses rather than pick one.
@@ -136,7 +136,7 @@ fn every_entry_is_reachable_through_some_spelling() {
         .collect();
     assert_eq!(
         qualified_only,
-        ["index-drift/safe-to-fix", "working-tree-drift/safe-to-fix"],
+        ["record-drift/safe-to-fix", "working-tree-drift/safe-to-fix"],
         "the entries only a qualified spelling reaches"
     );
 }
@@ -197,9 +197,9 @@ fn refused(name: &str) -> String {
 
 #[test]
 fn a_kind_and_sub_kind_reach_that_kinds_entry() {
-    let index = served_by_binary("index-drift/safe-to-fix");
+    let index = served_by_binary("record-drift/safe-to-fix");
     let working_tree = served_by_binary("working-tree-drift/safe-to-fix");
-    assert_eq!(index, page_entry("index-drift", "safe-to-fix").text);
+    assert_eq!(index, page_entry("record-drift", "safe-to-fix").text);
     assert_eq!(
         working_tree,
         page_entry("working-tree-drift", "safe-to-fix").text
@@ -210,7 +210,7 @@ fn a_kind_and_sub_kind_reach_that_kinds_entry() {
 #[test]
 fn a_sub_kind_two_kinds_carry_refuses_naming_both() {
     let stderr = refused("safe-to-fix");
-    for spelling in ["index-drift/safe-to-fix", "working-tree-drift/safe-to-fix"] {
+    for spelling in ["record-drift/safe-to-fix", "working-tree-drift/safe-to-fix"] {
         assert!(
             stderr.contains(&format!("`rwv explain {spelling}`")),
             "the refusal must name `{spelling}`:\n{stderr}"
@@ -224,9 +224,9 @@ fn a_sub_kind_two_kinds_carry_refuses_naming_both() {
 
 #[test]
 fn a_sub_kind_one_kind_carries_resolves_bare_and_qualified_alike() {
-    let bare = served_by_binary("live-staged");
-    assert_eq!(bare, page_entry("index-drift", "live-staged").text);
-    assert_eq!(served_by_binary("index-drift/live-staged"), bare);
+    let bare = served_by_binary("live-recorded");
+    assert_eq!(bare, page_entry("record-drift", "live-recorded").text);
+    assert_eq!(served_by_binary("record-drift/live-recorded"), bare);
 }
 
 /// `member-permissions` has one entry for both its sub-kinds, so the kind's
@@ -248,10 +248,10 @@ fn a_sub_kind_with_no_entry_of_its_own_reaches_its_kinds_entry() {
 #[test]
 fn a_sub_kind_its_kind_does_not_carry_reaches_nothing() {
     for name in [
-        "index-drift/live-edits",
+        "record-drift/live-edits",
         "pin/safe-to-fix",
         "member-permissions/safe-to-fix",
-        "index-drift/",
+        "record-drift/",
     ] {
         let stderr = refused(name);
         assert!(
@@ -264,9 +264,9 @@ fn a_sub_kind_its_kind_does_not_carry_reaches_nothing() {
 
 #[test]
 fn a_mistyped_qualified_name_is_suggested() {
-    let stderr = refused("index-drift/safe-to-fx");
+    let stderr = refused("record-drift/safe-to-fx");
     assert!(
-        stderr.contains("did you mean: index-drift/safe-to-fix?"),
+        stderr.contains("did you mean: record-drift/safe-to-fix?"),
         "{stderr}"
     );
 }
@@ -293,7 +293,7 @@ fn heading_token(entry: &str) -> &str {
 fn every_finding_sub_kind_resolves_by_its_qualified_spelling() {
     let spellings = qualified_spellings();
     assert!(
-        spellings.contains(&("index-drift".into(), "live-staged".into()))
+        spellings.contains(&("record-drift".into(), "live-recorded".into()))
             && spellings.contains(&("workweave-tree-integrity".into(), "dangling-parent".into())),
         "the register walk lost a sub-kind it is known to hold: it has stopped reading the \
          schema: {spellings:?}"
@@ -358,10 +358,10 @@ fn a_kind_gives_every_sub_kind_an_entry_or_none() {
 fn a_kind_missing_one_sub_kind_entry_is_reported() {
     let entries: Vec<PageEntry> = page_entries()
         .into_iter()
-        .filter(|e| !(e.token == "live-staged" && e.kind.as_deref() == Some("index-drift")))
+        .filter(|e| !(e.token == "live-recorded" && e.kind.as_deref() == Some("record-drift")))
         .collect();
     assert_eq!(
         partially_covered_kinds(&entries, &qualified_spellings()),
-        ["index-drift"]
+        ["record-drift"]
     );
 }

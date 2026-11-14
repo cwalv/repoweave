@@ -59,7 +59,7 @@ are about what happens when something outside rwv does.
 
 The drift produces two distinct symptoms; rwv distinguishes them.
 
-### Index drift
+### Index drift (`record-drift`)
 
 The on-disk *index* no longer matches HEAD. `git status` shows
 "phantom" staged changes — entries that aren't actually anything the
@@ -222,8 +222,8 @@ loses an assume-unchanged mark, and with `core.fileMode=false` an exec bit git
 does not record is set as the commit says: git reads neither as a change, and
 neither does rwv.
 
-`rwv doctor` reports the stale paths as `index-drift` and
-`working-tree-drift` `safe-to-fix`, and everything else as `live-staged`
+`rwv doctor` reports the stale paths as `record-drift` and
+`working-tree-drift` `safe-to-fix`, and everything else as `live-recorded`
 and `live-edits`; a checkout can carry both. `--fix` refreshes the
 stale paths and leaves the rest; drift left in place is named with its
 reason and the route, and the fix reports an error for it. The end of
@@ -272,7 +272,7 @@ Where nothing shows that the branch moved under the checkout — the move went
 unrecorded, the checkout already took part of it, it moved backward or
 sideways — a checkout holding an old commit's content reads as edits, and
 rwv refreshes none of it: `rwv land` refuses it as `edits` `dirty`, and
-`rwv doctor` reports it `live-staged` and `live-edits`. If those differences
+`rwv doctor` reports it `live-recorded` and `live-edits`. If those differences
 are not your work, stash them (`git stash push` in the checkout, the second
 command the `edits` refusal prints): the checkout returns to HEAD, nothing is
 committed, and the stash keeps every difference, your own edits included.

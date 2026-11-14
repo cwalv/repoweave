@@ -733,7 +733,7 @@ fn check_fix_reports_not_a_repo_cleanly_instead_of_raw_git_error() {
 // These tests exercise the JSON wire shape end-to-end. They:
 //   - construct a workspace fixture per CheckViolation variant where possible
 //     (orphaned-clone, dangling-reference, pin, missing-lock-merge-driver);
-//   - drive the remaining variants (workweave-drift, index-drift,
+//   - drive the remaining variants (workweave-drift, record-drift,
 //     working-tree-drift) directly through
 //     `ViolationOutput::from_violation` so the wire shape is fully covered
 //     without requiring elaborate workweave fixtures.
@@ -748,7 +748,7 @@ mod doctor_json {
     use super::*;
     use common::doctor_corpus::{case_token, corpus};
     use repoweave::check::{
-        CheckViolation, DriftKind, IndexDriftKind, MissingLockMergeDriverKind,
+        CheckViolation, DriftKind, MissingLockMergeDriverKind, RecordDriftKind,
         UnparseableProjectKind, ViolationOutput, WorkingTreeDriftKind, DOCTOR_SCHEMA_URL,
     };
     use repoweave::manifest::{ProjectName, RepoPath, WorkweaveId, WorkweaveName};
@@ -1092,10 +1092,10 @@ mod doctor_json {
     #[test]
     fn wire_index_drift_sub_kinds() {
         for (kind, expected_tag) in [
-            (IndexDriftKind::SafeToFix, "safe-to-fix"),
-            (IndexDriftKind::LiveStaged, "live-staged"),
+            (RecordDriftKind::SafeToFix, "safe-to-fix"),
+            (RecordDriftKind::LiveRecorded, "live-recorded"),
         ] {
-            let v = CheckViolation::IndexDrift {
+            let v = CheckViolation::RecordDrift {
                 workweave: None,
                 repo: RepoPath::new("github/a/b").expect("known-safe literal"),
                 kind,
@@ -1108,7 +1108,7 @@ mod doctor_json {
             .unwrap();
             assert_eq!(
                 json.get("kind").and_then(|k| k.as_str()),
-                Some("index-drift")
+                Some("record-drift")
             );
             assert_eq!(
                 json.get("sub_kind").and_then(|s| s.as_str()),
@@ -1318,7 +1318,7 @@ mod doctor_json {
             workweave: Option<String>,
             sub_kind: String,
         },
-        IndexDrift {
+        RecordDrift {
             path: String,
             absolute_path: String,
             workweave: Option<String>,

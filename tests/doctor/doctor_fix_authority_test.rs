@@ -345,7 +345,7 @@ fn the_page_walk_actually_reads_the_page() {
         "the findings repaired behind a consent flag are pinned at 2; got {consented}"
     );
     for expected in [
-        "index-drift/safe-to-fix",
+        "record-drift/safe-to-fix",
         "alignment/on-branch",
         "workweave-tree-integrity/unregistered-workweave",
         "stale-op-state",
@@ -1475,7 +1475,7 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         ),
         (
             "drift in",
-            Findings(&["index-drift/safe-to-fix", "working-tree-drift/safe-to-fix"]),
+            Findings(&["record-drift/safe-to-fix", "working-tree-drift/safe-to-fix"]),
         ),
         (
             "stale-worktree-registration for",

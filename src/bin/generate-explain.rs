@@ -1665,6 +1665,32 @@ fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(check_env_input_reads(&src_dir, &allowlist))
 }
 
+/// Published tokens that spell git's working-copy model: a finding kind, a
+/// sub-kind, a refusal kind or axis, or a state name. The workweave index is
+/// rwv's own record, so `workweave-index` is not git's index.
+fn check_published_tokens_have_no_git_words(
+    tokens: impl IntoIterator<Item = (&'static str, String)>,
+) -> Vec<String> {
+    let words = Regex::new(
+        r"(?i)stag(e|ed|es|ing)|unstag|stash|reflog|assume-unchanged|skip-worktree|unmerged[ -](path|file)|\bindex\b",
+    )
+    .unwrap();
+    tokens
+        .into_iter()
+        .filter(|(_, token)| !token.contains("workweave-index"))
+        .filter_map(|(table, token)| {
+            words.find(&token).map(|word| {
+                format!(
+                    "published-token: {table} `{token}` says `{}`; name what the operator \
+                     sees in words any VCS shares (\"recorded\", \"set aside\", \"what \
+                     the VCS records\")",
+                    word.as_str()
+                )
+            })
+        })
+        .collect()
+}
+
 /// Each string literal of Rust source `code` with the line it starts on,
 /// skipping comments, character literals and lifetimes.
 fn string_literals(code: &str) -> Vec<(usize, String)> {
@@ -5086,6 +5112,32 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
+    // --- published-token gate ---------------------------------------------
+    let (finding_kinds, sub_kinds) = doctor_finding_vocabulary();
+    let refusal_kinds = fs::read_to_string(root.join("src/refusal.rs"))
+        .map(|source| refusal_tokens(&source))
+        .unwrap_or_default();
+    let token_errors = check_published_tokens_have_no_git_words(
+        finding_kinds
+            .into_iter()
+            .map(|t| ("finding kind", t))
+            .chain(
+                sub_kinds
+                    .into_values()
+                    .flatten()
+                    .map(|t| ("finding sub-kind", t)),
+            )
+            .chain(refusal_kinds.into_iter().map(|t| ("refusal kind", t)))
+            .chain(repoweave::diagnosis::Axis::ALL.map(|axis| ("refusal axis", axis.token())))
+            .chain(
+                repoweave::diagnosis::State::ALL
+                    .map(|state| ("refusal state", state.name().to_owned())),
+            ),
+    );
+    if !token_errors.is_empty() {
+        anyhow::bail!("published-token check failed:\n{}", token_errors.join("\n"));
+    }
+
     // --- envelope-output documentation gate ------------------------------
     // Every RWV_* variable set on plugin spawns by envelope_vars() in
     // src/plugins.rs must be documented in docs/reference/plugin-protocol.md.
@@ -6199,6 +6251,20 @@ mod tests {
         assert_eq!(errors.len(), 2, "got:\n{}", errors.join("\n"));
         assert!(errors[0].contains("verb.rs:3") && errors[0].contains("`stage`"));
         assert!(errors[1].contains("verb.rs:7") && errors[1].contains("`reflog`"));
+    }
+
+    /// A published token that spells git's model fails; rwv's own workweave
+    /// index does not.
+    #[test]
+    fn published_token_check_fails_on_git_words_and_spares_the_workweave_index() {
+        let errors = check_published_tokens_have_no_git_words([
+            ("finding kind", "live-staged".to_owned()),
+            ("finding kind", "index-drift".to_owned()),
+            ("finding kind", "legacy-workweave-index".to_owned()),
+            ("refusal state", "drift left in place".to_owned()),
+        ]);
+        assert_eq!(errors.len(), 2, "got:\n{}", errors.join("\n"));
+        assert!(errors[0].contains("live-staged") && errors[1].contains("index-drift"));
     }
 
     /// A test module may build a concrete backend — that is what `git_vcs` is
@@ -8839,7 +8905,7 @@ mod tests {
                 "docs/page.md:6: `detached` is not a sub-kind of `weave-root-identity-conflict`",
                 "docs/page.md:7: `rwv explain integration-file-drifted` serves nothing",
                 "docs/page.md:7: `rwv explain safe-to-fix` refuses: `safe-to-fix` is a sub-kind of \
-                 more than one kind; cite one of [\"index-drift/safe-to-fix\", \
+                 more than one kind; cite one of [\"record-drift/safe-to-fix\", \
                  \"working-tree-drift/safe-to-fix\"]",
                 "docs/page.md:8: `rwv doctor --kind fully-owned-digest-mismatch` refuses",
                 "docs/page.md:8: `rwv doctor --kind stale-lok` refuses",
@@ -8867,7 +8933,7 @@ mod tests {
             // rwv-advice: not-an-invocation
             "create`, `rwv tidy` from `rwv-tidy`, no `rwv commit`, `rwv <verb>`,\n",
             "`rwv --help`, `rwv explain dropped-repo-has-unique-commits`, `rwv explain land`,\n",
-            "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-staged`,\n",
+            "`rwv explain working-tree-drift/safe-to-fix`, `rwv explain live-recorded`,\n",
             // rwv-advice: not-an-invocation
             "`rwv explain <token>`, `rwv doctor --kind tool-missing`, `rwv check-mid-op && rwv land`.\n",
             "`land`, `set-default-create-basedir`, `discard-unlanded`, `cargo-config`, `up-to-date`, `web-app`,\n",
