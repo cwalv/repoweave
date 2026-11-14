@@ -621,7 +621,7 @@ impl Role {
 
     pub fn legacy_spelling_hint() -> String {
         format!(
-            "the `{legacy}` role spelling is no longer accepted; the role is \
+            "the `{legacy}` role spelling is not accepted; the role is \
              spelled `{owned}`",
             legacy = Self::LEGACY_SPELLING,
             owned = Role::Owned

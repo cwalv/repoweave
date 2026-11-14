@@ -187,7 +187,7 @@ fn a_legacy_role_spelling_is_refused_with_the_replacement_named() {
 
     let combined = output(&workspace, &["doctor"]);
     assert!(
-        combined.contains("no longer accepted"),
+        combined.contains("role spelling is not accepted"),
         "the refusal must carry the migration sentence, got:\n{combined}"
     );
     assert!(
@@ -211,7 +211,7 @@ fn a_legacy_role_spelling_is_reported_once() {
     let (workspace, _, _) = make_workspace(tmp.path(), "ws", "rwv.toml", LEGACY_ROLE_MANIFEST);
 
     let combined = output(&workspace, &["doctor", "--json"]);
-    let hits = combined.matches("no longer accepted").count();
+    let hits = combined.matches("role spelling is not accepted").count();
     assert_eq!(
         hits, 1,
         "the legacy role spelling must be reported exactly once, saw {hits} in:\n{combined}"

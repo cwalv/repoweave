@@ -222,7 +222,7 @@ pub enum Commands {
         /// Repair every finding marked Auto-fixable in docs/reference/doctor-findings.md, which carries that mark on each finding it documents. Never touches live changes marked for commit or live edits. Idempotent. Active-project scoped; use --all to widen.
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
-        /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.
+        /// Emit the findings as one JSON envelope whose records carry a stable per-variant `kind`. See `rwv explain doctor`.
         #[arg(long, conflicts_with_all = ["locked", "fix"])]
         json: bool,
         /// Scan all projects and run weave-wide checks (orphan detection, cross-project stale locks, etc.).
@@ -403,7 +403,7 @@ pub enum Commands {
         /// How a repo holding new work takes in, for this run, where the target records no `history` for it: linear, merge or ff-only. A value differing from a recorded one is refused
         #[arg(long, value_name = "H", value_enum, conflicts_with = "do_continue")]
         history: Option<crate::manifest::History>,
-        /// Emit the refusal envelope as JSON. See `rwv explain sync`.
+        /// Emit the result as one JSON envelope: outcomes, placements, members, reports, advisories, refusals, and whether the sync completed. See `rwv explain sync`.
         #[arg(long, conflicts_with = "do_continue")]
         json: bool,
         /// Run up to N per-repo fetches in parallel. Default: 1 (serial).
@@ -638,7 +638,7 @@ pub enum Commands {
         /// Number of parallel per-repo workers for the fetches and member pushes. Default: 1 (serial): every push authenticates and runs the repo's pre-push hook, so concurrent pushes would share one terminal's credential prompts and run those hooks side by side, and the default push set is already narrowed to writable roles. Project-repo push always runs serially as the last step.
         #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
-        /// Emit per-repo outcomes as JSON (array-of-records with stable per-variant `kind`). See `rwv explain push`.
+        /// Emit the outcomes as one JSON envelope whose records carry a stable per-variant `kind`. See `rwv explain push`.
         #[arg(long)]
         json: bool,
     },
@@ -858,7 +858,7 @@ pub enum MemberAction {
         /// Register an existing clone instead of cloning: the argument is its
         /// path, relative paths resolving against the invocation directory, and
         /// its position under the weave root is the path recorded. The URL is
-        /// read from its origin remote
+        /// read from its remote; a clone with several remotes refuses
         #[arg(long)]
         adopt: bool,
         /// Record `recurse-submodules = false` for the member: new checkouts of

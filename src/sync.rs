@@ -3276,7 +3276,7 @@ fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[&str]) -> anyh
     };
     Err(crate::untokened!(
         Tally,
-        "{verb} completed: replay and relock finished and op-state is cleared, so `rwv abort` \
+        "{verb} completed: replay and relock finished and the op record is cleared, so `rwv abort` \
          does not apply. Pruning was refused for {n} member checkout{s} the manifest no longer \
          names, and {them} {are} still on disk:\n  {list}\n\
          Re-running {verb} will not prune {them}. Once nothing in {them} is needed, remove {them} \

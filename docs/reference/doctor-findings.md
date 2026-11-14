@@ -288,7 +288,7 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 
 #### `pre-schema`
 
-**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys of the retired schema: `version` where `branch` is expected, or `submodules` where `recurse-submodules` is. Every verb that reads the manifest at the checked-out tip refuses with this kind, and `rwv explain unparseable-project` is its route line.
+**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys an earlier release wrote: `version` where `branch` is now expected, or `submodules` where `recurse-submodules` is. Every verb that reads the manifest at the checked-out tip refuses with this kind, and `rwv explain unparseable-project` is its route line.
 
 **What to do:** `rwv doctor --fix`, run in the project's checkout. It renames the keys in place — `version` to `branch`, `submodules = "skip"` to `recurse-submodules = false`, and drops `submodules = "local"`, which is what an absent `recurse-submodules` means — keeping the file's comments and key order. It writes the rename into the working file and into the project's HEAD commit and commits only that, in one commit: any other edit to `rwv.toml`, and any edit to another file, stays uncommitted where it was. It declines, changing nothing, while another file is marked for the next commit or a rebase, merge or cherry-pick is in progress in the project repo, and says so; run it again once that is dealt with. A value of `submodules` other than `"local"` or `"skip"`, or an entry that names both a key and its replacement, is not guessed at: the repair names it and leaves the file.
 

@@ -571,7 +571,7 @@ fn seat_with_an_unprunable_drop(weave: &Weave) -> PathBuf {
 }
 
 const COMPLETED: &str =
-    "completed: replay and relock finished and op-state is cleared, so `rwv abort` does not apply";
+    "completed: replay and relock finished and the op record is cleared, so `rwv abort` does not apply";
 
 /// The op ran to completion and only the prune was refused: exit 1, a message
 /// that says abort does not apply and names the checkout, the checkout and
