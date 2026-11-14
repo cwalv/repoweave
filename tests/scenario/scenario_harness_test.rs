@@ -735,6 +735,12 @@ fn a_store_removal_after_a_rewrite_ends_once_its_backup_is_dropped() {
 }
 
 #[test]
+fn a_continued_landing_the_target_moved_under_offers_it_again_as_started() {
+    runner::run(scenarios::a_continued_landing_the_target_moved_under_offers_it_again_as_started())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1700,6 +1706,7 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    a_continued_landing_the_target_moved_under_offers_it_again_as_started,
     store_removal_keeps_nothing_of_a_submodule_remote_rewrite,
     store_removal_after_a_rewrite_ends_once_its_backup_is_dropped,
     store_removal_offers_an_exit_for_a_savepoint_it_holds,

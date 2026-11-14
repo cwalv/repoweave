@@ -2877,6 +2877,9 @@ struct OpContext<'a> {
     /// The landing's claim on its target, held until the target's workspace
     /// took the last fast-forward.
     landing_claim: std::sync::Mutex<Option<crate::landing_claim::LandingClaim>>,
+    /// The landing as a line that starts it again, with the flags it was
+    /// started with.
+    started_as: Vec<String>,
     /// The CWD project repo's backend. One per invocation, because the
     /// project repo is one per invocation — see [`crate::vcs::project_vcs`]
     /// for why it cannot be resolved from a manifest entry.
@@ -4242,7 +4245,7 @@ fn guard_and_mark<'a>(
             .collect(),
         ..op_state::TakeInRecord::default()
     });
-    remember_landing(&cwd_workspace_dir, &initial_record);
+    let started_as = landing_as_started(&cwd_workspace_dir, &initial_record);
     crate::landing_claim::refuse_without_exclusive_publish(
         project_vcs().as_ref(),
         &cwd_project_dir,
@@ -4534,6 +4537,7 @@ fn guard_and_mark<'a>(
             dest_workspace_dir.as_deref(),
             rewound_in_place,
             false,
+            &started_as,
         )
         .refused());
     }
@@ -4694,6 +4698,7 @@ fn guard_and_mark<'a>(
         cwd_project_name,
         take_in,
         retire,
+        started_as,
         retire_left: std::sync::atomic::AtomicBool::new(false),
         jobs,
         handler,
@@ -4725,7 +4730,7 @@ fn load_continuing_context<'a>(
         owner_workspace,
     } = op;
     let op_id = record.id.clone();
-    remember_landing(owner_workspace.as_path(), &record);
+    let started_as = landing_as_started(owner_workspace.as_path(), &record);
 
     if record.verb != op_state::OpVerb::Land {
         crate::refuse!(
@@ -4871,6 +4876,7 @@ fn load_continuing_context<'a>(
                 &SavepointKey::LandTarget(op_id.clone()),
                 &take_in,
                 composed,
+                &started_as,
             )? {
                 return Err(moved.refused());
             }
@@ -4997,6 +5003,7 @@ fn load_continuing_context<'a>(
         cwd_project_name,
         take_in,
         retire: record.retire,
+        started_as,
         retire_left: std::sync::atomic::AtomicBool::new(false),
         jobs: 1,
         handler,
@@ -5145,6 +5152,7 @@ fn target_moved(
     read: &SavepointKey,
     take_in: &op_state::TakeInRecord,
     composed: Option<&std::collections::BTreeMap<RepoKey, CommitId>>,
+    started_as: &[String],
 ) -> anyhow::Result<Option<crate::diagnosis::Judged>> {
     let mut moved: Vec<String> = Vec::new();
     let stores = MemberStores {
@@ -5282,6 +5290,7 @@ fn target_moved(
         target_workspace,
         moved,
         take_in.wrote_target(),
+        started_as,
     )))
 }
 
@@ -5297,12 +5306,10 @@ fn off_its_branch(vcs: &dyn Vcs, dir: &Path, branch: &str) -> anyhow::Result<Opt
     })
 }
 
-static LANDING_AS_STARTED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-
-/// Remember the landing `record` holds as the line that starts it again: its
+/// The landing `record` holds as the line that starts it again: its
 /// `--history`, its target where the feature's record names another, the
 /// members it was let change, and `--retire`.
-fn remember_landing(source_workspace: &Path, record: &OwnerRecord) {
+fn landing_as_started(source_workspace: &Path, record: &OwnerRecord) -> Vec<String> {
     let take_in = record.take_in.as_ref();
     let target = take_in.and_then(|take_in| match &take_in.sync_from {
         Some(op_state::SyncFrom::Target(target)) => Some(target.clone()),
@@ -5337,15 +5344,7 @@ fn remember_landing(source_workspace: &Path, record: &OwnerRecord) {
     if record.retire {
         words.push("--retire".to_owned());
     }
-    let _ = LANDING_AS_STARTED.set(words);
-}
-
-/// The line [`remember_landing`] remembered, `rwv land` where none was.
-fn landing_as_started() -> Vec<String> {
-    LANDING_AS_STARTED
-        .get()
-        .cloned()
-        .unwrap_or_else(|| vec!["rwv".to_owned(), "land".to_owned()])
+    words
 }
 
 fn target_moved_line(
@@ -5353,6 +5352,7 @@ fn target_moved_line(
     target_workspace: Option<&Path>,
     moved: Vec<String>,
     wrote_target: bool,
+    started_as: &[String],
 ) -> crate::diagnosis::Judged {
     let subject = match target_workspace {
         Some(workspace) => format!(
@@ -5367,7 +5367,7 @@ fn target_moved_line(
         .subject(subject)
         .listing(moved)
         .by_verb("land")
-        .bind_list("<landing>", landing_as_started())
+        .bind_list("<landing>", started_as)
         .only_forms(&[if wrote_target {
             crate::diagnosis::Form::LeaveTarget
         } else {
@@ -7172,6 +7172,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         &ctx.target_savepoint_key(),
         &ctx.take_in,
         Some(&composed),
+        &ctx.started_as,
     )? {
         return Err(moved.refused());
     }
@@ -7319,6 +7320,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             &cwd_repo,
             branch,
             &cwd_tip,
+            &ctx.started_as,
         ) {
             Ok(advance) => {
                 if emit_text {
@@ -7360,7 +7362,15 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         let there = workspace.join(repo_path.as_path());
         let (branch, cwd_tip) = planned(key)?;
         journal_in_place(ctx, workspace, key, cwd_tip.id())?;
-        match ff_advance_repo(vcs.as_ref(), repo_path, &there, &cwd_repo, branch, &cwd_tip) {
+        match ff_advance_repo(
+            vcs.as_ref(),
+            repo_path,
+            &there,
+            &cwd_repo,
+            branch,
+            &cwd_tip,
+            &ctx.started_as,
+        ) {
             Ok(advance) => {
                 if emit_text {
                     outln!(
@@ -7536,6 +7546,7 @@ fn advance_project_in_checkout(
         &ctx.cwd_project_dir,
         target_branch,
         cwd_project_tip,
+        &ctx.started_as,
     ) {
         Ok(advance) => {
             if emit_text {
@@ -7654,6 +7665,7 @@ fn advance_receiving_ref(
             label,
             dir,
             format!("'{}' is {now}, {why}", receiving.branch),
+            &ctx.started_as,
         )
         .refused()
     };
@@ -7765,6 +7777,7 @@ fn advance_receiving_ref(
             label,
             dir,
             does_not_fast_forward(&now, &ResolvedRevisionId::from(composed.clone())),
+            &ctx.started_as,
         )
         .refused());
     }
@@ -12139,6 +12152,7 @@ fn target_moved_line_for(
     label: impl std::fmt::Display,
     repo: &Path,
     how: String,
+    started_as: &[String],
 ) -> crate::diagnosis::Judged {
     State::TargetMovedMidOperation
         .of(label)
@@ -12147,7 +12161,7 @@ fn target_moved_line_for(
             repo.display()
         ))
         .listing([how])
-        .bind_list("<landing>", landing_as_started())
+        .bind_list("<landing>", started_as)
         .by_verb("land")
         .judge(project_vcs().as_ref())
 }
@@ -12199,10 +12213,11 @@ fn ff_advance_repo(
     cwd_repo: &Path,
     branch: &str,
     cwd_tip: &ResolvedRevisionId,
+    started_as: &[String],
 ) -> anyhow::Result<FfAdvance> {
     crate::test_pause::point("advance-target");
     if let Some(off) = off_its_branch(vcs, target_repo, branch)? {
-        return Err(target_moved_line_for(label, target_repo, off).refused());
+        return Err(target_moved_line_for(label, target_repo, off, started_as).refused());
     }
     // Verify that target_repo's HEAD is an ancestor of (or equal to) cwd_tip.
     // If not, this is a concurrent-modification scenario — bail.
@@ -12263,6 +12278,7 @@ fn ff_advance_repo(
             label,
             target_repo,
             format!("on '{on}', not on '{branch}'"),
+            started_as,
         )
         .refused());
     }
@@ -12305,6 +12321,7 @@ fn ff_advance_repo(
             label,
             target_repo,
             does_not_fast_forward(&target_tip, cwd_tip),
+            started_as,
         )
         .refused());
     }
@@ -12346,7 +12363,7 @@ fn ff_advance_repo(
                     None => format!("its HEAD no longer reads: {e:#}"),
                 },
             };
-            return Err(target_moved_line_for(label, target_repo, how).refused());
+            return Err(target_moved_line_for(label, target_repo, how, started_as).refused());
         }
         return Err(e).context("fast-forward advance failed in target");
     }
@@ -12912,8 +12929,16 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let (cwd, target, cwd_tip) = landing_pair(tmp.path());
 
-        let advance = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
-            .expect("an attached target accepts the landing");
+        let advance = ff_advance_repo(
+            git_vcs().as_ref(),
+            "repo",
+            &target,
+            &cwd,
+            "main",
+            &cwd_tip,
+            &[],
+        )
+        .expect("an attached target accepts the landing");
         let landed = advance
             .onto
             .expect("the target moved, so a branch received it");
@@ -12938,8 +12963,16 @@ mod tests {
         git(&target, &["config", "user.name", "T"]);
         commit(&target, "target-only");
 
-        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
-            .expect_err("a target holding commits CWD's tip does not must refuse");
+        let err = ff_advance_repo(
+            git_vcs().as_ref(),
+            "repo",
+            &target,
+            &cwd,
+            "main",
+            &cwd_tip,
+            &[],
+        )
+        .expect_err("a target holding commits CWD's tip does not must refuse");
         let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
         assert_eq!(
             report.lines()[0].state(),
@@ -12965,8 +12998,16 @@ mod tests {
         git(&target, &["checkout", "--detach", "HEAD"]);
         let head_before = git(&target, &["rev-parse", "HEAD"]);
 
-        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
-            .expect_err("a detached target has no branch for the landing to advance");
+        let err = ff_advance_repo(
+            git_vcs().as_ref(),
+            "repo",
+            &target,
+            &cwd,
+            "main",
+            &cwd_tip,
+            &[],
+        )
+        .expect_err("a detached target has no branch for the landing to advance");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("is not on a branch (detached HEAD at"),
@@ -13007,8 +13048,16 @@ mod tests {
             .unwrap();
         assert!(!stopped.status.success(), "the rebase must stop");
 
-        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
-            .expect_err("a target stopped in a rebase must refuse");
+        let err = ff_advance_repo(
+            git_vcs().as_ref(),
+            "repo",
+            &target,
+            &cwd,
+            "main",
+            &cwd_tip,
+            &[],
+        )
+        .expect_err("a target stopped in a rebase must refuse");
         let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
         assert_eq!(
             report.lines()[0].state(),
@@ -13024,8 +13073,16 @@ mod tests {
         let main_before = git(&target, &["rev-parse", "refs/heads/main"]);
         git(&target, &["switch", "-c", "hotfix"]);
 
-        let err = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
-            .expect_err("a checkout on another branch than the plan names must refuse");
+        let err = ff_advance_repo(
+            git_vcs().as_ref(),
+            "repo",
+            &target,
+            &cwd,
+            "main",
+            &cwd_tip,
+            &[],
+        )
+        .expect_err("a checkout on another branch than the plan names must refuse");
         let report = crate::diagnosis::report_of(&err).expect("the stop is judged");
         assert_eq!(
             report.lines()[0].state(),
@@ -13056,8 +13113,16 @@ mod tests {
         git(&target, &["fetch", cwd.to_str().unwrap(), "HEAD"]);
         git(&target, &["checkout", "--detach", cwd_tip.id().as_str()]);
 
-        let landed = ff_advance_repo(git_vcs().as_ref(), "repo", &target, &cwd, "main", &cwd_tip)
-            .expect("an already-converged target is a no-op, detached or not");
+        let landed = ff_advance_repo(
+            git_vcs().as_ref(),
+            "repo",
+            &target,
+            &cwd,
+            "main",
+            &cwd_tip,
+            &[],
+        )
+        .expect("an already-converged target is a no-op, detached or not");
         assert!(
             landed.onto.is_none(),
             "nothing moved, so no branch received anything"

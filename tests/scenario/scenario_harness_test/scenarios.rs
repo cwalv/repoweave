@@ -16853,6 +16853,56 @@ pub fn landing_as_refs_unpinned() -> Scenario {
     scenario("landing as refs unpinned", steps)
 }
 
+/// A landing started with `--history linear` stops on a conflict in `app`;
+/// the operator resolves it, and the target's project branch moves before
+/// `rwv land --continue`, which stops as `target` moved mid-operation. The
+/// landing it prints again carries `--history linear`: after the `rwv abort`
+/// it prints, the landing run as printed stops on the conflict again and,
+/// resolved, lands.
+pub fn a_continued_landing_the_target_moved_under_offers_it_again_as_started() -> Scenario {
+    scenario(
+        "a continued landing the target moved under offers it again as started",
+        vec![
+            create("w"),
+            Step::hand_edit(&ww("w"), Repo::App, "README", "app", "w side"),
+            Step::git(&ww("w"), Repo::App, &["commit", "-qam", "w side"]),
+            Step::hand_edit(&a(), Repo::App, "README", "app", "main side"),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "main side"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::git(&ww("w"), Repo::App, &["checkout", "--theirs", "README"]),
+            Step::git(&ww("w"), Repo::App, &["add", "README"]),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["commit", "-q", "--allow-empty", "-m", "main moves"],
+            ),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation))
+                .resolved_by_hand(&[Repo::App])
+                .claim(Claim::OutputContains(
+                    "\n    rwv abort\n    rwv land --history linear\n",
+                )),
+            Step::rwv_printed_exactly(&ww("w"), "rwv abort")
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App]),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::git(&ww("w"), Repo::App, &["checkout", "--theirs", "README"]),
+            Step::git(&ww("w"), Repo::App, &["add", "README"]),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .resolved_by_hand(&[Repo::App]),
+            Step::git(&a(), Repo::Proj, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("main moves")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w side")),
+        ],
+    )
+}
+
 /// `lost-race-abort`: a landing as refs has moved `app`'s `main` when the
 /// compare-and-swap of `lib`'s loses to a commit made there meanwhile. It
 /// stops with `target` moved mid-operation and the lost-race recovery;
