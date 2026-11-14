@@ -208,7 +208,6 @@ src/merge_upstream.rs	target dependents	-	1
 src/names.rs	name declared	tests/sync/protection_test.rs	1
 src/names.rs	name feature	-	1
 src/op_state.rs	(untokened:internal-invariant)	-	11
-src/op_state.rs	(untokened:owed)	-	1
 src/op_state.rs	dead-op-lease	-	2
 src/op_state.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	1
 src/op_state.rs	op-acquisition-raced	-	4
@@ -303,7 +302,7 @@ src/sync.rs	edits drift left in place	tests/sync/land_drift_test.rs	2
 src/sync.rs	foreign-tip	-	5
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
-src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	5
+src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	4
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	3
 src/sync.rs	op-parked	-	7
 src/sync.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1
@@ -335,6 +334,7 @@ src/workspace.rs	no-weave-root	-	1
 src/workspace.rs	occupied-bootstrap-dir	-	1
 src/workspace.rs	project-dir-missing	-	1
 src/workspace.rs	unreadable-active-project	tests/doctor/unreadable_active_project_test.rs	1
+src/workspace.rs	unreadable-marker	-	1
 src/workspace.rs	unregistered-workweave	-	1
 src/workspace/reconcile.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	2
 src/workspace/root_identity.rs	weave-root-identity-conflict	-	1

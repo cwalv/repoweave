@@ -244,7 +244,7 @@ Updated by `rwv activate <project>`, by `rwv init`, and by the `rwv clone` or `r
 
 ## `.rwv-workweave` — workweave marker
 
-Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity and parent. The project clone's workweave index keeps the same `parent`, with the workweave's path, so a marker that is lost or edited is written again from the index and the workweave's project checkout being a worktree of that clone; a verb that does not destroy the workweave restores it and says so, and `rwv workweave delete` and `rwv land --retire` refuse instead, naming `rwv doctor --fix`.
+Lives at every workweave directory root, and is a workweave root's *only* identity file — a workweave never carries `.rwv-active` beside it, and `rwv doctor` reports a root holding both. Records the workweave's identity, its name and its parent. The project clone's workweave index keeps the same name and `parent`, with the workweave's path, so a marker that is lost or edited is written again from the index and the workweave's project checkout being a worktree of that clone; a verb that does not destroy the workweave restores it and says so, and `rwv workweave delete` and `rwv land --retire` refuse instead, naming `rwv doctor --fix`.
 
 Written by `rwv workweave create <name>`, which, run inside a workweave, also duplicates that workweave's state; removed with the workweave by `rwv workweave delete <name>` or `rwv land --retire`.
 
@@ -252,6 +252,7 @@ Written by `rwv workweave create <name>`, which, run inside a workweave, also du
 {
   "primary": "/home/user/work",
   "project": "web-app",
+  "name": "fix",
   "parent": "/home/user/.workweaves/web-app--feat"
 }
 ```
@@ -260,9 +261,10 @@ Written by `rwv workweave create <name>`, which, run inside a workweave, also du
 |---|---|
 | `primary` | Absolute path to the primary weave |
 | `project` | Project name this workweave is forked for |
+| `name` | The workweave's name, wherever its directory is; an index lost or unreadable is rebuilt from it |
 | `parent` | Absolute path to the workspace the workweave was forked from. `primary` value when forked from primary; the parent-workweave path when forked from inside another workweave |
 
-All three fields are required. A marker in YAML format, or one missing `parent:`, is a legacy marker and must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` from the primary weave to migrate it to JSON, backfilling `parent:` where it is absent — `--fix` cannot run from inside the workweave it would repair, because the marker is resolved before any verb dispatches. See [upgrade-rwv — Step 1](../how-to/upgrade-rwv.md#step-1--a-legacy-workweave-marker).
+All four fields are required. A marker in YAML format, or one missing `parent` or `name`, is a legacy marker. Where the project's index lists the workweave, the first `rwv` invocation inside it writes the marker again from the index and says so; otherwise any invocation from inside it fails with a clear error message naming the file. `rwv doctor --fix` from the primary weave migrates it to JSON, taking the name from the index or the directory name `<project>--<name>` and backfilling `parent` where it is absent — `--fix` cannot run from inside the workweave it would repair, because the marker is resolved before any verb dispatches. See [upgrade-rwv — Step 1](../how-to/upgrade-rwv.md#step-1--a-legacy-workweave-marker).
 
 Consumed by:
 

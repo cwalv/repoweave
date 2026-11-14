@@ -79,15 +79,18 @@ from. The shape:
 {
   "primary": "/home/user/work/primary",
   "project": "web-app",
+  "name": "fix",
   "parent": "/home/user/work/.workweaves/web-app--feat"
 }
 ```
 
 `parent` is `primary` when the workweave was created from the primary
 weave, and the parent-workweave path when the workweave was created from
-inside another workweave. A legacy marker — YAML, or missing `parent:` —
-is refused at read rather than backfilled silently; `rwv doctor --fix`
-migrates it to the current JSON shape.
+inside another workweave. A legacy marker — YAML, or missing `parent` or
+`name` — is refused at read rather than backfilled silently, unless the
+project's index lists the workweave, from which the first verb run inside it
+writes the marker again; `rwv doctor --fix` migrates it to the current JSON
+shape.
 
 Tool-tracked parentage is what makes two operations safe to run without
 an explicit target:

@@ -62,10 +62,10 @@ From inside a workweave, the marker is checked first, then the manifest, then th
 
 ## Step 1 — a legacy workweave marker
 
-If `.rwv-workweave` was written by an older `rwv`, every command run from inside that workweave refuses immediately, including `rwv doctor` itself:
+A `.rwv-workweave` written by an older `rwv` lacks the workweave's `name` (and, older still, `parent`, or is YAML). Where the project's workweave index lists the workweave, the first command run inside it writes the marker again from the index and says so (`rwv: restored <workweave>/.rwv-workweave from the project clone's index and the worktree relation`), and `rwv doctor --fix` in the primary does the same for every workweave at once. Otherwise every command run from inside that workweave refuses immediately, including `rwv doctor` itself:
 
 ```text
-Error: <workweave>/.rwv-workweave is a legacy workweave marker (YAML format, or missing the required `parent:` field). Run `rwv doctor --fix` from the primary weave, not from inside this workweave: resolving the marker precedes the repair, so a self-invoked `--fix` hits this same refusal and changes nothing. The file is still readable YAML, so its own `primary:` names the weave to run from — `rwv doctor --fix -C <that path>` needs no `cd`.
+Error: <workweave>/.rwv-workweave is a legacy workweave marker (YAML format, or missing the required `parent` or `name` field). Run `rwv doctor --fix` from the primary weave, not from inside this workweave: resolving the marker precedes the repair, so a self-invoked `--fix` hits this same refusal and changes nothing. The file is still readable YAML, so its own `primary:` names the weave to run from — `rwv doctor --fix -C <that path>` needs no `cd`.
 ```
 
 Resolving which workspace the command is running in happens before `doctor`'s repair logic runs, so a self-invoked `--fix` inside the workweave cannot rewrite its own marker. Because the legacy marker is plain YAML, its `primary:` field is still readable:
@@ -75,7 +75,7 @@ cat .rwv-workweave        # primary: <path> — still readable, unmigrated
 rwv doctor --fix -C <path from primary:>
 ```
 
-`rwv doctor --fix` scans every workweave from the primary weave in one pass, migrating legacy `.rwv-workweave` markers to JSON, replacing any legacy symlinked `reference` member slots with read-only git worktrees, and settling file permissions.
+`rwv doctor --fix` scans every workweave from the primary weave in one pass, migrating legacy `.rwv-workweave` markers to JSON with the name the index records (or, for a workweave it does not list, the one its directory name `<project>--<name>` spells), replacing any legacy symlinked `reference` member slots with read-only git worktrees, and settling file permissions.
 
 ## Step 2 — a legacy project manifest
 
@@ -192,7 +192,7 @@ An earlier release kept each project's workweave index at `projects/<project>/.r
 rwv -C <primary> doctor --fix
 ```
 
-The rebuild lists the workweaves their `.rwv-workweave` markers record, writes the index into the project clone, and removes the old file. The basedir the old index recorded is not carried over: `rwv workweave set-default-create-basedir` records it again. A workweave outside the containers doctor scans is listed again by the next rwv run inside it. If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
+The rebuild lists the workweave each checkout of the project clone sits in, by the name its `.rwv-workweave` marker records, writes the index into the project clone, and removes the old file. The basedir the old index recorded is not carried over: `rwv workweave set-default-create-basedir` records it again. If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
 
 ## Step 9 — the lock merge driver an earlier release set up
 

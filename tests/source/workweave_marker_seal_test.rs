@@ -26,12 +26,17 @@ fn the_harness_can_compile_a_legal_snippet() {
     // invocation would make them all pass for the wrong reason.
     let (compiled, stderr) = compile(
         r#"
-        use repoweave::manifest::ProjectName;
+        use repoweave::manifest::{ProjectName, WorkweaveName};
         use repoweave::workspace::WorkweaveMarker;
         use std::path::Path;
-        pub fn legal(primary: &Path, project: ProjectName, parent: &Path) -> WorkweaveMarker {
-            let marker = WorkweaveMarker::new(primary, project, parent);
-            let _ = (marker.primary(), marker.project(), marker.parent());
+        pub fn legal(
+            primary: &Path,
+            project: ProjectName,
+            name: WorkweaveName,
+            parent: &Path,
+        ) -> WorkweaveMarker {
+            let marker = WorkweaveMarker::new(primary, project, name, parent);
+            let _ = (marker.primary(), marker.project(), marker.name(), marker.parent());
             marker
         }
         "#,
@@ -45,15 +50,16 @@ fn a_marker_cannot_be_assembled_field_by_field_from_outside_the_crate() {
         "E0451",
         "WorkweaveMarker's fields are private; only `new` builds one",
         r#"
-        use repoweave::manifest::ProjectName;
+        use repoweave::manifest::{ProjectName, WorkweaveName};
         use repoweave::path_spelling::CanonicalPath;
         use repoweave::workspace::WorkweaveMarker;
         pub fn forge(
             primary: CanonicalPath,
             project: ProjectName,
+            name: WorkweaveName,
             parent: CanonicalPath,
         ) -> WorkweaveMarker {
-            WorkweaveMarker { primary, project, parent }
+            WorkweaveMarker { primary, project, name, parent }
         }
         "#,
     );

@@ -3,8 +3,8 @@
 //! that clone. Where two of them agree and the third does not, the third is
 //! restored from the two.
 //!
-//! The marker keeps `primary`, `project` and `parent`; the index keeps each
-//! workweave's directory and the same `parent`. Together with the relation
+//! The marker keeps `primary`, `project`, the workweave's `name` and
+//! `parent`; the index keeps each name's directory and the same `parent`. Together with the relation
 //! they restore a lost or edited marker whole, and a root the marker and the
 //! relation agree on is listed again when the index lacks it.
 
@@ -154,9 +154,10 @@ fn describe_found(presence: &MarkerPresence) -> String {
     match presence {
         MarkerPresence::Absent => "is missing".to_owned(),
         MarkerPresence::Usable(marker) => format!(
-            "names primary {}, project `{}` and parent {}",
+            "names primary {}, project `{}`, workweave `{}` and parent {}",
             marker.primary().as_path().display(),
             marker.project(),
+            marker.name(),
             marker.parent().as_path().display()
         ),
         MarkerPresence::Defective { .. } => "cannot be read".to_owned(),
@@ -167,7 +168,12 @@ fn candidate_projects(root: &Path, presence: &MarkerPresence) -> anyhow::Result<
     match presence {
         MarkerPresence::Usable(marker) => Ok(vec![marker.project().clone()]),
         MarkerPresence::Defective {
-            defect: MarkerDefect::Legacy | MarkerDefect::DanglingPrimary { .. },
+            defect: MarkerDefect::Legacy,
+            project_hint,
+            ..
+        } => Ok(project_hint.iter().cloned().collect()),
+        MarkerPresence::Defective {
+            defect: MarkerDefect::DanglingPrimary { .. },
             ..
         } => Ok(Vec::new()),
         MarkerPresence::Absent | MarkerPresence::Defective { .. } => {
@@ -205,15 +211,17 @@ pub fn disagreement_at(root: &Path) -> anyhow::Result<Option<Disagreement>> {
             .as_ref()
             .and_then(|index| index.entry_at(root.as_path()));
         let repair = match (entry, &presence) {
-            (Some((_, entry)), _) => {
+            (Some((name, entry)), _) => {
                 let expected = WorkweaveMarker::new(
                     primary.as_path(),
                     project.clone(),
+                    name.clone(),
                     entry.parent.as_path(),
                 );
                 let agrees = matches!(&presence, MarkerPresence::Usable(found)
                     if found.names_primary(&primary)
                         && found.project() == &project
+                        && found.name() == name
                         && found.parent() == &entry.parent);
                 if agrees {
                     continue;
@@ -226,16 +234,8 @@ pub fn disagreement_at(root: &Path) -> anyhow::Result<Option<Disagreement>> {
             (None, MarkerPresence::Usable(marker))
                 if marker.names_primary(&primary) && marker.project() == &project =>
             {
-                let Some(name) = root
-                    .as_path()
-                    .file_name()
-                    .and_then(|base| base.to_str())
-                    .and_then(|base| super::workweave_name_in(&project, base))
-                else {
-                    continue;
-                };
                 Repair::ListRoot {
-                    name,
+                    name: marker.name().clone(),
                     parent: marker.parent().clone(),
                 }
             }
@@ -329,6 +329,7 @@ pub fn reparent(
 pub fn restore_marker_of_entry(
     primary: &CanonicalPath,
     project: &ProjectName,
+    name: &WorkweaveName,
     entry: &crate::workweave_index::IndexedWorkweave,
 ) -> anyhow::Result<bool> {
     if !entry.path.as_path().is_dir()
@@ -336,7 +337,12 @@ pub fn restore_marker_of_entry(
     {
         return Ok(false);
     }
-    WorkweaveMarker::new(primary.as_path(), project.clone(), entry.parent.as_path())
-        .write(entry.path.as_path())?;
+    WorkweaveMarker::new(
+        primary.as_path(),
+        project.clone(),
+        name.clone(),
+        entry.parent.as_path(),
+    )
+    .write(entry.path.as_path())?;
     Ok(true)
 }

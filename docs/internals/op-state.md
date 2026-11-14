@@ -26,23 +26,28 @@ It is the sole copy of mutable op state. Cleared on success, precondition
 refusal, and after `rwv abort`; preserved on phase failure so `--continue` and
 `rwv abort` can resume.
 
-Schema v7. The number moves with the record's shape: a test in `op_state`
-pins a digest of the declarations the wire record reaches in that file beside
-`OP_RECORD_SCHEMA`, so a field added, removed, renamed, retyped or given a
-serde attribute there without a new number fails it. Every reader refuses a record whose `schema` is another number or
-absent, and one carrying a field this release does not know (every struct of
-the record denies unknown fields), as `unreadable-op-record`, naming the
-release that wrote it (`release`, or "a release before" the running one for a
-record that has none): it is finished or aborted with that release, or ended
-here by `rwv abort --discard-unreadable-record`, and nothing of it is read. A
-record whose op id, verb, project and workspaces do not parse is refused the
-same way. JSON. The top-level keys are mandatory, so a record missing one fails
-to parse rather than defaulting; `rwv abort` then restores from savepoints alone
-where the op id, verb, project and workspaces still parse (`OwnerReading::HeaderOnly`),
-and refuses as `unreadable-op-record` where they do not. Inside `take_in`,
-fields marked `serde(default)` in `TakeInRecord` read as empty when absent.
-`LandingReport`, `Moves` and `SyncFrom` do not deny unknown fields, so one
-carrying a field this release lacks reads with the field dropped.
+Schema v8. One number names one shape in every tagged release: no tag ships
+a number another tag shipped with a different shape (releases up to 0.25.0
+wrote no `schema` at all, which every reader refuses). Between two tags the
+number moves once, at the first shape change after the earlier tag, and each
+later change before the next tag re-pins the digest beside that number: the
+builds between two tags are not releases, and a record two of them disagree
+on reads as unreadable, never in part. A test in `op_state` pins the pair
+`(OP_RECORD_SCHEMA, digest)`, the digest taken over the declarations the wire
+record reaches in that file, `vcs.rs` and `manifest.rs`, so a field added,
+removed, renamed, retyped or given a serde attribute there fails it until the
+pair is pinned again; which of the two moves is the rule above, held by
+review, since the test cannot see which tag last shipped the number. Every reader refuses a record whose `schema` is another number or
+absent, and one that does not parse whole, as `unreadable-op-record`: a
+field this release does not know (every struct and every data-carrying enum
+of the record denies unknown fields), one missing, a value of another type or
+variant. Where the header reads, the refusal names the release that wrote it
+(`release`, or "a release before" the running one for a record that has
+none): it is finished or aborted with that release, or ended here by
+`rwv abort --discard-unreadable-record`, and nothing of it is read; no verb
+acts on part of a record. JSON. The top-level keys are mandatory, so a record
+missing one fails to parse rather than defaulting; inside `take_in`, fields
+marked `serde(default)` in `TakeInRecord` read as empty when absent.
 
 ```json
 {
@@ -64,7 +69,7 @@ carrying a field this release lacks reads with the field dropped.
 
 | Field | Description |
 |---|---|
-| `schema` | The record schema, `7`. A record carrying another, or none, is refused as `unreadable-op-record` |
+| `schema` | The record schema, `8`. A record carrying another, or none, is refused as `unreadable-op-record` |
 | `release` | The rwv release that wrote the record |
 | `id` | Unique operation identifier (nanosecond wall-clock string). Shared with savepoint refs and lease files |
 | `verb` | Which top-level verb started this op: `sync`, `land`, `pull`, `update-remote` or `cherry-pick` |

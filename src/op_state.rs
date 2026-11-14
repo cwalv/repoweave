@@ -1,37 +1,25 @@
-//! Op-state files: multi-workspace operation tracking for `rwv sync` and `rwv land`.
+//! Op-state files: multi-workspace operation tracking for the verbs that stop
+//! and resume (`sync`, `land`, `pull`, `update --remote`, `cherry-pick`).
 //!
-//! # Schema v7 (no back-compat with v6)
+//! # Schema v8 (no back-compat with v7)
 //!
-//! A record carries its `schema`. One that carries another, or none, is
-//! refused by every reader, naming the release that wrote it: it is finished
-//! or aborted with that release. Do not add older-schema parsing.
+//! A record carries its `schema`. One that carries another, or none, or that
+//! does not read whole, is refused by every reader, naming the rwv that wrote
+//! it: it is finished or aborted with that rwv, or ended by `rwv abort
+//! --discard-unreadable-record`. Do not add older-schema parsing.
 //!
 //! ## Owner record (`.rwv-op`)
 //!
 //! Written at the **initiating workspace** (the owner). Holds all op parameters
 //! plus the current phase. It is the sole copy of mutable op state.
 //!
-//! ```json
-//! {
-//!   "id": "1779769917405921588",
-//!   "verb": "sync",
-//!   "history": null,
-//!   "project": "web-app",
-//!   "source": "/abs/path/src",
-//!   "target": "/abs/path/tgt",
-//!   "retire": false,
-//!   "phase": "replay",
-//!   "converged_tips": {},
-//!   "started_at": "2026-06-10T21:14:03Z"
-//! }
-//! ```
-//!
 //! `id` is the op id, shared with savepoint refs. `project` is the project
-//! both `source` and `target` are resolved under. `verb` is `sync` or
-//! `land`; `history` is the one-run `--history` (`linear`, `merge`,
+//! both `source` and `target` are resolved under. `verb` names the verb;
+//! `history` is the one-run `--history` (`linear`, `merge`,
 //! `ff-only`), or `null`; `phase` is `replay`, `relock`,
 //! `advance-target`, or `retire`. `converged_tips` is each repo's tip as the
-//! replay left it, written at relock completion and empty before.
+//! replay left it, written at relock completion and empty before. `take_in`
+//! is the verb's plan and the journal of what it moved.
 //!
 //! ## Thin lease (`.rwv-op-lease`)
 //!
@@ -54,7 +42,7 @@
 //!
 //! ## Acquisition atomicity
 //!
-//! For `sync` / `land`, the owner record and every touched-workspace lease
+//! The owner record and every touched-workspace lease
 //! are acquired **atomically at guard time** via [`acquire_op`]: each file is
 //! published with `crate::durable_file::create_new`, and on `AlreadyExists`
 //! anywhere the acquisition unwinds any partial state it created and returns
@@ -323,10 +311,10 @@ impl std::fmt::Display for OpVerb {
 }
 
 // ---------------------------------------------------------------------------
-// OpPhase — current phase in the operation lifecycle (v2)
+// OpPhase — current phase in the operation lifecycle
 // ---------------------------------------------------------------------------
 
-/// Current phase of the in-flight operation (schema v2).
+/// Current phase of the in-flight operation.
 ///
 /// Phases are listed in execution order.
 ///
@@ -357,8 +345,9 @@ impl std::fmt::Display for OpPhase {
     }
 }
 
-/// What `pull` and `update --remote` were asked to do, kept so `--continue`
-/// re-applies it and so a resumed op acts on the tips the first run planned.
+/// What the verb was asked to do and what it has moved, kept so `--continue`
+/// re-applies the plan on the tips the first run planned and `rwv abort` puts
+/// back what the journal names.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TakeInRecord {
@@ -562,7 +551,7 @@ impl Carrying {
 
 /// One move a landing reports as it makes it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum LandingReport {
     /// A receiving branch that existed nowhere, created at `at`.
     Created {
@@ -842,7 +831,7 @@ pub struct Receiving {
 
 /// How a landing moves a receiving branch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Moves {
     /// The member is composed onto `tip`, then the branch fast-forwards in
     /// `T`'s workspace's checkout, which must be on it.
@@ -892,7 +881,12 @@ pub struct CreatedRef {
 
 /// What a `sync` takes in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", content = "branch", rename_all = "kebab-case")]
+#[serde(
+    tag = "kind",
+    content = "branch",
+    rename_all = "kebab-case",
+    deny_unknown_fields
+)]
 pub enum SyncFrom {
     /// The record's target, or `--target`'s.
     Target(String),
@@ -949,7 +943,7 @@ pub struct OwnerRecord {
     pub converged_tips: BTreeMap<RepoKey, CommitId>,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
-    /// What a `pull` or `update --remote` op was asked to do.
+    /// The verb's plan and the journal of what it moved.
     pub take_in: Option<TakeInRecord>,
 }
 
@@ -1152,7 +1146,7 @@ impl OwnerRecord {
     /// stop in a VCS operation (a rebase, merge or cherry-pick): those its
     /// plan integrates, and each it journaled starting a merge, a rebase or a
     /// carry in. A repo stopped in one anywhere else is someone else's.
-    pub fn operates_in(&self) -> Option<std::collections::BTreeSet<RepoKey>> {
+    pub fn operates_in(&self) -> std::collections::BTreeSet<RepoKey> {
         let mut repos = std::collections::BTreeSet::new();
         if let Some(take_in) = &self.take_in {
             repos.extend(take_in.merges.iter().map(|m| m.repo.clone()));
@@ -1160,7 +1154,7 @@ impl OwnerRecord {
             repos.extend(take_in.carries.iter().map(|c| c.repo.clone()));
         }
         if matches!(self.verb, OpVerb::Pull | OpVerb::UpdateRemote) {
-            return Some(repos);
+            return repos;
         }
         repos.insert(RepoKey::Project);
         if let Some(take_in) = &self.take_in {
@@ -1186,7 +1180,7 @@ impl OwnerRecord {
                 );
             }
         }
-        Some(repos)
+        repos
     }
 
     /// Each VCS operation the op planned or journaled starting, by repo, with
@@ -1295,26 +1289,6 @@ impl OwnerHeader {
     }
 }
 
-/// An owner record as `rwv abort` reads it: whole, or only its header when
-/// the rest does not parse.
-#[derive(Debug)]
-pub enum OwnerReading {
-    Whole(Box<OwnerRecord>),
-    HeaderOnly {
-        header: OwnerHeader,
-        parse_error: String,
-    },
-}
-
-impl OwnerReading {
-    pub fn header(&self) -> OwnerHeader {
-        match self {
-            Self::Whole(record) => record.header(),
-            Self::HeaderOnly { header, .. } => header.clone(),
-        }
-    }
-}
-
 // ---------------------------------------------------------------------------
 // LeaseRecord — the thin lease at non-owner mutated workspaces
 // ---------------------------------------------------------------------------
@@ -1377,8 +1351,8 @@ pub struct ResolvedOwner {
 /// - Returns an error if a present file cannot be parsed, or if the lease
 ///   pointer leads to a missing owner record.
 ///
-/// This is the entry point for `--continue` invoked from any workspace (owner
-/// or leased); `rwv abort` resolves through [`resolve_for_abort`].
+/// This is the entry point for `--continue` and `rwv abort` invoked from any
+/// workspace (owner or leased).
 pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedOwner>> {
     Ok(
         resolve_with(workspace_dir, read_owner, |record| &record.id)?.map(
@@ -1387,21 +1361,6 @@ pub fn resolve_to_owner(workspace_dir: &Path) -> anyhow::Result<Option<ResolvedO
                 owner_workspace,
             },
         ),
-    )
-}
-
-/// [`resolve_to_owner`] for `rwv abort`, which can still restore from an
-/// owner record whose header parses when the rest does not.
-pub fn resolve_for_abort(
-    workspace_dir: &Path,
-) -> anyhow::Result<Option<(OwnerReading, CanonicalPath)>> {
-    resolve_with(
-        workspace_dir,
-        read_owner_for_abort,
-        |reading| match reading {
-            OwnerReading::Whole(record) => &record.id,
-            OwnerReading::HeaderOnly { header, .. } => &header.id,
-        },
     )
 }
 
@@ -1469,39 +1428,10 @@ pub fn write_owner(workspace_dir: &Path, record: &OwnerRecord) -> anyhow::Result
 
 /// Read the `.rwv-op` file from `workspace_dir`, returning `None` if absent.
 ///
-/// Returns an error if the file exists but cannot be parsed.
+/// A record that does not read whole refuses as `unreadable-op-record`,
+/// whatever failed in it: neither `--continue` nor `rwv abort` acts on part
+/// of a record.
 pub fn read_owner(workspace_dir: &Path) -> anyhow::Result<Option<OwnerRecord>> {
-    match read_owner_for_abort(workspace_dir)? {
-        None => Ok(None),
-        Some(OwnerReading::Whole(record)) => Ok(Some(*record)),
-        Some(OwnerReading::HeaderOnly {
-            header,
-            parse_error,
-        }) => Err(unparseable_record(
-            &OwnerRecord::path_in(workspace_dir),
-            &parse_error,
-            &format!(
-                "This rwv cannot resume the {verb} op it records; `rwv abort` still discards \
-                 it, because the op's id and workspaces parse: it restores the repos it can \
-                 attribute from the op's savepoints and refuses the rest by name",
-                verb = header.verb,
-            ),
-        )),
-    }
-}
-
-fn unparseable_record(path: &StatePath, parse_error: &str, advice: &str) -> anyhow::Error {
-    crate::untokened!(
-        Owed,
-        "failed to parse owner record at {path}: {parse_error}. {advice}"
-    )
-}
-
-/// Read the `.rwv-op` file from `workspace_dir` as `rwv abort` needs it.
-///
-/// Returns an error only when the file exists and not even its
-/// [`OwnerHeader`] parses.
-pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<OwnerReading>> {
     let path = OwnerRecord::path_in(workspace_dir);
     if !path.exists() {
         return Ok(None);
@@ -1511,33 +1441,22 @@ pub fn read_owner_for_abort(workspace_dir: &Path) -> anyhow::Result<Option<Owner
         .with_context(|| format!("failed to read owner record from {path}"))?;
     refuse_other_schema(&path, &json)?;
     let whole_error = match serde_json::from_str::<OwnerRecord>(&json) {
-        Ok(record) => return Ok(Some(OwnerReading::Whole(Box::new(record)))),
+        Ok(record) => return Ok(Some(record)),
         Err(e) => e,
     };
-    if whole_error.to_string().starts_with("unknown field") {
-        return Err(unreadable_record(
-            &path,
-            &format!(
-                "{writer} wrote it with a field this release does not read ({whole_error:#}), \
-                 so neither `--continue` nor `rwv abort` acts on it: what that field records \
-                 would not be put back. The release that wrote it resumes or aborts it",
-                writer = writer_of(&json),
-            ),
-        ));
-    }
-    match serde_json::from_str::<OwnerHeader>(&json) {
-        Ok(header) => Ok(Some(OwnerReading::HeaderOnly {
-            header,
-            parse_error: format!("{whole_error:#}"),
-        })),
-        Err(_) => Err(unreadable_record(
-            &path,
-            &format!(
-                "it names no operation this rwv can read ({whole_error:#}), so nothing can \
-                 resume it or restore from it"
-            ),
-        )),
-    }
+    let why = match serde_json::from_str::<OwnerHeader>(&json) {
+        Ok(_) => format!(
+            "{writer} wrote it in a shape this release does not read ({whole_error:#}), so \
+             neither `--continue` nor `rwv abort` acts on it: what the part it cannot read \
+             records would not be put back. The rwv that wrote it resumes or aborts it",
+            writer = writer_of(&json),
+        ),
+        Err(_) => format!(
+            "it names no operation this rwv can read ({whole_error:#}), so nothing can \
+             resume it or restore from it"
+        ),
+    };
+    Err(unreadable_record(&path, &why))
 }
 
 /// The verb that ends an operation whose record cannot be read, run in the
@@ -1567,6 +1486,9 @@ fn writer_of(json: &str) -> String {
         .ok()
         .and_then(|record| record.get("release")?.as_str().map(str::to_owned));
     match release {
+        Some(release) if release == crate::rwv_version().to_string() => {
+            format!("another build of rwv {release}")
+        }
         Some(release) => format!("rwv {release}"),
         None => format!("an rwv release before {}", crate::rwv_version()),
     }
@@ -1589,16 +1511,15 @@ fn refuse_other_schema(path: &StatePath, json: &str) -> anyhow::Result<()> {
         path,
         &format!(
             "{writer} wrote it, in {schema}, and this release reads schema {OP_RECORD_SCHEMA} \
-             alone, so neither `--continue` nor `rwv abort` acts on it. The release that wrote \
-             it resumes or aborts it"
+             alone, so neither `--continue` nor `rwv abort` acts on it. The rwv that wrote it \
+             resumes or aborts it"
         ),
     ))
 }
 
-/// The header of the `.rwv-op` file in `workspace_dir`, whether or not the
-/// rest of the record parses.
+/// The header of the `.rwv-op` file in `workspace_dir`.
 pub fn read_owner_header(workspace_dir: &Path) -> anyhow::Result<Option<OwnerHeader>> {
-    Ok(read_owner_for_abort(workspace_dir)?.map(|reading| reading.header()))
+    Ok(read_owner(workspace_dir)?.map(|record| record.header()))
 }
 
 /// The header of the `.rwv-op` file in `workspace_dir` as it reads, whatever
@@ -2675,7 +2596,6 @@ mod tests {
         a_record_in(tmp.path(), "");
         for refused in [
             read_owner(tmp.path()).map(|_| ()),
-            read_owner_for_abort(tmp.path()).map(|_| ()),
             read_owner_header(tmp.path()).map(|_| ()),
         ] {
             let refused = refused.unwrap_err();
@@ -2699,11 +2619,12 @@ mod tests {
     /// change ships with a new schema number and the digest it has there.
     ///
     /// Structural, since no record either release writes tells the two
-    /// apart. It reads the declarations in this file reachable from
-    /// `WireOwnerRecord`, attributes and fields, comments and blank lines
-    /// left out; a type declared in another module that a field names is
-    /// read by its name alone, so a change inside one is not seen here.
-    const PINNED_SHAPE: (u32, &str) = (8, "eb008ccaea487882");
+    /// apart. It reads the declarations reachable from `WireOwnerRecord`,
+    /// attributes and fields, comments and blank lines left out, in this
+    /// file, then `vcs.rs`, then `manifest.rs`; a type declared in another
+    /// module is read by its name alone, and a hand-written serde impl is not
+    /// read at all, so a change inside one is not seen here.
+    const PINNED_SHAPE: (u32, &str) = (8, "d1da2190fa8c7b51");
 
     fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
         let start = source.iter().position(|line| {
@@ -2737,19 +2658,30 @@ mod tests {
     }
 
     fn shape_digest() -> String {
-        let source: Vec<&str> = include_str!("op_state.rs")
-            .split("\n#[cfg(test)]\nmod tests")
-            .next()
-            .unwrap()
-            .lines()
-            .collect();
+        let sources: Vec<Vec<&str>> = [
+            include_str!("op_state.rs"),
+            include_str!("vcs.rs"),
+            include_str!("manifest.rs"),
+        ]
+        .iter()
+        .map(|file| {
+            file.split("\n#[cfg(test)]\nmod ")
+                .next()
+                .unwrap()
+                .lines()
+                .collect()
+        })
+        .collect();
         let mut seen = std::collections::BTreeMap::new();
         let mut pending = vec!["WireOwnerRecord".to_owned()];
         while let Some(name) = pending.pop() {
             if seen.contains_key(&name) {
                 continue;
             }
-            let Some(lines) = declaration_of(&source, &name) else {
+            let Some(lines) = sources
+                .iter()
+                .find_map(|source| declaration_of(source, &name))
+            else {
                 continue;
             };
             for word in lines
@@ -2761,7 +2693,9 @@ mod tests {
             }
             seen.insert(name, lines.join("\n"));
         }
-        assert!(seen.contains_key("TakeInRecord") && seen.contains_key("Carrying"));
+        assert!(["TakeInRecord", "Carrying", "CommitSummary", "History"]
+            .iter()
+            .all(|name| seen.contains_key(*name)));
         let shape = seen.into_values().collect::<Vec<_>>().join("\n");
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
         for byte in shape.bytes() {
@@ -2798,10 +2732,7 @@ mod tests {
         json["release"] = "9.9.9".into();
         json["take_in"]["moved_somewhere_new"] = serde_json::json!(["x"]);
         path.publish(json.to_string().as_bytes()).unwrap();
-        for refused in [
-            read_owner(tmp.path()).map(|_| ()),
-            read_owner_for_abort(tmp.path()).map(|_| ()),
-        ] {
+        for refused in [read_owner(tmp.path()).map(|_| ())] {
             let refused = refused.unwrap_err();
             assert_eq!(
                 crate::refusal::kind_of(&refused),
@@ -2809,9 +2740,78 @@ mod tests {
             );
             let message = format!("{refused:#}");
             assert!(
-                message.contains("rwv 9.9.9 wrote it with a field")
+                message.contains("rwv 9.9.9 wrote it in a shape")
                     && message.contains("moved_somewhere_new"),
                 "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_this_release_does_not_read_inside_an_enum_of_the_record_is_refused() {
+        let tmp = crate::tempdir().unwrap();
+        let tip = CommitId::parse(&"a".repeat(40)).unwrap();
+        let take_in = TakeInRecord {
+            sync_from: Some(SyncFrom::Target("main".into())),
+            receiving: BTreeMap::from([(
+                RepoKey::Project,
+                Receiving {
+                    branch: "main".into(),
+                    tip: tip.clone(),
+                    moves: Moves::Follows { create: false },
+                },
+            )]),
+            reports: vec![LandingReport::BeyondPin {
+                repo: RepoKey::Project,
+                target: "main".into(),
+                commits: vec![crate::vcs::CommitSummary {
+                    id: tip,
+                    subject: "s".into(),
+                }],
+            }],
+            ..TakeInRecord::default()
+        };
+        let record = OwnerRecord::new_take_in(
+            &"1".parse().unwrap(),
+            OpVerb::Land,
+            test_project(),
+            tmp.path(),
+            take_in,
+        );
+        write_owner(tmp.path(), &record).unwrap();
+        let path = OwnerRecord::path_in(tmp.path());
+        let written: serde_json::Value =
+            serde_json::from_str(&path.read_to_string().unwrap()).unwrap();
+        assert!(read_owner(tmp.path()).unwrap().is_some());
+        type Plant = fn(&mut serde_json::Value);
+        let plants: [(&str, Plant); 4] = [
+            ("Moves", |r| {
+                r["take_in"]["receiving"]["(project)"]["moves"]["follows"]["beyond"] = 1.into()
+            }),
+            ("LandingReport", |r| {
+                r["take_in"]["reports"][0]["beyond"] = 1.into()
+            }),
+            ("SyncFrom", |r| {
+                r["take_in"]["sync_from"]["beyond"] = 1.into()
+            }),
+            ("CommitSummary", |r| {
+                r["take_in"]["reports"][0]["commits"][0]["beyond"] = 1.into()
+            }),
+        ];
+        for (inside, plant) in plants {
+            let mut json = written.clone();
+            plant(&mut json);
+            path.publish(json.to_string().as_bytes()).unwrap();
+            let refused = read_owner(tmp.path()).unwrap_err();
+            assert_eq!(
+                crate::refusal::kind_of(&refused),
+                Some(RefusalKind::UnreadableOpRecord),
+                "{inside}: {refused:#}"
+            );
+            assert!(
+                format!("{refused:#}").contains("\"beyond\"")
+                    || format!("{refused:#}").contains("`beyond`"),
+                "{inside}: {refused:#}"
             );
         }
     }
@@ -3172,10 +3172,12 @@ mod tests {
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
         let err = read_owner(dir).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to parse owner record"),
-            "a record missing converged_tips must fail to parse; got: {err}"
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::UnreadableOpRecord),
+            "a record missing converged_tips must fail to parse; got: {err:#}"
         );
+        assert!(format!("{err:#}").contains("converged_tips"), "{err:#}");
     }
 
     #[test]
@@ -3814,7 +3816,7 @@ mod tests {
     }
 
     #[test]
-    fn abort_reads_the_header_of_a_record_whose_tips_do_not_parse() {
+    fn a_record_whose_header_reads_and_whose_tips_do_not_is_refused_whole() {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
         let op_id = OpId::new_now();
@@ -3833,34 +3835,22 @@ mod tests {
         json["converged_tips"]["(project)"] = "v1.0".into();
         path.publish(json.to_string().as_bytes()).unwrap();
 
-        let err = read_owner(dir).unwrap_err().to_string();
-        assert!(err.contains("`rwv abort` still discards it"), "{err}");
-        match read_owner_for_abort(dir).unwrap().unwrap() {
-            OwnerReading::HeaderOnly {
-                header,
-                parse_error,
-            } => {
-                assert_eq!(header, record.header());
-                assert!(
-                    parse_error.contains("'v1.0' is not a commit id"),
-                    "{parse_error}"
-                );
-            }
-            OwnerReading::Whole(_) => panic!("a tag name must not parse as a tip"),
+        for refused in [
+            read_owner(dir).map(|_| ()),
+            read_owner_header(dir).map(|_| ()),
+        ] {
+            let refused = refused.unwrap_err();
+            assert_eq!(
+                crate::refusal::kind_of(&refused),
+                Some(RefusalKind::UnreadableOpRecord)
+            );
+            let message = format!("{refused:#}");
+            assert!(
+                message.contains("'v1.0' is not a commit id")
+                    && message.contains(&discard_unreadable_record_at(dir)),
+                "{message}"
+            );
         }
-
-        path.publish(b"{ not json").unwrap();
-        let refused = read_owner_for_abort(dir).unwrap_err();
-        assert_eq!(
-            crate::refusal::kind_of(&refused),
-            Some(RefusalKind::UnreadableOpRecord)
-        );
-        assert!(
-            refused
-                .to_string()
-                .contains(&discard_unreadable_record_at(dir)),
-            "{refused}"
-        );
     }
 
     #[test]

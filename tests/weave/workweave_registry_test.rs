@@ -455,7 +455,7 @@ fn an_unparseable_index_reports_itself_and_doctor_fix_rebuilds_it() {
         .stdout(
             predicate::str::contains(
                 "[fixed] core: unreadable-workweave-index of project `web-app`: rebuilt it \
-                 listing 1 workweave(s) found on disk: feat",
+                 listing 1 workweave(s) the project clone's checkouts hold: feat",
             )
             .and(predicate::str::contains("[fixed] core: adopted workweave").not()),
         );
@@ -597,6 +597,149 @@ fn per_workweave_dir_override_lands_and_records_absolute_path() {
         .assert()
         .success();
     assert!(!custom.exists());
+}
+
+/// A workweave made with `--dir` in a directory whose name does not spell
+/// its name stays a workweave of its project however its index entry is lost:
+/// the rebuild of an unreadable index lists it, doctor reports it when the
+/// index parses and lacks it and `--fix` adopts it, and a verb run inside it
+/// lists it on its own. Each exit is run as its text prints it.
+#[test]
+fn a_dir_workweave_named_otherwise_than_its_directory_survives_a_lost_entry() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let far = tmp.path().join("elsewhere").join("xyz");
+    rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "far",
+            "--dir",
+        ])
+        .arg(&far)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let idx_p = index_path(&ws, "web-app");
+    let lists_far = || {
+        let path = read_index(&ws, "web-app")["workweaves"]["far"]["path"]
+            .as_str()
+            .map(PathBuf::from);
+        path.is_some_and(|path| path.canonicalize().unwrap() == far.canonicalize().unwrap())
+    };
+    let run_printed = |text: &str, needle: &str| {
+        let line = text
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("rwv ") && line.contains(needle))
+            .unwrap_or_else(|| panic!("no `{needle}` line printed:\n{text}"));
+        let words = shell_words(line);
+        let out = rwv().args(&words[1..]).current_dir(&far).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{line}:\n{}",
+            common::cli::describe(&out)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+
+    std::fs::write(&idx_p, "garbage{").unwrap();
+    let out = rwv().args(["status"]).current_dir(&far).output().unwrap();
+    let printed = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let fixed = run_printed(&printed, "doctor --fix");
+    assert!(fixed.contains("checkouts hold: far"), "{fixed}");
+    assert!(lists_far(), "the rebuild must list `far`");
+
+    let mut emptied = read_index(&ws, "web-app");
+    emptied["workweaves"] = serde_json::json!({});
+    std::fs::write(&idx_p, serde_json::to_string_pretty(&emptied).unwrap()).unwrap();
+    assert!(
+        doctor_kinds(&ws).contains(&"workweave-tree-integrity/unregistered-workweave".to_string())
+    );
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("adopted workweave `far`"));
+    assert!(lists_far(), "doctor --fix must adopt `far`");
+
+    std::fs::write(&idx_p, serde_json::to_string_pretty(&emptied).unwrap()).unwrap();
+    let out = rwv().args(["status"]).current_dir(&far).output().unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("listed workweave `far`"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    assert!(lists_far(), "a verb run inside must list `far`");
+
+    rwv()
+        .args(["workweave", "delete", "--project", "web-app", "far"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(!far.exists());
+}
+
+/// A marker written before markers carried their workweave's name is
+/// migrated with the name its project's index records: by the first verb run
+/// inside the workweave, and by `rwv doctor --fix` in the primary.
+#[test]
+fn a_marker_without_a_name_takes_the_one_its_index_records() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let far = tmp.path().join("elsewhere").join("xyz");
+    rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "far",
+            "--dir",
+        ])
+        .arg(&far)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let marker = far.join(".rwv-workweave");
+    let unnamed = || {
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&marker).unwrap()).unwrap();
+        json.as_object_mut().unwrap().remove("name").unwrap();
+        std::fs::write(&marker, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+    };
+    let name = || {
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&marker).unwrap()).unwrap();
+        json["name"].as_str().map(str::to_owned)
+    };
+
+    unnamed();
+    let out = rwv().args(["status"]).current_dir(&far).output().unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(name().as_deref(), Some("far"));
+
+    unnamed();
+    rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert_eq!(name().as_deref(), Some("far"));
+}
+
+fn shell_words(line: &str) -> Vec<String> {
+    line.split_whitespace()
+        .map(|word| word.trim_matches('`').to_owned())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------

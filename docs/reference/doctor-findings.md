@@ -703,13 +703,11 @@ adopt or prune against an unreadable index would fail on the same parse error.
 
 **What to do:** `rwv doctor --fix`, run in the primary or in any of the
 project's workweaves, rebuilds the index from what the workweaves on disk
-record: each `.rwv-workweave` marker in the containers doctor scans holds the
-workweave's project and parent, and its directory name, `<project>--<name>`,
-holds its name. What no marker holds is not rebuilt: the basedir the index
-recorded (`rwv workweave set-default-create-basedir` records it again), and a workweave
-outside the scanned containers, which the next rwv run inside it lists again
-where its directory name spells its name. The rebuild removes a file at the
-old path.
+record: each checkout the project clone links, wherever its directory is,
+sits in a workweave whose `.rwv-workweave` marker holds its project, name and
+parent. What no marker holds is not rebuilt: the basedir the index recorded
+(`rwv workweave set-default-create-basedir` records it again). The rebuild
+removes a file at the old path.
 
 ### `workweave-tree-integrity`
 
@@ -757,17 +755,10 @@ adoption is an operator decision, so it happens where you asked for it. A verb
 run from inside the workweave lists it again on its own when its marker and its
 project checkout's link to the project clone agree.
 
-**Scope.** The scan enumerates the containers each project records, so this
-finding covers a directory sitting in one of them. A workweave placed outside
-them all — `rwv workweave create <name> --dir <path>` — is not among
-the candidates: an unrecorded one there produces no finding and `--fix` has
-nothing to adopt. Retire the directory and create the workweave again instead,
-which does not depend on where it sits.
-
-With no registry entry the name comes from the basename, read against the
-marker's own project — so a directory in a container whose basename that
-project does not render carries no name to adopt, and reports
-[`misnamed-dir`](#misnamed-dir) instead of this.
+**Scope.** The scan reads each checkout the project clone links, wherever its
+directory is (`rwv workweave create <name> --dir <path>` included), and each
+directory in the containers each project records. The name adopted is the one
+the workweave's marker holds.
 
 #### `stale-registry-entry`
 
@@ -1544,9 +1535,9 @@ finding names — an op is only resumable under the verb that started it — or
 
 ### `unreadable-op-record`
 
-**Warning. Report-only.** A `.rwv-op` file this rwv cannot read: not even the
-operation it names parses, or another release wrote it in a record schema this
-one does not read. Nothing can resume the operation or restore from its
+**Warning. Report-only.** A `.rwv-op` file this rwv does not read whole: a
+field missing, one it does not know, a value of another type or variant, or a
+record schema this one does not read. Nothing can resume the operation or restore from its
 savepoints, and every verb that reads the record, run in its workspace or in a
 workspace the operation leases, refuses with this kind and the same message.
 `rwv status` reports it instead of refusing.

@@ -583,7 +583,7 @@ Abort plans every write it would make, on both sides, before it makes any. Where
 
 A dependent's branch the op carried along and moved is put back like any other branch the op moved, its tip kept first in its slot where nothing else reaches it; one gone or checked out outside the op's workspaces refuses the whole abort before anything is put back (`foreign-tip`), naming what to do first.
 
-Refuses as `no-op-recorded` if no operation is in progress. An op record this rwv cannot fully parse is still aborted when its op id, verb, project and workspaces parse: abort says so and restores by the same rule, which reads no tip the record holds. A record where even those fields do not parse, or that another release's record schema wrote, is refused by every verb as `unreadable-op-record`, naming `rwv abort --discard-unreadable-record`.
+Refuses as `no-op-recorded` if no operation is in progress. An op record this rwv does not read whole, whatever failed in it or whichever record schema wrote it, is refused by every verb as `unreadable-op-record`, plain `rwv abort` included, naming `rwv abort --discard-unreadable-record`.
 
 **Exit codes:**
 - `0` — all repositories restored cleanly to their savepoints and the op record removed.

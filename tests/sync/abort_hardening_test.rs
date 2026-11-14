@@ -41,6 +41,7 @@ use predicates::prelude::*;
 use std::path::{Path, PathBuf};
 
 use crate::common;
+use repoweave::refusal::RefusalKind;
 
 // ---------------------------------------------------------------------------
 // Helpers (kept local — mirroring e2e_sync_abort_test.rs style)
@@ -675,9 +676,8 @@ fn abort_noise_collapses_to_summary_line() {
 }
 
 /// A tip slot holding a name rather than a commit id is a corrupt record.
-/// Abort reads only its header, so the name is never resolved: the tip the
-/// tag points at is not attributed to the op and is kept as a backup before
-/// the restore.
+/// Abort refuses it whole, naming the value, and never resolves the name:
+/// nothing is reset and nothing is kept.
 #[test]
 fn abort_never_resolves_a_tag_name_in_an_owner_records_tip_slot() {
     let tmp = common::tempdir().unwrap();
@@ -698,26 +698,18 @@ fn abort_never_resolves_a_tag_name_in_an_owner_records_tip_slot() {
     plant_savepoint(&ws.project_dir, op_id, &project_savepoint);
     plant_owner_record(&ws.root, op_id, "relock", &[(SERVER_PATH, "v2.0")]);
 
-    let output = rwv()
-        .arg("abort")
-        .current_dir(&ws.root)
-        .assert()
-        .success()
-        .get_output()
-        .clone();
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
+    let out = rwv().arg("abort").current_dir(&ws.root).output().unwrap();
+    let stderr = common::cli::refused(&out, RefusalKind::UnreadableOpRecord);
     assert!(
         stderr.contains("'v2.0' is not a commit id"),
         "abort names the value in the slot.\nstderr:\n{stderr}"
     );
-    let kept = refs_under(&ws.server_dir, "refs/rwv/backup/");
-    assert_eq!(kept.len(), 1, "the tagged tip is not attributed: {kept:?}");
-    assert_eq!(kept[0].1, server_converged);
+    assert!(refs_under(&ws.server_dir, "refs/rwv/backup/").is_empty());
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
-        server_savepoint
+        server_converged
     );
+    assert!(ws.root.join(".rwv-op").exists());
 }
 
 // ---------------------------------------------------------------------------

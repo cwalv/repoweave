@@ -9,6 +9,7 @@ use std::process::Output;
 use crate::common;
 
 use repoweave::diagnosis::State;
+use repoweave::refusal::RefusalKind;
 
 const PROJECT: &str = "app";
 const LIB: &str = "local/owner/lib";
@@ -236,40 +237,63 @@ fn assert_doctor_reports_no_op_state(parked: &Parked) {
     }
 }
 
-/// A recorded tip that is a tag name fails the record's parse while its op
-/// id and workspaces still parse. The error sends the operator to `rwv
-/// abort`, which restores by the rule that reads no recorded tip: it
-/// cancels the member's rebase with its working copy kept, puts the project
-/// repo back, and ends the op.
+/// A record whose op id and workspaces read while the rest does not is one
+/// unreadable state whatever failed in it: a missing field, a variant this
+/// release does not know, a value of the wrong type, a tip that is not a
+/// commit id. Plain `rwv abort` from either side refuses it naming the
+/// discard and moves nothing, so a commit another seat made on the target's
+/// branch since the stop stays where it is.
 #[test]
-fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
-    let parked = park();
-    rewrite_record(&parked, |record| {
-        record["converged_tips"]["(project)"] = "v1.0".into();
-    });
-
-    let out = rwv(&parked.seat.root, &["land", "--continue"]);
-    let stderr = stderr_of(&out);
-    assert!(!out.status.success(), "{}", transcript(&out));
-    assert!(
-        stderr.contains("`rwv abort` still discards it"),
-        "the parse error must name abort as the way out:\n{}",
-        transcript(&out)
-    );
-
-    let out = rwv(&parked.seat.root, &["abort"]);
-    assert!(out.status.success(), "{}", transcript(&out));
-    assert!(
-        String::from_utf8_lossy(&out.stdout).contains("  projects/app: "),
-        "with its recorded tip unreadable, the replayed project repo is restored:\n{}",
-        transcript(&out)
-    );
-    assert!(!mid_op(&parked.seat.lib), "{}", transcript(&out));
-
-    assert_no_op_residue(&parked);
-    land(&parked);
-    assert_no_op_residue(&parked);
-    assert_doctor_reports_no_op_state(&parked);
+fn a_record_that_does_not_read_whole_is_refused_by_abort_whatever_failed_in_it() {
+    type Edit = fn(&mut serde_json::Value);
+    let edits: [(&str, Edit); 4] = [
+        ("a missing field", |r| {
+            r["take_in"]
+                .as_object_mut()
+                .unwrap()
+                .remove("merge_upstream")
+                .expect("the record carries the field the edit removes");
+        }),
+        ("an unknown variant", |r| {
+            r["phase"] = "no-such-phase".into()
+        }),
+        ("a wrong type", |r| r["take_in"]["merges"] = 7.into()),
+        ("a tag for a tip", |r| {
+            r["converged_tips"]["(project)"] = "v1.0".into()
+        }),
+    ];
+    for (what, edit) in edits {
+        let parked = park();
+        let target = parked.primary.root.clone();
+        commit_file(&parked.primary.lib, "other.txt", "x\n", "another seat");
+        let target_lib = head(&parked.primary.lib);
+        let seat_lib = head(&parked.seat.lib);
+        let seat_project = head(&parked.seat.project);
+        rewrite_record(&parked, edit);
+        let discard = format!(
+            "rwv -C {} abort --discard-unreadable-record",
+            parked.seat.root.display()
+        );
+        for (dir, args) in [
+            (&parked.seat.root, &["abort"][..]),
+            (&target, &["abort"][..]),
+            (&parked.seat.root, &["land", "--continue"][..]),
+        ] {
+            let out = rwv(dir, args);
+            let stderr = common::cli::refused(&out, RefusalKind::UnreadableOpRecord);
+            assert!(
+                stderr.contains(&discard),
+                "{what}: rwv {args:?} must name the discard:\n{}",
+                transcript(&out)
+            );
+        }
+        assert_eq!(head(&parked.primary.lib), target_lib, "{what}");
+        assert_eq!(head(&parked.seat.lib), seat_lib, "{what}");
+        assert_eq!(head(&parked.seat.project), seat_project, "{what}");
+        assert!(record_path(&parked).exists(), "{what}");
+        succeed(&parked.seat.root, &["abort", "--discard-unreadable-record"]);
+        assert!(!record_path(&parked).exists(), "{what}");
+    }
 }
 
 /// A record that names no op refuses every verb that reads it, `rwv abort`

@@ -53,6 +53,7 @@ fn make_workweave(tmp: &Path, ws: &Path, project: &str, name: &str) -> std::path
     let marker = WorkweaveMarker::new(
         &primary_canon,
         ProjectName::new(project).unwrap(),
+        repoweave::manifest::WorkweaveName::new("ww").unwrap(),
         &primary_canon,
     );
     marker.write(&ww_dir).unwrap();

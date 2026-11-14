@@ -320,6 +320,7 @@ impl<'de> serde::Deserialize<'de> for RawRevisionId {
 /// git-specific spelling, so callers render the same shape regardless of the
 /// underlying VCS.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CommitSummary {
     pub id: CommitId,
     pub subject: String,
@@ -1154,12 +1155,10 @@ impl std::error::Error for VcsError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Integrates {
     /// The op rebases, merges or copies here.
+    #[default]
     Yes,
     /// The op never starts an operation here.
     No,
-    /// The record that would say could not be read.
-    #[default]
-    Unknown,
 }
 
 /// A VCS operation an op journaled starting in a repo, by what it takes in.

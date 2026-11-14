@@ -743,6 +743,7 @@ fn activate_from_workweave_is_rejected() {
     let marker = WorkweaveMarker::new(
         &primary_canon,
         ProjectName::new("my-proj").unwrap(),
+        repoweave::manifest::WorkweaveName::new("ww").unwrap(),
         &primary_canon,
     );
     marker.write(&workweave_dir).unwrap();
@@ -794,6 +795,7 @@ fn activate_different_project_from_workweave_is_rejected() {
     let marker = WorkweaveMarker::new(
         &primary_canon,
         ProjectName::new("proj-a").unwrap(),
+        repoweave::manifest::WorkweaveName::new("ww").unwrap(),
         &primary_canon,
     );
     marker.write(&workweave_dir).unwrap();
@@ -851,6 +853,7 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
     WorkweaveMarker::new(
         &primary_canon,
         ProjectName::new("web-app").unwrap(),
+        repoweave::manifest::WorkweaveName::new("ww").unwrap(),
         &primary_canon,
     )
     .write(&workweave_dir)

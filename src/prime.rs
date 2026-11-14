@@ -447,6 +447,7 @@ enabled = true
         crate::workspace::WorkweaveMarker::new(
             &primary_canon,
             crate::manifest::ProjectName::new("ws").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&workweave_dir)

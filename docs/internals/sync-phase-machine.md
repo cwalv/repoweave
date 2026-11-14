@@ -508,7 +508,7 @@ before its write:
 |---|---|
 | At the savepoint | `Untouched` |
 | At any other tip | `Restored`, the tip kept in the branch's slot first where nothing else reaches it |
-| On the target side of a `land`, a repo `take_in.moved_in_target` does not name | left where it stands, its savepoint dropped (kept as a backup first when nothing reaches it), printed `left at <tip>` unless it is at its savepoint. An unreadable record (header only) has no journal, so this row never applies there |
+| On the target side of a `land`, a repo `take_in.moved_in_target` does not name | left where it stands, its savepoint dropped (kept as a backup first when nothing reaches it), printed `left at <tip>` unless it is at its savepoint |
 | On another branch than its savepoint names, or detached where it was attached | `SwitchedBack`: put back on the saved branch, the branch it was on left where it stands (a detached HEAD's commits kept first in `HEAD/aborted`), then planned again by this table |
 | Stopped in a rebase, merge or copy, other than the next row | `Canceled`: the working copy, or with no edits the commits a detached HEAD holds, kept in the checkout's slot first (`GitVcs::keep_working_copy_before_cancel`); then canceled as the VCS's own abort would, and planned again by this table. Untracked paths in the cancel's way, or an edit that makes the VCS refuse the cancel, are named in the plan (`clear_first`) and removed only after the working copy is kept |
 | Stopped in an operation begun at the savepoint in a repo the op never integrates (`Integrates::No`, and no journaled `OwnStep` matching it), or with no savepoint | `LeftStopped`, its savepoint dropped |

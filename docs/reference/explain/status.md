@@ -764,7 +764,7 @@ Schema:
       ]
     },
     "OpPhase": {
-      "description": "Current phase of the in-flight operation (schema v2).\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (land only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
+      "description": "Current phase of the in-flight operation.\n\nPhases are listed in execution order.\n\n```text guard → mark → savepoint → replay → relock → advance-target → retire → cleanup (land only)   (--retire only) ```\n\nThe persisted phase is always the phase in progress. Every phase is idempotent and re-runnable from the record alone.",
       "oneOf": [
         {
           "description": "Project repo, then member repos: Phase 1' and Phase 2.",

@@ -3437,66 +3437,101 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
         }
     }
 
-    // Pass 2 — every marker-bearing workweave on disk (from any container)
-    // that is not in the validated set is an orphan. Uses
-    // `doctor_scan_container` for the shape-parse, iterating every unique
-    // container so per-workweave overrides are covered. A project whose index
+    // Pass 2 — every marker-bearing workweave on disk that is not in the
+    // validated set is an orphan: one a linked checkout of a project clone
+    // sits in, wherever its directory is, and one in a scanned container
+    // whose checkout is not linked. A project whose index
     // did not parse has no validated set to be absent from, so "orphan" is
     // not a fact about it — `unreadable-workweave-index` above is.
     let mut seen_orphans = std::collections::HashSet::new();
-    for container in workweave_containers_for_scan(ws_root) {
-        for (workweave, dir) in
+    let linked = crate::workspace::discover_projects(ws_root)
+        .into_iter()
+        .flat_map(|project| {
+            linked_workweaves(ws_root, &project)
+                .into_iter()
+                .map(move |(marker, dir)| {
+                    (
+                        WorkweaveId {
+                            project: project.clone(),
+                            name: marker.name().clone(),
+                        },
+                        dir,
+                    )
+                })
+        });
+    let in_containers = workweave_containers_for_scan(ws_root)
+        .into_iter()
+        .flat_map(|container| {
             crate::workweave::doctor_scan_container(ws_root, container.as_path())
-        {
-            if unreadable_index_projects.contains(workweave.project.as_str()) {
-                continue;
-            }
-            let canonical = CanonicalPath::of(&dir);
-            let key = (workweave.project.as_str().to_string(), canonical.clone());
-            if recorded_valid_paths.contains(&key) {
-                continue;
-            }
-            if !seen_orphans.insert(canonical) {
-                continue;
-            }
-            violations.push(CheckViolation::WorkweaveTreeIntegrity {
-                workweave_dir: dir,
-                sub_kind: WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
-                    project: workweave.project.clone(),
-                    workweave_name: workweave.name.clone(),
-                },
-            });
+        });
+    for (workweave, dir) in linked.chain(in_containers) {
+        if unreadable_index_projects.contains(workweave.project.as_str()) {
+            continue;
         }
+        let canonical = CanonicalPath::of(&dir);
+        let key = (workweave.project.as_str().to_string(), canonical.clone());
+        if recorded_valid_paths.contains(&key) {
+            continue;
+        }
+        if !seen_orphans.insert(canonical) {
+            continue;
+        }
+        violations.push(CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: dir,
+            sub_kind: WorkweaveTreeIntegrityKind::UnregisteredWorkweave {
+                project: workweave.project.clone(),
+                workweave_name: workweave.name.clone(),
+            },
+        });
     }
 
     violations
 }
 
+/// Each workweave of `ws_root`'s `project` a linked checkout of the project
+/// clone sits in, wherever its directory is, with its marker.
+fn linked_workweaves(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+) -> Vec<(crate::workspace::WorkweaveMarker, PathBuf)> {
+    let primary = CanonicalPath::of(ws_root);
+    let depth = crate::workspace::project_rel_dir(project)
+        .components()
+        .count();
+    let checkouts = crate::vcs::project_vcs()
+        .list_worktrees(&project_dir(ws_root, project))
+        .unwrap_or_default();
+    checkouts
+        .iter()
+        .filter_map(|checkout| checkout.ancestors().nth(depth))
+        .filter(|root| CanonicalPath::of(root) != primary)
+        .filter_map(|root| {
+            let marker = crate::workspace::WorkweaveMarker::read(root).ok()??;
+            (marker.names_primary(&primary) && marker.project() == project)
+                .then(|| (marker, root.to_path_buf()))
+        })
+        .collect()
+}
+
 /// Rebuild `project`'s unreadable workweave index from the markers of the
-/// workweaves in the containers doctor scans: the names it lists, or `None`
-/// where the index read by the time its claim was held.
+/// workweaves the project clone's linked checkouts sit in, wherever their
+/// directories are: the names it lists, or `None` where the index read by the
+/// time its claim was held.
 pub fn rebuild_workweave_index(
     ws_root: &Path,
     project: &crate::manifest::ProjectName,
 ) -> anyhow::Result<Option<Vec<WorkweaveName>>> {
-    let mut found = Vec::new();
-    for container in workweave_containers_for_scan(ws_root) {
-        for (workweave, dir) in
-            crate::workweave::doctor_scan_container(ws_root, container.as_path())
-        {
-            if workweave.project != *project {
-                continue;
-            }
-            let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&dir) else {
-                continue;
-            };
-            found.push((
-                workweave.name,
-                CanonicalPath::of(&dir),
+    let mut found: Vec<_> = linked_workweaves(ws_root, project)
+        .into_iter()
+        .map(|(marker, root)| {
+            (
+                marker.name().clone(),
+                CanonicalPath::of(&root),
                 marker.parent().clone(),
-            ));
-        }
-    }
+            )
+        })
+        .collect();
+    found.sort();
     let names = found.iter().map(|(name, ..)| name.clone()).collect();
     Ok(crate::workweave_index::rebuild(ws_root, project, &found)?.then_some(names))
 }
@@ -3556,7 +3591,7 @@ pub fn fix_stale_registry_entry(
     let entry = crate::workweave_index::read(ws_root, project)?
         .and_then(|index| index.workweaves.get(workweave_name).cloned());
     if let Some(entry) = &entry {
-        if crate::workspace::restore_marker_of_entry(&primary, project, entry)? {
+        if crate::workspace::restore_marker_of_entry(&primary, project, workweave_name, entry)? {
             return Ok(StaleEntryFix::MarkerRestored);
         }
     }
@@ -8863,9 +8898,9 @@ fn apply_finding_repairs(
                     Ok(Some(names)) => {
                         outln!(
                             "[fixed] core: unreadable-workweave-index of project `{project}`: \
-                             rebuilt it listing {} workweave(s) found on disk{}{}; the basedir \
-                             it recorded is not rebuilt, and a workweave outside the scanned \
-                             containers is listed again by the next rwv run inside it",
+                             rebuilt it listing {} workweave(s) the project clone's \
+                             checkouts hold{}{}; the basedir it recorded is not rebuilt: \
+                             `rwv workweave set-default-create-basedir` records it again",
                             names.len(),
                             if names.is_empty() { "" } else { ": " },
                             names

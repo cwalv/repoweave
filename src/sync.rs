@@ -8342,7 +8342,7 @@ fn apply_project_strategy(
 fn landing_released_into(
     ctx: &WorkspaceContext,
     workspace: &CanonicalPath,
-) -> anyhow::Result<Vec<(op_state::OwnerReading, CanonicalPath)>> {
+) -> anyhow::Result<Vec<(op_state::OwnerRecord, CanonicalPath)>> {
     let primary = CanonicalPath::of(ctx.primary_path());
     let owners = std::iter::once(primary).chain(
         recorded_workweaves(ctx.primary_path())?
@@ -8351,22 +8351,18 @@ fn landing_released_into(
     );
     let mut released = Vec::new();
     for owner in owners.filter(|owner| owner != workspace) {
-        let Ok(Some(reading)) = op_state::read_owner_for_abort(owner.as_path()) else {
+        let Ok(Some(record)) = op_state::read_owner(owner.as_path()) else {
             continue;
         };
-        let header = reading.header();
-        let moved_in_place = match &reading {
-            op_state::OwnerReading::Whole(record) => record.take_in.as_ref().is_some_and(|t| {
-                t.in_place_workspaces()
-                    .iter()
-                    .any(|ws| CanonicalPath::of(ws) == *workspace)
-            }),
-            op_state::OwnerReading::HeaderOnly { .. } => false,
-        };
-        if header.verb == OpVerb::Land
-            && (header.target.as_ref() == Some(workspace) || moved_in_place)
+        let moved_in_place = record.take_in.as_ref().is_some_and(|t| {
+            t.in_place_workspaces()
+                .iter()
+                .any(|ws| CanonicalPath::of(ws) == *workspace)
+        });
+        if record.verb == OpVerb::Land
+            && (record.target.as_ref() == Some(workspace) || moved_in_place)
         {
-            released.push((reading, owner));
+            released.push((record, owner));
         }
     }
     Ok(released)
@@ -8380,16 +8376,16 @@ fn landing_released_into(
 /// its own workspace.
 fn released_landing_to_abort(
     ctx: &WorkspaceContext,
-) -> anyhow::Result<Option<(op_state::OwnerReading, CanonicalPath)>> {
+) -> anyhow::Result<Option<(op_state::OwnerRecord, CanonicalPath)>> {
     let mut released = landing_released_into(ctx, ctx.active_root())?;
     let aborts_there =
         |owner: &CanonicalPath| format!("rwv -C {} abort", owner.as_path().display());
     match released.len() {
         0 => Ok(None),
         1 => {
-            let (reading, owner) = released.remove(0);
-            let id = reading.header().id.clone();
-            if !retire_stopped(&reading) {
+            let (record, owner) = released.remove(0);
+            let id = record.id.clone();
+            if !retire_stopped(&record) {
                 crate::refuse!(
                     RefusalKind::AbortInItsWorkspace,
                     "the landing from {owner} (op {id}) moved this workspace and released it, \
@@ -8404,7 +8400,7 @@ fn released_landing_to_abort(
                  in its retire",
                 owner.as_path().display()
             );
-            Ok(Some((reading, owner)))
+            Ok(Some((record, owner)))
         }
         _ => crate::refuse!(
             RefusalKind::AbortInItsWorkspace,
@@ -8413,24 +8409,19 @@ fn released_landing_to_abort(
             n = released.len(),
             lines = released
                 .iter()
-                .map(|(reading, owner)| format!(
-                    "  op {}:\n    {}",
-                    reading.header().id,
-                    aborts_there(owner)
-                ))
+                .map(|(record, owner)| format!("  op {}:\n    {}", record.id, aborts_there(owner)))
                 .collect::<Vec<_>>()
                 .join("\n"),
         ),
     }
 }
 
-fn retire_stopped(reading: &op_state::OwnerReading) -> bool {
-    matches!(
-        reading,
-        op_state::OwnerReading::Whole(record)
-            if record.phase == op_state::OpPhase::Retire
-                && record.take_in.as_ref().is_some_and(|take_in| take_in.retire_stopped)
-    )
+fn retire_stopped(record: &op_state::OwnerRecord) -> bool {
+    record.phase == op_state::OpPhase::Retire
+        && record
+            .take_in
+            .as_ref()
+            .is_some_and(|take_in| take_in.retire_stopped)
 }
 
 /// Which of an op's workspaces a restore is running in, decided by the
@@ -8531,7 +8522,7 @@ pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<(
         }
     };
     let record = OwnerRecord::path_in(owner.as_path());
-    match op_state::read_owner_for_abort(owner.as_path()) {
+    match op_state::read_owner(owner.as_path()) {
         Err(e) if crate::refusal::kind_of(&e) == Some(RefusalKind::UnreadableOpRecord) => {
             eprintln!("{e:#}");
         }
@@ -8543,7 +8534,7 @@ pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<(
              restores from it"
         ),
         Ok(None) => {
-            op_state::resolve_for_abort(here.as_path())?;
+            op_state::resolve_to_owner(here.as_path())?;
             crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
         }
     }
@@ -8710,32 +8701,21 @@ fn abort_op(
     leave_target: bool,
     retaken: &mut Option<Retaken>,
 ) -> anyhow::Result<()> {
-    // resolve_for_abort follows a lease pointer if the workspace holds a lease,
-    // so `rwv abort` invoked from either the owner or a leased workspace finds
-    // the same record.
-    let found = match op_state::resolve_for_abort(ctx.active_root().as_path())? {
-        Some(found) => Some(found),
+    let found = match op_state::resolve_to_owner(ctx.active_root().as_path())? {
+        Some(resolved) => Some((resolved.record, resolved.owner_workspace)),
         None => released_landing_to_abort(ctx)?,
     };
-    let Some((reading, owner_workspace)) = found else {
+    let Some((record, owner_workspace)) = found else {
         crate::refuse!(RefusalKind::NoOpRecorded, "no operation in progress")
     };
-    let header = reading.header();
+    let record = &record;
+    let header = record.header();
     let workspace = if header.target.as_ref() == Some(ctx.active_root()) {
         ctx.active_root()
     } else {
         &owner_workspace
     };
     let workspace_dir = workspace.as_path().to_path_buf();
-    if let op_state::OwnerReading::HeaderOnly { parse_error, .. } = &reading {
-        eprintln!(
-            "owner record at {} does not parse past op {}'s id and workspaces: {parse_error}\n\
-             No tips it recorded are read, and none is needed: each repo is put back at its \
-             savepoint, what that discards kept first.",
-            op_state::OwnerRecord::path_in(owner_workspace.as_path()),
-            header.id,
-        );
-    }
     let other_workspace = (header.verb == OpVerb::Land)
         .then(|| {
             if owner_workspace == *workspace {
@@ -8747,16 +8727,11 @@ fn abort_op(
         .flatten()
         .filter(|other| other != workspace);
     let op_id = header.id.clone();
-    let moved_in_target: Option<&[RepoKey]> = match &reading {
-        op_state::OwnerReading::Whole(record) => Some(
-            record
-                .take_in
-                .as_ref()
-                .map(|take_in| take_in.moved_in_target.as_slice())
-                .unwrap_or_default(),
-        ),
-        op_state::OwnerReading::HeaderOnly { .. } => None,
-    };
+    let moved_in_target: &[RepoKey] = record
+        .take_in
+        .as_ref()
+        .map(|take_in| take_in.moved_in_target.as_slice())
+        .unwrap_or_default();
 
     // Both of the op's workspaces are enumerated under the op's own project,
     // whichever side abort was invoked from. A workspace's `.rwv-active` may
@@ -8797,25 +8772,15 @@ fn abort_op(
         .flatten()
         .collect(),
     };
-    let judge = || match &reading {
-        op_state::OwnerReading::Whole(record) if record.verb == OpVerb::Land => {
-            Some(judge_target(record, &stores, ctx.primary_path()))
-        }
-        _ => None,
-    };
+    let judge =
+        || (record.verb == OpVerb::Land).then(|| judge_target(record, &stores, ctx.primary_path()));
     let target_label = if header.target.as_ref() == Some(ctx.active_root()) {
         ""
     } else {
         AbortSide::LandTarget.label()
     };
-    let operates_in = match &reading {
-        op_state::OwnerReading::Whole(record) => record.operates_in(),
-        op_state::OwnerReading::HeaderOnly { .. } => None,
-    };
-    let own_steps = match &reading {
-        op_state::OwnerReading::Whole(record) => record.own_steps(),
-        op_state::OwnerReading::HeaderOnly { .. } => Default::default(),
-    };
+    let operates_in = record.operates_in();
+    let own_steps = record.own_steps();
 
     let make_plan = || {
         let mut plan = AbortPlan::default();
@@ -8833,7 +8798,7 @@ fn abort_op(
             "",
             &op_id,
             moved_in_target,
-            operates_in.as_ref(),
+            &operates_in,
             &own_steps,
             &mut plan,
         );
@@ -8864,7 +8829,7 @@ fn abort_op(
                                 side.label(),
                                 &op_id,
                                 moved_in_target,
-                                operates_in.as_ref(),
+                                &operates_in,
                                 &own_steps,
                                 &mut plan,
                             );
@@ -8885,61 +8850,53 @@ fn abort_op(
             }
         }
 
-        if let op_state::OwnerReading::Whole(record) = &reading {
-            plan_in_place(record, &op_project_name, &stores, &mut plan);
-            let target_dir = if header.target.as_ref() == Some(workspace) {
-                Some(workspace_dir.as_path())
-            } else {
-                other_ws_dir.as_deref()
-            };
-            if let Some(target_dir) = target_dir.filter(|_| record.verb == OpVerb::Land) {
-                plan_made(record, target_dir, target_label, &mut plan);
-            }
-            plan.op_ref_moves(
-                &workspace_dir,
-                &cwd_project_dir,
-                record
-                    .take_in
-                    .as_ref()
-                    .map(|take_in| {
-                        take_in
-                            .ref_moves
-                            .iter()
-                            .filter(|m| !carried_move(take_in, m))
-                            .cloned()
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                &op_project_name,
-            );
-            let carried = plan_carried(
-                record,
-                &owner_workspace,
-                &workspace_dir,
-                &cwd_project_dir,
-                &plan,
-            );
-            plan.steps.push(carried);
-            if record.verb == OpVerb::Land {
-                members.take_record(record);
-                plan_landing_refs(record, &members, &stores, &mut plan);
-            }
+        plan_in_place(record, &op_project_name, &stores, &mut plan);
+        let target_dir = if header.target.as_ref() == Some(workspace) {
+            Some(workspace_dir.as_path())
+        } else {
+            other_ws_dir.as_deref()
+        };
+        if let Some(target_dir) = target_dir.filter(|_| record.verb == OpVerb::Land) {
+            plan_made(record, target_dir, target_label, &mut plan);
+        }
+        plan.op_ref_moves(
+            &workspace_dir,
+            &cwd_project_dir,
+            record
+                .take_in
+                .as_ref()
+                .map(|take_in| {
+                    take_in
+                        .ref_moves
+                        .iter()
+                        .filter(|m| !carried_move(take_in, m))
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default(),
+            &op_project_name,
+        );
+        let carried = plan_carried(
+            record,
+            &owner_workspace,
+            &workspace_dir,
+            &cwd_project_dir,
+            &plan,
+        );
+        plan.steps.push(carried);
+        if record.verb == OpVerb::Land {
+            members.take_record(record);
+            plan_landing_refs(record, &members, &stores, &mut plan);
         }
         (plan, other_ws_dir)
-    };
-    let record = match &reading {
-        op_state::OwnerReading::Whole(record) => Some(record.as_ref()),
-        op_state::OwnerReading::HeaderOnly { .. } => None,
     };
     let unit_refuses =
         |standing: &Option<TargetStanding>| standing.as_ref().is_some_and(|s| !s.restorable());
     let (plan, _) = make_plan();
     let standing = judge();
     if leave_target {
-        return match (&reading, &standing) {
-            (op_state::OwnerReading::Whole(record), Some(standing))
-                if !standing.restorable() || plan.blocks(true) =>
-            {
+        return match &standing {
+            Some(standing) if !standing.restorable() || plan.blocks(true) => {
                 if plan.blocks(false) {
                     return refuse_abort(
                         Some(record),
@@ -8951,20 +8908,13 @@ fn abort_op(
                 }
                 abort_leaving_target(record, &owner_workspace, standing, &stores, plan)
             }
-            (op_state::OwnerReading::Whole(_), Some(_)) => crate::refuse!(
+            Some(_) => crate::refuse!(
                 RefusalKind::InapplicableFlag,
                 "--leave-target leaves a landing's target as it stands where something other \
                  than the landing moved it, and every branch this landing moved there is where \
                  it left it; drop the flag, and `rwv abort` restores the target"
             ),
-            (op_state::OwnerReading::HeaderOnly { .. }, _) if header.verb == OpVerb::Land => {
-                crate::refuse!(
-                    RefusalKind::InapplicableFlag,
-                    "--leave-target needs to know what the landing wrote in its target, and \
-                     abort cannot read the landing's record past its header; drop the flag"
-                )
-            }
-            _ => crate::refuse!(
+            None => crate::refuse!(
                 RefusalKind::InapplicableFlag,
                 "--leave-target ends a landing, and the operation in progress is not one; \
                  drop the flag"
@@ -8973,7 +8923,7 @@ fn abort_op(
     }
     if unit_refuses(&standing) || plan.blocked() {
         return refuse_abort(
-            record,
+            Some(record),
             standing.as_ref(),
             plan,
             &op_project_name,
@@ -8981,24 +8931,22 @@ fn abort_op(
         );
     }
     if header.verb == OpVerb::Land {
-        *retaken = Some(retake_target(&reading, &owner_workspace, &cwd_project_dir)?);
+        *retaken = Some(retake_target(record, &owner_workspace, &cwd_project_dir)?);
     }
     crate::test_pause::point("abort-retaken");
     let (plan, other_ws_dir) = make_plan();
     let standing = judge();
     if unit_refuses(&standing) || plan.blocked() {
         return refuse_abort(
-            record,
+            Some(record),
             standing.as_ref(),
             plan,
             &op_project_name,
             target_label,
         );
     }
-    if record.is_some() {
-        op_state::mark_abort_begun(owner_workspace.as_path())
-            .context("could not record that abort began")?;
-    }
+    op_state::mark_abort_begun(owner_workspace.as_path())
+        .context("could not record that abort began")?;
     crate::test_pause::point("abort-begun");
     let plan = plan.target_project_first();
     let mut tally = AbortTally::default();
@@ -9045,14 +8993,12 @@ fn abort_op(
             drop_reached_rebased_backups(dir, &op_project_name);
             forget_replays_in(dir, &op_project_name);
         }
-        if let Some(record) = record {
-            let side = if owner_workspace == *workspace {
-                ""
-            } else {
-                AbortSide::Replay.label()
-            };
-            name_unreached_rebased_backups(record, owner_workspace.as_path(), side);
-        }
+        let side = if owner_workspace == *workspace {
+            ""
+        } else {
+            AbortSide::Replay.label()
+        };
+        name_unreached_rebased_backups(record, owner_workspace.as_path(), side);
         op_state::clear_owner_of(owner_workspace.as_path(), &op_id);
     } else if tally.any_foreign {
         eprintln!(
@@ -9606,8 +9552,8 @@ fn plan_abort_workspace(
     side: AbortSide,
     label: &str,
     op_id: &OpId,
-    moved_in_target: Option<&[RepoKey]>,
-    operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
+    moved_in_target: &[RepoKey],
+    operates_in: &std::collections::BTreeSet<RepoKey>,
     own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
     plan: &mut AbortPlan,
 ) {
@@ -9647,8 +9593,8 @@ fn plan_abort_workspace(
         std::collections::BTreeMap::new();
     for (repo_key, vcs, abs) in repos {
         let named = RepoOperand::of(&repo_key, &project.name);
-        let unmoved_target = matches!(side, AbortSide::LandTarget)
-            && moved_in_target.is_some_and(|moved| !moved.contains(&repo_key));
+        let unmoved_target =
+            matches!(side, AbortSide::LandTarget) && !moved_in_target.contains(&repo_key);
         let head = vcs.head_revision(&abs).ok();
         if let Some(head) = &head {
             moved_from.insert(abs.clone(), head.clone());
@@ -9673,9 +9619,8 @@ fn plan_abort_workspace(
         }
         let integrates = match (side, operates_in) {
             (AbortSide::LandTarget, _) => Integrates::No,
-            (AbortSide::Replay, None) => Integrates::Unknown,
-            (AbortSide::Replay, Some(ours)) if ours.contains(&repo_key) => Integrates::Yes,
-            (AbortSide::Replay, Some(_)) => Integrates::No,
+            (AbortSide::Replay, ours) if ours.contains(&repo_key) => Integrates::Yes,
+            (AbortSide::Replay, _) => Integrates::No,
         };
         let attribution = Attribution {
             integrates,
@@ -10049,22 +9994,18 @@ impl Retaken {
 /// the target's workspace. A landing stopped before its retire still holds
 /// both; one in its retire released them, and takes them back here, waiting
 /// on the claim as a landing does and refusing while another operation holds
-/// either. A record that does not parse past its header names no target
-/// branch, so only the lease is taken back for it.
+/// either.
 fn retake_target(
-    reading: &op_state::OwnerReading,
+    record: &op_state::OwnerRecord,
     owner_workspace: &CanonicalPath,
     project_dir_here: &Path,
 ) -> anyhow::Result<Retaken> {
-    let header = reading.header();
-    let target = match reading {
-        op_state::OwnerReading::Whole(record) => record
-            .take_in
-            .as_ref()
-            .and_then(|take_in| take_in.receiving.get(&RepoKey::Project))
-            .map(|receiving| receiving.branch.clone()),
-        op_state::OwnerReading::HeaderOnly { .. } => None,
-    };
+    let header = record.header();
+    let target = record
+        .take_in
+        .as_ref()
+        .and_then(|take_in| take_in.receiving.get(&RepoKey::Project))
+        .map(|receiving| receiving.branch.clone());
     let claim = match &target {
         Some(target) => Some(crate::landing_claim::LandingClaim::take(
             project_vcs().as_ref(),
@@ -10076,24 +10017,21 @@ fn retake_target(
         )?),
         None => None,
     };
-    let in_place = match reading {
-        op_state::OwnerReading::Whole(record) => record
-            .take_in
-            .iter()
-            .flat_map(op_state::TakeInRecord::in_place_workspaces)
-            .filter(|workspace| {
-                let there = workspace.is_dir();
-                if !there {
-                    eprintln!(
-                        "  [{}]: gone, so nothing there is put back",
-                        workspace.display()
-                    );
-                }
-                there
-            })
-            .collect(),
-        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
-    };
+    let in_place: Vec<PathBuf> = record
+        .take_in
+        .iter()
+        .flat_map(op_state::TakeInRecord::in_place_workspaces)
+        .filter(|workspace| {
+            let there = workspace.is_dir();
+            if !there {
+                eprintln!(
+                    "  [{}]: gone, so nothing there is put back",
+                    workspace.display()
+                );
+            }
+            there
+        })
+        .collect();
     let leasing: Vec<PathBuf> = header
         .target
         .iter()
@@ -13256,6 +13194,7 @@ mod tests {
         crate::workspace::WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&ww)
@@ -13404,6 +13343,7 @@ mod tests {
         crate::workspace::WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&ww)

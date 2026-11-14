@@ -2117,8 +2117,38 @@ impl WorkweaveMarker {
                  Legacy, which requires a valid `project:`",
             );
         let parent = field("parent").unwrap_or(primary);
-        Self::new(Path::new(primary), project, Path::new(parent)).write(dir)?;
+        let name = Self::name_for_migration(Path::new(primary), &project, dir)?;
+        Self::new(Path::new(primary), project, name, Path::new(parent)).write(dir)?;
         Ok(true)
+    }
+
+    /// The name a legacy marker at `dir` is migrated with: the one `primary`'s
+    /// index records at `dir`, else the one the directory's name renders.
+    fn name_for_migration(
+        primary: &Path,
+        project: &ProjectName,
+        dir: &Path,
+    ) -> anyhow::Result<crate::manifest::WorkweaveName> {
+        let recorded = crate::workweave_index::read(primary, project)?
+            .and_then(|index| index.entry_at(dir).map(|(name, _)| name.clone()));
+        recorded
+            .or_else(|| {
+                dir.file_name()
+                    .and_then(|base| base.to_str())
+                    .and_then(|base| workweave_name_in(project, base))
+            })
+            .ok_or_else(|| {
+                crate::refusal::refusal(
+                    RefusalKind::UnreadableMarker,
+                    format!(
+                        "{} names no workweave, the index of project `{project}` lists none at \
+                         {}, and the directory's name is not `<project>--<name>`, so no name \
+                         migrates it. Delete it to adopt this tree as a standalone weave.",
+                        Self::path_in(dir),
+                        dir.display()
+                    ),
+                )
+            })
     }
 }
 
@@ -2189,7 +2219,7 @@ impl MarkerDefect<PathBuf> {
             ),
             MarkerDefect::Legacy => format!(
                 "{} is a legacy workweave marker (YAML format, or missing the required \
-                 `parent:` field). Run `rwv doctor --fix` from the primary weave, not \
+                 `parent` or `name` field). Run `rwv doctor --fix` from the primary weave, not \
                  from inside this workweave: resolving the marker precedes the repair, \
                  so a self-invoked `--fix` hits this same refusal and changes nothing. \
                  The file is still readable YAML, so its own `primary:` names the weave \
@@ -2861,6 +2891,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("ws").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         );
         marker.write(&weave_dir).unwrap();
@@ -3165,6 +3196,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             Path::new("/home/user/weaveroot"),
             ProjectName::new("my-project").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             Path::new("/home/user/weaveroot"),
         );
         marker.write(dir).unwrap();
@@ -3198,7 +3230,12 @@ mod tests {
         let dir = tmp.path();
         let primary = resolved_dir(dir, "weaveroot/primary");
         let parent = resolved_dir(dir, "weaveroot/.workweaves/primary--ww1");
-        let marker = WorkweaveMarker::new(&primary, ProjectName::new("p").unwrap(), &parent);
+        let marker = WorkweaveMarker::new(
+            &primary,
+            ProjectName::new("p").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
+            &parent,
+        );
         marker.write(dir).unwrap();
 
         let read_back = WorkweaveMarker::read(dir).unwrap().unwrap();
@@ -3222,6 +3259,7 @@ mod tests {
             serde_json::to_string_pretty(&serde_json::json!({
                 "primary": primary,
                 "project": "p",
+                "name": "ww",
                 "parent": detoured,
             }))
             .unwrap(),
@@ -3244,9 +3282,14 @@ mod tests {
         let dir = tmp.path();
         let primary = resolved_dir(dir, "primary");
         let parent = resolved_dir(dir, "parent");
-        WorkweaveMarker::new(&primary, ProjectName::new("p").unwrap(), &parent)
-            .write(dir)
-            .unwrap();
+        WorkweaveMarker::new(
+            &primary,
+            ProjectName::new("p").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
+            &parent,
+        )
+        .write(dir)
+        .unwrap();
 
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join(".rwv-workweave")).unwrap())
@@ -3326,7 +3369,8 @@ mod tests {
         // usable just because it has the right shape; it is a legacy marker
         // like any other, refused at read and convertible by migrate_legacy.
         let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
+        let dir = &tmp.path().join("p--ww");
+        std::fs::create_dir_all(dir).unwrap();
         let primary = resolved_dir(dir, "primary");
         let yaml = format!(
             "primary: {primary}\nproject: p\nparent: {primary}\n",
@@ -3362,7 +3406,8 @@ mod tests {
         // marker forked from another workweave) must survive migration
         // rather than get overwritten with primary.
         let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
+        let dir = &tmp.path().join("p--ww");
+        std::fs::create_dir_all(dir).unwrap();
         let primary = resolved_dir(dir, "primary");
         let parent = resolved_dir(dir, ".workweaves/primary--ww1");
         let yaml = format!(
@@ -3386,7 +3431,8 @@ mod tests {
     #[test]
     fn workweave_marker_migrate_legacy_backfills_parent() {
         let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
+        let dir = &tmp.path().join("legacy-project--ww");
+        std::fs::create_dir_all(dir).unwrap();
         let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
 
@@ -3407,7 +3453,8 @@ mod tests {
     #[test]
     fn workweave_marker_migrate_legacy_is_idempotent() {
         let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
+        let dir = &tmp.path().join("legacy-project--ww");
+        std::fs::create_dir_all(dir).unwrap();
         let legacy = "primary: /home/user/weaveroot/primary\nproject: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
 
@@ -3426,7 +3473,8 @@ mod tests {
     #[test]
     fn workweave_marker_migrate_legacy_quotes_yaml_special_primary() {
         let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
+        let dir = &tmp.path().join("legacy-project--ww");
+        std::fs::create_dir_all(dir).unwrap();
         let legacy =
             "primary: '/home/user/weaveroot/has: a colon-space'\nproject: legacy-project\n";
         std::fs::write(dir.join(".rwv-workweave"), legacy).unwrap();
@@ -3461,6 +3509,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         );
         marker.write(&weave_dir).unwrap();
@@ -3490,6 +3539,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&weave_dir)
@@ -3584,6 +3634,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         );
         marker.write(&weave_dir).unwrap();
@@ -3618,6 +3669,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("marker-project").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         );
         marker.write(&weave_dir).unwrap();
@@ -3673,9 +3725,14 @@ mod tests {
         let dir = make_workspace(parent, "web-app--copied");
         let dangling = parent.join("gone");
         std::fs::create_dir_all(&dangling).unwrap();
-        WorkweaveMarker::new(&dangling, ProjectName::new("web-app").unwrap(), &dangling)
-            .write(&dir)
-            .unwrap();
+        WorkweaveMarker::new(
+            &dangling,
+            ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
+            &dangling,
+        )
+        .write(&dir)
+        .unwrap();
         (dir, dangling)
     }
 
@@ -3732,6 +3789,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&dir)
@@ -3832,6 +3890,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&dir)
@@ -3861,6 +3920,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&upper)
@@ -3872,6 +3932,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &upper_canon,
         )
         .write(&lower)
@@ -4140,7 +4201,12 @@ mod tests {
     /// Helper: write a workweave marker at `dir` pointing at `primary` and
     /// naming `project`.
     fn write_marker(dir: &Path, primary: &Path, project: &str) {
-        let marker = WorkweaveMarker::new(primary, ProjectName::new(project).unwrap(), primary);
+        let marker = WorkweaveMarker::new(
+            primary,
+            ProjectName::new(project).unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
+            primary,
+        );
         marker.write(dir).unwrap();
     }
 
@@ -4630,6 +4696,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("myproject").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         );
         marker.write(&weave_dir).unwrap();
@@ -4680,6 +4747,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("myproject").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&weave_dir)
@@ -4736,6 +4804,7 @@ mod tests {
         let marker = WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("myproject").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         );
         marker.write(&weave_dir).unwrap();
@@ -4777,6 +4846,7 @@ mod tests {
         WorkweaveMarker::new(
             &primary_canon,
             ProjectName::new("myproject").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
             &primary_canon,
         )
         .write(&weave_dir)
@@ -4876,7 +4946,12 @@ mod tests {
     fn make_workweave(parent: &Path, name: &str, primary: &Path, project: &str) -> PathBuf {
         let dir = parent.join(name);
         std::fs::create_dir_all(&dir).unwrap();
-        let marker = WorkweaveMarker::new(primary, ProjectName::new(project).unwrap(), primary);
+        let marker = WorkweaveMarker::new(
+            primary,
+            ProjectName::new(project).unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
+            primary,
+        );
         marker.write(&dir).unwrap();
         dir
     }

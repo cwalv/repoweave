@@ -44,9 +44,7 @@ use crate::vcs::{
     project_vcs, vcs_for, DestroyProof, EphemeralRefName, FoundBranch, RawRefName, RefOrigin,
     RegistrationPrune, ResolvedRevisionId, Site, Vcs, VcsError,
 };
-use crate::workspace::{
-    project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
-};
+use crate::workspace::{project_dir, project_rel_dir, project_rel_path, WorkweaveMarker};
 use crate::workweave_index;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -2391,7 +2389,7 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
     // where to land. For workweaves forked directly from primary, parent
     // == primary; for workweaves forked from another workweave, parent is
     // that workweave's directory.
-    let marker = WorkweaveMarker::new(primary_root, project.clone(), source_root);
+    let marker = WorkweaveMarker::new(primary_root, project.clone(), name.clone(), source_root);
     // The marker is the ONLY identity file a workweave root gets: it and
     // `.rwv-active` name the same fact and are mutually exclusive, occupying
     // one tier of the resolution chain rather than two. A pointer beside it
@@ -4394,20 +4392,7 @@ pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(Workweave
             continue;
         }
         let project_name = marker.project().clone();
-        let dir_name = entry.file_name().to_string_lossy().into_owned();
-        let recorded = workweave_name_for_path(ws_root, &project_name, &dir)
-            .ok()
-            .flatten();
-        let name = match recorded {
-            Some(n) => n,
-            None => match workweave_name_in(&project_name, &dir_name) {
-                Some(from_basename) => from_basename,
-                // No record, and a basename this project could not have
-                // rendered: identity is not recoverable. The misnamed-dir
-                // finding owns this state.
-                None => continue,
-            },
-        };
+        let name = marker.name().clone();
         result.push((
             WorkweaveId {
                 project: project_name,
@@ -5239,9 +5224,14 @@ mod tests {
         let workweave_dir = tmp.path().join(".workweaves").join("web-app--feat");
         std::fs::create_dir_all(&primary).unwrap();
         std::fs::create_dir_all(&workweave_dir).unwrap();
-        WorkweaveMarker::new(&primary, ProjectName::new("web-app").unwrap(), &primary)
-            .write(&workweave_dir)
-            .unwrap();
+        WorkweaveMarker::new(
+            &primary,
+            ProjectName::new("web-app").unwrap(),
+            crate::manifest::WorkweaveName::new("ww").unwrap(),
+            &primary,
+        )
+        .write(&workweave_dir)
+        .unwrap();
         (tmp, primary, workweave_dir)
     }
 

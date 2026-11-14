@@ -62,7 +62,7 @@ A refusal moves and writes nothing: abort plans every step on both sides before 
 
 ### Ending an operation whose record cannot be read
 
-If every verb refuses with `unreadable-op-record`, the operation record cannot be read: its op id does not parse, or another release wrote it. If another release wrote it, that release resumes or aborts the operation. Otherwise run the command the refusal prints:
+If every verb refuses with `unreadable-op-record`, the operation record cannot be read whole: another release wrote it, or it was edited. If another release wrote it, that release resumes or aborts the operation. Otherwise run the command the refusal prints:
 
 ```bash
 rwv -C <workspace> abort --discard-unreadable-record

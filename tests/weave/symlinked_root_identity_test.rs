@@ -56,9 +56,14 @@ fn project() -> ProjectName {
 /// spelling `primary` is given in.
 fn workweave_at(primary: &Path, dir: &Path) {
     std::fs::create_dir_all(dir).unwrap();
-    WorkweaveMarker::new(primary, project(), primary)
-        .write(dir)
-        .unwrap();
+    WorkweaveMarker::new(
+        primary,
+        project(),
+        repoweave::manifest::WorkweaveName::new("ww").unwrap(),
+        primary,
+    )
+    .write(dir)
+    .unwrap();
 }
 
 #[test]
