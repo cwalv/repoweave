@@ -141,7 +141,7 @@ fn plant_owner_record_rebasing(
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{root}\", \"target\": \"{root}\", \"retire\": false, \"phase\": \"{phase}\", \
          \"converged_tips\": {{{tips_json}}}, \
-         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
+         \"started_at\": \"2026-05-27T10:00:00Z\", \"schema\": 8, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         root = common::json_escaped(workspace),
         take_in = sync_plan(rebases),
     );

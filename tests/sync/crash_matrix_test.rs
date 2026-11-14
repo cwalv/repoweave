@@ -288,7 +288,7 @@ fn plant_owner_record(workspace: &Path, rec: &OwnerRecordFixture) {
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": {retire}, \
          \"phase\": \"{phase}\", \
          \"converged_tips\": {{{converged_json}}}, \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 8, \"release\": \"0.0.0\", \"take_in\": {take_in}}}",
         take_in = if rec.verb_str == "land" {
             let mut plan: repoweave::op_state::TakeInRecord = serde_json::from_str(
                 &common::land_plan_json(workspace, Path::new(&rec.target), "web-app"),
@@ -2542,7 +2542,7 @@ fn cell7_record(primary: &Workspace, ww: &Workspace, op_id: &str) -> String {
         "{{\"id\": \"{op_id}\", \"verb\": \"sync\", \"history\": null, \"project\": \"web-app\", \
          \"source\": \"{src}\", \"target\": \"{tgt}\", \"retire\": false, \
          \"phase\": \"replay\", \
-         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 7, \"release\": \"0.0.0\", \"take_in\": null}}",
+         \"started_at\": \"2026-06-10T00:00:00Z\", \"schema\": 8, \"release\": \"0.0.0\", \"take_in\": null}}",
         src = common::json_escaped(&primary.root),
         tgt = common::json_escaped(&ww.root),
     )
