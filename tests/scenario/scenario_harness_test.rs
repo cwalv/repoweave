@@ -4350,6 +4350,38 @@ holding_rwv! {
     }
 }
 
+holding_rwv! {
+    /// A landing into a target behind its upstream, killed once it has
+    /// reported what it took in, says so once when it is continued.
+    fn a_continued_landing_reports_the_upstream_it_took_in_once() {
+        bad_steps(
+            "a continued landing reports the upstream it took in once",
+            vec![
+                Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
+                    .expect(Exit::Succeeds),
+                Step::commit(&ww("w"), Repo::Docs, "w-docs"),
+                Step::new_machine(Machine::B),
+                Step::commit(&Place::Primary(Machine::B), Repo::App, "b-app"),
+                Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"])
+                    .expect(Exit::Succeeds),
+                Step::rwv(&Place::Primary(Machine::B), &["push"])
+                    .pushes(Remote::origin(Repo::App), "main")
+                    .pushes(Remote::origin(Repo::Proj), "main")
+                    .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
+                    .expect(Exit::Succeeds),
+                Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+                Step::rwv_paused(&ww("w"), &["land", "--history", "linear"], "aligning-target", "landing"),
+                Step::kill("landing"),
+                Step::rwv(&ww("w"), &["land", "--continue"])
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj])
+                    .claim(Claim::OutputOnce("took in 1 commit(s) of 'main'")),
+            ],
+        )
+        .assert_fully_decided_green();
+    }
+}
+
 /// Machine B moves `lib` on `main` and publishes it; machine A takes in the
 /// project repo's upstream alone, so its clone of `lib` lacks the pin.
 fn upstream_pins_what_this_clone_lacks(seed: Seed) -> Scenario {
