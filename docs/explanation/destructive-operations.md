@@ -42,8 +42,12 @@ Examples in the current tree:
   lifts the second.
 - `rwv member remove --delete` refuses to delete a checkout with uncommitted
   changes or commits no other clone reaches, a backup holding such commits
-  included, and refuses to delete the canonical store while another
-  project's manifest still references the repo.
+  included, or a submodule store it removes holding what no remote has, and
+  refuses to delete the canonical store while another project's manifest
+  still references the repo. `rwv workweave delete` and `rwv land --retire`
+  ask the submodule stores of the checkouts they remove the same.
+  `--discard-unpublished` lets that go, listing it, and keeps no backup: it
+  would go with the store.
 - `rwv sync --reset-to-target <repo>` moves only the repo it names, refuses
   one with uncommitted changes, a declared branch, or a branch another weave
   branch lands into, and keeps the tip it leaves as a backup, listing the

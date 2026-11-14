@@ -738,6 +738,80 @@ fn a_continued_landing_the_target_moved_under_offers_it_again_as_started() {
 }
 
 #[test]
+fn a_store_removal_asks_a_deinitialized_submodule_store() {
+    runner::run(
+        scenarios::store_removal_asks_a_submodule_store_with_no_checkout(
+            scenarios::SubmoduleLeft::Deinitialized,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_store_removal_asks_a_submodule_store_a_commit_removed() {
+    runner::run(
+        scenarios::store_removal_asks_a_submodule_store_with_no_checkout(
+            scenarios::SubmoduleLeft::RemovedByACommit,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_clone_whose_remote_is_gone_is_removed_as_its_refusal_offers() {
+    runner::run(scenarios::store_removal_of_a_clone_whose_remote_is_gone())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn member_remove_delete_asks_a_workweave_checkouts_submodule_store() {
+    runner::run(
+        scenarios::checkout_removal_asks_the_submodule_stores_of_a_workweave(
+            scenarios::CheckoutRemovedBy::MemberRemoveDelete,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn workweave_delete_asks_its_checkouts_submodule_stores() {
+    runner::run(
+        scenarios::checkout_removal_asks_the_submodule_stores_of_a_workweave(
+            scenarios::CheckoutRemovedBy::WorkweaveDelete,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_retire_asks_its_checkouts_submodule_stores() {
+    runner::run(
+        scenarios::checkout_removal_asks_the_submodule_stores_of_a_workweave(
+            scenarios::CheckoutRemovedBy::Retire,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_retire_keeps_the_only_store_of_a_landed_submodule_commit() {
+    runner::run(scenarios::retire_keeps_the_only_store_of_a_landed_submodule_commit())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_workweave_delete_with_no_submodule_store_asks_no_remote() {
+    runner::run(scenarios::workweave_removal_with_no_submodule_store_asks_no_remote(false))
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_retire_with_no_submodule_store_asks_no_remote() {
+    runner::run(scenarios::workweave_removal_with_no_submodule_store_asks_no_remote(true))
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1696,6 +1770,21 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    store_removal_asks_a_submodule_store_with_no_checkout(scenarios::SubmoduleLeft::Deinitialized),
+    store_removal_asks_a_submodule_store_with_no_checkout(
+        scenarios::SubmoduleLeft::RemovedByACommit
+    ),
+    store_removal_of_a_clone_whose_remote_is_gone,
+    checkout_removal_asks_the_submodule_stores_of_a_workweave(
+        scenarios::CheckoutRemovedBy::MemberRemoveDelete
+    ),
+    checkout_removal_asks_the_submodule_stores_of_a_workweave(
+        scenarios::CheckoutRemovedBy::WorkweaveDelete
+    ),
+    checkout_removal_asks_the_submodule_stores_of_a_workweave(scenarios::CheckoutRemovedBy::Retire),
+    retire_keeps_the_only_store_of_a_landed_submodule_commit,
+    workweave_removal_with_no_submodule_store_asks_no_remote(false),
+    workweave_removal_with_no_submodule_store_asks_no_remote(true),
     a_continued_landing_the_target_moved_under_offers_it_again_as_started,
     store_removal_keeps_nothing_of_a_submodule_remote_rewrite,
     store_removal_after_a_rewrite_ends_once_its_backup_is_dropped,

@@ -215,7 +215,10 @@ and run `rwv member add --adopt <path>` with that path. Adopted at any other pat
 is registered there, and an `owned` or `dependency` entry then reports
 [`placement-disagreement`](#placement-disagreement). `rwv member add <url>` registers
 it only once it sits at that path; anywhere else it makes a second clone and
-leaves this one standing. Or remove the directory yourself. Note that without
+leaves this one standing. Or remove it with `rwv member remove <path> --delete`,
+which refuses while it holds what no remote has or its remote does not answer;
+`rwv member remove <path> --delete --discard-unpublished` removes it with what no
+remote is confirmed to hold, listing it first. Note that without
 `--all`, orphan detection is skipped entirely — a repo missing from the active
 project may belong to another one, and reporting it would be a false positive.
 

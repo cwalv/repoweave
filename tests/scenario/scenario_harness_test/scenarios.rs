@@ -695,6 +695,255 @@ pub fn store_removal_after_a_rewrite_ends_once_its_backup_is_dropped() -> Scenar
     )
 }
 
+/// How a submodule's checkout leaves the primary's clone of `app` while its
+/// store stays behind under the clone's own.
+#[derive(Debug, Clone, Copy)]
+pub enum SubmoduleLeft {
+    Deinitialized,
+    RemovedByACommit,
+}
+
+/// A submodule store of `app` with a branch only it holds, behind `app`'s
+/// checkout at `at`.
+fn submodule_side_branch(at: &Place) -> Vec<Step> {
+    vec![
+        Step::git(
+            at,
+            Repo::App,
+            &[
+                "-C",
+                "sub",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "side-only",
+            ],
+        ),
+        Step::git(at, Repo::App, &["-C", "sub", "branch", "side"]),
+        Step::git(
+            at,
+            Repo::App,
+            &["-C", "sub", "reset", "-q", "--hard", "HEAD~1"],
+        ),
+    ]
+}
+
+/// `app` in the primary gains a submodule `sub` of `lib`, published and
+/// locked.
+fn app_gains_a_submodule() -> Vec<Step> {
+    let file = "protocol.file.allow=always";
+    vec![
+        Step::git(
+            &a(),
+            Repo::App,
+            &["-c", file, "submodule", "add", "-q", "../lib.git", "sub"],
+        ),
+        Step::git(&a(), Repo::App, &["commit", "-qm", "add sub"]),
+        Step::git(&a(), Repo::App, &["push", "-q", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A submodule store no checkout uses still goes with the clone it sits in,
+/// so `member remove --delete` asks it what it holds that no remote has, and
+/// the removal it offers that lets that go runs as printed.
+pub fn store_removal_asks_a_submodule_store_with_no_checkout(left: SubmoduleLeft) -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.extend(submodule_side_branch(&a()));
+    match left {
+        SubmoduleLeft::Deinitialized => steps.push(Step::git(
+            &a(),
+            Repo::App,
+            &["submodule", "deinit", "-q", "-f", "sub"],
+        )),
+        SubmoduleLeft::RemovedByACommit => steps.extend([
+            Step::git(&a(), Repo::App, &["rm", "-q", "sub"]),
+            Step::git(&a(), Repo::App, &["commit", "-qm", "drop sub"]),
+            Step::git(&a(), Repo::App, &["push", "-q", "origin", "main"])
+                .pushes(Remote::origin(Repo::App), "main"),
+        ]),
+    }
+    steps.extend([
+        Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains(
+                "branch side in submodule .git/modules/sub",
+            ))
+            .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+        Step::rwv_printed_quoted(&a(), "rwv member remove ", "--discard-unpublished")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "with what no remote is confirmed to hold: branch side in submodule \
+                 .git/modules/sub",
+            ))
+            .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+    ]);
+    scenario(
+        "a store removal asks a submodule store with no checkout",
+        steps,
+    )
+}
+
+/// A clone whose remote never answers again, holding a commit no remote has:
+/// the removal its refusal offers that lets it go runs as printed, naming
+/// what went.
+pub fn store_removal_of_a_clone_whose_remote_is_gone() -> Scenario {
+    scenario(
+        "a store removal of a clone whose remote is gone",
+        vec![
+            Step::commit(&a(), Repo::App, "only-here"),
+            Step::unreachable(Remote::origin(Repo::App)),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::RemotesUnconfirmed))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::rwv_printed_quoted(&a(), "rwv member remove ", "--discard-unpublished")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "with what no remote is confirmed to hold (its remotes as last fetched; \
+                     unconfirmed: origin",
+                ))
+                .claim(Claim::OutputContains("branch main"))
+                .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app"))
+                .may_strand(&[Repo::App]),
+        ],
+    )
+}
+
+/// The removals of a workweave's checkout of a member.
+#[derive(Debug, Clone, Copy)]
+pub enum CheckoutRemovedBy {
+    MemberRemoveDelete,
+    WorkweaveDelete,
+    Retire,
+}
+
+/// A workweave's checkout keeps its submodules' stores beside its own
+/// registration in the store it links into, and nothing else holds what is
+/// committed there; each verb that removes the checkout asks them what they
+/// hold that no remote has, and the removal each offers that lets it go runs
+/// as printed. A sync's prune is in `tests/sync/sync_prune_direction_test.rs`.
+pub fn checkout_removal_asks_the_submodule_stores_of_a_workweave(
+    by: CheckoutRemovedBy,
+) -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.push(create("w"));
+    steps.extend(submodule_side_branch(&ww("w")));
+    let held = "branch side in submodule sub";
+    let gone = ".workweaves/proj--w/local/remotes/app";
+    let (refused, discard) = match by {
+        CheckoutRemovedBy::MemberRemoveDelete => (
+            Step::rwv(&ww("w"), &["member", "remove", APP, "--delete"]),
+            Step::rwv_printed_quoted(&ww("w"), "rwv member remove ", "--discard-unpublished"),
+        ),
+        CheckoutRemovedBy::WorkweaveDelete => (
+            Step::rwv(&a(), &["workweave", "delete", "w"]),
+            Step::rwv_printed_quoted(&a(), "rwv workweave delete ", "--discard-unpublished"),
+        ),
+        CheckoutRemovedBy::Retire => {
+            steps.push(Step::commit(&ww("w"), Repo::Proj, "w-proj"));
+            (
+                Step::rwv(&ww("w"), &["land", "--retire"])
+                    .claim(Claim::OutputContains(
+                        "the landing is done and the workweave was not deleted",
+                    ))
+                    .claim(Claim::Contains {
+                        at: a(),
+                        repo: Repo::Proj,
+                        rev: "main",
+                        mark: "w-proj",
+                    }),
+                Step::rwv_printed_quoted(&ww("w"), "rwv land --continue", "--discard-unpublished"),
+            )
+        }
+    };
+    steps.extend([
+        refused
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains(held))
+            .claim(Claim::DirStands(Machine::A, gone)),
+        discard
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(held))
+            .claim(Claim::DirGone(Machine::A, gone)),
+    ]);
+    scenario(
+        "a checkout removal asks the submodule stores of a workweave",
+        steps,
+    )
+}
+
+/// The ordinary flow: a commit made in a workweave's submodule, its gitlink
+/// committed in the member, then `land --retire`. The landing lands the
+/// gitlink and keeps the workweave, the only place the commit is; once the
+/// commit is published, the retire it names runs as printed.
+pub fn retire_keeps_the_only_store_of_a_landed_submodule_commit() -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.extend([
+        create("w"),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &[
+                "-C",
+                "sub",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "sub-feature",
+            ],
+        ),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "use the new sub"]),
+        Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains("the checked-out commit"))
+            .claim(Claim::OutputContains("the landing is done"))
+            .claim(Claim::DirStands(
+                Machine::A,
+                ".workweaves/proj--w/local/remotes/app",
+            )),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["-C", "sub", "push", "-q", "origin", "HEAD:refs/heads/main"],
+        )
+        .pushes(Remote::origin(Repo::Lib), "main"),
+        Step::rwv_printed_quoted(&ww("w"), "rwv land --continue", "")
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
+    ]);
+    scenario(
+        "a retire keeps the only store of a landed submodule commit",
+        steps,
+    )
+}
+
+/// A workweave whose checkouts hold no submodule store is deleted, and
+/// retired, with every remote unreachable: nothing is asked of a remote when
+/// no store goes.
+pub fn workweave_removal_with_no_submodule_store_asks_no_remote(retire: bool) -> Scenario {
+    let mut steps = vec![create("w"), Step::commit(&ww("w"), Repo::App, "w-app")];
+    steps.extend(
+        [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs]
+            .map(|repo| Step::unreachable(Remote::origin(repo))),
+    );
+    steps.push(
+        match retire {
+            true => Step::rwv(&ww("w"), &["land", "--retire"]),
+            false => Step::rwv(&a(), &["workweave", "delete", "w", "--discard-unlanded"]),
+        }
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("w"))),
+    );
+    scenario(
+        "a workweave removal with no submodule store asks no remote",
+        steps,
+    )
+}
+
 /// A landing's prune judges the target's clone against its remotes as they
 /// are: a branch whose remote copy was deleted after it was pushed holds its
 /// commits alone, and the clone stays.

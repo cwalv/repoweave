@@ -111,7 +111,7 @@ This removes the entry from `rwv.toml` and updates integration files while leavi
 rwv member remove github/example/some-lib --delete
 ```
 
-`--delete` refuses if the checkout has uncommitted changes, commits unreachable from any other clone, or (in the primary weave) live workweave worktrees or references from another project's `rwv.toml` (pass `--delete-shared-clone` to override the shared-project check). If you already removed the entry from `rwv.toml` by hand, running `rwv member remove <path> [--delete]` finishes regenerating integration files and deleting the leftover checkout.
+`--delete` refuses if the checkout has uncommitted changes, commits unreachable from any other clone (a submodule store it removes included), a remote that does not answer, or (in the primary weave) live workweave worktrees or references from another project's `rwv.toml` (pass `--delete-shared-clone` to override the shared-project check). If you already removed the entry from `rwv.toml` by hand, running `rwv member remove <path> [--delete]` finishes regenerating integration files and deleting the leftover checkout. For a clone whose remote is gone for good, `rwv member remove <path> --delete --discard-unpublished` removes it, listing what no remote is confirmed to hold.
 
 The removal is committed with the member's pin dropped and the files it regenerated, leaving every other uncommitted edit where it is.
 

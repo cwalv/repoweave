@@ -137,6 +137,29 @@ impl DiscardUncommittedConsent {
     }
 }
 
+/// Proof that the operator consented to removing stores with what no remote
+/// is confirmed to hold. Minted from `--discard-unpublished`.
+///
+/// `Copy`: see [`DiscardUnlandedConsent`]'s doc comment.
+#[derive(Debug, Clone, Copy)]
+pub struct DiscardUnpublishedConsent(());
+
+impl DiscardUnpublishedConsent {
+    /// Mint unconditionally. `#[cfg(test)]`: see
+    /// [`DiscardUnlandedConsent::granted`]'s doc comment.
+    #[cfg(test)]
+    pub(crate) fn granted() -> Self {
+        Self(())
+    }
+
+    /// Mint from the parsed `--discard-unpublished` value: `Some` iff the
+    /// operator passed it. `pub(in crate::cli)`: see
+    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
+    pub(in crate::cli) fn from_flag(discard_unpublished: bool) -> Option<Self> {
+        discard_unpublished.then_some(Self(()))
+    }
+}
+
 /// Proof that the operator consented to giving up a workweave member's
 /// pinned commits that are in no clone, relinking its checkout onto the
 /// workweave's branch created at the canonical clone's HEAD. Minted from

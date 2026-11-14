@@ -579,6 +579,7 @@ fn resume_request(invocation: &WorkspaceContext) -> SyncRequest {
         ),
         project_override: None,
         allow_member_change: Vec::new(),
+        discard_unpublished: None,
     }
 }
 

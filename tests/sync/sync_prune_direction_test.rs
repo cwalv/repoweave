@@ -1003,3 +1003,53 @@ fn a_landing_that_cannot_file_a_savepoint_does_not_start() {
     succeed(&s1, &["land", "--history", "linear"]);
     assert!(common::git_in(&primary_lib, &["log", "--format=%s", "main"]).contains("feature"));
 }
+
+/// A seat's checkout of a dropped member keeps its submodule's store beside
+/// its registration in the primary's clone, the only place a branch made
+/// there is: the sync's prune keeps the checkout, naming it, and the removal
+/// it offers that lets it go runs as printed.
+#[test]
+fn a_sync_keeps_a_dropped_checkout_whose_submodule_store_holds_what_no_remote_has() {
+    let weave = weave();
+    let sub = upstream_repo(&weave._tmp.path().join("upstream-sub"), "sub");
+    add_and_commit(&weave.root, &weave.extra_url, "owned");
+    let clone = common::under(&weave.root, EXTRA);
+    common::git_in(
+        &clone,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            &common::file_url(&sub),
+            "sub",
+        ],
+    );
+    common::git_in(&clone, &["commit", "-qm", "add sub"]);
+    succeed(&weave.root, &["lock", "--commit"]);
+    let s1 = seat(&weave, &weave.root, "s1");
+    let seat_sub = common::under(&s1, EXTRA).join("sub");
+    common::git_in(&seat_sub, &["commit", "--allow-empty", "-qm", "side-only"]);
+    common::git_in(&seat_sub, &["branch", "side"]);
+    common::git_in(&seat_sub, &["reset", "-q", "--hard", "HEAD~1"]);
+    drop_and_commit(&weave.root, "drop extra");
+
+    let out = run(&s1, &["sync"]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains(&format!("{EXTRA}: prune skipped"))
+            && stderr.contains("branch side in submodule sub"),
+        "{stderr}"
+    );
+    assert!(seat_sub.is_dir());
+
+    let removal = stderr
+        .split('`')
+        .find(|quoted| quoted.starts_with("rwv ") && quoted.ends_with("--discard-unpublished"))
+        .unwrap_or_else(|| panic!("the prune names the removal that lets it go: {stderr}"));
+    let args: Vec<&str> = removal.split_whitespace().skip(1).collect();
+    succeed(&s1, &args);
+    assert!(!common::under(&s1, EXTRA).exists());
+}

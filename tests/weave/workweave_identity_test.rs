@@ -90,6 +90,7 @@ fn delete_refuses_a_name_and_a_path_that_denote_different_workweaves() {
         Some(wb.as_path()),
         None,
         None,
+        None,
         &RemoteDeletes::default(),
     )
     .expect_err("naming `wa` while holding `wb`'s path must refuse");
@@ -127,6 +128,7 @@ fn delete_proceeds_when_the_name_and_the_path_agree() {
         Some(wa.as_path()),
         None,
         None,
+        None,
         &RemoteDeletes::default(),
     )
     .expect("naming `wa` while holding `wa`'s path must delete it");
@@ -155,6 +157,7 @@ fn delete_accepts_an_equivalent_spelling_of_the_registered_path() {
         &ProjectName::new("proj").unwrap(),
         &WorkweaveName::new("wa").unwrap(),
         Some(detoured.as_path()),
+        None,
         None,
         None,
         &RemoteDeletes::default(),

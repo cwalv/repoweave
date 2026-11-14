@@ -1315,6 +1315,7 @@ impl Removal {
 pub fn run_remove(
     path: &str,
     removal: Removal,
+    discard: Option<crate::cli::consent::DiscardUnpublishedConsent>,
     ctx: &WorkspaceContext,
     opts: ActivateOptions,
 ) -> anyhow::Result<()> {
@@ -1349,6 +1350,7 @@ pub fn run_remove(
             ctx,
             &repo_path,
             crate::sync::RemovalCause::RemoveDelete,
+            discard,
         )?)
     } else {
         None

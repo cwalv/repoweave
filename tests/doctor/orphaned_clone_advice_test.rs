@@ -219,3 +219,35 @@ fn a_workweave_orphan_moved_to_its_placement_in_the_primary_and_adopted_clears_t
         "the workweave holds a worktree of the adopted clone"
     );
 }
+
+/// An orphan whose remote is gone for good, holding a commit no remote has:
+/// the removal that lets it go is the one the advice names for it, and it
+/// runs as printed.
+#[test]
+fn an_orphan_whose_remote_is_gone_is_removed_as_the_advice_names() {
+    let tmp = common::tempdir().unwrap();
+    let ws = bare_weave(&tmp);
+    let url = origin(&tmp);
+    common::git_in(&ws, &["clone", "--quiet", &url, "local/acme/x"]);
+    let clone = common::under(&ws, "local/acme/x");
+    common::git_in(&clone, &["commit", "--allow-empty", "-qm", "only-here"]);
+    std::fs::remove_dir_all(common::under(tmp.path(), "origins/acme/x.git")).unwrap();
+    let advice = orphan_advice(&ws, "local/acme/x");
+    let removal = advice
+        .split('`')
+        .find(|quoted| {
+            quoted.starts_with("rwv member remove ") && quoted.ends_with("--discard-unpublished")
+        })
+        .unwrap_or_else(|| panic!("the advice names the removal that lets it go: {advice}"));
+    let args: Vec<&str> = removal.split_whitespace().skip(1).collect();
+    let out = common::rwv().args(&args).current_dir(&ws).output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("with what no remote is confirmed to hold") && stderr.contains("branch "),
+        "what went is named: {stderr}"
+    );
+    assert!(!clone.exists());
+
+    assert_eq!(doctor_findings(&ws), Vec::new());
+}

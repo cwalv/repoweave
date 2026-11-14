@@ -6610,7 +6610,9 @@ impl CheckViolation {
                      register it, move it to the path its remote's URL places it at under \
                      the primary weave root, unless it already sits there, and run \
                      `rwv member add --adopt` with that path; or remove it with `rwv member \
-                     remove {path} --delete`, which refuses while it holds what no remote has"
+                     remove {path} --delete`, which refuses while it holds what no remote has \
+                     or a remote does not answer; `rwv member remove {path} --delete \
+                     --discard-unpublished` removes it with what no remote is confirmed to hold"
             ),
             CheckViolation::UnknownSegmentClone { path } => format!(
                 "unknown-segment clone: {path} — sits under a top-level directory no \

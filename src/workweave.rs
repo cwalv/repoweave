@@ -32,7 +32,9 @@
 /// `{project}--{workweave}/<segment>`.
 const PRE_FLAT_BRIDGE: &str = "0.25.0";
 
-use crate::cli::consent::{DiscardUncommittedConsent, DiscardUnlandedConsent};
+use crate::cli::consent::{
+    DiscardUncommittedConsent, DiscardUnlandedConsent, DiscardUnpublishedConsent,
+};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoPath, Role, SubmoduleRecursion, WorkweaveId, WorkweaveName,
 };
@@ -3701,6 +3703,7 @@ impl WorkweaveDeletion {
 /// workweave through a path passes the directory it believes `name` denotes,
 /// and a disagreement with the registry refuses instead of deleting somewhere
 /// else. A caller holding nothing but a name passes `None`.
+#[allow(clippy::too_many_arguments)]
 pub fn delete_workweave(
     ws_root: &Path,
     project: &ProjectName,
@@ -3708,6 +3711,7 @@ pub fn delete_workweave(
     expected_dir: Option<&Path>,
     discard_uncommitted: Option<DiscardUncommittedConsent>,
     discard_unlanded: Option<DiscardUnlandedConsent>,
+    discard_unpublished: Option<DiscardUnpublishedConsent>,
     remote_deletes: &crate::deletion::RemoteDeletes,
 ) -> anyhow::Result<WorkweaveDeletion> {
     let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
@@ -3751,6 +3755,7 @@ pub fn delete_workweave(
         &workweave_dir,
         discard_uncommitted,
         discard_unlanded,
+        discard_unpublished,
         remote_deletes,
         Deleter::Operator,
     )
@@ -4002,6 +4007,7 @@ pub(crate) fn delete_workweave_for_retire(
     name: &WorkweaveName,
     workweave_dir: &Path,
     landed_into: crate::records::BranchName,
+    discard_unpublished: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<WorkweaveDeletion> {
     crate::workspace::require_agreement(&CanonicalPath::of(ws_root), project, workweave_dir)?;
     delete_workweave_inner_at(
@@ -4011,9 +4017,58 @@ pub(crate) fn delete_workweave_for_retire(
         workweave_dir,
         None,
         None,
+        discard_unpublished,
         &crate::deletion::RemoteDeletes::default(),
         Deleter::RetiringOp { landed_into },
     )
+}
+
+/// Refuse the delete while a store nested in one of `workweave_dir`'s
+/// checkouts holds what no remote has, the way every removal of a checkout
+/// judges the stores it removes.
+fn judge_nested_stores(
+    ws_root: &Path,
+    workweave_dir: &Path,
+    project: &ProjectName,
+    manifest: &Manifest,
+    cause: crate::sync::RemovalCause,
+    discard: Option<DiscardUnpublishedConsent>,
+) -> anyhow::Result<()> {
+    let line_from = match cause {
+        crate::sync::RemovalCause::Retire => workweave_dir,
+        _ => ws_root,
+    };
+    let mut checkouts: Vec<(String, PathBuf, Box<dyn Vcs>)> = vec![(
+        project_rel_path(project),
+        workweave_dir.join(project_rel_dir(project)),
+        project_vcs(),
+    )];
+    checkouts.extend(
+        member_depth_checkouts(workweave_dir, manifest)
+            .into_iter()
+            .map(|checkout| {
+                (
+                    checkout.label(),
+                    workweave_dir.join(checkout.repo_path.as_path()),
+                    checkout.vcs,
+                )
+            }),
+    );
+    for (label, checkout, vcs) in checkouts {
+        if !checkout.exists() || !vcs.is_repo(&checkout) {
+            continue;
+        }
+        crate::sync::judge_removed_stores(
+            vcs.as_ref(),
+            &checkout,
+            crate::sync::StoresRemoved::Nested,
+            &label,
+            cause,
+            line_from,
+            discard,
+        )?;
+    }
+    Ok(())
 }
 
 /// Who deletes a workweave: whether an in-flight op record refuses the delete.
@@ -4097,6 +4152,7 @@ fn delete_workweave_inner_at(
     workweave_dir: &Path,
     discard_uncommitted: Option<DiscardUncommittedConsent>,
     discard_unlanded: Option<DiscardUnlandedConsent>,
+    discard_unpublished: Option<DiscardUnpublishedConsent>,
     remote_deletes: &crate::deletion::RemoteDeletes,
     deleter: Deleter,
 ) -> anyhow::Result<WorkweaveDeletion> {
@@ -4162,6 +4218,19 @@ fn delete_workweave_inner_at(
         }
     }
     refusals.into_result()?;
+    if workweave_dir.exists() {
+        judge_nested_stores(
+            ws_root,
+            &workweave_dir,
+            project,
+            &manifest,
+            match &deleter {
+                Deleter::Operator => crate::sync::RemovalCause::WorkweaveDelete(name),
+                Deleter::RetiringOp { .. } => crate::sync::RemovalCause::Retire,
+            },
+            discard_unpublished,
+        )?;
+    }
 
     let rule = match feature_of(ws_root, project, &workweave_dir)? {
         Some((branch, recorded)) => Some(crate::deletion::Rule::open(crate::deletion::Request {
@@ -4598,6 +4667,7 @@ pub fn handle_claude_hook() -> anyhow::Result<()> {
                         marker.project(),
                         &name,
                         Some(Path::new(&worktree_path)),
+                        None,
                         None,
                         None,
                         &crate::deletion::RemoteDeletes::default(),

@@ -996,6 +996,7 @@ pub fn run() -> anyhow::Result<()> {
                 path,
                 delete,
                 delete_shared_clone,
+                discard_unpublished,
                 project,
                 no_materialize,
             } => {
@@ -1005,6 +1006,7 @@ pub fn run() -> anyhow::Result<()> {
                 add_remove::run_remove(
                     &path,
                     add_remove::Removal::from_flags(delete, delete_shared_clone)?,
+                    consent::DiscardUnpublishedConsent::from_flag(discard_unpublished),
                     &ctx,
                     activate::ActivateOptions { no_materialize },
                 )?;
@@ -1139,6 +1141,7 @@ pub fn run() -> anyhow::Result<()> {
                         name,
                         discard_uncommitted,
                         discard_unlanded,
+                        discard_unpublished,
                         delete_remote,
                         delete_remote_unlanded,
                         json,
@@ -1153,6 +1156,7 @@ pub fn run() -> anyhow::Result<()> {
                             None,
                             consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
                             consent::DiscardUnlandedConsent::from_flag(discard_unlanded),
+                            consent::DiscardUnpublishedConsent::from_flag(discard_unpublished),
                             &crate::deletion::RemoteDeletes {
                                 landed: delete_remote,
                                 unlanded: delete_remote_unlanded,
@@ -1575,6 +1579,7 @@ pub fn run() -> anyhow::Result<()> {
             json,
             jobs,
             project,
+            discard_unpublished,
             do_continue,
         }) => {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
@@ -1584,6 +1589,9 @@ pub fn run() -> anyhow::Result<()> {
                     op: Box::new(crate::op_state::resume(ctx.active_path())?),
                     project_override,
                     allow_member_change,
+                    discard_unpublished: consent::DiscardUnpublishedConsent::from_flag(
+                        discard_unpublished,
+                    ),
                 }
             } else {
                 crate::branch::require_recorded(&ctx)?;

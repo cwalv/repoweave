@@ -141,6 +141,33 @@ impl From<&Argv> for Argv {
 /// surrounding process (a `pre-push` hook, another git invocation) makes
 /// `git` operate on the wrong repository regardless of the working directory
 /// set here.
+/// Whether `dir` is a repository's own directory whose `core.worktree` names
+/// a directory that is gone. A submodule's store keeps naming its checkout
+/// after the checkout is removed, and git refuses to run in it then; with the
+/// store standing in as its own work tree, what reads only refs and objects
+/// runs there.
+fn names_a_gone_work_tree(dir: &Path) -> bool {
+    if !dir.join("HEAD").is_file() || !dir.join("objects").is_dir() {
+        return false;
+    }
+    let Ok(config) = std::fs::read_to_string(dir.join("config")) else {
+        return false;
+    };
+    let mut in_core = false;
+    config.lines().map(str::trim).any(|line| {
+        if line.starts_with('[') {
+            in_core = line.eq_ignore_ascii_case("[core]");
+            return false;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            return false;
+        };
+        in_core
+            && key.trim().eq_ignore_ascii_case("worktree")
+            && !dir.join(value.trim().trim_matches('"')).exists()
+    })
+}
+
 pub(super) struct GitCommand {
     command: Command,
 }
@@ -171,6 +198,10 @@ impl GitCommand {
     }
 
     pub(super) fn current_dir(&mut self, dir: impl AsRef<Path>) -> &mut GitCommand {
+        let dir = dir.as_ref();
+        if names_a_gone_work_tree(dir) {
+            self.command.env("GIT_DIR", dir).env("GIT_WORK_TREE", dir);
+        }
         self.command.current_dir(dir);
         self
     }

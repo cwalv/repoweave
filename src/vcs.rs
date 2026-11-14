@@ -4087,12 +4087,15 @@ pub trait Vcs: Send + Sync {
     /// For git: `git rev-parse --symbolic-full-name @{-1}`.
     fn branch_left(&self, checkout: &Path) -> Result<Option<RawRefName>, VcsError>;
 
-    /// The checkouts of the stores nested inside `checkout` whose directory
-    /// removing it removes, at any depth, each as a path relative to
-    /// `checkout`, outermost first.
+    /// Every store nested in `checkout` that removing it removes, at any
+    /// depth, checked out or not: each checked-out one by its checkout,
+    /// outermost first, then each other one by its store. Each is a path
+    /// relative to `checkout`, or absolute where it lies outside it.
     ///
-    /// For git: every initialized submodule, `git submodule foreach
-    /// --recursive`.
+    /// For git: every initialized submodule (`git submodule foreach
+    /// --recursive`), then every repository under the `modules` directory of
+    /// the checkout's git dir and of each store found, and, where the checkout
+    /// is its own store, of each linked worktree's.
     fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
     /// The commits of `branch` that no remote-tracking branch reaches and no

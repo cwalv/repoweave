@@ -632,10 +632,13 @@ weave, where the clone is the repo's only store, that is anything the store
 holds whose commits no remote-tracking branch of a remote it has reaches,
 each named: a branch, a tag, a [backup](../explanation/destructive-operations.md),
 an operation's savepoint, edits the VCS set aside, or a checked-out commit on
-no branch. Each submodule store inside the clone is asked the same, and what
-it holds is named with the submodule's path. The remotes are fetched first,
-so the comparison is with what they hold now; a remote that does not answer
-is [`remotes-unconfirmed`](#remotes-unconfirmed). In a workweave, it is a
+no branch. Every submodule store the removal removes is asked the same,
+checked out or not: each inside the clone, and each a workweave's checkout
+keeps, which `rwv workweave delete` and `rwv land --retire` remove too. What
+it holds is named with the submodule's path, or, for a store with no
+checkout, the store's path. The remotes are fetched first, so the comparison
+is with what they hold now; a remote that does not answer is
+[`remotes-unconfirmed`](#remotes-unconfirmed). In a workweave, it is also a
 worktree tip the canonical clone does not contain.
 
 **Why.** Dropping a repo removes its checkout. If it holds the only copy of
@@ -650,7 +653,13 @@ backups and what each holds; `rwv backup drop <repo> <name>` drops the ones that
 not wanted; the refusal prints that line with the backups it names. `rwv
 doctor --fix` keeps a savepoint no operation holds as a backup. Other
 work that is genuinely unwanted is deleted with the VCS (the branch or tag
-deleted, the set-aside edits dropped), so the loss is a deliberate act. A
+deleted, the set-aside edits dropped), so the loss is a deliberate act, or
+let go whole with `--discard-unpublished` (`rwv member remove <repo> --delete
+--discard-unpublished`, `rwv workweave delete <name> --discard-unpublished`,
+`rwv land --continue --discard-unpublished`), which lists what went; the
+refusal prints the line for the verb that met it. A retire this refuses
+leaves the landing done and the workweave in place, and `rwv land
+--continue` retires it once nothing refuses. A
 landing or sync whose prune this refuses still completes and prints the
 checkout it kept, why, and the removal that takes it later, `rwv -C <ws>
 member remove <repo> --delete`; a sync then exits 1. Re-running it will not
@@ -660,9 +669,10 @@ prune the checkout.
 
 ### `remotes-unconfirmed`
 
-**Condition.** Removing a checkout would destroy its repo's only store — the
-clone in the primary weave, or a submodule store inside it — and fetching
-one of that store's remotes failed: the remote is offline, gone, or refused.
+**Condition.** Removing a checkout would destroy a store — the clone in the
+primary weave, or a submodule store inside it or kept by a workweave's
+checkout — and fetching one of that store's remotes failed: the remote is
+offline, gone, or refused.
 
 **Why.** Whether the store holds what no remote has is read against what the
 remotes hold now. A remote that does not answer leaves that unknowable, and
@@ -670,8 +680,11 @@ what it held as last fetched may no longer be there.
 
 **Exits.** Run the removal again once the remote answers. To remove the
 member and keep its clone on disk, run `rwv member remove <repo>` without
-`--delete`. A landing or sync that meets this skips the prune, keeps the
-checkout, and prints the removal that takes it once the remote answers.
+`--delete`. For a remote gone for good, `--discard-unpublished` removes the
+store judged against the remote as last fetched, listing what no remote is
+confirmed to hold before it goes; the refusal prints the line for the verb
+that met it. A landing or sync that meets this skips the prune, keeps the
+checkout, and prints both removals.
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 

@@ -4035,11 +4035,46 @@ impl Vcs for GitVcs {
             ],
             checkout,
         )?;
-        Ok(listed
+        let mut nested: Vec<PathBuf> = listed
             .lines()
             .filter(|line| !line.is_empty())
             .map(PathBuf::from)
-            .collect())
+            .collect();
+        let git_dir_of = |dir: &Path| -> Result<PathBuf, VcsError> {
+            Ok(PathBuf::from(Self::run_trimmed(
+                ["rev-parse", "--absolute-git-dir"],
+                dir,
+            )?))
+        };
+        let own = git_dir_of(checkout)?;
+        let common = PathBuf::from(Self::run_trimmed(
+            ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            checkout,
+        )?);
+        let mut pending = vec![own.clone()];
+        if CanonicalPath::of(&own) == CanonicalPath::of(&common) {
+            pending.extend(subdirectories(&common.join("worktrees")));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for rel in &nested {
+            let git_dir = git_dir_of(&checkout.join(rel))?;
+            seen.insert(CanonicalPath::of(&git_dir));
+            pending.push(git_dir);
+        }
+        while let Some(git_dir) = pending.pop() {
+            for store in module_stores(&git_dir.join("modules")) {
+                if seen.insert(CanonicalPath::of(&store)) {
+                    nested.push(
+                        store
+                            .strip_prefix(checkout)
+                            .map(Path::to_path_buf)
+                            .unwrap_or_else(|_| store.clone()),
+                    );
+                    pending.push(store);
+                }
+            }
+        }
+        Ok(nested)
     }
 
     fn unpushed_commits(
@@ -7785,6 +7820,33 @@ impl WorkspacePopulation for GitVcs {
             stderr: "the submodule's repository has no remote to fetch from".into(),
         }))
     }
+}
+
+fn subdirectories(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// The repositories git keeps under a `modules` directory, a submodule's name
+/// being a path of any depth there; each one's own `modules` is not walked.
+fn module_stores(modules: &Path) -> Vec<PathBuf> {
+    let mut stores = Vec::new();
+    let mut pending = subdirectories(modules);
+    while let Some(dir) = pending.pop() {
+        if dir.join("HEAD").is_file() && dir.join("objects").is_dir() {
+            stores.push(dir);
+        } else {
+            pending.extend(subdirectories(&dir));
+        }
+    }
+    stores.sort();
+    stores
 }
 
 /// The copy of `submodule`'s repository kept under `module_data`.

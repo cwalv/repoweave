@@ -478,6 +478,11 @@ pub enum Commands {
         /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out, or the branch a carry replays) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing, refused where `rwv.toml` was edited since the stop; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
+        /// With `--continue`, retire the workweave even if a store nested in one of its
+        /// checkouts holds what no remote is confirmed to have, as `rwv workweave delete
+        /// --discard-unpublished` does
+        #[arg(long, requires = "do_continue")]
+        discard_unpublished: bool,
         /// Resume a landing a conflict stopped, after resolving it; every parameter comes
         /// from the op record. `--project` asserts the recorded project and refuses another
         #[arg(long = "continue")]
@@ -900,6 +905,12 @@ pub enum MemberAction {
         /// With `--delete`, remove the clone even if other projects still reference it
         #[arg(long, requires = "delete")]
         delete_shared_clone: bool,
+        /// With `--delete`, remove the clone with what its stores, nested ones included, hold
+        /// that no remote is confirmed to have, a remote that does not answer counting as
+        /// having nothing more than it last gave; each such thing is listed before the clone
+        /// goes. No backup is kept: it would go with the store
+        #[arg(long, requires = "delete")]
+        discard_unpublished: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
@@ -1093,6 +1104,12 @@ pub enum WorkweaveAction {
         /// detached commits and the rule keeps the branch.
         #[arg(long)]
         discard_unlanded: bool,
+        /// Delete even if a store nested in a checkout of the workweave holds what no
+        /// remote is confirmed to have, a remote that does not answer counting as having
+        /// nothing more than it last gave; each such thing is listed before it goes. No
+        /// backup is kept: it would go with the store
+        #[arg(long)]
+        discard_unpublished: bool,
         /// Also delete each push branch of what belongs to the workweave that
         /// has landed on the target's remote-tracking branch
         #[arg(long)]

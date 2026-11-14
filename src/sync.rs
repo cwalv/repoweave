@@ -6,6 +6,7 @@
 //! savepoints.
 
 use crate::check::UnparseableProjectKind;
+use crate::cli::consent::DiscardUnpublishedConsent;
 use crate::diagnosis::{Report, State};
 use crate::lock::generate_lock;
 use crate::manifest::{
@@ -2032,7 +2033,7 @@ pub(crate) fn prune_dropped_repo(
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    let removal = plan_checkout_removal(vcs, ctx, repo_path, RemovalCause::DroppedFromLock)?;
+    let removal = plan_checkout_removal(vcs, ctx, repo_path, RemovalCause::DroppedFromLock, None)?;
     let store = removal.linked_into();
     removal.perform(vcs, repo_path)?;
     if let Some(store) = store {
@@ -2048,61 +2049,109 @@ pub(crate) fn prune_dropped_repo(
 
 /// The line that removes `repo`'s checkout in `workspace`, spelled to run
 /// from where this invocation was typed.
-pub(crate) fn remove_delete_line(workspace: &Path, repo: &RepoPath) -> String {
+fn remove_delete_line(workspace: &Path, repo: &str) -> String {
     crate::workspace::rwv_line(workspace, &format!("member remove {repo} --delete"))
 }
 
 /// What is removing a checkout, as a refusal of that removal tells it.
 #[derive(Clone, Copy)]
-pub(crate) enum RemovalCause {
+pub(crate) enum RemovalCause<'a> {
     DroppedFromLock,
     RemoveDelete,
+    WorkweaveDelete(&'a crate::manifest::WorkweaveName),
+    Retire,
 }
 
-impl RemovalCause {
+impl RemovalCause<'_> {
     fn releaser(self) -> crate::workweave::Releaser {
         match self {
             Self::DroppedFromLock => crate::workweave::Releaser::Prune,
-            Self::RemoveDelete => crate::workweave::Releaser::Remove,
+            Self::RemoveDelete | Self::WorkweaveDelete(_) | Self::Retire => {
+                crate::workweave::Releaser::Remove
+            }
         }
     }
 
-    fn situation(self) -> &'static str {
+    fn situation(self) -> String {
         match self {
-            Self::DroppedFromLock => "dropped from lock",
-            Self::RemoveDelete => "named for `rwv member remove --delete`",
+            Self::DroppedFromLock => "dropped from lock".to_owned(),
+            Self::RemoveDelete => "named for `rwv member remove --delete`".to_owned(),
+            Self::WorkweaveDelete(name) => {
+                format!("a checkout of workweave `{name}`, named for `rwv workweave delete`")
+            }
+            Self::Retire => "a checkout of the workweave `rwv land --retire` removes".to_owned(),
         }
     }
 
     /// The last step of a remedy. A dropped checkout the op could not prune
     /// stays unpruned: the next op starts from a manifest that no longer names
     /// it, so re-running sync is not a way to remove it.
-    fn rerun(self, workspace: &Path, repo: &RepoPath) -> String {
+    fn rerun(self, workspace: &Path, repo: &str) -> String {
         match self {
             Self::DroppedFromLock => format!(
                 "remove the checkout with `{}`",
                 remove_delete_line(workspace, repo)
             ),
             Self::RemoveDelete => format!("re-run `rwv member remove {repo} --delete`"),
+            Self::WorkweaveDelete(name) => format!(
+                "re-run `{}`",
+                crate::workspace::rwv_line(workspace, &format!("workweave delete {name}"))
+            ),
+            Self::Retire => format!(
+                "`{}` re-runs the retire check",
+                crate::workspace::rwv_line(workspace, "land --continue")
+            ),
         }
     }
 
-    fn then_rerun(self, first: &str, workspace: &Path, repo: &RepoPath) -> String {
+    fn then_rerun(self, first: &str, workspace: &Path, repo: &str) -> String {
         match self {
-            Self::DroppedFromLock => format!("{first}, then {}", self.rerun(workspace, repo)),
-            Self::RemoveDelete => format!("{first} and {}", self.rerun(workspace, repo)),
+            Self::DroppedFromLock | Self::Retire => {
+                format!("{first}, then {}", self.rerun(workspace, repo))
+            }
+            Self::RemoveDelete | Self::WorkweaveDelete(_) => {
+                format!("{first} and {}", self.rerun(workspace, repo))
+            }
         }
     }
 
-    fn when_unconfirmed(self, workspace: &Path, repo: &RepoPath) -> String {
+    /// The line that removes the stores with what no remote is confirmed to
+    /// hold.
+    fn discarding(self, workspace: &Path, repo: &str) -> String {
+        let args = match self {
+            Self::DroppedFromLock | Self::RemoveDelete => {
+                format!("member remove {repo} --delete --discard-unpublished")
+            }
+            Self::WorkweaveDelete(name) => format!("workweave delete {name} --discard-unpublished"),
+            Self::Retire => "land --continue --discard-unpublished".to_owned(),
+        };
+        crate::workspace::rwv_line(workspace, &args)
+    }
+
+    fn preface(self) -> &'static str {
+        match self {
+            Self::Retire => "the landing is done and the workweave was not deleted. ",
+            Self::DroppedFromLock | Self::RemoveDelete | Self::WorkweaveDelete(_) => "",
+        }
+    }
+
+    fn when_unconfirmed(self, workspace: &Path, repo: &str) -> String {
+        let discard = self.discarding(workspace, repo);
         match self {
             Self::DroppedFromLock => format!(
-                "The checkout is kept; once the remote answers, {}",
+                "The checkout is kept; once the remote answers, {}; or remove it with what no \
+                 remote is confirmed to hold: `{discard}`",
                 self.rerun(workspace, repo)
             ),
             Self::RemoveDelete => format!(
-                "Run it again once the remote answers, or keep the clone: `rwv member remove \
-                 {repo}`, without `--delete`, removes the member and leaves its clone on disk"
+                "Run it again once the remote answers; or keep the clone: `rwv member remove \
+                 {repo}`, without `--delete`, removes the member and leaves its clone on disk; \
+                 or remove it with what no remote is confirmed to hold: `{discard}`"
+            ),
+            Self::WorkweaveDelete(_) | Self::Retire => format!(
+                "Once the remote answers, {}; or remove it with what no remote is confirmed to \
+                 hold: `{discard}`",
+                self.rerun(workspace, repo)
             ),
         }
     }
@@ -2167,6 +2216,7 @@ pub(crate) fn plan_checkout_removal(
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
     cause: RemovalCause,
+    discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<CheckoutRemoval> {
     let dropped = cause.situation();
     let dest = ctx.active_path().join(repo_path.as_path());
@@ -2194,9 +2244,21 @@ pub(crate) fn plan_checkout_removal(
     }
     report.note(format!(
         "{repo_path}: {dropped}; once nothing above refuses it, {}",
-        cause.rerun(ctx.active_path(), repo_path)
+        cause.rerun(ctx.active_path(), repo_path.as_str())
     ));
     report.into_result()?;
+    judge_removed_stores(
+        vcs,
+        &dest,
+        match removes_store {
+            true => StoresRemoved::OwnAndNested,
+            false => StoresRemoved::Nested,
+        },
+        repo_path.as_str(),
+        cause,
+        ctx.active_path(),
+        discard,
+    )?;
 
     match &ctx.checkout {
         Checkout::Workweave {
@@ -2216,7 +2278,7 @@ pub(crate) fn plan_checkout_removal(
                         if !is_ancestor && !on_a_branch {
                             crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
                                 "{repo_path}: {dropped} but worktree has commits not in canonical clone; {}",
-                                cause.then_rerun("push/merge them", ctx.active_path(), repo_path)
+                                cause.then_rerun("push/merge them", ctx.active_path(), repo_path.as_str())
                             );
                         }
                     }
@@ -2283,43 +2345,6 @@ pub(crate) fn plan_checkout_removal(
             }
         }
         Checkout::Primary { .. } => {
-            let stores = stores_removed_with(vcs, &dest, repo_path, dropped)?;
-            refresh_remotes(vcs, &stores, ctx.active_path(), repo_path, cause)?;
-            let mut held = Vec::new();
-            for (nested, store) in &stores {
-                let found = vcs
-                    .held_by_no_remote(store)
-                    .with_context(|| {
-                        format!(
-                            "{repo_path}: {dropped}, but what its clone holds that no remote has \
-                             could not be read; refusing to remove a clone whose unpublished work \
-                             could not be ruled out"
-                        )
-                    })
-                    .map_err(|e| {
-                        crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e)
-                    })?;
-                held.extend(found.into_iter().map(|h| Held {
-                    nested: nested.clone(),
-                    held: h,
-                }));
-            }
-            if !held.is_empty() {
-                crate::refuse!(
-                    RefusalKind::DroppedRepoHasUniqueCommits,
-                    "{repo_path}: {dropped} but its clone, the repo's only store here, holds what \
-                     no remote has: {}; removing the clone removes them. {}",
-                    held.iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    cause.then_rerun(
-                        &publish_or_drop(repo_path, &held),
-                        ctx.active_path(),
-                        repo_path
-                    )
-                );
-            }
             // DESTROY-STORE: `dest` in the primary IS the canonical
             // store — the refdb and object database every workweave worktree
             // of this repo is registered in. Its checkouts were judged above.
@@ -2328,8 +2353,114 @@ pub(crate) fn plan_checkout_removal(
     }
 }
 
-/// Something a store removed with a clone holds that no remote has, with the
-/// path of the nested store holding it, `None` for the clone's own.
+/// Which stores removing a checkout removes besides those nested in it.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum StoresRemoved {
+    /// The checkout is its repo's store, and goes with it.
+    OwnAndNested,
+    /// The checkout is linked into a store that outlives it.
+    Nested,
+}
+
+/// Refuse removing the checkout at `dest` while a store its removal removes
+/// holds what no remote has, judged against its remotes as they answer now.
+/// A remote that does not answer refuses too: what it holds cannot be
+/// confirmed. `discard` lets both go, naming what goes. No remote is asked
+/// where the removal removes no store.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn judge_removed_stores(
+    vcs: &dyn Vcs,
+    dest: &Path,
+    removed: StoresRemoved,
+    repo: &str,
+    cause: RemovalCause,
+    workspace: &Path,
+    discard: Option<DiscardUnpublishedConsent>,
+) -> anyhow::Result<()> {
+    let situation = cause.situation();
+    let stores = stores_removed_with(vcs, dest, removed, repo, &situation)?;
+    if stores.is_empty() {
+        return Ok(());
+    }
+    let whose = match removed {
+        StoresRemoved::OwnAndNested => "its clone holds",
+        StoresRemoved::Nested => "the stores nested in its checkout hold",
+    };
+    let unanswered = refresh_remotes(vcs, &stores);
+    if !unanswered.is_empty() && discard.is_none() {
+        crate::refuse!(
+            RefusalKind::RemotesUnconfirmed,
+            "{}{repo}: {situation}, but what its remotes hold could not be confirmed ({}), so \
+             whether {whose} what no remote has cannot be told. {}",
+            cause.preface(),
+            unanswered.join("; "),
+            cause.when_unconfirmed(workspace, repo)
+        );
+    }
+    let mut held = Vec::new();
+    for (nested, store) in &stores {
+        let found = vcs
+            .held_by_no_remote(store)
+            .with_context(|| {
+                format!(
+                    "{repo}: {situation}, but what its stores hold that no remote has could not \
+                     be read; refusing to remove a store whose unpublished work could not be ruled \
+                     out"
+                )
+            })
+            .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?;
+        held.extend(found.into_iter().map(|h| Held {
+            nested: nested.clone(),
+            held: h,
+        }));
+    }
+    let listed = held
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if discard.is_some() {
+        if !held.is_empty() || !unanswered.is_empty() {
+            let unconfirmed = match unanswered.is_empty() {
+                true => String::new(),
+                false => format!(
+                    " (its remotes as last fetched; unconfirmed: {})",
+                    unanswered.join("; ")
+                ),
+            };
+            let what = match held.is_empty() {
+                true => "nothing beyond what they last gave".to_owned(),
+                false => listed,
+            };
+            eprintln!(
+                "rwv: {repo}: removing {} with what no remote is confirmed to hold{unconfirmed}: \
+                 {what}",
+                dest.display()
+            );
+        }
+        return Ok(());
+    }
+    if held.is_empty() {
+        return Ok(());
+    }
+    let (subject, object) = match removed {
+        StoresRemoved::OwnAndNested => {
+            ("its clone, the repo's only store here, holds", "the clone")
+        }
+        StoresRemoved::Nested => ("the stores nested in its checkout hold", "the checkout"),
+    };
+    crate::refuse!(
+        RefusalKind::DroppedRepoHasUniqueCommits,
+        "{}{repo}: {situation}, but {subject} what no remote has: {listed}; removing \
+         {object} removes them. {}; or remove it with them: `{}`",
+        cause.preface(),
+        cause.then_rerun(&publish_or_drop(repo, &held), workspace, repo),
+        cause.discarding(workspace, repo)
+    );
+}
+
+/// Something a store removed with a checkout holds that no remote has, with
+/// the path of the nested store holding it, `None` for the clone's own.
 struct Held {
     nested: Option<PathBuf>,
     held: crate::vcs::HeldAlone,
@@ -2344,24 +2475,28 @@ impl std::fmt::Display for Held {
     }
 }
 
-/// The stores removing the clone at `dest` removes: its own, then each nested
-/// inside it, with the nested one's path.
+/// The stores removing the checkout at `dest` removes: its own where
+/// `removed` says so, then each nested inside it, with the nested one's path.
 fn stores_removed_with(
     vcs: &dyn Vcs,
     dest: &Path,
-    repo_path: &RepoPath,
-    dropped: &str,
+    removed: StoresRemoved,
+    repo: &str,
+    situation: &str,
 ) -> anyhow::Result<Vec<(Option<PathBuf>, PathBuf)>> {
     let nested = vcs
         .nested_stores(dest)
         .with_context(|| {
             format!(
-                "{repo_path}: {dropped}, but the stores nested inside its clone could not be \
-                 listed; refusing to remove a clone whose unpublished work could not be ruled out"
+                "{repo}: {situation}, but the stores nested inside its checkout could not be \
+                 listed; refusing to remove a checkout whose unpublished work could not be ruled \
+                 out"
             )
         })
         .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?;
-    Ok(std::iter::once((None, dest.to_path_buf()))
+    let own = (removed == StoresRemoved::OwnAndNested).then(|| (None, dest.to_path_buf()));
+    Ok(own
+        .into_iter()
         .chain(nested.into_iter().map(|rel| {
             let store = dest.join(&rel);
             (Some(rel), store)
@@ -2370,17 +2505,10 @@ fn stores_removed_with(
 }
 
 /// Bring what each of `stores` knows of its remotes up to date, so what no
-/// remote has is judged against the remotes as they are. A nested store keeps
-/// no tip a remote rewrote a branch off: nothing rwv can drop may be left in
-/// it. A remote that does not answer refuses the removal: what it holds
-/// cannot be confirmed.
-fn refresh_remotes(
-    vcs: &dyn Vcs,
-    stores: &[(Option<PathBuf>, PathBuf)],
-    workspace: &Path,
-    repo_path: &RepoPath,
-    cause: RemovalCause,
-) -> anyhow::Result<()> {
+/// remote has is judged against the remotes as they are, and name each remote
+/// that did not answer. A nested store keeps no tip a remote rewrote a branch
+/// off: nothing rwv can drop may be left in it.
+fn refresh_remotes(vcs: &dyn Vcs, stores: &[(Option<PathBuf>, PathBuf)]) -> Vec<String> {
     let mut unanswered = Vec::new();
     for (nested, store) in stores {
         let within = nested
@@ -2401,28 +2529,24 @@ fn refresh_remotes(
             Err(e) => unanswered.push(format!("its remotes{within}: {e:#}")),
         }
     }
-    if unanswered.is_empty() {
-        return Ok(());
-    }
-    crate::refuse!(
-        RefusalKind::RemotesUnconfirmed,
-        "{repo_path}: {}, but what its remotes hold could not be confirmed ({}), so whether its \
-         clone holds what no remote has cannot be told. {}",
-        cause.situation(),
-        unanswered.join("; "),
-        cause.when_unconfirmed(workspace, repo_path)
-    );
+    unanswered
 }
 
 /// The ways to keep or let go of what a store holds that no remote has:
 /// publish it, commit what was set aside, and drop the backups, named.
-fn publish_or_drop(repo_path: &RepoPath, held: &[Held]) -> String {
+fn publish_or_drop(repo_path: &str, held: &[Held]) -> String {
     let own = || held.iter().filter(|h| h.nested.is_none()).map(|h| &h.held);
     let backups: Vec<&str> = own()
         .filter(|h| h.kind == crate::vcs::HeldKind::Backup)
         .map(|h| h.name.as_str())
         .collect();
-    let mut ways = vec!["publish what you keep (`rwv push` for branches)".to_owned()];
+    let mut ways = Vec::new();
+    if own().next().is_some() {
+        ways.push("publish what you keep (`rwv push` for branches)".to_owned());
+    }
+    if held.iter().any(|h| h.nested.is_some()) {
+        ways.push("publish what a submodule store holds to its remote with the VCS".to_owned());
+    }
     if held
         .iter()
         .any(|h| h.held.kind == crate::vcs::HeldKind::SetAsideEdits)
@@ -2770,6 +2894,7 @@ struct OpContext<'a> {
     /// Set when retire removed the workweave and the deletion rule kept
     /// branches of it.
     retire_left: std::sync::atomic::AtomicBool,
+    discard_unpublished: Option<DiscardUnpublishedConsent>,
     jobs: usize,
     handler: &'a dyn OutputHandler,
     /// The landing's claim on its target, held until the target's workspace
@@ -3087,6 +3212,9 @@ pub enum SyncRequest {
         /// The repos `--allow-member-change` names, added to the consent the
         /// op recorded at its start.
         allow_member_change: Vec<RepoOperand>,
+        /// Consent to the retire removing stores with what no remote is
+        /// confirmed to hold, for this run.
+        discard_unpublished: Option<DiscardUnpublishedConsent>,
     },
 }
 
@@ -3111,7 +3239,14 @@ fn run_machine(
     request: SyncRequest,
     handler: &dyn OutputHandler,
 ) -> anyhow::Result<()> {
-    let ctx = match request {
+    let discard_unpublished = match &request {
+        SyncRequest::Continue {
+            discard_unpublished,
+            ..
+        } => *discard_unpublished,
+        SyncRequest::Fresh { .. } => None,
+    };
+    let mut ctx = match request {
         SyncRequest::Fresh {
             landing,
             history,
@@ -3132,6 +3267,7 @@ fn run_machine(
             op,
             project_override,
             allow_member_change,
+            ..
         } if op.record.verb == op_state::OpVerb::Land && !op.record.records_a_plan() => {
             resume_before_the_plan(cwd_ctx, *op, project_override, allow_member_change, handler)?
         }
@@ -3139,6 +3275,7 @@ fn run_machine(
             op,
             project_override,
             allow_member_change,
+            ..
         } => load_continuing_context(
             cwd_ctx,
             *op,
@@ -3147,6 +3284,7 @@ fn run_machine(
             handler,
         )?,
     };
+    ctx.discard_unpublished = discard_unpublished;
 
     // Reported before the first phase, so a run that fails partway still
     // describes the op it was running rather than the arguments it was
@@ -4593,6 +4731,7 @@ fn guard_and_mark<'a>(
         retire,
         started_as,
         retire_left: std::sync::atomic::AtomicBool::new(false),
+        discard_unpublished: None,
         jobs,
         handler,
         project_vcs,
@@ -4898,6 +5037,7 @@ fn load_continuing_context<'a>(
         retire: record.retire,
         started_as,
         retire_left: std::sync::atomic::AtomicBool::new(false),
+        discard_unpublished: None,
         jobs: 1,
         handler,
         project_vcs,
@@ -8063,6 +8203,7 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 project,
                 &ctx.cwd_project_dir,
                 landed_into(ctx, project)?,
+                ctx.discard_unpublished,
             )?;
             eprintln!("retired workweave {}", retired.name().as_str());
             if emit_text {
@@ -8230,6 +8371,7 @@ fn drop_rebased_backups(ctx: &OpContext<'_>) {
 /// The [`RetiredWorkweave`] returned is the only evidence a retire happened:
 /// every path that does not reach the delete returns `Err`, and the primary
 /// weave never calls this at all.
+#[allow(clippy::too_many_arguments)]
 fn retire_workweave_after_landing(
     project_vcs: &dyn Vcs,
     ctx: &WorkspaceContext,
@@ -8238,6 +8380,7 @@ fn retire_workweave_after_landing(
     project: &crate::manifest::ProjectName,
     cwd_project_dir: &Path,
     landed_into: crate::records::BranchName,
+    discard_unpublished: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<RetiredWorkweave> {
     let resume = op_state::resume_command(op_state::OpVerb::Land);
 
@@ -8267,6 +8410,7 @@ fn retire_workweave_after_landing(
         workweave_name,
         workweave_dir,
         landed_into,
+        discard_unpublished,
     )
     .context("--retire: workweave delete failed")?;
 
@@ -13341,6 +13485,38 @@ mod tests {
             "each thing the submodule holds is named with its path; got:\n{msg}"
         );
         assert!(store.exists());
+    }
+
+    #[test]
+    fn prune_dropped_repo_asks_a_deinitialized_submodule_store() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, sub) = primary_with_a_submodule(tmp.path());
+        git(&sub, &["switch", "-q", "-c", "side"]);
+        commit(&sub, "only-in-sub");
+        git(&sub, &["switch", "-q", "--detach", "HEAD~1"]);
+        git(&store, &["submodule", "deinit", "-q", "-f", "sub"]);
+        assert!(!sub.join(".git").exists());
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("a submodule store with no checkout goes with the clone");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("branch side in submodule .git/modules/sub"),
+            "{msg}"
+        );
+        assert!(store.exists());
+
+        plan_checkout_removal(
+            git_vcs().as_ref(),
+            &ctx,
+            &dropped(),
+            RemovalCause::RemoveDelete,
+            Some(DiscardUnpublishedConsent::granted()),
+        )
+        .expect("consent lets what the submodule store holds go")
+        .perform(git_vcs().as_ref(), &dropped())
+        .unwrap();
+        assert!(!store.exists());
     }
 
     #[test]

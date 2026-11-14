@@ -23,7 +23,7 @@ fn the_harness_can_delete_and_create_without_consent() {
         };
         use std::path::Path;
         pub fn delete(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let _ = delete_workweave(ws, p, n, None, None, None, &RemoteDeletes::default());
+            let _ = delete_workweave(ws, p, n, None, None, None, None, &RemoteDeletes::default());
         }
         pub fn create(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
             let _ = create_workweave(CreateWorkweave {
@@ -56,7 +56,7 @@ fn delete_does_not_take_a_bool_for_discarding_uncommitted_work() {
         use repoweave::workweave::delete_workweave;
         use std::path::Path;
         pub fn delete(ws: &Path, p: &ProjectName, n: &WorkweaveName) {
-            let _ = delete_workweave(ws, p, n, None, true, None, &RemoteDeletes::default());
+            let _ = delete_workweave(ws, p, n, None, true, None, None, &RemoteDeletes::default());
         }
         "#,
     );
@@ -85,6 +85,34 @@ fn a_discard_uncommitted_consent_cannot_be_forged_by_tuple_literal() {
         use repoweave::cli::consent::DiscardUncommittedConsent;
         pub fn forge() -> DiscardUncommittedConsent {
             DiscardUncommittedConsent(())
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_discard_unpublished_consent_is_not_minted_outside_the_cli_module() {
+    assert_fails_with(
+        "E0624",
+        "consent is minted from a named flag, at dispatch, and nowhere else",
+        r#"
+        use repoweave::cli::consent::DiscardUnpublishedConsent;
+        pub fn mint() -> Option<DiscardUnpublishedConsent> {
+            DiscardUnpublishedConsent::from_flag(true)
+        }
+        "#,
+    );
+}
+
+#[test]
+fn a_discard_unpublished_consent_cannot_be_forged_by_tuple_literal() {
+    assert_fails_with(
+        "E0423",
+        "the field is private to cli::consent; only from_flag can produce one",
+        r#"
+        use repoweave::cli::consent::DiscardUnpublishedConsent;
+        pub fn forge() -> DiscardUnpublishedConsent {
+            DiscardUnpublishedConsent(())
         }
         "#,
     );

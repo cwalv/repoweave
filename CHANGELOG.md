@@ -198,7 +198,9 @@ records only the members a selector matches, never moving a pin backward.
 Also new: `rwv sync --reset-to-target`, `rwv activate --update`, `rwv branch
 set-history --unset`, `rwv cherry-pick --mainline` and `--except`, `rwv clone
 --no-reference`, `rwv member add --no-recurse-submodules`, `rwv member pin
---commit` and `rwv member set-branch --url`. Removed: `rwv workweave create
+--commit`, `rwv member set-branch --url`, and `--discard-unpublished` on `rwv
+member remove --delete`, `rwv workweave delete` and `rwv land --continue`.
+Removed: `rwv workweave create
 --discard-uncommitted` and `--discard-unmerged-commits`, and `rwv workweave
 delete --discard-unmerged-commits`, whose successor is `--discard-unlanded`.
 
@@ -234,8 +236,9 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   no branch. A branch whose commits a remote holds no longer blocks it.
 - The uncommitted-changes refusal of such a removal offers only to commit the
   edits: setting them aside would leave them in the clone being removed.
-- Each submodule store inside the clone is asked the same question, and what
-  it holds is named with the submodule's path. A tag on a tree or blob no
+- Each submodule store inside the clone is asked the same question, checked
+  out or not, and what it holds is named with the submodule's path, or, for a
+  store with no checkout, the store's. A tag on a tree or blob no
   remote has counts; a remote-tracking branch of a remote the clone no longer
   has does not count as a remote reaching anything.
 - The removal fetches the clone's remotes, and each submodule's, before it
@@ -243,6 +246,17 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   alone. A remote that does not answer refuses `member remove --delete`
   (`remotes-unconfirmed`), which offers `rwv member remove <repo>` without
   `--delete`; a landing or sync skips that prune and says so.
+- `rwv member remove --delete --discard-unpublished` removes the clone with
+  what no remote is confirmed to hold, a remote that does not answer counting
+  as holding what it last gave, and lists what went first. Both refusals, and
+  `rwv doctor`'s `orphaned-clone`, offer it.
+- A workweave's checkout keeps its submodules' stores, and `rwv member remove
+  --delete` there, a sync's prune, `rwv workweave delete` and `rwv land
+  --retire` ask each the same question before the checkout goes. A workweave
+  whose checkouts keep none asks no remote. `rwv workweave delete` takes
+  `--discard-unpublished`; a retire it refuses leaves the landing done and
+  the workweave in place, and `rwv land --continue`, or `rwv land --continue
+  --discard-unpublished`, retires it.
 - A landing or sync that does not prune a checkout always prints the checkout,
   why, and the removal that takes it later, `rwv -C <ws> member remove <repo>
   --delete` where it was typed elsewhere; the refusal names `rwv doctor --fix`
