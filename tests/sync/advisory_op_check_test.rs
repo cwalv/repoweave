@@ -265,7 +265,12 @@ fn clone_refuses_before_it_clones_and_runs_once_the_record_clears() {
     assert!(refused.contains("land in progress"), "{refused}");
     assert!(!ws.join("projects/dep").exists(), "{refused}");
 
-    std::fs::remove_file(ws.join(".rwv-op")).unwrap();
+    let (ok, aborted) = rwv(&["abort"], &ws);
+    assert!(
+        ok,
+        "abort ends an operation recorded with no project to read:\n{aborted}"
+    );
+    assert!(!ws.join(".rwv-op").exists(), "{aborted}");
     let (ok, cleared) = rwv(&["clone", &source], &ws);
     assert!(
         ok,

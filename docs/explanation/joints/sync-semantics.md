@@ -164,18 +164,16 @@ branch back once no checkout is left on it.
 when the repo's tip is one the operation accounts for: the savepoint itself
 (nothing to restore), a tip the op recorded while advancing or converging
 that repo, or a rebase, merge or cherry-pick the op left in progress. Every
-such tip is a commit the op made, so a clean abort writes no ref: what it
-discards is the op's own output. Any other tip, such as a commit made after
-the op stopped, is a foreign tip: abort refuses that repo, leaves its tip in
-place, keeps the op record, and lists the blocking commits.
-`--abandon-foreign-tip <repo>` consents to restoring over it, and the tip is
-first kept as a backup marked `abandoned`, named for the branch it moves
-off. The consent applies to the tip abort finds when it runs, so a foreign
-agent that kept committing between two runs has the tip as it then stands
-kept. `rwv backup list` shows the backup and `rwv backup drop` drops it.
+such tip is a commit the op made, so abort resets off it without a backup:
+what it discards is the op's own output. Any other tip that holds a commit the
+savepoint does not reach, such as a commit made after the op stopped, is kept
+as a backup before abort puts the repo back, and abort prints its name with the
+command that shows it; so is the working copy of a checkout stopped in a
+rebase or merge, from whichever workspace abort runs in. `rwv backup list`
+shows each backup and `rwv backup drop` drops it.
 
 **Planned whole.** Abort plans every write on both sides before it makes any. One
-blocked step (a foreign tip, a branch gone or checked out elsewhere, edits in a
+blocked step (a branch gone or checked out elsewhere, edits in a
 workspace abort was not run in, something unreadable) refuses the whole abort:
 nothing of either side is restored and `--continue` stays open. After it begins,
 `--continue` is closed, and a write that finds a repo moved since the plan stops

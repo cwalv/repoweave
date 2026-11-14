@@ -297,3 +297,99 @@ fn from_the_target_its_tip_at_the_seats_journaled_tip_is_left() {
 fn from_the_workweave_the_targets_tip_at_its_journaled_tip_is_left() {
     target_at_the_seats_journaled_tip_is_left(Invoked::Workweave);
 }
+
+/// What each show line abort printed for a backup it kept prints, run as
+/// printed.
+fn shown_backups(out: &Output) -> String {
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut lines = stdout.lines();
+    let mut shown = String::new();
+    while let Some(line) = lines.next() {
+        if !line.contains("kept as backup") || !line.ends_with("this shows it:") {
+            continue;
+        }
+        let show = lines
+            .next()
+            .unwrap_or_else(|| panic!("{}", transcript(out)));
+        let words: Vec<&str> = show.split_whitespace().collect();
+        assert_eq!(words[0], "git", "{show}");
+        shown.push_str(&common::git_in(Path::new("."), &words[1..]));
+        shown.push('\n');
+    }
+    shown
+}
+
+/// A commit the operator makes at a stop is not the operation's: abort puts
+/// the branch back to its savepoint all the same, keeping that commit as a
+/// backup first and naming it, from either workspace.
+fn a_commit_made_at_the_stop_is_kept_as_a_backup(from: Invoked) {
+    let parked = park(false);
+    let pre = pre_op(&parked);
+    run_sync_to_into_park(&parked);
+    commit_file(
+        &parked.seat.project,
+        "hand.txt",
+        "hand\n",
+        "HAND commit at the stop",
+    );
+
+    let out = parked.abort(from);
+    assert!(out.status.success(), "{from:?}:\n{}", transcript(&out));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("kept as backup"),
+        "{from:?}: abort names the backup and the command that shows it:\n{}",
+        transcript(&out)
+    );
+    assert_restored(&parked, &pre, &out);
+    assert!(
+        shown_backups(&out).contains("HAND commit at the stop"),
+        "{from:?}: the printed show line returns the commit\n{}",
+        transcript(&out)
+    );
+}
+
+#[test]
+fn from_the_workweave_a_commit_made_at_the_stop_is_kept_as_a_backup() {
+    a_commit_made_at_the_stop_is_kept_as_a_backup(Invoked::Workweave);
+}
+
+#[test]
+fn from_the_target_a_commit_made_at_the_stop_is_kept_as_a_backup() {
+    a_commit_made_at_the_stop_is_kept_as_a_backup(Invoked::Target);
+}
+
+/// A conflict resolution the operator staged at the stop is kept as a backup
+/// by abort, typed in either workspace, before it cancels the stopped
+/// operation.
+fn a_staged_resolution_is_kept_as_a_backup(from: Invoked) {
+    let parked = park(false);
+    let pre = pre_op(&parked);
+    run_sync_to_into_park(&parked);
+    std::fs::write(parked.seat.lib.join("c.txt"), "RESOLVED\n").unwrap();
+    common::git_in(&parked.seat.lib, &["add", "c.txt"]);
+
+    let out = parked.abort(from);
+    assert!(out.status.success(), "{from:?}:\n{}", transcript(&out));
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("uncommitted edits are kept as backup"),
+        "{from:?}:\n{}",
+        transcript(&out)
+    );
+    assert_restored(&parked, &pre, &out);
+    assert!(
+        shown_backups(&out).contains("RESOLVED"),
+        "{from:?}: the printed show line returns the resolution\n{}",
+        transcript(&out)
+    );
+}
+
+#[test]
+fn from_the_workweave_a_staged_resolution_is_kept_as_a_backup() {
+    a_staged_resolution_is_kept_as_a_backup(Invoked::Workweave);
+}
+
+#[test]
+fn from_the_target_a_staged_resolution_is_kept_as_a_backup() {
+    a_staged_resolution_is_kept_as_a_backup(Invoked::Target);
+}

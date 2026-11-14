@@ -311,16 +311,16 @@ name it there, or name the primary's clone directly. Nothing was written.
 ### `foreign-tip`
 
 **Condition.** `rwv abort` planned its restore and something blocks the plan: a
-ref at a tip the recorded operation does not account for, a branch gone or
-checked out where abort may not move it, uncommitted edits that returning a repo
-to its savepoint would discard in a workspace abort was not run in, an operation
-stopped in a repo that abort did not start, a cancel the VCS would refuse, or
-something abort could not read. The verdict is the same whichever workspace of
-the op abort runs from.
+branch gone or checked out where abort may not move it, uncommitted edits that
+returning a repo to its savepoint would discard in a workspace abort was not run
+in, a landing's target that something other than the landing moved since, a
+commit the landing wrote in its target that another lock pins, or something
+abort could not read. The verdict is the same whichever workspace of the op
+abort runs from.
 
-**Why.** Abort restores each repo to the savepoint the op took. A tip the op
-never wrote means something else moved that ref, and restoring would discard a
-change the operation is not responsible for.
+**Why.** Abort puts each ref back at its savepoint, keeping first every tip
+that holds commits the operation did not make. What it cannot move, or cannot
+move without losing what no backup keeps, it refuses rather than guess.
 
 Abort plans every step before it makes one, so the plan is blocked whole: a
 landing's target is restored whole or not at all, and one obstacle on either side
@@ -328,21 +328,14 @@ refuses both. The refusal says `nothing is restored` (`nothing of either side is
 restored` for a landing), keeps the op record and leaves `--continue` open. After
 an abort has begun it says `nothing more is restored` and `--continue` is closed.
 
-**Exits.** Inspect the named repos and decide: if the foreign commits are
-wanted, move them somewhere safe first; if not, reset the ref yourself and
-re-run `rwv abort`, or pass `--abandon-foreign-tip <repo>` to restore that repo
-anyway, first keeping the abandoned commits as a backup marked `abandoned`,
-which `rwv backup list` shows and `rwv backup drop` drops. Name the project
-repo as `projects/<name>`. For a landing's target, the abandon names every
-moved repo, and is not offered where the target's project branch moved; there
-`rwv abort --leave-target` ends the landing with its source restored and its
-target left as it stands, and a landing stopped in its retire can instead
-finish with `rwv land --continue`. A repo whose give-up is accepted only from
-the landing's other workspace is spelled `rwv -C <workspace> abort`; where it is
-accepted nowhere no give-up line is printed. Edits in the other workspace are set
-aside with the printed stash or status line. Where a plan could not be read,
-`rwv abort --leave-target` ends a landing without it. Each closing command carries
-every `--abandon-foreign-tip` already given. The refusal moves nothing and writes
+**Exits.** Make the fix the refusal names for each obstacle, then rerun `rwv
+abort`. For a landing's target that something else moved, `rwv abort
+--leave-target` ends the landing with its source restored and its target left
+as it stands, and a landing stopped in its retire can instead finish with `rwv
+land --continue`. Edits in the other workspace are set aside with the printed
+command, or kept by the abort run there (`rwv -C <workspace> abort`) where the
+refusal prints that line. Where a plan could not be read, `rwv abort
+--leave-target` ends a landing without it. The refusal moves nothing and writes
 nothing.
 
 **Where this sits.** [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
@@ -804,9 +797,8 @@ commit the branch never held or moves a pin onto the wrong one, without a word.
 
 **Exits.** The refusal prints the one that works. `rwv abort` puts back what
 the operation moved; where the branch holds a tip the operation did not write,
-such as an amended one, abort refuses it as foreign, and `rwv abort
---abandon-foreign-tip <repo>` puts the branch back and keeps that tip as an
-`abandoned` backup. Then rerun the verb. Nothing was moved by this refusal.
+such as an amended one, abort keeps that tip as a backup first. Then rerun the
+verb. Nothing was moved by this refusal.
 
 ### `repo-not-in-manifest`
 

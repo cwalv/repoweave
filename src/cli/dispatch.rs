@@ -1366,7 +1366,6 @@ pub fn run() -> anyhow::Result<()> {
             crate::log::run(&ctx, &query, OutputMode::from_flag(json))?;
         }
         Some(Commands::Abort {
-            abandon_foreign_tip,
             leave_target,
             discard_unreadable_record,
         }) => {
@@ -1374,13 +1373,7 @@ pub fn run() -> anyhow::Result<()> {
             if discard_unreadable_record {
                 sync::run_discard_unreadable_record(&ctx)?;
             } else {
-                sync::run_abort(
-                    &ctx,
-                    &crate::cli::consent::AbandonForeignTipConsent::from_flag(
-                        &abandon_foreign_tip,
-                        leave_target,
-                    ),
-                )?;
+                sync::run_abort(&ctx, leave_target)?;
             }
         }
         Some(Commands::Branch { action }) => match action {

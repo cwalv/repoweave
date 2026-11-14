@@ -80,16 +80,6 @@ Each named override is narrow — it bypasses one named precondition at a
 time. It does not turn into "disable all checks" — each precondition
 that an override bypasses is enumerated at the call site.
 
-`abort --abandon-foreign-tip <repo>` shows how narrow "narrow" is meant
-to be. It waives one precondition (the tip must be attributable to the
-op) for one repo per occurrence, and has no all-repos form — whether a
-particular repo's foreign commits are expendable is a judgment about
-those commits, so a blanket spelling would answer it for repos the
-operator never looked at. It is also the case where rule 3 does the
-naming: the flag says *abandon*, not *discard*, because the tip is kept
-as an `abandoned` backup before the branch moves off it. An override
-buys a waiver of the precondition it names, never of rule 3.
-
 `push --overwrite <repo>` follows the rule: it names the repo whose push
 branch it replaces, not a mode. It replaces only a diverged push branch of
 a branch nothing declares, keeps the remote tip as a backup first, and is
@@ -130,8 +120,8 @@ it holds. These discards make one first:
 - `rwv workweave delete --discard-uncommitted` keeps the edits of each
   checkout as a commit on its HEAD (untracked files included, ignored
   ones not), then the backup ref;
-- `rwv abort --abandon-foreign-tip <repo>` keeps the foreign tip, marked
-  `abandoned`;
+- `rwv abort` keeps a tip it moves a branch off that holds commits the
+  operation did not make;
 - `rwv abort`, before a reset or a cancel that is not the operation's own
   stopped step, keeps the uncommitted edits it would discard in a checkout
   of the workspace it is run in, an ignored file it would overwrite

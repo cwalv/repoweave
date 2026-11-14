@@ -40,7 +40,7 @@
 //! House rule: escape hatches are named for the precondition they waive,
 //! never a bare `--force`.
 
-use crate::manifest::{ProjectName, RepoKey, RepoOperand};
+use crate::manifest::{ProjectName, RepoOperand};
 use crate::vcs::ResolvedRevisionId;
 
 /// Proof that the operator consented to deleting a branch whose commits have
@@ -70,7 +70,7 @@ impl DiscardUnlandedConsent {
 /// of the repos named here, discarding the remote history the pushed tip does
 /// not contain. Minted from `--overwrite`, one occurrence per repo.
 ///
-/// Like [`AbandonForeignTipConsent`] it carries data, because the loss is
+/// It carries data, because the loss is
 /// per repo: a flag that named no repo, or all of them, would answer for
 /// repos the operator never looked at.
 #[derive(Debug, Clone, Default)]
@@ -368,72 +368,4 @@ impl RemoveUndeclaredLinksConsent {
 pub enum DriftConsent {
     Regenerate(RegenerateDriftedConsent),
     Adopt(AdoptDriftedConsent),
-}
-
-/// Proof that the operator consented to `rwv abort` moving a branch off
-/// commits the operation did not create — in the repos named here and no
-/// others. Minted from `--abandon-foreign-tip`.
-///
-/// The one token in this module carrying data rather than being a
-/// zero-sized proof, and the module's opening house rule is why. The
-/// consequence being waived is per-repo: whether abandoning THIS repo's
-/// foreign commits is acceptable is a judgment about those commits, and
-/// a blanket spelling would answer it for repos the operator never
-/// looked at. So the flag names a repo, there is no all-repos form to
-/// mint from, and the empty set — the operator passing nothing — covers
-/// nothing rather than everything.
-///
-/// It also carries `--leave-target`, which ends a landing leaving a target
-/// something else moved as it stands.
-#[derive(Debug, Clone, Default)]
-pub struct AbandonForeignTipConsent {
-    abandon: std::collections::BTreeSet<RepoOperand>,
-    leave_target: bool,
-}
-
-impl AbandonForeignTipConsent {
-    // No `granted()`: the tests that exercise this token drive the binary,
-    // so they mint through the flag like an operator does.
-
-    /// Mint from the parsed `--abandon-foreign-tip` values — one entry
-    /// per occurrence of the flag. `pub(in crate::cli)`: see
-    /// [`DiscardUnlandedConsent::from_flag`]'s doc comment.
-    ///
-    /// Each value is a [`RepoOperand`] as the operator typed it, which already
-    /// reads a completed path, a `./` prefix and a Windows separator as the
-    /// repo abort's own per-repo output names.
-    pub(in crate::cli) fn from_flag(
-        abandon_foreign_tip: &[RepoOperand],
-        leave_target: bool,
-    ) -> Self {
-        Self {
-            abandon: abandon_foreign_tip.iter().cloned().collect(),
-            leave_target,
-        }
-    }
-
-    pub fn leaves_target(&self) -> bool {
-        self.leave_target
-    }
-
-    /// Whether the operator named this repo of the op of `project`.
-    /// `repo_key` is the same key abort's per-repo maps use, so a `land`
-    /// op consults it once per side: consent is given for a repo, and both
-    /// workspaces' copies of that repo are covered by it.
-    pub fn covers(&self, repo_key: &RepoKey, project: &ProjectName) -> bool {
-        self.abandon.contains(&RepoOperand::of(repo_key, project))
-    }
-
-    pub fn named(&self) -> impl Iterator<Item = &RepoOperand> {
-        self.abandon.iter()
-    }
-
-    /// A project other than `project` whose repo the operator named, if any:
-    /// consent given for it reaches nothing in this op.
-    pub fn names_another_project(&self, project: &ProjectName) -> Option<&ProjectName> {
-        self.abandon
-            .iter()
-            .filter_map(RepoOperand::project)
-            .find(|named| *named != project)
-    }
 }

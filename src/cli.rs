@@ -358,15 +358,16 @@ pub enum Commands {
 
     // ── Multi-workspace ops ───────────────────────────────────────────────────
     /// Roll the operation in progress (a sync, landing, pull or update --remote that merges or resets, or cherry-pick) back to its savepoints in every workspace it touched, run from any of them
+    ///
+    /// A tip it leaves that holds commits the operation did not make, and the
+    /// working copy of a checkout stopped in a conflict, are each kept as a
+    /// backup first, named with the command that shows it.
     Abort {
-        /// Consent to restoring THIS repo over a foreign tip — commits the operation did not create, which abort otherwise refuses to move the branch off. Name the repo as abort's own output does (its workspace-relative path, or `projects/<name>` for the project repo); repeat the flag per repo. There is deliberately no all-repos form. The abandoned commits are first kept as an `abandoned` backup, which `rwv backup list` shows and `rwv backup drop` drops.
-        #[arg(long = "abandon-foreign-tip", value_name = "REPO")]
-        abandon_foreign_tip: Vec<crate::manifest::RepoOperand>,
         /// End a landing whose target something else has moved since (another landing built on it, a commit, a branch deleted or checked out): its source is restored and its whole target left as it stands, each tip the landing wrote there first kept as a backup where no branch reaches it, its savepoints dropped. Refused where abort can restore the target.
         #[arg(long = "leave-target")]
         leave_target: bool,
         /// End the operation whose record this rwv cannot read: remove the record, the leases it holds on other workspaces and its landing claims, and move nothing back. Lists the repos it leaves stopped in a VCS operation and the savepoints it leaves for `rwv doctor` to keep or drop. Refused where the record reads, which plain `rwv abort` restores from.
-        #[arg(long = "discard-unreadable-record", conflicts_with_all = ["abandon_foreign_tip", "leave_target"])]
+        #[arg(long = "discard-unreadable-record", conflicts_with = "leave_target")]
         discard_unreadable_record: bool,
     },
     /// List, drop or prune the backups rwv keeps before any step that would leave a commit or an edit unpreserved

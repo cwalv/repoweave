@@ -7,7 +7,7 @@ use crate::vcs::{
     AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
-    DiffBeyond, DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation,
+    DiffBeyond, DiscardOutcome, FileChange, HeadAttachment, HeadObservation,
     Holds, InTheWay, LeftBehind, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup,
     MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PathStanding, PinOutcome,
     PruningFetch, PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId,
@@ -3308,6 +3308,12 @@ impl Vcs for GitVcs {
                 "git -C <checkout> config core.logAllRefUpdates true"
             }
             VcsAction::ShowKeptFile => "git -C <checkout> show <revision>:<paths>",
+            VcsAction::ShowKeptCommits => {
+                "git -C <checkout> log --stat <base>..refs/rwv/backup/<backup>"
+            }
+            VcsAction::ShowKeptEdits => {
+                "git -C <checkout> diff refs/rwv/backup/<backup>^1 refs/rwv/backup/<backup>"
+            }
             VcsAction::SetCommitIdentity => {
                 "git config --global user.name <name> && git config --global user.email <email>"
             }
@@ -3793,7 +3799,6 @@ impl Vcs for GitVcs {
         repo: &Path,
         saved: &RefSavepoint,
         wrote: Option<&CommitId>,
-        foreign_tip_policy: ForeignTipPolicy,
         freed: &[PathBuf],
     ) -> Result<RefRestorePlan, VcsError> {
         let now = self
@@ -3819,21 +3824,8 @@ impl Vcs for GitVcs {
                 why: checked_out_at(&held),
             });
         }
-        if Some(&now) == wrote || foreign_tip_policy == ForeignTipPolicy::Abandon {
-            return Ok(RefRestorePlan::Restore {
-                abandon: Some(&now) != wrote,
-                from: now,
-            });
-        }
-        Ok(RefRestorePlan::Blocked {
-            observed: Some(now),
-            why: match wrote {
-                Some(wrote) => {
-                    format!("the op left it at {} and it has moved since", wrote.short())
-                }
-                None => "the op did not move it there".to_owned(),
-            },
-        })
+        let keep = Some(&now) != wrote && !self.reached_from(repo, &now, &saved.at)?;
+        Ok(RefRestorePlan::Restore { from: now, keep })
     }
 
     fn execute_ref_restore(
@@ -3862,7 +3854,7 @@ impl Vcs for GitVcs {
                 self.drop_ref_savepoint(repo, key, &saved.branch)?;
                 Ok(RefRestoreOutcome::Untouched)
             }
-            RefRestorePlan::Restore { from, abandon } => {
+            RefRestorePlan::Restore { from, keep } => {
                 if now.as_ref() != Some(from) {
                     return Ok(moved(now));
                 }
@@ -3873,12 +3865,12 @@ impl Vcs for GitVcs {
                         why: checked_out_at(&held),
                     });
                 }
-                let backup = if *abandon {
+                let backup = if *keep {
                     Some(self.create_backup(
                         repo,
                         &BackupSource::Branch(saved.branch.clone()),
                         &ResolvedRevisionId::from(from.clone()),
-                        Some(BackupMark::Abandoned),
+                        None,
                     )?)
                 } else {
                     None
@@ -3886,8 +3878,8 @@ impl Vcs for GitVcs {
                 Self::update_branch_ref(repo, &saved.branch, from, &saved.at)?;
                 self.drop_ref_savepoint(repo, key, &saved.branch)?;
                 Ok(match backup {
-                    Some(backup) => RefRestoreOutcome::AbandonedForeignTip {
-                        abandoned_tip: from.clone(),
+                    Some(backup) => RefRestoreOutcome::Kept {
+                        tip: from.clone(),
                         backup,
                     },
                     None => RefRestoreOutcome::Restored,
@@ -3933,7 +3925,6 @@ impl Vcs for GitVcs {
         repo: &Path,
         key: &SavepointKey,
         attribution: &Attribution<'_>,
-        foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<CheckoutRestorePlan, VcsError> {
         let Some((on, savepoint)) = self.checkout_savepoint(repo, key)? else {
             return Ok(match self.mid_op(repo) {
@@ -3950,15 +3941,7 @@ impl Vcs for GitVcs {
             head: self.head_revision(repo)?.id().clone(),
             edits_cleared: false,
         };
-        self.plan_from(
-            repo,
-            &on,
-            &savepoint,
-            attribution,
-            foreign_tip_policy,
-            key,
-            held,
-        )
+        self.plan_from(repo, &on, &savepoint, attribution, key, held)
     }
 
     fn execute_checkout_restore(
@@ -5842,11 +5825,11 @@ impl GitVcs {
         Ok(true)
     }
 
-    /// Before canceling an operation stopped in a workspace abort was not
-    /// typed in: keep its working copy as a backup, once per restore, the
-    /// ignored paths the cancel's move would discard included. What the
-    /// operator there changed since the stop cannot be told from the
-    /// operation's own conflict state, so the whole of it is kept.
+    /// Before canceling a stopped operation: keep the checkout's working copy
+    /// as a backup, once per restore, the ignored paths the cancel's move
+    /// would discard included. What the operator changed since the stop
+    /// cannot be told from the operation's own conflict state, so the whole
+    /// of it is kept, in whichever workspace abort was typed.
     fn keep_working_copy_before_cancel(
         &self,
         repo: &Path,
@@ -5867,22 +5850,6 @@ impl GitVcs {
             ));
         }
         Ok(())
-    }
-
-    /// End an operation whose own abort the VCS refused, under the
-    /// operator's `--abandon-foreign-tip`: keep what the move discards as a
-    /// backup, then move the checkout hard to `to`, where canceling returns.
-    fn finish_refused_cancel(
-        &self,
-        repo: &Path,
-        to: &ResolvedRevisionId,
-        edits_here: bool,
-        kept: &mut Vec<KeptWork>,
-    ) -> Result<bool, VcsError> {
-        if !self.keep_before_discarding(repo, to, edits_here, kept)? {
-            return Ok(false);
-        }
-        Self::run(["reset", "--hard", to.id().as_str()], repo).map(|_| true)
     }
 
     /// Cancel the operation `stopped` in `repo` as its own abort does,
@@ -6064,20 +6031,38 @@ impl GitVcs {
         Ok((discarded || tracked_dirt).then_some(forced))
     }
 
+    /// Whether `savepoint` reaches `tip`, so moving a ref from `tip` back to
+    /// `savepoint` leaves no commit behind.
+    fn reached_from(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        savepoint: &CommitId,
+    ) -> Result<bool, VcsError> {
+        self.is_ancestor(
+            repo,
+            &ResolvedRevisionId::from(tip.clone()),
+            &ResolvedRevisionId::from(savepoint.clone()),
+        )
+    }
+
     /// Plan the restore of `repo` to `savepoint` from what `held` says the
-    /// checkout holds once the steps planned before have run.
-    #[allow(clippy::too_many_arguments)]
+    /// checkout holds once the steps planned before have run. A tip that is
+    /// neither the savepoint, nor one the op wrote, nor one the savepoint
+    /// reaches, is kept as a backup before the checkout leaves it.
     fn plan_from(
         &self,
         repo: &Path,
         on: &SavedCheckout,
         savepoint: &CommitId,
         attribution: &Attribution<'_>,
-        foreign_tip_policy: ForeignTipPolicy,
         key: &SavepointKey,
         held: CheckoutHolds,
     ) -> Result<CheckoutRestorePlan, VcsError> {
         let attributable = |tip: &CommitId| tip == savepoint || attribution.wrote(tip);
+        let keeps = |tip: &CommitId| -> Result<bool, VcsError> {
+            Ok(!attributable(tip) && !self.reached_from(repo, tip, savepoint)?)
+        };
         let edits_elsewhere = |in_the_way| {
             CheckoutRestorePlan::Blocked(VerifiedRestoreOutcome::EditsElsewhere {
                 savepoint: savepoint.clone(),
@@ -6091,38 +6076,23 @@ impl GitVcs {
                 && returns_to.as_ref().is_some_and(&attributable)
                 && self.stopped_in_own_step(repo, stopped, attribution.own_steps)?;
             let at_savepoint = returns_to.as_ref() == Some(savepoint);
-            let lands_at = returns_to.unwrap_or_else(|| held.head.clone());
-            let mut keep_edits_to = None;
-            if !own {
-                if attribution.integrates == Integrates::No && at_savepoint {
-                    return Ok(CheckoutRestorePlan::LeaveStopped { stopped });
-                }
-                if foreign_tip_policy == ForeignTipPolicy::Refuse {
-                    return Ok(CheckoutRestorePlan::Blocked(
-                        VerifiedRestoreOutcome::StoppedForeign {
-                            stopped,
-                            returns_to: lands_at,
-                            savepoint: savepoint.clone(),
-                        },
-                    ));
-                }
-                if !attribution.edits_here
-                    && Self::hard_move_discards(repo, &ResolvedRevisionId::from(lands_at.clone()))?
-                        .is_some()
-                {
-                    return Ok(edits_elsewhere(InTheWay::Unresolved));
-                }
-                keep_edits_to = Some(lands_at.clone());
+            if !own && attribution.integrates == Integrates::No && at_savepoint {
+                return Ok(CheckoutRestorePlan::LeaveStopped { stopped });
             }
-            if let Some(why) = Self::cancel_refuses(repo, stopped)? {
-                if foreign_tip_policy == ForeignTipPolicy::Refuse {
-                    return Ok(CheckoutRestorePlan::Blocked(
-                        VerifiedRestoreOutcome::CancelRefused { stopped, why },
-                    ));
-                }
-                if !attribution.edits_here {
-                    return Ok(edits_elsewhere(InTheWay::Unresolved));
-                }
+            let lands_at = returns_to.unwrap_or_else(|| held.head.clone());
+            let in_the_way = Self::untracked_in_the_way(repo, &lands_at)?;
+            let clear_first =
+                !in_the_way.is_empty() || Self::cancel_refuses(repo, stopped)?.is_some();
+            if !attribution.edits_here
+                && (clear_first
+                    || !own
+                        && Self::hard_move_discards(
+                            repo,
+                            &ResolvedRevisionId::from(lands_at.clone()),
+                        )?
+                        .is_some())
+            {
+                return Ok(edits_elsewhere(InTheWay::Unresolved));
             }
             let on_after = match stopped {
                 ConflictOp::Rebase => Self::rebasing(repo)?.or(held.on),
@@ -6133,7 +6103,6 @@ impl GitVcs {
                 on,
                 savepoint,
                 attribution,
-                foreign_tip_policy,
                 key,
                 CheckoutHolds {
                     stopped: None,
@@ -6144,8 +6113,8 @@ impl GitVcs {
             )?;
             return Ok(CheckoutRestorePlan::Cancel {
                 stopped,
-                keep_edits_to,
-                abandon: foreign_tip_policy == ForeignTipPolicy::Abandon,
+                keep_head: !own,
+                clear_first: clear_first.then_some(in_the_way),
                 then: Box::new(then),
             });
         }
@@ -6188,15 +6157,6 @@ impl GitVcs {
                 }
                 SavedCheckout::Detached | SavedCheckout::Unnamed => None,
             };
-            if !attributable(&held.head) && foreign_tip_policy == ForeignTipPolicy::Refuse {
-                return Ok(CheckoutRestorePlan::Blocked(
-                    VerifiedRestoreOutcome::ForeignTip {
-                        observed_tip: held.head.clone(),
-                        savepoint: savepoint.clone(),
-                        recorded_converged_tip: attribution.converged.cloned(),
-                    },
-                ));
-            }
             let lands_at = onto
                 .as_ref()
                 .map_or_else(|| savepoint.clone(), |(_, tip)| tip.clone());
@@ -6209,20 +6169,11 @@ impl GitVcs {
             if let (Some(in_the_way), false) = (in_the_way, attribution.edits_here) {
                 return Ok(edits_elsewhere(in_the_way));
             }
-            if let (Some(in_the_way), ForeignTipPolicy::Refuse) = (in_the_way, foreign_tip_policy) {
-                return Ok(CheckoutRestorePlan::Blocked(
-                    VerifiedRestoreOutcome::EditsBlockSwitchBack {
-                        savepoint: savepoint.clone(),
-                        in_the_way,
-                    },
-                ));
-            }
             let then = self.plan_from(
                 repo,
                 on,
                 savepoint,
                 attribution,
-                foreign_tip_policy,
                 key,
                 CheckoutHolds {
                     stopped: None,
@@ -6232,15 +6183,11 @@ impl GitVcs {
                 },
             )?;
             return Ok(CheckoutRestorePlan::SwitchBack {
-                keep_detached_as_abandoned: off.is_none()
-                    && (!attributable(&held.head)
-                        || attribution.finished_by_hand == Some(&held.head)),
+                keep_detached: off.is_none() && keeps(&held.head)?,
                 off,
                 from: held.head,
                 onto: onto.map(|(branch, _)| branch),
                 savepoint: savepoint.clone(),
-                discard_blocking_edits: attribution.edits_here
-                    && foreign_tip_policy == ForeignTipPolicy::Abandon,
                 then: Box::new(then),
             });
         }
@@ -6248,22 +6195,14 @@ impl GitVcs {
         if held.head == *savepoint {
             return Ok(CheckoutRestorePlan::Untouched { at: held.head });
         }
-        let why = if attribution.finished_by_hand == Some(&held.head) {
-            RestoredFrom::FinishedByHand
-        } else if attribution.intent == Some(&held.head) {
+        let why = if attribution.intent == Some(&held.head) {
             RestoredFrom::Intent
         } else if attribution.wrote(&held.head) {
             RestoredFrom::Converged
-        } else if foreign_tip_policy == ForeignTipPolicy::Abandon {
-            RestoredFrom::Abandoned
+        } else if keeps(&held.head)? {
+            RestoredFrom::Kept
         } else {
-            return Ok(CheckoutRestorePlan::Blocked(
-                VerifiedRestoreOutcome::ForeignTip {
-                    observed_tip: held.head,
-                    savepoint: savepoint.clone(),
-                    recorded_converged_tip: attribution.converged.cloned(),
-                },
-            ));
+            RestoredFrom::Reached
         };
         if !held.edits_cleared && !attribution.edits_here {
             if let Some(ignored) =
@@ -6281,6 +6220,39 @@ impl GitVcs {
             savepoint: savepoint.clone(),
             why,
         })
+    }
+
+    /// The untracked files and directories in `repo` a hard move to `to`
+    /// would overwrite, each where `to` has a path at, under or above it.
+    fn untracked_in_the_way(repo: &Path, to: &CommitId) -> Result<Vec<String>, VcsError> {
+        let listed = |args: &[&str]| -> Result<Vec<String>, VcsError> {
+            Ok(Self::run(args.to_vec(), repo)?
+                .split('\0')
+                .filter(|p| !p.is_empty())
+                .map(|p| p.trim_end_matches('/').to_owned())
+                .collect())
+        };
+        let untracked = listed(&["ls-files", "--others", "--directory", "-z"])?;
+        if untracked.is_empty() {
+            return Ok(Vec::new());
+        }
+        let tracked = listed(&["ls-tree", "-r", "-z", "--name-only", to.as_str()])?;
+        let head: BTreeSet<String> = listed(&["ls-tree", "-r", "-z", "--name-only", "HEAD"])?
+            .into_iter()
+            .collect();
+        Ok(untracked
+            .into_iter()
+            .filter(|path| {
+                tracked.iter().filter(|t| !head.contains(*t)).any(|t| {
+                    t == path
+                        || t.strip_prefix(path.as_str())
+                            .is_some_and(|rest| rest.starts_with('/'))
+                        || path
+                            .strip_prefix(t.as_str())
+                            .is_some_and(|rest| rest.starts_with('/'))
+                })
+            })
+            .collect())
     }
 
     /// Why the VCS's own cancel of `stopped` would refuse, where it would: a
@@ -6471,30 +6443,18 @@ impl GitVcs {
                 }
                 let outcome = match why {
                     RestoredFrom::Intent => VerifiedRestoreOutcome::RestoredFromIntent,
-                    RestoredFrom::Converged => VerifiedRestoreOutcome::RestoredFromConverged,
-                    RestoredFrom::FinishedByHand => {
+                    RestoredFrom::Converged | RestoredFrom::Reached => {
+                        VerifiedRestoreOutcome::RestoredFromConverged
+                    }
+                    RestoredFrom::Kept => {
                         let source = self.head_backup_source(repo)?;
-                        kept.push(KeptWork::FinishedByHand(self.create_backup(
+                        kept.push(KeptWork::Tip(self.create_backup(
                             repo,
                             &source,
                             &ResolvedRevisionId::from(from.clone()),
                             None,
                         )?));
                         VerifiedRestoreOutcome::RestoredFromConverged
-                    }
-                    RestoredFrom::Abandoned => {
-                        let source = self.head_backup_source(repo)?;
-                        let backup = self.create_backup(
-                            repo,
-                            &source,
-                            &ResolvedRevisionId::from(from.clone()),
-                            Some(BackupMark::Abandoned),
-                        )?;
-                        VerifiedRestoreOutcome::AbandonedForeignTip {
-                            abandoned_tip: from.clone(),
-                            savepoint: savepoint.clone(),
-                            backup,
-                        }
                     }
                 };
                 self.reset_and_drop_savepoint(
@@ -6508,50 +6468,33 @@ impl GitVcs {
             }
             CheckoutRestorePlan::Cancel {
                 stopped,
-                keep_edits_to,
-                abandon,
+                keep_head,
+                clear_first,
                 then,
             } => {
                 if self.mid_op(repo) != Some(*stopped) {
                     return self.diverged(repo, key);
                 }
-                let edits_elsewhere = |vcs: &Self| -> Result<VerifiedRestoreOutcome, VcsError> {
-                    Ok(match vcs.checkout_savepoint(repo, key)? {
-                        Some((_, savepoint)) => VerifiedRestoreOutcome::EditsElsewhere {
-                            savepoint,
-                            in_the_way: InTheWay::Unresolved,
-                        },
-                        None => VerifiedRestoreOutcome::NoSavepoint,
-                    })
-                };
-                if let Some(to) = keep_edits_to {
-                    let to = ResolvedRevisionId::from(to.clone());
-                    if !self.keep_before_discarding(repo, &to, edits_here, kept)? {
-                        return edits_elsewhere(self);
+                self.keep_working_copy_before_cancel(repo, kept)?;
+                if *keep_head {
+                    if let Some(commits) = self.backup_unpreserved_head(repo)? {
+                        kept.push(KeptWork::Commits(commits));
                     }
                 }
-                if !edits_here {
-                    self.keep_working_copy_before_cancel(repo, kept)?;
+                if let Some(in_the_way) = clear_first {
+                    Self::run(["reset", "--hard", "HEAD"], repo)?;
+                    for path in in_the_way {
+                        let path = repo.join(path);
+                        let _ =
+                            std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
+                    }
                 }
-                if let Err(refused) = self.cancel_stopped(repo, *stopped) {
-                    let why = match refused {
-                        VcsError::CommandFailed { stderr, .. } => stderr.trim().to_owned(),
-                        other => other.to_string(),
-                    };
-                    if !abandon {
-                        return Ok(VerifiedRestoreOutcome::CancelRefused {
-                            stopped: *stopped,
-                            why,
-                        });
-                    }
-                    let to = match self.cancel_returns_to(repo)? {
-                        Some(to) => to,
-                        None => self.head_revision(repo)?,
-                    };
-                    if !self.finish_refused_cancel(repo, &to, edits_here, kept)? {
-                        return edits_elsewhere(self);
-                    }
-                    if self.mid_op(repo).is_some() {
+                if self.mid_op(repo).is_some() {
+                    if let Err(refused) = self.cancel_stopped(repo, *stopped) {
+                        let why = match refused {
+                            VcsError::CommandFailed { stderr, .. } => stderr.trim().to_owned(),
+                            other => other.to_string(),
+                        };
                         return Ok(VerifiedRestoreOutcome::CancelRefused {
                             stopped: *stopped,
                             why,
@@ -6569,19 +6512,18 @@ impl GitVcs {
                 from,
                 onto,
                 savepoint,
-                keep_detached_as_abandoned,
-                discard_blocking_edits,
+                keep_detached,
                 then,
             } => {
                 if !self.holds(repo, from, Some(off))? {
                     return self.diverged(repo, key);
                 }
-                if *keep_detached_as_abandoned {
+                if *keep_detached {
                     let backup = self.create_backup(
                         repo,
                         &BackupSource::DetachedHead,
                         &ResolvedRevisionId::from(from.clone()),
-                        Some(BackupMark::Abandoned),
+                        None,
                     )?;
                     kept.push(KeptWork::Commits(backup));
                 }
@@ -6591,7 +6533,7 @@ impl GitVcs {
                         vcs.set_detached_head(repo, &ResolvedRevisionId::from(savepoint.clone()))
                     }
                 };
-                if *discard_blocking_edits {
+                if edits_here {
                     let lands_on = match onto {
                         Some(branch) => self.resolve_local_branch_tip(repo, branch)?,
                         None => Some(ResolvedRevisionId::from(savepoint.clone())),
@@ -6616,12 +6558,6 @@ impl GitVcs {
                     }
                     if !edits_here {
                         return Ok(VerifiedRestoreOutcome::EditsElsewhere {
-                            savepoint: savepoint.clone(),
-                            in_the_way: InTheWay::Edits,
-                        });
-                    }
-                    if !discard_blocking_edits {
-                        return Ok(VerifiedRestoreOutcome::EditsBlockSwitchBack {
                             savepoint: savepoint.clone(),
                             in_the_way: InTheWay::Edits,
                         });

@@ -357,18 +357,6 @@ fn plant_target_side(primary: &Workspace, ww: &Workspace, op_id: &str) {
     plant_savepoint(&primary.server_dir, &target_id);
 }
 
-/// A refused abort moved nothing, so it wrote no pre-abort ref and kept no
-/// backup.
-fn assert_no_abort_refs(repo: &Path) {
-    for prefix in ["refs/rwv/pre-abort", "refs/rwv/backup"] {
-        assert_eq!(
-            common::git_in(repo, &["for-each-ref", prefix]),
-            "",
-            "a refused abort leaves nothing under {prefix}"
-        );
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Divergence helpers — moving repos off their initial tip in controlled ways
 // ---------------------------------------------------------------------------
@@ -447,25 +435,6 @@ fn run_abort_ok(cwd: &Path, cell_name: &str) {
         "[cell {cell_name}] abort must succeed; stderr:\n{}",
         String::from_utf8_lossy(&out.stderr)
     );
-}
-
-fn run_abort_refuses_foreign(cwd: &Path, cell_name: &str) -> String {
-    let out = rwv()
-        .args(["abort"])
-        .current_dir(cwd)
-        .output()
-        .expect("rwv abort failed to spawn");
-    assert!(
-        !out.status.success(),
-        "[cell {cell_name}] abort must refuse on a foreign tip; stderr:\n{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(
-        stderr.contains("foreign-tip"),
-        "[cell {cell_name}] refusal must name `foreign-tip`; stderr:\n{stderr}"
-    );
-    stderr
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,10 +1546,10 @@ fn cell_m_advance_target_sync_to_lease_abort() {
 /// Cell `J(advance-target) / land / owner-side`: target's server has been
 /// ff'd to the converged tip AND a post-crash foreign commit was added on
 /// top of that tip (modeling: "another agent built on the advanced target
-/// after our crash"). Abort must REFUSE for that repo with `foreign-tip`,
-/// exit nonzero, leave the tip unchanged, and retain op-state.
+/// after our crash"). Abort keeps that tip as a backup, puts the target's
+/// server back at its savepoint, and ends the op.
 #[test]
-fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
+fn cell_j_advance_target_sync_to_foreign_tip_is_kept_and_restored() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, ww_server_tip, ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
@@ -1639,31 +1608,20 @@ fn cell_j_advance_target_sync_to_foreign_tip_abort_refuses() {
     );
     plant_savepoint_at(&primary.server_dir, &target_id, &primary_server_pre);
 
-    let stderr = run_abort_refuses_foreign(&ww.root, "J(advance-target)/foreign-tip/land/owner");
-    assert!(
-        stderr.contains(SERVER_PATH),
-        "refusal must name the foreign repo path; stderr:\n{stderr}"
-    );
-
-    // Foreign tip unchanged.
+    run_abort_ok(&ww.root, "J(advance-target)/kept/land/owner");
     assert_eq!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
-        foreign_tip,
-        "foreign-tip refusal must not reset"
+        primary_server_pre
     );
-
-    // Op-state retained (so operator can re-run abort).
-    assert!(
-        ww.root.join(".rwv-op").exists(),
-        "owner record must be retained on foreign-tip refusal"
+    assert_eq!(
+        common::git_in(
+            &primary.server_dir,
+            &["for-each-ref", "--format=%(objectname)", "refs/rwv/backup/"]
+        ),
+        foreign_tip
     );
-    assert!(
-        primary.root.join(".rwv-op-lease").exists(),
-        "target lease must be retained on foreign-tip refusal"
-    );
-
-    // The refusal moved nothing, so it keeps nothing.
-    assert_no_abort_refs(&primary.server_dir);
+    assert!(!ww.root.join(".rwv-op").exists());
+    assert!(!primary.root.join(".rwv-op-lease").exists());
 }
 
 // ===========================================================================
@@ -2030,18 +1988,24 @@ fn landed_then_moved_again(journaled: bool) -> (Workspace, Workspace, String, te
     (primary, ww, moved_again, tmp)
 }
 
+/// A target member the landing moved that moved again since is put back,
+/// the tip it moved to kept as a backup first, and the op ends.
 #[test]
-fn abort_refuses_a_target_repo_the_landing_moved_that_moved_again() {
+fn abort_keeps_a_target_repo_the_landing_moved_that_moved_again() {
     let (primary, ww, moved_again, _tmp) = landed_then_moved_again(true);
-    run_abort_refuses_foreign(&ww.root, "landed then moved again");
-    assert_eq!(
+    run_abort_ok(&ww.root, "landed then moved again");
+    assert_ne!(
         common::git_in(&primary.server_dir, &["rev-parse", "HEAD"]),
         moved_again
     );
-    assert!(
-        ww.root.join(".rwv-op").exists(),
-        "the refused abort keeps the op"
+    assert_eq!(
+        common::git_in(
+            &primary.server_dir,
+            &["for-each-ref", "--format=%(objectname)", "refs/rwv/backup/"]
+        ),
+        moved_again
     );
+    assert!(!ww.root.join(".rwv-op").exists(), "the abort ends the op");
 }
 
 /// A target repo the landing never moved, stopped in a merge someone else
@@ -2527,11 +2491,10 @@ fn cell_advanced_tips_rebase_captured_project_at_t1_abort_restores() {
 // ---------------------------------------------------------------------------
 
 /// Cell 4 (§8.4): rebase one-write window — project at T1 but
-/// advanced_tips[(project)] absent. T1 is foreign from abort's perspective.
-/// Asserts the documented floor: nonzero exit, op-state retained, no ref
-/// written, tip unchanged.
+/// advanced_tips[(project)] absent. T1 is not journaled, so abort keeps it
+/// as a backup before it puts the project back: nothing is lost.
 #[test]
-fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
+fn cell_advanced_tips_one_write_window_project_at_t1_is_kept() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _ww_server_tip, _ww_project_tip) = make_ww_ahead_sync_to(tmp.path());
 
@@ -2569,36 +2532,28 @@ fn cell_advanced_tips_one_write_window_project_at_t1_abort_refuses() {
     // Phase 1' completes after the record holds the tip it started from.
     let t1 = t1_after_record();
 
-    // Abort must REFUSE: T1 is not attributable.
+    // T1 is not journaled: it is kept as a backup, and the project put back.
     let out = rwv()
         .args(["abort"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv abort failed to spawn");
-    assert!(
-        !out.status.success(),
-        "[cell4] abort must refuse: T1 is not in the attributable set; \
-         stderr:\n{}",
+    let said = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(
-        stderr.contains("foreign-tip"),
-        "[cell4] refusal must name `foreign-tip`; stderr:\n{stderr}"
-    );
-
-    // Tip unchanged.
+    assert!(out.status.success(), "[cell4] {said}");
     assert_eq!(
         common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
-        t1,
-        "[cell4] foreign-tip refusal must not reset — T1 must be preserved"
+        ww_project_pre
     );
-    // Op-state retained so operator can re-run abort after reconciling.
-    assert!(
-        ww.root.join(".rwv-op").exists(),
-        "[cell4] owner record must be retained on foreign-tip refusal"
+    let kept = common::git_in(
+        &ww.project_dir,
+        &["for-each-ref", "--format=%(objectname)", "refs/rwv/backup/"],
     );
-    assert_no_abort_refs(&ww.project_dir);
+    assert_eq!(kept, t1, "[cell4] {said}");
+    assert!(!ww.root.join(".rwv-op").exists(), "[cell4] {said}");
 }
 
 // ---------------------------------------------------------------------------
@@ -2678,7 +2633,7 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 }
 
 // ---------------------------------------------------------------------------
-// Cell 6: mixed — a foreign repo refuses the whole abort, op-advanced repos included.
+// Cell 6: mixed — a repo at a tip the op did not write is kept, every repo restored.
 //
 // Synthesizes the 2026-06-10 incident as a regression test. The server repo
 // was advanced to its advanced_tips target (op's own ff). An operator commit
@@ -2691,13 +2646,11 @@ fn cell_advanced_tips_after_relock_project_at_t2_abort_via_converged_tips() {
 // included.
 // ---------------------------------------------------------------------------
 
-/// Cell 6 (§8.6): mixed — server carries a post-crash operator commit
-/// (foreign); project advanced to its advanced_tips target. The abort is
-/// refused naming the server and moves nothing: the foreign tip stays, the
-/// op-advanced project is not restored, and the record is kept. Regression
-/// test for the 2026-06-10 incident.
+/// Cell 6 (§8.6): mixed — server carries a post-crash operator commit;
+/// project advanced to its advanced_tips target. The server's tip is kept as
+/// a backup and both repos are put back, the record cleared.
 #[test]
-fn cell_advanced_tips_mixed_foreign_server_refuses_whole_and_moves_nothing() {
+fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, primary_server_tip, _ww_project_tip) = make_primary_ahead_sync(tmp.path());
 
@@ -2752,46 +2705,37 @@ fn cell_advanced_tips_mixed_foreign_server_refuses_whole_and_moves_nothing() {
     plant_savepoint_at(&ww.server_dir, op_id, &ww_server_pre);
     plant_savepoint_at(&ww.project_dir, op_id, &ww_project_pre);
 
-    // Abort must refuse on the server (foreign commit on top of ff target),
-    // but succeed on the project (head == advanced_tips[(project)]).
+    // The server's tip holds a commit the op did not write: it is kept as a
+    // backup, and both repos are put back.
     let out = rwv()
         .args(["abort"])
         .current_dir(&ww.root)
         .output()
         .expect("rwv abort failed to spawn");
-    assert!(
-        !out.status.success(),
-        "[cell6] abort must fail: server has a foreign commit; stderr:\n{}",
+    let said = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(out.status.success(), "[cell6] {said}");
     assert!(
-        stderr.contains("foreign-tip"),
-        "[cell6] refusal must name `foreign-tip`; stderr:\n{stderr}"
+        said.contains(&format!("{SERVER_PATH}: its tip")),
+        "[cell6] the server's tip is named as kept: {said}"
     );
-    // The server path must be named in the refusal (the incident tell).
-    assert!(
-        stderr.contains(SERVER_PATH),
-        "[cell6] refusal must name the foreign repo (SERVER_PATH); stderr:\n{stderr}"
-    );
-
-    // Foreign server tip is unchanged.
     assert_eq!(
         common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]),
-        foreign_server_tip,
-        "[cell6] server foreign tip must NOT be reset"
+        ww_server_pre
     );
-    assert_ne!(
+    assert_eq!(
         common::git_in(&ww.project_dir, &["rev-parse", "HEAD"]),
-        ww_project_pre,
-        "[cell6] a refused abort moves nothing, the op-advanced project included"
+        ww_project_pre
     );
-    // Op-state retained (server refused).
-    assert!(
-        ww.root.join(".rwv-op").exists(),
-        "[cell6] owner record must be retained when a foreign-tip refusal occurs"
+    let kept = common::git_in(
+        &ww.server_dir,
+        &["for-each-ref", "--format=%(objectname)", "refs/rwv/backup/"],
     );
-    assert_no_abort_refs(&ww.server_dir);
+    assert_eq!(kept, foreign_server_tip, "[cell6] {said}");
+    assert!(!ww.root.join(".rwv-op").exists(), "[cell6] {said}");
 }
 
 // ---------------------------------------------------------------------------
@@ -2860,11 +2804,10 @@ fn cell_owner_record_missing_advanced_tips_key_aborts_from_its_header() {
 }
 
 /// A record that reads header-only says nothing of what the op started, so
-/// a merge begun at the savepoint is not taken for the op's: abort refuses
-/// it, and naming the repo on `--abandon-foreign-tip` keeps its staged
-/// content as a backup before canceling it.
+/// a merge begun at the savepoint is canceled with its staged content kept
+/// as a backup first.
 #[test]
-fn a_header_only_record_refuses_a_merge_begun_at_the_savepoint() {
+fn a_header_only_record_keeps_a_merge_begun_at_the_savepoint_and_cancels_it() {
     let tmp = common::tempdir().unwrap();
     let (primary, ww, _sha) = make_shared_workspaces(tmp.path());
     let ww_server_pre = common::git_in(&ww.server_dir, &["rev-parse", "HEAD"]);
@@ -2882,13 +2825,6 @@ fn a_header_only_record_refuses_a_merge_begun_at_the_savepoint() {
     );
 
     let out = common::cli::run(&["abort"], &ww.root);
-    common::cli::refused(&out, repoweave::refusal::RefusalKind::ForeignTip);
-    common::git_in(
-        &ww.server_dir,
-        &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-    );
-
-    let out = common::cli::run(&["abort", "--abandon-foreign-tip", SERVER_PATH], &ww.root);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("its uncommitted edits are kept as backup"),

@@ -16,8 +16,9 @@ Backups are made by:
 - `rwv workweave delete --discard-uncommitted`, which keeps each checkout's
   uncommitted edits as a commit on its HEAD (untracked files included, ignored
   ones not);
-- `rwv abort --abandon-foreign-tip <repo>`, which keeps the tip it moves the
-  branch off, marked `abandoned`;
+- `rwv abort`, which keeps a tip it moves a branch off that holds commits the
+  operation did not make, and the working copy of a checkout it cancels a
+  stopped operation in;
 - `rwv fetch`, which keeps the old tip of a remote-tracking branch the remote
   rewrote, marked `superseded`, so work built on it stays reachable and is not
   counted as unpushed;
@@ -34,7 +35,7 @@ own, and nothing but `rwv backup` does.
 
 For each repo of the project that holds a backup — the project repo as
 `projects/<name>`, a member by its path — one line per backup: its name, the
-commit it holds, `[abandoned]` for a tip `abort` gave up, `[superseded]` for a tip a fetch found the remote had rewritten away, `[rebased]` for a
+commit it holds, `[superseded]` for a tip a fetch found the remote had rewritten away, `[rebased]` for a
 branch a rebase rewrote, and `[redundant]` when a branch or remote-tracking
 branch reaches everything the backup holds, so dropping it loses nothing.
 Under each line, the commits it holds that no branch reaches, newest first.
@@ -118,7 +119,7 @@ Drop everything a branch already reaches:
 rwv backup prune
 ```
 
-Keep an abandoned tip: publish it under a branch of its own before dropping
+Keep a tip `abort` kept: publish it under a branch of its own before dropping
 anything that reaches it.
 
 ## Common errors

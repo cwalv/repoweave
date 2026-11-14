@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::op_state::SavepointKey;
-use crate::vcs::{Attribution, ForeignTipPolicy, Vcs, VerifiedRestoreOutcome};
+use crate::vcs::{Attribution, Vcs, VerifiedRestoreOutcome};
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = git_command()
@@ -54,9 +54,9 @@ fn named(plan: &CheckoutRestorePlan) -> String {
         CheckoutRestorePlan::Untouched { .. } => "Untouched".to_owned(),
         CheckoutRestorePlan::Reset { why, .. } => match why {
             RestoredFrom::Intent => "RestoredFromIntent",
-            RestoredFrom::Converged => "RestoredFromConverged",
-            RestoredFrom::Abandoned => "AbandonedForeignTip",
-            RestoredFrom::FinishedByHand => "RestoredFinishedByHand",
+            RestoredFrom::Converged | RestoredFrom::Reached | RestoredFrom::Kept => {
+                "RestoredFromConverged"
+            }
         }
         .to_owned(),
         CheckoutRestorePlan::Cancel { then, .. } => format!("Canceled({})", named(then)),
@@ -84,11 +84,10 @@ fn shape(outcome: &VerifiedRestoreOutcome) -> String {
 fn planned_then_run(
     p: &Path,
     attribution: &Attribution<'_>,
-    policy: ForeignTipPolicy,
     expect: &str,
 ) -> VerifiedRestoreOutcome {
     let plan = GitVcs
-        .plan_checkout_restore(p, &key(), attribution, policy)
+        .plan_checkout_restore(p, &key(), attribution)
         .unwrap();
     assert_eq!(named(&plan), expect, "the plan: {plan:?}");
     let outcome = GitVcs
@@ -102,12 +101,7 @@ fn planned_then_run(
 fn a_checkout_at_its_savepoint_is_untouched() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    planned_then_run(
-        p.path(),
-        &Attribution::default(),
-        ForeignTipPolicy::Refuse,
-        "Untouched",
-    );
+    planned_then_run(p.path(), &Attribution::default(), "Untouched");
 }
 
 #[test]
@@ -121,32 +115,36 @@ fn a_tip_the_op_wrote_is_reset_to_the_savepoint() {
             intent: Some(&wrote),
             ..Attribution::default()
         },
-        ForeignTipPolicy::Refuse,
         "RestoredFromIntent",
     );
     assert_eq!(&head(p.path()), saved.id());
 }
 
 #[test]
-fn a_replay_finished_by_hand_on_a_branch_is_kept_before_the_reset() {
+fn a_tip_the_op_did_not_write_is_kept_before_the_reset() {
     let p = repo();
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    let by_hand = commit(p.path(), "resolved by hand");
-    let attribution = Attribution {
-        converged: Some(&by_hand),
-        finished_by_hand: Some(&by_hand),
-        ..Attribution::default()
-    };
+    commit(p.path(), "resolved by hand");
+    let attribution = Attribution::default();
     let plan = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
+        .plan_checkout_restore(p.path(), &key(), &attribution)
         .unwrap();
-    assert_eq!(named(&plan), "RestoredFinishedByHand", "{plan:?}");
+    assert!(
+        matches!(
+            &plan,
+            CheckoutRestorePlan::Reset {
+                why: RestoredFrom::Kept,
+                ..
+            }
+        ),
+        "{plan:?}"
+    );
     let outcome = GitVcs
         .execute_checkout_restore(p.path(), &key(), &plan, false)
         .unwrap();
     assert!(
         matches!(&outcome, VerifiedRestoreOutcome::Kept { kept, .. }
-            if matches!(kept.as_slice(), [KeptWork::FinishedByHand(_)])),
+            if matches!(kept.as_slice(), [KeptWork::Tip(_)])),
         "{outcome:?}"
     );
     assert_eq!(&head(p.path()), saved.id());
@@ -192,7 +190,6 @@ fn a_merge_the_op_stopped_in_is_canceled() {
             own_steps: &steps,
             ..Attribution::default()
         },
-        ForeignTipPolicy::Refuse,
         "Canceled(Untouched)",
     );
     assert_eq!(GitVcs.mid_op(p.path()), None);
@@ -200,21 +197,26 @@ fn a_merge_the_op_stopped_in_is_canceled() {
 }
 
 #[test]
-fn a_merge_the_op_never_started_on_a_tip_it_never_wrote_blocks() {
+fn a_merge_the_op_never_started_on_a_tip_it_never_wrote_is_canceled_and_its_tip_kept() {
     let p = repo();
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
     stopped_merging(p.path());
     let at = head(p.path());
     merge_conflicting(p.path());
-    planned_then_run(
+    let outcome = planned_then_run(
         p.path(),
-        &Attribution::default(),
-        ForeignTipPolicy::Refuse,
-        "StoppedForeign",
+        &Attribution {
+            edits_here: true,
+            ..Attribution::default()
+        },
+        "Canceled(RestoredFromConverged)",
     );
-    assert_eq!(GitVcs.mid_op(p.path()), Some(ConflictOp::Merge));
-    assert_eq!(head(p.path()), at);
-    assert_ne!(&at, saved.id());
+    assert_eq!(GitVcs.mid_op(p.path()), None);
+    assert_eq!(&head(p.path()), saved.id());
+    let kept = GitVcs
+        .list_backups(p.path(), RemoteTracking::Counted)
+        .unwrap();
+    assert!(kept.iter().any(|b| b.backup.tip.id() == &at), "{outcome:?}");
 }
 
 #[test]
@@ -222,12 +224,7 @@ fn a_checkout_switched_off_its_branch_is_switched_back() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     git(p.path(), &["switch", "-q", "-c", "other"]);
-    planned_then_run(
-        p.path(),
-        &Attribution::default(),
-        ForeignTipPolicy::Refuse,
-        "SwitchedBack(Untouched)",
-    );
+    planned_then_run(p.path(), &Attribution::default(), "SwitchedBack(Untouched)");
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
 }
 
@@ -236,12 +233,7 @@ fn a_detached_checkout_is_put_back_on_its_branch() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     git(p.path(), &["switch", "-q", "--detach"]);
-    planned_then_run(
-        p.path(),
-        &Attribution::default(),
-        ForeignTipPolicy::Refuse,
-        "SwitchedBack(Untouched)",
-    );
+    planned_then_run(p.path(), &Attribution::default(), "SwitchedBack(Untouched)");
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
 }
 
@@ -258,7 +250,6 @@ fn edits_here_are_kept_before_the_reset() {
             edits_here: true,
             ..Attribution::default()
         },
-        ForeignTipPolicy::Refuse,
         "RestoredFromIntent",
     );
     assert!(
@@ -280,7 +271,6 @@ fn edits_elsewhere_block_and_are_left() {
             intent: Some(&wrote),
             ..Attribution::default()
         },
-        ForeignTipPolicy::Refuse,
         "EditsElsewhere",
     );
     assert_eq!(head(p.path()), wrote);
@@ -316,7 +306,6 @@ fn a_submodule_left_dirty_elsewhere_does_not_block_the_reset_that_never_touches_
             intent: Some(&wrote),
             ..Attribution::default()
         },
-        ForeignTipPolicy::Refuse,
         "RestoredFromIntent",
     );
     assert_eq!(
@@ -336,12 +325,7 @@ fn a_branch_held_elsewhere_blocks_the_switch_back() {
         p.path(),
         &["worktree", "add", "-q", wt.to_str().unwrap(), "main"],
     );
-    planned_then_run(
-        p.path(),
-        &Attribution::default(),
-        ForeignTipPolicy::Refuse,
-        "CannotSwitchBack",
-    );
+    planned_then_run(p.path(), &Attribution::default(), "CannotSwitchBack");
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "other");
 }
 
@@ -352,12 +336,7 @@ fn a_branch_gone_blocks_the_switch_back() {
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     git(p.path(), &["switch", "-q", "main"]);
     git(p.path(), &["branch", "-q", "-d", "topic"]);
-    planned_then_run(
-        p.path(),
-        &Attribution::default(),
-        ForeignTipPolicy::Refuse,
-        "CannotSwitchBack",
-    );
+    planned_then_run(p.path(), &Attribution::default(), "CannotSwitchBack");
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
 }
 
@@ -371,7 +350,7 @@ fn a_plan_the_checkout_moved_under_writes_nothing_and_reports_what_it_holds() {
         ..Attribution::default()
     };
     let plan = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
+        .plan_checkout_restore(p.path(), &key(), &attribution)
         .unwrap();
     let moved = commit(p.path(), "meanwhile");
 
@@ -400,13 +379,7 @@ fn a_ref_plan_the_branch_moved_under_writes_nothing() {
         at,
     };
     let plan = GitVcs
-        .plan_ref_restore(
-            p.path(),
-            &saved,
-            Some(&wrote),
-            ForeignTipPolicy::Refuse,
-            &[],
-        )
+        .plan_ref_restore(p.path(), &saved, Some(&wrote), &[])
         .unwrap();
     assert!(matches!(plan, RefRestorePlan::Restore { .. }), "{plan:?}");
     let moved = commit(p.path(), "meanwhile");
@@ -534,7 +507,7 @@ fn the_stash_each_obstacle_prints_clears_it() {
 }
 
 #[test]
-fn an_abandoned_switch_back_keeps_the_ignored_file_it_overwrites() {
+fn a_switch_back_here_keeps_the_ignored_file_it_overwrites() {
     let tmp = repo();
     let p = tmp.path();
     let base = head(p);
@@ -548,7 +521,7 @@ fn an_abandoned_switch_back_keeps_the_ignored_file_it_overwrites() {
         ..Attribution::default()
     };
     let plan = GitVcs
-        .plan_checkout_restore(p, &key(), &attribution, ForeignTipPolicy::Abandon)
+        .plan_checkout_restore(p, &key(), &attribution)
         .unwrap();
     let outcome = GitVcs
         .execute_checkout_restore(p, &key(), &plan, true)
@@ -582,12 +555,7 @@ fn a_leave_stopped_plan_whose_merge_was_given_up_leaves_nothing_to_report() {
     let side = stopped_merging(p.path());
     merge_conflicting(p.path());
     let plan = GitVcs
-        .plan_checkout_restore(
-            p.path(),
-            &key(),
-            &Attribution::default(),
-            ForeignTipPolicy::Refuse,
-        )
+        .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     assert_eq!(named(&plan), "LeftStopped");
     git(p.path(), &["merge", "--abort"]);
@@ -604,12 +572,7 @@ fn an_untouched_plan_the_checkout_moved_under_keeps_its_savepoint() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     let plan = GitVcs
-        .plan_checkout_restore(
-            p.path(),
-            &key(),
-            &Attribution::default(),
-            ForeignTipPolicy::Refuse,
-        )
+        .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     assert_eq!(named(&plan), "Untouched");
     let moved = commit(p.path(), "meanwhile");
@@ -634,7 +597,7 @@ fn a_cancel_plan_whose_merge_was_given_up_cancels_nothing_and_keeps_its_savepoin
         ..Attribution::default()
     };
     let plan = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
+        .plan_checkout_restore(p.path(), &key(), &attribution)
         .unwrap();
     assert_eq!(named(&plan), "Canceled(Untouched)");
     git(p.path(), &["merge", "--abort"]);
@@ -651,12 +614,7 @@ fn a_switch_back_plan_the_checkout_moved_under_switches_nothing() {
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     git(p.path(), &["switch", "-q", "-c", "other"]);
     let plan = GitVcs
-        .plan_checkout_restore(
-            p.path(),
-            &key(),
-            &Attribution::default(),
-            ForeignTipPolicy::Refuse,
-        )
+        .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     assert_eq!(named(&plan), "SwitchedBack(Untouched)");
     git(p.path(), &["switch", "-q", "-c", "third"]);
@@ -697,7 +655,7 @@ fn a_ref_untouched_plan_the_branch_moved_under_keeps_its_savepoint() {
         .create_ref_savepoint(p.path(), &key(), &saved.branch, &saved.at)
         .unwrap();
     let plan = GitVcs
-        .plan_ref_restore(p.path(), &saved, None, ForeignTipPolicy::Refuse, &[])
+        .plan_ref_restore(p.path(), &saved, None, &[])
         .unwrap();
     assert!(matches!(plan, RefRestorePlan::Untouched), "{plan:?}");
     git(p.path(), &["switch", "-q", "topic"]);
@@ -721,13 +679,7 @@ fn a_ref_restore_plan_the_branch_was_checked_out_under_writes_nothing() {
     let p = repo();
     let (saved, wrote) = ref_at_a_tip_the_op_wrote(p.path());
     let plan = GitVcs
-        .plan_ref_restore(
-            p.path(),
-            &saved,
-            Some(&wrote),
-            ForeignTipPolicy::Refuse,
-            &[],
-        )
+        .plan_ref_restore(p.path(), &saved, Some(&wrote), &[])
         .unwrap();
     assert!(matches!(plan, RefRestorePlan::Restore { .. }), "{plan:?}");
     git(p.path(), &["switch", "-q", "topic"]);
@@ -751,32 +703,20 @@ fn a_branch_held_by_a_checkout_the_plan_switches_off_does_not_block_its_restore(
     git(p.path(), &["switch", "-q", "topic"]);
     let held = vec![p.path().to_path_buf()];
     let blocked = GitVcs
-        .plan_ref_restore(
-            p.path(),
-            &saved,
-            Some(&wrote),
-            ForeignTipPolicy::Refuse,
-            &[],
-        )
+        .plan_ref_restore(p.path(), &saved, Some(&wrote), &[])
         .unwrap();
     assert!(
         matches!(blocked, RefRestorePlan::Blocked { .. }),
         "{blocked:?}"
     );
     let freed = GitVcs
-        .plan_ref_restore(
-            p.path(),
-            &saved,
-            Some(&wrote),
-            ForeignTipPolicy::Refuse,
-            &held,
-        )
+        .plan_ref_restore(p.path(), &saved, Some(&wrote), &held)
         .unwrap();
     assert!(matches!(freed, RefRestorePlan::Restore { .. }), "{freed:?}");
 }
 
 #[test]
-fn edits_here_that_collide_with_the_switch_back_keep_it_from_running_unless_abandoned() {
+fn edits_here_that_collide_with_the_switch_back_are_kept_and_it_runs() {
     let p = repo();
     let base = head(p.path());
     std::fs::write(p.path().join("f"), "2").unwrap();
@@ -789,18 +729,11 @@ fn edits_here_that_collide_with_the_switch_back_keep_it_from_running_unless_aban
         edits_here: true,
         ..Attribution::default()
     };
-    let refused = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Refuse)
-        .unwrap();
-    assert_eq!(named(&refused), "EditsBlockSwitchBack", "{refused:?}");
-    assert_eq!(git(p.path(), &["branch", "--show-current"]), "other");
-    assert_eq!(std::fs::read_to_string(p.path().join("f")).unwrap(), "mine");
-
-    let abandoned = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution, ForeignTipPolicy::Abandon)
+    let plan = GitVcs
+        .plan_checkout_restore(p.path(), &key(), &attribution)
         .unwrap();
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &abandoned, true)
+        .execute_checkout_restore(p.path(), &key(), &plan, true)
         .unwrap();
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
     assert!(
@@ -810,18 +743,13 @@ fn edits_here_that_collide_with_the_switch_back_keep_it_from_running_unless_aban
 }
 
 #[test]
-fn an_abandoned_switch_back_from_a_detached_head_keeps_its_commits() {
+fn a_switch_back_from_a_detached_head_keeps_its_commits() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     git(p.path(), &["switch", "-q", "--detach"]);
     let stranded = commit(p.path(), "stranded");
     let plan = GitVcs
-        .plan_checkout_restore(
-            p.path(),
-            &key(),
-            &Attribution::default(),
-            ForeignTipPolicy::Abandon,
-        )
+        .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     let outcome = GitVcs
         .execute_checkout_restore(p.path(), &key(), &plan, false)

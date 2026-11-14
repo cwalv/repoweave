@@ -143,8 +143,7 @@ pub struct BackupOutput {
     pub name: String,
     /// The commit the backup holds.
     pub tip: CommitId,
-    /// `rebased` for a branch a rebase rewrote, `abandoned` for a tip
-    /// `rwv abort --abandon-foreign-tip` gave up; absent for any other.
+    /// `rebased` for a branch a rebase rewrote; absent for any other.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mark: Option<BackupMark>,
     /// A branch reaches everything the backup holds, so dropping it loses

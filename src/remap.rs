@@ -74,7 +74,7 @@ pub(crate) fn recorded(
                 from.short(),
                 onto.short(),
                 tip.short(),
-                held_by.abort_choice(tip)
+                held_by.abort_choice()
             ),
         ));
     };
@@ -86,29 +86,14 @@ pub(crate) fn recorded(
 #[derive(Clone, Copy)]
 pub(crate) struct HeldBy<'a> {
     pub(crate) workspace: &'a Path,
-    pub(crate) repo: &'a RepoKey,
 }
 
 impl HeldBy<'_> {
-    fn abort_choice(&self, tip: &CommitId) -> String {
-        let Ok(Some(owner)) = crate::op_state::read_owner(self.workspace) else {
-            return "this puts back what this operation moved:\n\trwv abort".to_owned();
-        };
-        let written = match &owner.tips {
-            crate::op_state::PhaseTips::Replay(tips)
-            | crate::op_state::PhaseTips::Converged(tips) => tips.get(self.repo),
-        };
-        if written.is_none_or(|written| written == tip) {
-            return "this puts back what this operation moved:\n\trwv abort".to_owned();
-        }
-        let operand = match self.repo {
-            RepoKey::Project => crate::manifest::RepoOperand::Project(owner.project.clone()),
-            RepoKey::Member(path) => crate::manifest::RepoOperand::Member(path.clone()),
-        };
+    fn abort_choice(&self) -> String {
         format!(
-            "the tip is not one this operation wrote, so `rwv abort` refuses it as foreign; \
-             this puts the branch back and keeps that tip as an `abandoned` backup:\n\t\
-             rwv abort --abandon-foreign-tip {operand}"
+            "this puts back what this operation moved, keeping as a backup first any tip it \
+             did not write:\n\t{}",
+            crate::op_state::abort_command_at(self.workspace)
         )
     }
 }
@@ -142,10 +127,7 @@ pub(crate) fn member_replays(
             &carry.from,
             &carry.onto,
             composed,
-            HeldBy {
-                workspace,
-                repo: &carry.repo,
-            },
+            HeldBy { workspace },
         )?;
         replays.entry(path.clone()).or_default().push(MemberReplay {
             replayed,
@@ -178,10 +160,7 @@ pub(crate) fn member_replays(
             &rebase.from,
             &rebase.onto,
             tip.id(),
-            HeldBy {
-                workspace,
-                repo: &rebase.repo,
-            },
+            HeldBy { workspace },
         )?;
         replays.entry(path.clone()).or_default().push(MemberReplay {
             replayed,
@@ -554,10 +533,7 @@ pub(crate) fn remap_rebased_project(
         &project.from,
         &project.onto,
         &tip,
-        HeldBy {
-            workspace,
-            repo: &RepoKey::Project,
-        },
+        HeldBy { workspace },
     )?;
     let manifest = match tip_manifest {
         Some(text) => Manifest::from_toml_str(text)?,

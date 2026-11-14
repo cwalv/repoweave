@@ -665,7 +665,6 @@ impl Vcs for FakeVcs {
         _repo: &Path,
         _saved: &RefSavepoint,
         _wrote: Option<&CommitId>,
-        _foreign_tip_policy: ForeignTipPolicy,
         _freed: &[PathBuf],
     ) -> Result<crate::vcs::RefRestorePlan, VcsError> {
         unsupported("plan_ref_restore")
@@ -706,7 +705,6 @@ impl Vcs for FakeVcs {
         _repo: &Path,
         _key: &SavepointKey,
         _attribution: &crate::vcs::Attribution<'_>,
-        _foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<crate::vcs::CheckoutRestorePlan, VcsError> {
         unsupported("plan_checkout_restore")
     }

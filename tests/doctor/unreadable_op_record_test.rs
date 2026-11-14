@@ -238,9 +238,8 @@ fn assert_doctor_reports_no_op_state(parked: &Parked) {
 
 /// A recorded tip that is a tag name fails the record's parse while its op
 /// id and workspaces still parse. The error sends the operator to `rwv
-/// abort`, abort refuses each repo it can no longer attribute, the member
-/// stopped in the landing's rebase included, and names the flag that
-/// settles it, and that flag ends the op.
+/// abort`, which keeps each tip it can no longer attribute as a backup,
+/// cancels the member's rebase with its working copy kept, and ends the op.
 #[test]
 fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     let parked = park();
@@ -258,32 +257,13 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     );
 
     let out = rwv(&parked.seat.root, &["abort"]);
-    let stderr = stderr_of(&out);
-    assert!(!out.status.success(), "{}", transcript(&out));
+    assert!(out.status.success(), "{}", transcript(&out));
     assert!(
-        stderr.contains("  projects/app: foreign-tip violation"),
-        "with its recorded tip unreadable, the replayed project repo is foreign:\n{}",
+        String::from_utf8_lossy(&out.stdout).contains("  projects/app: its tip"),
+        "with its recorded tip unreadable, the replayed project repo's tip is kept:\n{}",
         transcript(&out)
     );
-    assert!(
-        mid_op(&parked.seat.lib)
-            && stderr.contains(&format!(
-                "\trwv abort --abandon-foreign-tip projects/app --abandon-foreign-tip {LIB}\n"
-            )),
-        "with no step recorded, the member's rebase is not taken for the op's: it is \
-         refused, and one command naming both repos ends it:\n{}",
-        transcript(&out)
-    );
-
-    succeed(
-        &parked.seat.root,
-        &[
-            "abort",
-            "--abandon-foreign-tip=projects/app",
-            "--abandon-foreign-tip",
-            LIB,
-        ],
-    );
+    assert!(!mid_op(&parked.seat.lib), "{}", transcript(&out));
 
     assert_no_op_residue(&parked);
     land(&parked);

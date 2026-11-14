@@ -77,7 +77,7 @@ src/check.rs	unknown-finding-kind	-	1
 src/cherry_pick.rs	(untokened:owed)	-	4
 src/cherry_pick.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/cherry_pick.rs	edits rwv.toml or rwv.lock uncommitted	-	1
-src/cherry_pick.rs	foreign-tip	tests/sync/abort_hardening_test.rs	1
+src/cherry_pick.rs	foreign-tip	-	1
 src/cherry_pick.rs	head-not-on-branch	-	1
 src/cherry_pick.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/cherry_pick.rs	name no-such-branch	-	1
@@ -301,7 +301,7 @@ src/sync.rs	clone-topology	-	1
 src/sync.rs	dropped-repo-has-unique-commits	tests/sync/backup_verb_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
 src/sync.rs	edits drift left in place	tests/sync/land_drift_test.rs	1
-src/sync.rs	foreign-tip	tests/sync/abort_hardening_test.rs	5
+src/sync.rs	foreign-tip	-	5
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
 src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	6

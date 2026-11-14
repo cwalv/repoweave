@@ -445,10 +445,14 @@ pub enum VcsAction {
     SetCommitIdentity,
     ShowKeptFile,
     TurnOnCheckoutRecording,
+    /// The commits a backup keeps beyond `<base>`.
+    ShowKeptCommits,
+    /// What a backup of a working copy holds beyond the commit it was on.
+    ShowKeptEdits,
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 32] = [
+    pub const ALL: [VcsAction; 34] = [
         Self::AddAll,
         Self::Commit,
         Self::Stash,
@@ -481,6 +485,8 @@ impl VcsAction {
         Self::SetCommitIdentity,
         Self::ShowKeptFile,
         Self::TurnOnCheckoutRecording,
+        Self::ShowKeptCommits,
+        Self::ShowKeptEdits,
     ];
 }
 
@@ -1147,22 +1153,6 @@ impl std::error::Error for VcsError {
     }
 }
 
-/// Whether a caller has consented to restoring over a foreign tip.
-///
-/// A foreign tip is one [`Vcs::verified_restore_savepoint`] cannot attribute
-/// to the op. [`Self::Refuse`] is the default everywhere; [`Self::Abandon`]
-/// is reached only from an operator flag naming one repo at a time, and even
-/// then the restore proceeds only after the tip being moved off is kept as an
-/// `abandoned` backup — the consent buys abandonment, never destruction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ForeignTipPolicy {
-    /// Report [`VerifiedRestoreOutcome::ForeignTip`] and leave HEAD alone.
-    Refuse,
-    /// Keep the foreign tip as an `abandoned` backup, then restore to the
-    /// savepoint.
-    Abandon,
-}
-
 /// Whether an op's own steps run in a checkout, so an operation stopped there
 /// may be one it started.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1206,9 +1196,6 @@ pub struct Attribution<'a> {
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
     pub own_steps: &'a [OwnStep],
-    /// The tip the op's own replay reached here once the operator finished
-    /// it by hand, which holds their resolution.
-    pub finished_by_hand: Option<&'a CommitId>,
     /// Whether the checkout is in the workspace abort was run in, where its
     /// uncommitted edits are kept as a backup before a move discards them;
     /// elsewhere they refuse the move.
@@ -1230,8 +1217,9 @@ pub enum KeptWork {
     Edits(BackupWitness),
     /// The commits a detached HEAD held that no branch reaches.
     Commits(BackupWitness),
-    /// The op's own replay as the operator finished it by hand.
-    FinishedByHand(BackupWitness),
+    /// A tip the op did not write that held commits its savepoint does not
+    /// reach.
+    Tip(BackupWitness),
 }
 
 /// Outcome of a [`Vcs::verified_restore_savepoint`] call.
@@ -1276,15 +1264,6 @@ pub enum VerifiedRestoreOutcome {
         savepoint: CommitId,
         in_the_way: InTheWay,
     },
-    /// The checkout is stopped in an operation the op cannot attribute to
-    /// itself: one it never starts there begun on a tip it moved, or one
-    /// begun on a tip it never wrote. Nothing was touched.
-    StoppedForeign {
-        stopped: ConflictOp,
-        /// Where canceling the operation would leave HEAD.
-        returns_to: CommitId,
-        savepoint: CommitId,
-    },
     /// The checkout, at a tip abort may restore, is off the branch its
     /// savepoint names, and that branch cannot be checked out here: it is
     /// gone, or another checkout holds it. Nothing was touched.
@@ -1294,24 +1273,14 @@ pub enum VerifiedRestoreOutcome {
         /// The checkouts holding the branch; empty where it is gone.
         held_at: Vec<PathBuf>,
     },
-    /// The checkout, at a tip abort may restore, is off where its savepoint
-    /// was taken, and its uncommitted edits keep it from switching back.
-    /// Nothing was touched.
-    EditsBlockSwitchBack {
-        savepoint: CommitId,
-        in_the_way: InTheWay,
-    },
     /// Work was kept as backups before the steps that would have discarded
     /// it; `then` is what the restore did.
     Kept {
         kept: Vec<KeptWork>,
         then: Box<VerifiedRestoreOutcome>,
     },
-    /// The repo's tip is not attributable to the op — it is neither the
-    /// savepoint, nor the recorded converged tip, nor a mid-op state.
-    /// Restore was REFUSED and the tip left where it is. The caller is
-    /// expected to report the violation and continue with other repos; do
-    /// not silently reset.
+    /// The checkout moved after abort planned its restore: nothing of it
+    /// was touched.
     ForeignTip {
         /// The repo's current tip at the moment of classification.
         observed_tip: CommitId,
@@ -1322,21 +1291,8 @@ pub enum VerifiedRestoreOutcome {
         /// converged tips, or when no entry exists for this repo.
         recorded_converged_tip: Option<CommitId>,
     },
-    /// The repo's tip was foreign, the caller consented via
-    /// [`ForeignTipPolicy::Abandon`], and the tip was kept as an `abandoned`
-    /// backup — so the repo was reset back to the savepoint and the foreign
-    /// commits remain reachable through `backup`.
-    AbandonedForeignTip {
-        /// The foreign tip the branch was moved off.
-        abandoned_tip: CommitId,
-        /// The savepoint the repo was reset to.
-        savepoint: CommitId,
-        /// The backup holding the abandoned tip.
-        backup: BackupWitness,
-    },
     /// The checkout was on another branch than the one its savepoint names,
-    /// or detached where it was not, at a tip attributable to the op (or the
-    /// operator abandoned it); it was put back where the savepoint was
+    /// or detached where it was not; it was put back where the savepoint was
     /// taken, leaving the branch it was on where it stands, and `then` is
     /// that restored checkout's own outcome.
     SwitchedBack {
@@ -1366,10 +1322,11 @@ pub enum RefRestoreOutcome {
         observed: Option<CommitId>,
         why: String,
     },
-    /// The branch was at a foreign tip the operator abandoned: the tip was
-    /// kept as an `abandoned` backup and the branch put back.
-    AbandonedForeignTip {
-        abandoned_tip: CommitId,
+    /// The branch was at a tip the op did not write, holding commits its
+    /// savepoint does not reach: the tip was kept as a backup and the branch
+    /// put back.
+    Kept {
+        tip: CommitId,
         backup: BackupWitness,
     },
 }
@@ -1380,12 +1337,11 @@ pub enum RefRestoreOutcome {
 pub enum RestoredFrom {
     Intent,
     Converged,
-    /// A foreign tip the operator gave up, kept as an `abandoned` backup
-    /// first.
-    Abandoned,
-    /// The op's own replay, finished by hand: the operator's resolution,
-    /// kept as a backup first.
-    FinishedByHand,
+    /// A tip the op did not write that the savepoint reaches.
+    Reached,
+    /// A tip the op did not write holding commits the savepoint does not
+    /// reach, kept as a backup first.
+    Kept,
 }
 
 /// What restoring a checkout to its savepoint would do, judged from what
@@ -1410,13 +1366,15 @@ pub enum CheckoutRestorePlan {
         savepoint: CommitId,
         why: RestoredFrom,
     },
-    /// Cancel the operation the checkout is stopped in, keeping first what
-    /// a hard move to `keep_edits_to` discards; where the VCS refuses the
-    /// cancel, `abandon` ends it by a hard move instead.
+    /// Cancel the operation the checkout is stopped in, its working copy
+    /// kept as a backup first, and, where the op did not start it, the
+    /// commits its HEAD holds that no branch reaches. Where the VCS would
+    /// refuse the cancel, `clear_first` names the untracked paths in its
+    /// way, removed with the working copy's edits once both are kept.
     Cancel {
         stopped: ConflictOp,
-        keep_edits_to: Option<CommitId>,
-        abandon: bool,
+        keep_head: bool,
+        clear_first: Option<Vec<String>>,
         then: Box<CheckoutRestorePlan>,
     },
     /// Put the checkout back where its savepoint was taken: onto `onto`, or
@@ -1426,10 +1384,8 @@ pub enum CheckoutRestorePlan {
         from: CommitId,
         onto: Option<RawRefName>,
         savepoint: CommitId,
-        keep_detached_as_abandoned: bool,
-        /// Whether edits that keep it from switching may be kept as a
-        /// backup and discarded.
-        discard_blocking_edits: bool,
+        /// Whether the detached HEAD it leaves holds commits to keep.
+        keep_detached: bool,
         then: Box<CheckoutRestorePlan>,
     },
     /// Something abort may not move past: the outcome that says what, with
@@ -1478,9 +1434,9 @@ pub enum RefRestorePlan {
     /// At its savepoint: the savepoint is dropped.
     Untouched,
     /// Move the branch from `from` to its savepoint by compare-and-swap,
-    /// keeping `from` as an `abandoned` backup first where `abandon`.
-    Restore { from: CommitId, abandon: bool },
-    /// Left as it is: gone, checked out, or at a tip the op did not write.
+    /// keeping `from` as a backup first where `keep`.
+    Restore { from: CommitId, keep: bool },
+    /// Left as it is: gone, or checked out.
     Blocked {
         observed: Option<CommitId>,
         why: String,
@@ -1505,8 +1461,6 @@ pub enum RefRestorePlan {
 pub enum BackupMark {
     /// Made before a rebase rewrote the branch.
     Rebased,
-    /// The tip `rwv abort --abandon-foreign-tip` gave up.
-    Abandoned,
     /// The tip of a remote-tracking branch a fetch found rewritten.
     Superseded,
 }
@@ -3993,19 +3947,18 @@ pub trait Vcs: Send + Sync {
     ) -> Result<(), VcsError>;
 
     /// Put `saved.branch` back at `saved.at` by compare-and-swap against
-    /// `wrote`, the tip the op moved it to, and drop its savepoint. A branch
-    /// at its savepoint is left; one gone, checked out anywhere, or at any
-    /// other tip is foreign, unless `foreign_tip_policy` abandons that tip,
-    /// which is kept as a backup first. A checked-out branch is never moved.
+    /// the tip it holds, and drop its savepoint. A branch at its savepoint
+    /// is left; one gone or checked out anywhere is foreign and never
+    /// moved. A tip other than `wrote` holding commits the savepoint does
+    /// not reach is kept as a backup first.
     fn restore_ref_savepoint(
         &self,
         repo: &Path,
         key: &SavepointKey,
         saved: &RefSavepoint,
         wrote: Option<&CommitId>,
-        foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<RefRestoreOutcome, VcsError> {
-        let plan = self.plan_ref_restore(repo, saved, wrote, foreign_tip_policy, &[])?;
+        let plan = self.plan_ref_restore(repo, saved, wrote, &[])?;
         self.execute_ref_restore(repo, key, saved, &plan)
     }
 
@@ -4017,7 +3970,6 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
         saved: &RefSavepoint,
         wrote: Option<&CommitId>,
-        foreign_tip_policy: ForeignTipPolicy,
         freed: &[PathBuf],
     ) -> Result<RefRestorePlan, VcsError>;
 
@@ -4060,52 +4012,38 @@ pub trait Vcs: Send + Sync {
     /// the branch savepoints filed beside it.
     fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError>;
 
-    /// HEAD-verified restore: classify the repo's current tip and restore
-    /// to the savepoint ONLY when the tip is attributable to the op: the
-    /// savepoint itself, or a tip `attribution` says the op wrote.
-    ///
-    /// Classification (evaluated in order):
+    /// Restore the checkout to its savepoint, keeping as a backup first
+    /// whatever the restore would otherwise lose:
     /// - no savepoint exists for `key` → [`VerifiedRestoreOutcome::NoSavepoint`],
     ///   or [`VerifiedRestoreOutcome::LeftStopped`] where it is stopped in an
     ///   operation, which the op cannot have started where it saved nothing.
-    /// - the checkout is stopped in a rebase, merge or copy: it is the op's
-    ///   own when `attribution` says the op integrates here and canceling it
-    ///   returns to an attributable tip; it is then canceled and the tip it
-    ///   returns to classified in turn ([`VerifiedRestoreOutcome::Canceled`]).
-    ///   One the op never starts here, begun at the savepoint, is left
-    ///   ([`VerifiedRestoreOutcome::LeftStopped`]). Where the record that
-    ///   would say is unread, one begun at the savepoint, the one tip such
-    ///   a record still attributes, is canceled once its edits are kept.
-    ///   Any other is [`VerifiedRestoreOutcome::StoppedForeign`], untouched.
-    /// - the checkout is on another branch than the savepoint names, or
-    ///   detached where it was attached or the reverse → when its tip is
-    ///   attributable, it is put back where the savepoint was taken without
-    ///   moving the branch it leaves, and the restored checkout is
-    ///   classified in turn ([`VerifiedRestoreOutcome::SwitchedBack`]).
+    /// - stopped in an operation the op never starts here, begun at the
+    ///   savepoint → left ([`VerifiedRestoreOutcome::LeftStopped`]). Any other
+    ///   stopped operation is canceled once the working copy, and the commits
+    ///   HEAD holds where the op did not start it, are kept, whichever
+    ///   workspace abort runs in; the tip it returns to is classified in
+    ///   turn ([`VerifiedRestoreOutcome::Canceled`]).
+    /// - on another branch than the savepoint names, or detached where it was
+    ///   attached or the reverse → put back where the savepoint was taken
+    ///   without moving the branch it leaves
+    ///   ([`VerifiedRestoreOutcome::SwitchedBack`]).
     /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`].
-    /// - the tip the op's replay last wrote →
-    ///   [`VerifiedRestoreOutcome::RestoredFromIntent`]; the tip it
-    ///   converged on, or the one a carry stopped here began from →
-    ///   [`VerifiedRestoreOutcome::RestoredFromConverged`]. Exact match only.
-    /// - **anything else** → [`VerifiedRestoreOutcome::ForeignTip`], HEAD
-    ///   untouched.
+    /// - any other tip is reset to the savepoint; one the op did not write
+    ///   that holds commits the savepoint does not reach is kept as a backup
+    ///   first ([`KeptWork::Tip`]).
     ///
-    /// `foreign_tip_policy` widens the two refusals and nothing else. Under
-    /// [`ForeignTipPolicy::Abandon`] a stopped operation is canceled and a
-    /// foreign tip restored over, each only after what it would discard is
-    /// kept as a backup ([`VerifiedRestoreOutcome::AbandonedForeignTip`]).
-    ///
-    /// No step that discards uncommitted edits, or commits a detached HEAD
-    /// holds, runs before they are kept as backups
-    /// ([`VerifiedRestoreOutcome::Kept`]).
+    /// Uncommitted edits in a checkout of another workspace than the one
+    /// abort runs in refuse the restore
+    /// ([`VerifiedRestoreOutcome::EditsElsewhere`]); in that one they are kept
+    /// as a backup ([`VerifiedRestoreOutcome::Kept`]) before any step that
+    /// discards them.
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
         key: &SavepointKey,
         attribution: &Attribution<'_>,
-        foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        let plan = self.plan_checkout_restore(repo, key, attribution, foreign_tip_policy)?;
+        let plan = self.plan_checkout_restore(repo, key, attribution)?;
         self.execute_checkout_restore(repo, key, &plan, attribution.edits_here)
     }
 
@@ -4117,7 +4055,6 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
         key: &SavepointKey,
         attribution: &Attribution<'_>,
-        foreign_tip_policy: ForeignTipPolicy,
     ) -> Result<CheckoutRestorePlan, VcsError>;
 
     /// Carry out `plan` up to the first step it blocks at. A step whose

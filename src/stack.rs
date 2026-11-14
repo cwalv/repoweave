@@ -641,7 +641,6 @@ impl Carrier<'_> {
             &tip,
             crate::remap::HeldBy {
                 workspace: self.workspace,
-                repo: &carrying.repo,
             },
         )?;
         if carrying.repo == RepoKey::Project {

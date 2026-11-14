@@ -26,21 +26,20 @@ If the operation stopped as `unparseable-project` `mid-operation`, the project r
 
 ## Roll back with `rwv abort`
 
-`rwv abort` restores every ref the operation moved to its pre-op savepoint (under `refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` in the target of a `land`): each checkout, onto the branch it was on, and each branch a landing moved without a checkout. It cancels a rebase, merge or cherry-pick the operation left in progress in the source, and clears the op record:
+`rwv abort` restores every ref the operation moved to its pre-op savepoint (under `refs/rwv/pre-op/<op-id>`, or `refs/rwv/pre-op/<op-id>-target` in the target of a `land`): each checkout, onto the branch it was on, and each branch a landing moved without a checkout. It cancels a rebase, merge or cherry-pick left in progress, and clears the op record:
 
 | Current repository tip | `rwv abort` outcome |
 |---|---|
-| Equal to the savepoint | `untouched` — the operation never moved this repository |
-| Equal to the recorded intent or converged tip | `restored` — reset to the savepoint |
-| On another branch than when the operation began, at a tip the operation accounts for | `switched back` onto that branch, the branch it was on left where it stands, then judged by this table |
-| Stopped in a rebase, merge or cherry-pick the operation started, begun on a tip the operation wrote | `restored` — the VCS operation canceled, then judged by this table |
+| Equal to the savepoint | `untouched`: the operation never moved this repository |
+| Equal to the recorded intent or converged tip | `restored`: reset to the savepoint |
+| Any other tip | reset to the savepoint; where the tip holds commits the savepoint does not reach (a commit you made at a stop), it is kept as a backup first |
+| On another branch than when the operation began | `switched back` onto that branch, the branch it was on left where it stands, then judged by this table |
+| Stopped in a rebase, merge or cherry-pick | the working copy, your conflict resolutions included, kept as a backup, then the VCS operation canceled and the repository judged by this table |
 | Stopped in an operation begun where the operation found it, in a repository the operation never merges or rebases, or in a `land`'s target a repository the landing never moved | `left` where it stands, the operation in progress there included |
-| Stopped in any other operation: begun on a commit made after the stop, or in a `land`'s target on a tip the landing moved | refused, the operation in progress left as it is; op record retained |
-| Anything else | `foreign-tip violation` — restore refused, the tip left in place and nothing written; op record retained |
 
-A branch the landing moved without a checkout is put back once every checkout is restored, only from the tip the landing wrote and only while nothing has it checked out; one the landing created is deleted.
+A branch the landing moved without a checkout is put back once every checkout is restored, from the tip it holds, while nothing has it checked out; one the landing created is deleted.
 
-Every commit `rwv abort` resets off is one the operation made, so the commits it discards are the operation's own output. Some hold work of yours: a conflict you resolved before `--continue`, or an `rwv.toml` fix the replay took in. `rwv abort` keeps that as a backup only until the operation records the replay's result as its own (a sync at its relock; a landing once `--continue` has finished the replay, and for a carried fix once it has re-pinned the replayed project commits); from there it resets off those commits as a plain rebase abort discards a continued rebase's resolutions (for git, `git rebase --abort`), and the VCS's record of past positions (for git, the reflog) is what still holds them. A commit you make at a stop is not the operation's result, whether or not `--continue` ran after it: it refuses the abort as a `foreign-tip`, as it would without the `--continue`. Uncommitted edits made during the stop are kept: before any reset that would discard them in the workspace you run it in, `rwv abort` keeps them as a backup and prints its name (`rwv backup list` shows it). Edits in a checkout of the other workspace of a landing refuse the abort instead: it names the command that sets them aside there, or run `rwv abort` in that workspace, which keeps them as a backup. Canceling the operation's own stopped rebase or merge in the workspace you run it in is the one step it takes as the VCS's own abort would; in the other workspace of a landing, `rwv abort` first keeps that checkout's working copy as a backup and prints its name. A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a foreign tip, a branch that is gone or checked out elsewhere, edits in the other workspace of a landing, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
+`rwv abort` never discards a commit or an edit without keeping it first, from whichever workspace you run it in. Each backup it keeps is printed on one line with its name, followed by the command that shows what it holds. That includes a commit you made at a stop, whether or not `--continue` ran after it, and a conflict you resolved and staged; the operation's own commits it resets off without a backup. Uncommitted edits in a checkout of the other workspace of a landing refuse the abort instead: it names the command that sets them aside there, or run `rwv abort` in that workspace, which keeps them as a backup. A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a branch that is gone or checked out elsewhere, edits in the other workspace of a landing, a landing's target that something else moved, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort as `foreign-tip`, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
 
 ### Ending an operation whose record cannot be read
 
@@ -54,18 +53,9 @@ It removes the record, the leases the operation holds on other workspaces and it
 
 ### Handling a `foreign-tip` refusal
 
-If a commit was made in a repository after the sync paused, `rwv abort` refuses to overwrite that unattributed tip and retains the op record:
-
-- **To discard the post-crash commits and roll back to the savepoint**, pass `--abandon-foreign-tip <repo>` (repeatable per repository; `projects/<name>` names the project repo):
-  ```bash
-  rwv abort --abandon-foreign-tip github/foo/bar
-  ```
-  The abandoned commits are first kept as a backup marked `abandoned`, named for the branch they were on, and abort prints its name. `rwv backup list` shows it with the commits only it holds, and `rwv backup drop github/foo/bar <name>` drops it once they are not wanted. If the foreign agent kept committing between two runs, the rerun keeps the tip as it then stands.
-
-The refusal ends with the commands that end the operation, one per way it can end, each already carrying every `--abandon-foreign-tip` you gave, so run a printed command as printed:
+The refusal ends with the commands that end the operation, so run a printed command as printed:
 
 - `rwv abort` again, once the fixes it printed are made;
-- `rwv abort --abandon-foreign-tip <repo> ...`, naming each repository that can be given up;
 - `rwv land --continue`, where a landing stopped in its retire and can finish;
 - `rwv abort --leave-target`, for a landing whose target something else moved, or holds a commit the landing wrote that another lock now pins: the source is restored, the target is left as it stands, and each tip the landing wrote there is kept as a backup first where no branch reaches it.
 
@@ -73,9 +63,7 @@ Edits in the other workspace of a landing are set aside there with the command t
 
 Once `rwv abort` has begun, the operation can only be aborted: `--continue` refuses it. A write that finds a repository moved since abort judged it stops there, saying `abort stopped there`; what was restored stays, nothing after it is done, and `rwv abort` run again completes the rest.
 
-A repository refused because it is stopped in an operation abort did not start prints its own choices: finish or abandon that operation there, then rerun `rwv abort`; or `rwv abort --abandon-foreign-tip <repo>`, which keeps its edits and commits as backups before canceling it.
-
-A branch the operation moved with no checkout holding it is put back only where it still sits at the tip the operation wrote. One that moved since is refused with `rwv abort --abandon-foreign-tip <repo>`, which keeps its new tip as an `abandoned` backup and puts it back; one a checkout now holds names that checkout to free, then rerun `rwv abort`.
+A branch the operation moved with no checkout holding it that a checkout now holds names that checkout to free, then rerun `rwv abort`.
 
 ### When no operation is in progress
 

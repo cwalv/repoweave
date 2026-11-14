@@ -16,7 +16,6 @@ const REMOTE_TRACKING_ROOT: &str = "refs/remotes/";
 const ID_WIDTH: usize = 12;
 const DETACHED_HEAD: &str = "HEAD";
 const REBASED_PREFIX: &str = "rebased-";
-const ABANDONED_PREFIX: &str = "abandoned-";
 const SUPERSEDED_PREFIX: &str = "superseded-";
 const EDITS_MESSAGE: &str = "rwv backup of uncommitted edits";
 /// The second parent of an edits backup whose index held content the
@@ -34,7 +33,6 @@ fn id_text(mark: Option<BackupMark>, hex: &str) -> String {
     match mark {
         None => hex.to_owned(),
         Some(BackupMark::Rebased) => format!("{REBASED_PREFIX}{hex}"),
-        Some(BackupMark::Abandoned) => format!("{ABANDONED_PREFIX}{hex}"),
         Some(BackupMark::Superseded) => format!("{SUPERSEDED_PREFIX}{hex}"),
     }
 }
@@ -42,8 +40,6 @@ fn id_text(mark: Option<BackupMark>, hex: &str) -> String {
 fn mark_of(id: &str) -> Option<BackupMark> {
     if id.starts_with(REBASED_PREFIX) {
         Some(BackupMark::Rebased)
-    } else if id.starts_with(ABANDONED_PREFIX) {
-        Some(BackupMark::Abandoned)
     } else if id.starts_with(SUPERSEDED_PREFIX) {
         Some(BackupMark::Superseded)
     } else {
@@ -342,7 +338,7 @@ impl GitVcs {
 mod tests {
     use super::*;
     use crate::op_state::SavepointKey;
-    use crate::vcs::{Attribution, ForeignTipPolicy, Vcs, VerifiedRestoreOutcome};
+    use crate::vcs::{Attribution, Vcs, VerifiedRestoreOutcome};
 
     fn git(dir: &Path, args: &[&str]) -> String {
         let out = git_command()
@@ -430,7 +426,7 @@ mod tests {
     fn a_mark_is_part_of_the_name_and_is_read_back() {
         let p = repo();
         let tip = commit(p.path(), "work");
-        for mark in [None, Some(BackupMark::Rebased), Some(BackupMark::Abandoned)] {
+        for mark in [None, Some(BackupMark::Rebased)] {
             GitVcs
                 .write_backup(p.path(), &feature("b"), &tip, mark)
                 .unwrap();
@@ -445,7 +441,7 @@ mod tests {
             3,
             "one tip backed up three ways is three backups: {marks:?}"
         );
-        for expected in [None, Some(BackupMark::Rebased), Some(BackupMark::Abandoned)] {
+        for expected in [None, Some(BackupMark::Rebased)] {
             assert!(
                 marks.contains(&expected),
                 "{expected:?} not read back: {marks:?}"
@@ -699,39 +695,18 @@ mod tests {
     }
 
     #[test]
-    fn a_foreign_tip_is_refused_and_nothing_is_written_without_consent() {
+    fn a_tip_the_op_did_not_write_is_kept_as_a_backup_before_the_reset() {
         let (p, key, savepoint, foreign) = foreign_tip_fixture();
 
         let outcome = GitVcs
-            .verified_restore_savepoint(
-                p.path(),
-                &key,
-                &Attribution::default(),
-                ForeignTipPolicy::Refuse,
-            )
+            .verified_restore_savepoint(p.path(), &key, &Attribution::default())
             .unwrap();
 
-        assert!(matches!(outcome, VerifiedRestoreOutcome::ForeignTip { .. }));
-        assert_eq!(head(p.path()), foreign);
-        assert_ne!(head(p.path()), savepoint);
-        assert!(listed(p.path()).is_empty());
-    }
-
-    #[test]
-    fn an_abandoned_foreign_tip_is_kept_as_an_abandoned_backup_before_the_reset() {
-        let (p, key, savepoint, foreign) = foreign_tip_fixture();
-
-        let outcome = GitVcs
-            .verified_restore_savepoint(
-                p.path(),
-                &key,
-                &Attribution::default(),
-                ForeignTipPolicy::Abandon,
-            )
-            .unwrap();
-
-        let VerifiedRestoreOutcome::AbandonedForeignTip { backup, .. } = outcome else {
-            panic!("expected the tip to be abandoned, got {outcome:?}");
+        let VerifiedRestoreOutcome::Kept { kept, .. } = &outcome else {
+            panic!("expected the tip to be kept, got {outcome:?}");
+        };
+        let [crate::vcs::KeptWork::Tip(backup)] = kept.as_slice() else {
+            panic!("expected one kept tip, got {outcome:?}");
         };
         assert_eq!(
             head(p.path()),
@@ -739,17 +714,8 @@ mod tests {
             "the repo is back at the savepoint"
         );
         assert_eq!(backup.backup().tip, foreign);
-        assert_eq!(backup.backup().mark, Some(BackupMark::Abandoned));
         let held = listed(p.path());
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].backup, *backup.backup());
-        assert_eq!(
-            git(
-                p.path(),
-                &["for-each-ref", "--format=%(refname)", "refs/rwv/pre-abort/"]
-            ),
-            "",
-            "no pre-abort ref is written"
-        );
     }
 }

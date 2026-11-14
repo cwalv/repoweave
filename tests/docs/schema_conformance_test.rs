@@ -374,9 +374,9 @@ fn backup_corpus() -> Vec<(&'static str, Value)> {
                                 false,
                             ),
                             backup(
-                                "HEAD/abandoned-cccccccccccc",
+                                "HEAD/cccccccccccc",
                                 'c',
-                                Some(BackupMark::Abandoned),
+                                None,
                                 false,
                             ),
                             backup(
@@ -1231,7 +1231,7 @@ fn status_backups() -> Vec<repoweave::backup::RepoBackupsOutput> {
     vec![repoweave::backup::RepoBackupsOutput {
         path: REPO.to_owned(),
         backups: vec![
-            backup("main/1", Some(repoweave::vcs::BackupMark::Abandoned)),
+            backup("main/1", None),
             backup("main/2", Some(repoweave::vcs::BackupMark::Rebased)),
             backup("main/3", None),
             backup(

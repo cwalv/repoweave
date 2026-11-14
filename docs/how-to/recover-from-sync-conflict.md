@@ -100,7 +100,7 @@ If you step through a multi-commit rebase manually (for git, `git rebase --conti
 - **Member repo conflict:** A member repo's branch has a textual conflict against the incoming target revision. Resolve the conflicted files in that member checkout, run `git add`, and resume with `--continue`.
 - **`rwv land --retire` conflict:** When `--retire` hits a conflict, the workweave is preserved so you can resolve it. After marking your fixes resolved, run bare `rwv land --continue` — `--retire` is remembered in the op record and runs automatically once the sync finishes.
 
-For inspecting the in-flight op record, handling `foreign-tip` refusals during `rwv abort`, or finding the commits an abandoned foreign tip left in an `abandoned` backup (`rwv backup list`), see [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md).
+For inspecting the in-flight op record, handling `foreign-tip` refusals during `rwv abort`, or finding the commits `rwv abort` kept as a backup (`rwv backup list`), see [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md).
 
 ## Related
 
