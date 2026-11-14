@@ -16,8 +16,11 @@ Backups are made by:
 - `rwv workweave delete --discard-uncommitted`, which keeps each checkout's
   uncommitted edits as a commit on its HEAD (untracked files included, ignored
   ones not);
-- `rwv abort --abandon-foreign-tip <repo>`, which keeps the tip it moves the
-  branch off, marked `abandoned`;
+- `rwv abort`, which keeps the tip it resets a branch from, where that tip
+  holds a commit no other branch reaches, in the branch's one slot
+  `<branch>/aborted`, and the working copy it discards in a checkout in the
+  checkout's one slot `<branch>/aborted-working-copy`; the next abort that
+  keeps something there overwrites the slot;
 - `rwv fetch`, which keeps the old tip of a remote-tracking branch the remote
   rewrote, marked `superseded`, so work built on it stays reachable and is not
   counted as unpushed;
@@ -27,15 +30,15 @@ Backups are made by:
 A backup is named `<branch>/<id>`: the branch it backs up (`HEAD` for a
 detached HEAD) and an id that begins with the mark, if it has one, and ends
 with the abbreviated id of the commit it holds. Making the same backup twice
-names the same one. It stays until it is dropped — no verb drops one on its
+names the same one. An abort slot's id is its mark alone. It stays until it is dropped — no verb drops one on its
 own, and nothing but `rwv backup` does.
 
 ### What `list` shows
 
 For each repo of the project that holds a backup — the project repo as
 `projects/<name>`, a member by its path — one line per backup: its name, the
-commit it holds, `[abandoned]` for a tip `abort` gave up, `[superseded]` for a tip a fetch found the remote had rewritten away, `[rebased]` for a
-branch a rebase rewrote, and `[redundant]` when a branch or remote-tracking
+commit it holds, `[superseded]` for a tip a fetch found the remote had rewritten away, `[rebased]` for a
+branch a rebase rewrote, `[aborted]` and `[aborted-working-copy]` for abort's slots, and `[redundant]` when a branch or remote-tracking
 branch reaches everything the backup holds, so dropping it loses nothing.
 Under each line, the commits it holds that no branch reaches, newest first.
 That list is what is lost if the backup is dropped. `list` reads refs as last
@@ -129,17 +132,24 @@ Schema:
           ]
         },
         {
-          "description": "The tip `rwv abort --abandon-foreign-tip` gave up.",
-          "type": "string",
-          "enum": [
-            "abandoned"
-          ]
-        },
-        {
           "description": "The tip of a remote-tracking branch a fetch found rewritten.",
           "type": "string",
           "enum": [
             "superseded"
+          ]
+        },
+        {
+          "description": "The branch's one slot for the tip `rwv abort` last reset it from; the next abort that resets the branch overwrites it.",
+          "type": "string",
+          "enum": [
+            "aborted"
+          ]
+        },
+        {
+          "description": "The checkout's one slot for the working copy `rwv abort` last discarded on it; the next abort that discards one there overwrites it.",
+          "type": "string",
+          "enum": [
+            "aborted-working-copy"
           ]
         }
       ]
@@ -161,7 +171,7 @@ Schema:
           }
         },
         "mark": {
-          "description": "`rebased` for a branch a rebase rewrote, `abandoned` for a tip `rwv abort --abandon-foreign-tip` gave up; absent for any other.",
+          "description": "`rebased` for a branch a rebase rewrote; absent for any other.",
           "anyOf": [
             {
               "$ref": "#/definitions/BackupMark"
@@ -257,7 +267,7 @@ Drop everything a branch already reaches:
 rwv backup prune
 ```
 
-Keep an abandoned tip: publish it under a branch of its own before dropping
+Keep a tip `abort` kept: publish it under a branch of its own before dropping
 anything that reaches it.
 
 ## Common errors

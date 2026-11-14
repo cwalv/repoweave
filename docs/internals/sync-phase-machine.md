@@ -488,53 +488,55 @@ an edit without keeping it first) is on the joint. What follows is how abort
 plans each checkout and what it keeps.
 
 Abort puts every checkout back to its savepoint. It does not decide whose a
-tip is; it decides only whether moving off the tip loses a commit. A tip the
-savepoint reaches, or one the record names as written by the op
-(`Attribution::wrote`: `advanced_tips[repo]`, `converged_tips[repo]`, or the
-tip a stopped carry began from), leaves nothing behind. Any other tip is kept
-as a backup (`KeptWork::Tip`) before the reset. A repo with no savepoint for
-the op is `NoSavepoint` and skipped. The plan (`Vcs::plan_checkout_restore`)
-is made for every checkout of both workspaces before anything moves, and the
-executor re-reads each checkout before its write:
+tip is, and no decision to keep reads the op record: it keeps whatever the
+move discards. Before a reset, the tip goes in the branch's slot
+(`Vcs::keep_in_slot`, mark `BackupMark::Aborted`) where it holds a commit
+that neither the savepoint nor any other branch or remote-tracking branch
+reaches (`Vcs::holds_only_its_own`); the working copy a reset, a switch or a
+cancel discards goes in the checkout's slot (`GitVcs::keep_working_copy`,
+mark `BackupMark::AbortedWorkingCopy`), named for the branch the checkout is
+on, or that its stopped rebase moves. A slot is a fixed name per branch,
+written by `update-ref` over whatever it held, so the next abort overwrites
+it; both are judged and written at execute time, just before the move, so a
+kill between keep and move leaves the slot holding what the rerun keeps
+again. A repo with no savepoint for the op is `NoSavepoint` and skipped. The
+plan (`Vcs::plan_checkout_restore`) is made for every checkout of both
+workspaces before anything moves, and the executor re-reads each checkout
+before its write:
 
 | Current state | Outcome |
 |---|---|
 | At the savepoint | `Untouched` |
-| At a tip the record names as written by the op | `RestoredFromIntent` / `RestoredFromConverged`, reset to the savepoint with no backup |
-| At any other tip the savepoint reaches | reset, no backup |
-| At any other tip | the tip kept as a backup (`KeptWork::Tip`), then reset; printed `its tip, holding commits this operation did not make, is kept as backup <name>` and the command that shows it |
+| At any other tip | `Restored`, the tip kept in the branch's slot first where nothing else reaches it |
 | On the target side of a `land`, a repo `take_in.moved_in_target` does not name | left where it stands, its savepoint dropped (kept as a backup first when nothing reaches it), printed `left at <tip>` unless it is at its savepoint. An unreadable record (header only) has no journal, so this row never applies there |
-| On another branch than its savepoint names, or detached where it was attached | `SwitchedBack`: put back on the saved branch, the branch it was on left where it stands (a detached HEAD's commits kept first), then planned again by this table |
-| Stopped in a rebase, merge or copy, other than the next row | `Canceled`: the working copy kept as a backup first (`GitVcs::keep_working_copy_before_cancel`), and, where the op did not start the operation (`Integrates` and `OwnerRecord::own_steps` say which it did), the commits HEAD holds that no branch reaches; then canceled as the VCS's own abort would, and planned again by this table. Untracked paths in the cancel's way, or an edit that makes the VCS refuse the cancel, are named in the plan (`clear_first`) and removed only after the working copy is kept |
-| Stopped in an operation begun at the savepoint in a repo the op never integrates (`Integrates::No`), or with no savepoint | `LeftStopped`, its savepoint dropped |
-| Uncommitted edits a reset or switch would discard, in either workspace | kept as a backup first (`KeptWork::Edits`) |
+| On another branch than its savepoint names, or detached where it was attached | `SwitchedBack`: put back on the saved branch, the branch it was on left where it stands (a detached HEAD's commits kept first in `HEAD/aborted`), then planned again by this table |
+| Stopped in a rebase, merge or copy, other than the next row | `Canceled`: the working copy, or with no edits the commits a detached HEAD holds, kept in the checkout's slot first (`GitVcs::keep_working_copy_before_cancel`); then canceled as the VCS's own abort would, and planned again by this table. Untracked paths in the cancel's way, or an edit that makes the VCS refuse the cancel, are named in the plan (`clear_first`) and removed only after the working copy is kept |
+| Stopped in an operation begun at the savepoint in a repo the op never integrates (`Integrates::No`, and no journaled `OwnStep` matching it), or with no savepoint | `LeftStopped`, its savepoint dropped |
+| Uncommitted edits a reset or switch would discard, in either workspace | kept in the checkout's slot first |
 | Moved between the plan and its write | `ForeignTip`: left as it is, the abort stops there, refuses `foreign-tip`, and the rerun plans it again |
 
-**`advanced_tips`** is written during replay: the planned tip of each
-fast-forward before the fan-out, and the tip of each rebase right after it
-succeeds; the project tip after its composition is journaled without
-judging whose it is. It is cleared in the same persist that writes
-`converged_tips` at relock completion. Before its relock commit, the
-landing (its linear relock and its merge arm) and the sync journal the
-commit's parents in `take_in.relocking`; a project tip on exactly those
-parents that changes only `rwv.lock` over its one parent, or merges the two,
-is the op's (`GitVcs::relock_of`), so a kill between the commit and the
-journal of its tip leaves abort nothing to keep. Any other tip the op wrote
-but did not get to journal is kept as a backup rather than reset silently.
+`Attribution` carries only what decides whether a stopped operation is the
+op's to cancel (`Integrates`, the journaled `OwnStep`s); the tips the record
+journals (`advanced_tips`, `converged_tips`) are read by `--continue` and by
+the landing's target judgment, never by a keep.
 
-**At a `--continue`'s entry**, while the op replays
-(`sync::keep_what_moved_at_the_stop`, called from `Op::resume` and the
-landing's continue): each checkout of the op's own workspace that moved
-during the stop off its savepoint and its journaled tip, onto commits its
-savepoint does not reach, has that tip kept as a backup journaled in
-`take_in.backups` and the tip journaled in `advanced_tips`. Whatever the
-continue does over it, a later abort names it.
+**The target is judged from the record, toward refusing.** `judge_target`
+compares each branch the landing moved in its target with the tip the record
+says it wrote; one at any other tip (a commit on it since, project branch or
+member) refuses the whole abort as `foreign-tip`, offering
+`--leave-target`. A wrong record there can only refuse, never discard.
 
-**Journaled backups.** `take_in.backups` holds the `rebased` backups the op
-made and the backups a continue made at its entry. They go when the op
-completes. A clean abort (`settle_journaled_backups`) drops each one its
-repo's restored checkout reaches and names every other, with the command that
-shows it.
+**Rebased backups.** `take_in.backups` journals the `rebased` backups the op
+made; the op drops them when it completes. A clean abort drops, in each repo
+of both workspaces, every `rebased` backup a branch reaches
+(`drop_reached_rebased_backups`): the restore put the branch back where the
+rebase found it.
+
+**Output.** One line per repo abort keeps something for
+(`sync::kept_line`), naming the slots and the command `Vcs::show_kept`
+spells, which lists each commit they hold beyond the savepoint with its
+changes; a repo restored with nothing kept prints `restored`, and untouched
+repos are counted in the summary line.
 
 ### Checkouts a landing fast-forwarded in place
 
@@ -552,9 +554,10 @@ Once every checkout of both workspaces is restored, abort walks every member
 either side listed before or after the op, and the record's plan, through
 any checkout of the member's store, and for each branch savepoint under the
 target key: a branch at its savepoint is left; one the journal names at the
-tip the op wrote, and checked out nowhere, is put back by compare-and-swap;
-one at any other tip is put back too, that tip kept as a backup first where
-the savepoint does not reach it; one gone or checked out blocks the plan. A branch the journal does not name is
+tip the op wrote, and checked out nowhere, is put back by compare-and-swap,
+its tip kept in the branch's slot first where nothing else reaches it; one at
+any other tip blocks the plan, as the target judgment refuses it;
+one gone or checked out blocks the plan. A branch the journal does not name is
 left. A branch the op created is then deleted where it sits at its creation
 point, or at the tip the op wrote (put back to the creation point first),
 while another branch reaches it.

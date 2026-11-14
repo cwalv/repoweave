@@ -1465,7 +1465,9 @@ The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
 - `Vcs::write_backup(repo, source, tip, mark)` is the backend's primitive:
   idempotent, creating the ref where none exists, or naming the one that already
   holds the same tip. `BackupSource` is a branch or a detached HEAD; `mark` is
-  `Rebased`, `Abandoned` or none. Git spells the ref
+  `Rebased`, `Superseded`, `Aborted`, `AbortedWorkingCopy` or none; the two
+  abort marks name a slot, a fixed name per branch that the next write
+  overwrites. Git spells the ref
   `refs/rwv/backup/<branch>/<id>`, `<branch>` being `HEAD` when detached, the id
   the abbreviated tip behind the mark (`src/git/backup.rs`). The namespace is
   declared once, as `BACKUP_NAMESPACE` in `src/git.rs`, and
@@ -1475,9 +1477,9 @@ The seam (`vcs.rs`) owns the shape and the backend owns every spelling:
   `BackupWitness`: it calls `write_backup`, then mints the witness in `vcs.rs`,
   where its fields are visible. A value of the type is proof the ref exists, not
   a plan to write one. `DestroyProof::backed_up` runs the backup
-  itself; `verified_restore_savepoint` under `ForeignTipPolicy::Abandon` makes
-  one before its `reset --hard` and returns the witness in
-  `VerifiedRestoreOutcome::AbandonedForeignTip`.
+  itself; `Vcs::keep_in_slot` makes one before abort's reset where the tip
+  holds a commit nothing else reaches, and the restore returns the witnesses
+  in `VerifiedRestoreOutcome::Kept`.
 - `Vcs::list_backups(repo, RemoteTracking)` returns each backup with the commits
   it holds that no branch reaches (`held`); a backup with none is *redundant*.
   `RemoteTracking::Ignored` judges on local branches alone, which `backup prune`

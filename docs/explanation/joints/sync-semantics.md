@@ -159,21 +159,23 @@ landing moves without a checkout, at the tip the landing read. Abort puts a
 checkout back on its branch before it resets anything, and puts each such
 branch back once no checkout is left on it.
 
-**Verified restore.** Abort resets a repo to its savepoint only
-when the repo's tip is one the operation accounts for: the savepoint itself
-(nothing to restore), a tip the op recorded while advancing or converging
-that repo, or a rebase, merge or cherry-pick the op left in progress. Every
-such tip is a commit the op made, so abort resets off it without a backup:
-what it discards is the op's own output. Any other tip that holds a commit the
-savepoint does not reach, such as a commit made after the op stopped, is kept
-as a backup before abort puts the repo back, and abort prints its name with the
-command that shows it; so is the working copy of a checkout stopped in a
-rebase or merge, from whichever workspace abort runs in. `rwv backup list`
-shows each backup and `rwv backup drop` drops it.
+**Keeping what it discards.** Abort resets each repo to its savepoint and,
+before it does, keeps what the reset or a cancel discards, without asking who
+made it: the tip of each branch it resets, where that tip holds a commit
+neither the savepoint nor another branch reaches, in the branch's one slot,
+and the working copy of each checkout it cancels a stopped rebase, merge or
+copy in, or discards edits in, in the checkout's one slot, from whichever
+workspace abort runs in. The next abort that keeps something in a slot
+overwrites it. This is the bar a single-repository reset sets, where the VCS
+keeps the last tip a reset moved off, one deep: an operation's own commits and
+a commit you made at a stop are kept alike, so no record of whose a tip is can
+be wrong about it. Abort prints one line per repo it keeps something for, with
+the command that shows it; `rwv backup list` shows the slots and
+`rwv backup drop` drops one.
 
 **Planned whole.** Abort plans every write on both sides before it makes any. One
-blocked step (a branch gone or checked out elsewhere, a landing's target that
-something else moved, something unreadable) refuses the whole abort:
+blocked step (a branch gone or checked out elsewhere, a branch of a landing's
+target that something else moved, something unreadable) refuses the whole abort:
 nothing of either side is restored and `--continue` stays open. After it begins,
 `--continue` is closed, and a write that finds a repo moved since the plan stops
 there; a rerun of `rwv abort` completes the rest. `--leave-target` ends a landing

@@ -102,11 +102,10 @@ may move, pointing at its pre-operation state before any destructive write
 under `refs/rwv/pre-op/<op-id>-target` in a `land` target's repos, which
 share a ref store with the source's. The ref is tied to a specific
 operation id, and `rwv abort` knows how to roll back to it. A savepoint
-lasts one operation: abort restores a repo only over tips the operation
-itself made, so what it throws away is the operation's own output.
+lasts one operation.
 
-**Backups** cover a discard the operator consents to, and the edits
-`rwv abort` discards in the workspace it is run in. A backup is a ref
+**Backups** cover a discard the operator consents to, and what
+`rwv abort` discards. A backup is a ref
 an rwv verb makes before any step that would leave a commit or an
 uncommitted edit unpreserved — reached by no branch, no remote-tracking
 branch and no other backup. It lives under `refs/rwv/backup/<branch>/<id>`
@@ -120,12 +119,13 @@ it holds. These discards make one first:
 - `rwv workweave delete --discard-uncommitted` keeps the edits of each
   checkout as a commit on its HEAD (untracked files included, ignored
   ones not), then the backup ref;
-- `rwv abort` keeps a tip it moves a branch off that holds commits the
-  operation did not make;
-- `rwv abort`, before a reset or a cancel that is not the operation's own
-  stopped step, keeps the uncommitted edits it would discard in a checkout
-  of either workspace of the operation, an ignored file it would overwrite
-  included.
+- `rwv abort` keeps the tip it resets a branch from, wherever that tip
+  holds a commit no other branch reaches, and the working copy it discards
+  in a checkout of either workspace of the operation (an ignored file it
+  would overwrite included), whoever made either. It keeps them in one slot
+  per branch and one per checkout, which the next abort overwrites: the
+  bar of a single-repository reset, whose last discarded tip the VCS also
+  keeps one deep.
 
 The backup is written first and the delete or the reset runs only once it
 exists: a backup that cannot be written stops the verb with nothing

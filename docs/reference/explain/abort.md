@@ -22,27 +22,39 @@ workspace and the recorded target are rolled back, whichever of the two
 ### What is restored
 
 For each member repo and the project repo in every involved workspace, abort
-puts the checkout back at its savepoint, and keeps first whatever that would
-otherwise lose. The outcome by what the checkout holds:
+puts the checkout back at its savepoint, and keeps first whatever that
+discards, whoever made it: the operation, you, or another tool. The outcome by
+what the checkout holds:
 
 | Current state | Outcome |
 |---|---|
 | At the savepoint | `untouched`; HEAD not touched |
-| At a tip the op recorded writing (`advanced_tips` or `converged_tips`) | `restored (from recorded intent tip)` or `restored (from recorded converged tip)`; reset to the savepoint |
-| At any other tip the savepoint reaches | reset to the savepoint; nothing is lost |
-| At any other tip, holding a commit the savepoint does not reach (a commit you made at a stop) | `its tip ... is kept as backup <name>`, then `restored`; the line after it is the command that shows the backup's commits |
-| Stopped in a rebase, merge or copy | canceled as the VCS's own abort would, its working copy kept as a backup first (`its uncommitted edits are kept as backup <name>`), from whichever workspace abort runs in; where the op did not start it, the commits its HEAD holds are kept too; then the tip it returns to is judged as above |
+| At a tip holding a commit that neither the savepoint nor any other branch reaches | reset to the savepoint, the tip kept first in the branch's backup slot |
+| At any other tip | `restored`: reset to the savepoint; nothing is lost |
+| Stopped in a rebase, merge or copy | canceled as the VCS's own abort would, its working copy (or, with no edits, the commits the stopped operation made) kept first in the checkout's backup slot, from whichever workspace abort runs in; then the tip it returns to is judged as above |
 | Stopped in an operation begun at the savepoint, in a repo the op never integrates (or with no savepoint) | `left stopped in a <operation>, which this operation never starts there`; left as it is |
 | In the target workspace of a `land`, in a repo whose branch the landing never fast-forwarded | `left at <tip>, where something other than this landing moved it`; not the op's, so not restored |
 
-Abort never discards a commit or an edit without keeping it first, and
-prints each backup on one line with its name, followed by the command that
-shows what it holds. Before any reset that would discard uncommitted edits
-in the workspace abort runs in, it keeps them as a backup too.
+A branch moved as a ref is put back the same way, its tip kept first in its
+slot where nothing else reaches it. Where the op record parses no further
+than its header, abort restores by the same rule.
 
-Where the op record parses no further than its header, abort reads no tip
-it recorded: every tip it leaves that holds commits the savepoint does not
-reach is kept as a backup.
+### The backup slots
+
+Each branch has one slot, `<branch>/aborted`, for the tip abort last reset
+it from, and each checkout one, `<branch>/aborted-working-copy`, for the
+working copy abort last discarded there (named for the branch the checkout
+is on). The next abort that keeps something there overwrites it: a slot is
+one deep, like the VCS's own record of the last tip a reset moved off. What
+an earlier abort kept and a later one overwrote is still in the VCS's own
+history of the branch (git: its reflog) until that expires. `rwv backup list`
+shows the slots with the other backups, `rwv backup drop` drops one, and
+`rwv backup prune` takes one a branch reaches, as it takes any backup that
+holds nothing a branch does not.
+
+Abort never discards a commit or an edit without keeping it first. Each repo
+it keeps something for is one line, naming the slots and the command that
+shows what they hold.
 
 The op-state file (`.rwv-op`) is removed from all involved workspaces once
 every repo is restored.
@@ -50,8 +62,8 @@ every repo is restored.
 ### What is **not** restored
 
 - **Uncommitted working-tree changes.** The savepoint records commits, not
-  edits. Edits a reset or cancel would discard are kept as a backup, not
-  restored into the working tree.
+  edits. Edits a reset or cancel would discard are kept in the checkout's
+  slot, not restored into the working tree.
 - **Side effects outside the git history**: integration-generated files,
   `node_modules/`, `.venv/`, etc. are not snapshotted and are not rolled back.
 
@@ -87,10 +99,8 @@ landing moved in the target, in the target's checkouts, in place in another
 workspace, or as refs. Where one stands somewhere other than where the landing
 left it (another landing built on it, a commit, a deletion), or is checked out
 where abort may not move it, abort refuses as `foreign-tip` before either side
-moves, naming each and the commits on it since, and prints the choices. A
-member branch of the target that only moved on since, the project branch
-where the landing left it, is put back with the rest, its tip kept as a
-backup first. Otherwise:
+moves, naming each and the commits on it since, and prints the choices, for a
+member branch as for the project branch:
 
 - free the checkout, or put the deleted branch back where the landing left it,
   then rerun `rwv abort`, which restores the whole target;
@@ -155,22 +165,21 @@ Run `rwv abort --help` for the full clap surface.
 
 ## Output
 
-Per-repo restoration lines to stdout. Each line names the outcome:
+One line to stdout for each repo abort restored. Each names the outcome,
+and, where abort kept what it discarded, the slots and the command that shows
+them:
 
 ```
-  <repo-path>: restored (from recorded intent tip)
-  <repo-path>: restored (from recorded converged tip)
-  <repo-path>: restored (from mid-op state)
-  <repo-path>: its uncommitted edits are kept as backup <name>; this shows it:
-  	<the VCS command that shows the backup>
-  <repo-path>: its tip, holding commits this operation did not make, is kept as backup <name>; this shows it:
-  	<the VCS command that shows the backup>
   <repo-path>: restored
+  <repo-path>: canceled the rebase in progress
+  <repo-path>: canceled the rebase in progress and restored
+  <repo-path>: what abort discarded is kept as backup <slot>[, <slot>] (<outcome>); this shows it: <the VCS command that shows the slots>
   <repo-path>: left stopped in a merge, which this operation never starts there
 ```
 
-Each backup line is followed by the command that shows what the backup holds,
-so what abort moved off is recoverable from the transcript alone.
+Run as printed, the command lists each commit the slots hold beyond the
+savepoint with its changes, a working copy's edits among them, so what abort
+moved off is recoverable from the transcript alone.
 
 For a `land`, lines for the workspace `abort` was invoked from carry no
 prefix, and lines for the op's other workspace carry its side: `[target]`
@@ -230,13 +239,12 @@ rwv land
 rwv abort
 ```
 
-Abort after a commit made at a stop: the commit is kept, and the printed
-command shows it:
+Abort after a commit made at a stop: the commit is kept in the branch's
+slot, and the printed command shows it:
 
 ```
 rwv abort
-# ... github/foo/bar: its tip, holding commits this operation did not make, is kept as backup main/<id>; this shows it:
-# ...     git -C github/foo/bar log --stat <savepoint>..refs/rwv/backup/main/<id>
+# ... github/foo/bar: what abort discarded is kept as backup main/aborted (restored); this shows it: git -C github/foo/bar log -p --diff-merges=first-parent ^<savepoint> refs/rwv/backup/main/aborted
 ```
 
 ## Common errors
@@ -244,8 +252,7 @@ rwv abort
 - *no operation in progress* — no `.rwv-op` file found. Either no sync is
   in flight, or the op already completed and was cleaned up. Nothing to abort.
 - *`foreign-tip`* — the plan is blocked: a branch is gone or checked out
-  elsewhere, a landing's target moved since, or edits stand in the other
-  workspace. The refusal moves and writes nothing, names what clears each, and
+  elsewhere, or a landing's target moved since. The refusal moves and writes nothing, names what clears each, and
   op-state is retained so `rwv abort` reruns.
 - *abort completed with failures* — a write the plan named could not be made
   (the repo moved after abort judged it, or a backup could not be written, in

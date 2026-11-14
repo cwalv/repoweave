@@ -16,9 +16,11 @@ Backups are made by:
 - `rwv workweave delete --discard-uncommitted`, which keeps each checkout's
   uncommitted edits as a commit on its HEAD (untracked files included, ignored
   ones not);
-- `rwv abort`, which keeps a tip it moves a branch off that holds commits the
-  operation did not make, and the working copy of a checkout it cancels a
-  stopped operation in;
+- `rwv abort`, which keeps the tip it resets a branch from, where that tip
+  holds a commit no other branch reaches, in the branch's one slot
+  `<branch>/aborted`, and the working copy it discards in a checkout in the
+  checkout's one slot `<branch>/aborted-working-copy`; the next abort that
+  keeps something there overwrites the slot;
 - `rwv fetch`, which keeps the old tip of a remote-tracking branch the remote
   rewrote, marked `superseded`, so work built on it stays reachable and is not
   counted as unpushed;
@@ -28,7 +30,7 @@ Backups are made by:
 A backup is named `<branch>/<id>`: the branch it backs up (`HEAD` for a
 detached HEAD) and an id that begins with the mark, if it has one, and ends
 with the abbreviated id of the commit it holds. Making the same backup twice
-names the same one. It stays until it is dropped — no verb drops one on its
+names the same one. An abort slot's id is its mark alone. It stays until it is dropped — no verb drops one on its
 own, and nothing but `rwv backup` does.
 
 ### What `list` shows
@@ -36,7 +38,7 @@ own, and nothing but `rwv backup` does.
 For each repo of the project that holds a backup — the project repo as
 `projects/<name>`, a member by its path — one line per backup: its name, the
 commit it holds, `[superseded]` for a tip a fetch found the remote had rewritten away, `[rebased]` for a
-branch a rebase rewrote, and `[redundant]` when a branch or remote-tracking
+branch a rebase rewrote, `[aborted]` and `[aborted-working-copy]` for abort's slots, and `[redundant]` when a branch or remote-tracking
 branch reaches everything the backup holds, so dropping it loses nothing.
 Under each line, the commits it holds that no branch reaches, newest first.
 That list is what is lost if the backup is dropped. `list` reads refs as last

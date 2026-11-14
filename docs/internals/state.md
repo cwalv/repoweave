@@ -52,7 +52,7 @@ Every ref rwv writes is below `refs/rwv/` and in a namespace of `RwvRef`
 | Namespace | Owner | Lifetime | What it holds |
 |---|---|---|---|
 | `refs/rwv/pre-op/<key>/…` | `src/git.rs` | one operation | savepoints: the checkout (`checkout/<branch>` or `detached`) and each moved branch (`ref/<branch>`) at the start of an operation; `<key>` is the op id, with `-target` or `-in-place` for another workspace's. Abort consumes them; `rwv doctor --fix` drops or converts an orphaned one |
-| `refs/rwv/backup/<branch>/<id>` | `src/git/backup.rs` | until dropped | backups, marked `rebased`, `abandoned` or `superseded` by the id's prefix. `rwv backup list`, `drop` and `prune` are the only readers and writers of the ones an operator sees; a `superseded` one is the old tip of a remote-tracking branch a fetch found rewritten, and the unpushed-commit counts read it as published |
+| `refs/rwv/backup/<branch>/<id>` | `src/git/backup.rs` | until dropped | backups, marked `rebased` or `superseded` by the id's prefix; abort's slots `<branch>/aborted` and `<branch>/aborted-working-copy` by the whole id, overwritten by the next abort. `rwv backup list`, `drop` and `prune` are the only readers and writers of the ones an operator sees; a `superseded` one is the old tip of a remote-tracking branch a fetch found rewritten, and the unpushed-commit counts read it as published |
 
 A branch `rwv-records` (local and remote-tracking), one TOML per branch, holds
 the branch records (`src/records.rs`, `src/git/records.rs`); it is advanced by

@@ -375,17 +375,24 @@ Schema:
           ]
         },
         {
-          "description": "The tip `rwv abort --abandon-foreign-tip` gave up.",
-          "type": "string",
-          "enum": [
-            "abandoned"
-          ]
-        },
-        {
           "description": "The tip of a remote-tracking branch a fetch found rewritten.",
           "type": "string",
           "enum": [
             "superseded"
+          ]
+        },
+        {
+          "description": "The branch's one slot for the tip `rwv abort` last reset it from; the next abort that resets the branch overwrites it.",
+          "type": "string",
+          "enum": [
+            "aborted"
+          ]
+        },
+        {
+          "description": "The checkout's one slot for the working copy `rwv abort` last discarded on it; the next abort that discards one there overwrites it.",
+          "type": "string",
+          "enum": [
+            "aborted-working-copy"
           ]
         }
       ]
@@ -407,7 +414,7 @@ Schema:
           }
         },
         "mark": {
-          "description": "`rebased` for a branch a rebase rewrote, `abandoned` for a tip `rwv abort --abandon-foreign-tip` gave up; absent for any other.",
+          "description": "`rebased` for a branch a rebase rewrote; absent for any other.",
           "anyOf": [
             {
               "$ref": "#/definitions/BackupMark"

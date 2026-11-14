@@ -318,8 +318,9 @@ abort could not read. The verdict is the same whichever workspace of the op
 abort runs from.
 
 **Why.** Abort puts each ref back at its savepoint, keeping first every tip
-that holds commits the operation did not make. What it cannot move, or cannot
-move without losing what no backup keeps, it refuses rather than guess.
+and working copy it discards, in one slot per branch and per checkout. What
+it cannot move, or a target branch something other than the landing moved
+since, it refuses rather than move someone else's work under them.
 
 Abort plans every step before it makes one, so the plan is blocked whole: a
 landing's target is restored whole or not at all, and one obstacle on either side
@@ -793,8 +794,8 @@ commits by author, date or subject would guess, and a wrong guess pins a
 commit the branch never held or moves a pin onto the wrong one, without a word.
 
 **Exits.** The refusal prints the one that works. `rwv abort` puts back what
-the operation moved; where the branch holds a tip the operation did not write,
-such as an amended one, abort keeps that tip as a backup first. Then rerun the
+the operation moved, keeping first, in the branch's slot, any tip it resets
+that holds a commit nothing else reaches, such as an amended one. Then rerun the
 verb. Nothing was moved by this refusal.
 
 ### `repo-not-in-manifest`
