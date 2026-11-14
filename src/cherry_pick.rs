@@ -1881,9 +1881,14 @@ fn commit_project(
             crate::manifest_conflict::sides_at(vcs, dir, parent.as_ref(), pre_head, &commit);
         let text_merge = std::fs::read_to_string(&manifest_path)
             .with_context(|| format!("{label}: failed to read the merged rwv.toml"))?;
-        if let Some(lines) =
-            crate::manifest_conflict::check_ported_text_merge(vcs, dir, &sides, &text_merge, ours)?
-        {
+        if let Some(lines) = crate::manifest_conflict::check_ported_text_merge(
+            vcs,
+            dir,
+            &op.workspace,
+            &sides,
+            &text_merge,
+            ours,
+        )? {
             differs = lines;
             conflicted.push(Manifest::FILE_NAME.to_owned());
         }

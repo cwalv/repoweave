@@ -8,7 +8,8 @@
 
 use crate::manifest::Manifest;
 use crate::op_state::OpVerb;
-use crate::vcs::{CommitId, ConflictSides, ResolvedRevisionId, TakingSide, Vcs, VcsAction};
+use crate::op_state::{ManifestStop, ManifestStopKind};
+use crate::vcs::{CommitId, ConflictSides, ResolvedRevisionId, Vcs, VcsAction};
 use anyhow::Context;
 use std::path::Path;
 
@@ -21,6 +22,12 @@ pub enum Side {
     Yours,
     Incoming,
     TextMerge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Taking {
+    Yours,
+    Incoming,
 }
 
 impl Side {
@@ -123,13 +130,13 @@ impl Sides {
         &self,
         regions: &toml::Table,
         other: &toml::Table,
-        taking: TakingSide,
+        taking: Taking,
     ) -> anyhow::Result<Manifest> {
         let in_regions = self.in_regions(regions, other)?;
         self.merged_with(regions.clone(), Some(&in_regions), |_, yours, incoming| {
             match taking {
-                TakingSide::Yours => yours,
-                TakingSide::Incoming => incoming,
+                Taking::Yours => yours,
+                Taking::Incoming => incoming,
             }
             .cloned()
         })
@@ -290,14 +297,16 @@ fn put(table: &mut toml::Table, path: &[String], value: Option<toml::Value>) {
     };
 }
 
-/// How `rwv.toml` in `dir` reads, `None` where it is not unmerged there.
-pub(crate) fn reading(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<Reading>> {
+/// How `rwv.toml` in `dir` reads at `stop`, `None` where it is not unmerged
+/// there.
+pub(crate) fn reading(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    stop: Option<&ManifestStop>,
+) -> anyhow::Result<Option<Reading>> {
     let Some(recorded) = vcs.conflict_sides(dir, Manifest::FILE_NAME)? else {
         return Ok(None);
     };
-    let [yours, incoming] = [TakingSide::Yours, TakingSide::Incoming]
-        .map(|taking| vcs.merge_taking(dir, &recorded, taking));
-    let (yours, incoming) = (yours?, incoming?);
     let sides = match read(&recorded) {
         Ok(sides) => sides,
         Err((side, why)) => {
@@ -306,12 +315,24 @@ pub(crate) fn reading(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<Readin
             }))
         }
     };
-    if yours == incoming {
+    let Some(stop) = stop else {
+        return Ok(Some(Reading::Unreadable {
+            what: "rwv.toml is unmerged at no stop of an rwv operation".to_owned(),
+        }));
+    };
+    if stop.kind == ManifestStopKind::Checked {
         return Ok(Some(Reading::Checked {
-            lines: differences(&yours, &sides)?,
-            text_merge: yours,
+            lines: differences(&stop.working, &sides)?,
+            text_merge: stop.working.clone(),
         }));
     }
+    let Some([yours, incoming]) = vcs.conflict_picks(dir, Manifest::FILE_NAME, &stop.working)?
+    else {
+        return Ok(Some(Reading::Unreadable {
+            what: "rwv.toml as the stop left it holds no region in conflict the VCS marked"
+                .to_owned(),
+        }));
+    };
     let parsed = |side: &str, text: &str| {
         Manifest::from_toml_str(text)
             .and_then(|m| m.declared())
@@ -336,13 +357,8 @@ pub(crate) fn reading(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<Readin
     Ok(Some(Reading::Conflicted {
         conflicts: sides.in_conflict(&yours_table, &incoming_table)?,
         taking: [
-            settle(TakingSide::Yours, &yours, &yours_table, &incoming_table),
-            settle(
-                TakingSide::Incoming,
-                &incoming,
-                &incoming_table,
-                &yours_table,
-            ),
+            settle(Taking::Yours, &yours, &yours_table, &incoming_table),
+            settle(Taking::Incoming, &incoming, &incoming_table, &yours_table),
         ],
     }))
 }
@@ -430,21 +446,25 @@ pub(crate) fn check_tip(sides: &ConflictSides, tip: &str) -> anyhow::Result<Opti
     })
 }
 
-/// Check `text_merge`, the text the VCS merged `rwv.toml` into in `dir` with
-/// no conflict, against the merge of the values of `sides`. Where they
-/// differ, record `rwv.toml` as unmerged from `sides`, its working file left
-/// as the VCS merged it; return whether it did.
-pub(crate) fn check_text_merge(
+/// Record `rwv.toml` in `dir` as unmerged from `sides`, its working file left
+/// as the VCS merged it, and journal the check's stop on the op at
+/// `workspace`.
+fn stop_checked(
     vcs: &dyn Vcs,
     dir: &Path,
+    workspace: &Path,
     sides: &ConflictSides,
-    text_merge: &str,
-) -> anyhow::Result<bool> {
-    if differing(sides, text_merge)?.is_none() {
-        return Ok(false);
-    }
+) -> anyhow::Result<()> {
     vcs.record_conflict(dir, Manifest::FILE_NAME, sides)?;
-    Ok(true)
+    let working = std::fs::read_to_string(dir.join(Manifest::FILE_NAME))
+        .context("failed to read the merged rwv.toml")?;
+    crate::op_state::journal_manifest_stop(
+        workspace,
+        Some(ManifestStop {
+            kind: ManifestStopKind::Checked,
+            working,
+        }),
+    )
 }
 
 /// Check `text_merge`, the text the VCS merged `rwv.toml` into in `dir` with
@@ -456,6 +476,7 @@ pub(crate) fn check_text_merge(
 pub(crate) fn check_ported_text_merge(
     vcs: &dyn Vcs,
     dir: &Path,
+    workspace: &Path,
     sides: &ConflictSides,
     text_merge: &str,
     ours: &Manifest,
@@ -489,7 +510,7 @@ pub(crate) fn check_ported_text_merge(
     if lines.is_empty() {
         return Ok(None);
     }
-    vcs.record_conflict(dir, Manifest::FILE_NAME, sides)?;
+    stop_checked(vcs, dir, workspace, sides)?;
     Ok(Some(lines))
 }
 
@@ -537,9 +558,14 @@ pub(crate) fn text_merge_differs(sides: &ConflictSides, text_merge: &str) -> any
 }
 
 /// Check the merge in flight in `dir`, where it left `rwv.toml` merged,
-/// against the merge of the values of its sides; return whether it recorded
-/// `rwv.toml` unmerged.
-pub(crate) fn check_merge_in_flight(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<bool> {
+/// against the merge of the values of its sides. Where they differ, record
+/// `rwv.toml` as unmerged, its working file left as the VCS merged it, and
+/// journal the stop on the op at `workspace`; return whether it did.
+pub(crate) fn check_merge_in_flight(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    workspace: &Path,
+) -> anyhow::Result<bool> {
     let Some(incoming) = vcs.merge_in_flight(dir)? else {
         return Ok(false);
     };
@@ -557,7 +583,11 @@ pub(crate) fn check_merge_in_flight(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result
     let Some(sides) = sides_to_check(vcs, dir, &yours, &incoming)? else {
         return Ok(false);
     };
-    check_text_merge(vcs, dir, &sides, &text_merge)
+    if differing(&sides, &text_merge)?.is_none() {
+        return Ok(false);
+    }
+    stop_checked(vcs, dir, workspace, &sides)?;
+    Ok(true)
 }
 
 fn kept_lines(vcs: &dyn Vcs, dir: &Path, kept: &crate::vcs::BackupWitness) -> [String; 2] {
@@ -625,7 +655,18 @@ pub(crate) fn continue_at_stop(
     };
     let path = dir.join(Manifest::FILE_NAME);
     let done = crate::op_state::resume_command(typed);
-    let Some(reading) = reading(vcs, &dir)? else {
+    let stop = record
+        .take_in
+        .as_ref()
+        .and_then(|take_in| take_in.manifest_stop.clone());
+    let resolved = || -> anyhow::Result<()> {
+        vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+        crate::op_state::journal_manifest_stop(workspace, None)
+    };
+    let Some(reading) = reading(vcs, &dir, stop.as_ref())? else {
+        if stop.is_some() {
+            crate::op_state::journal_manifest_stop(workspace, None)?;
+        }
         if record.verb != typed {
             return Ok(());
         }
@@ -685,7 +726,7 @@ pub(crate) fn continue_at_stop(
                     ],
                 ));
             }
-            vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+            resolved()?;
             eprintln!(
                 "{done}: kept the text merge of rwv.toml as the VCS made it, marked resolved"
             );
@@ -734,7 +775,7 @@ pub(crate) fn continue_at_stop(
         .and_then(|text| Manifest::from_toml_str(&text).ok())
     {
         if working.declares_same(&Manifest::from_toml_str(text)?) {
-            vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+            resolved()?;
             eprintln!(
                 "{done}: rwv.toml as it stands declares the merge of both sides; marked it resolved"
             );
@@ -749,9 +790,20 @@ pub(crate) fn continue_at_stop(
             ],
         ));
     }
+    if std::fs::read_to_string(&path).ok() != stop.map(|stop| stop.working) {
+        return Err(refused(
+            "rwv.toml was edited since the stop",
+            vec![
+                "no side is written over an edit; to finish it by hand, mark it resolved, then \
+                 run the continue again:"
+                    .to_owned(),
+                format!("  {}", mark_resolved(vcs, &dir)),
+            ],
+        ));
+    }
     let kept = vcs.backup_edits(&dir)?;
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
-    vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+    resolved()?;
     let took = match keep {
         Some(side) if conflicts.is_empty() => format!(
             "; no entry was in conflict, so `--keep {}` took nothing",
@@ -882,15 +934,40 @@ fn keyed_in(path: &[String]) -> Option<&[String]> {
     }
 }
 
-/// The lines a stop prints for an unmerged `rwv.toml` in `dir`: each entry in
-/// conflict with both sides' values, and the ways on. `resume` is the
-/// continue of the operation stopped there, spelled to run against its
-/// workspace.
-pub(crate) fn stop_lines(vcs: &dyn Vcs, dir: &Path, resume: &str) -> Vec<String> {
-    match reading(vcs, dir) {
+/// The lines a stop of the op at `workspace` prints for an unmerged
+/// `rwv.toml` in `dir`: each entry in conflict with both sides' values, and
+/// the ways on. A stop the check did not journal is a conflict the VCS left,
+/// journaled here with its working file. `resume` is the continue of the
+/// operation stopped there, spelled to run against its workspace.
+pub(crate) fn enter_stop(vcs: &dyn Vcs, dir: &Path, workspace: &Path, resume: &str) -> Vec<String> {
+    match entered(vcs, dir, workspace) {
         Ok(Some(reading)) => reading_lines(vcs, dir, &reading, Some(resume)),
         _ => Vec::new(),
     }
+}
+
+fn entered(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<Option<Reading>> {
+    if vcs.conflict_sides(dir, Manifest::FILE_NAME)?.is_none() {
+        return Ok(None);
+    }
+    let mut stop = journaled_stop(workspace)?;
+    if stop.is_none() {
+        if let Ok(working) = std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) {
+            let conflicted = ManifestStop {
+                kind: ManifestStopKind::Conflicted,
+                working,
+            };
+            crate::op_state::journal_manifest_stop(workspace, Some(conflicted.clone()))?;
+            stop = Some(conflicted);
+        }
+    }
+    reading(vcs, dir, stop.as_ref())
+}
+
+fn journaled_stop(workspace: &Path) -> anyhow::Result<Option<ManifestStop>> {
+    Ok(crate::op_state::read_owner(workspace)?
+        .and_then(|record| record.take_in)
+        .and_then(|take_in| take_in.manifest_stop))
 }
 
 /// `resume`: `None` where no operation of rwv's is stopped in `dir`.
@@ -1045,9 +1122,9 @@ mod tests {
         fn merged(&self, take_incoming: bool) -> anyhow::Result<Manifest> {
             let [yours, incoming] = whole(self);
             if take_incoming {
-                self.settled(&incoming, &yours, TakingSide::Incoming)
+                self.settled(&incoming, &yours, Taking::Incoming)
             } else {
-                self.settled(&yours, &incoming, TakingSide::Yours)
+                self.settled(&yours, &incoming, Taking::Yours)
             }
         }
     }
@@ -1214,7 +1291,7 @@ mod tests {
         assert_eq!(listed, ["local/a branch"]);
         let settled = toml::to_string(
             &sides
-                .settled(&regions, &other, TakingSide::Yours)
+                .settled(&regions, &other, Taking::Yours)
                 .unwrap()
                 .declared()
                 .unwrap(),
@@ -1222,6 +1299,85 @@ mod tests {
         .unwrap();
         assert!(settled.contains("\"t\", \"b\", \"o\""), "{settled}");
         assert!(settled.contains("branch = \"x\""), "{settled}");
+    }
+
+    fn manifest_of(members: &[(&str, &str, Option<bool>)]) -> String {
+        let mut text = "[repositories]\n".to_owned();
+        for (name, role, submodules) in members {
+            text.push_str(&format!(
+                "\n[repositories.\"local/remotes/{name}\"]\ntype = \"git\"\nurl = \
+                 \"file:///r/{name}.git\"\nbranch = \"main\"\nrole = \"{role}\"\n"
+            ));
+            if let Some(submodules) = submodules {
+                text.push_str(&format!("recurse-submodules = {submodules}\n"));
+            }
+        }
+        text
+    }
+
+    #[test]
+    fn keeping_a_side_takes_the_regions_of_the_working_file_git_left() {
+        let tmp = crate::tempdir().unwrap();
+        let repo = tmp.path();
+        let git = |args: &[&str]| {
+            let out = crate::git::git_command_in_test()
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(repo)
+                .output()
+                .unwrap();
+            out.status.success()
+        };
+        let commit = |text: String| {
+            std::fs::write(repo.join(Manifest::FILE_NAME), text).unwrap();
+            assert!(git(&["commit", "-qam", "side"]));
+        };
+        assert!(git(&["init", "-q", "-b", "main"]));
+        crate::git::LineEndings::Verbatim.pin(repo);
+        std::fs::write(
+            repo.join(Manifest::FILE_NAME),
+            manifest_of(&[
+                ("docs", "owned", Some(false)),
+                ("lib", "owned", Some(false)),
+                ("zed", "owned", None),
+            ]),
+        )
+        .unwrap();
+        assert!(git(&["add", "."]) && git(&["commit", "-qm", "base"]));
+        assert!(git(&["branch", "incoming"]));
+        commit(manifest_of(&[
+            ("docs", "owned", Some(false)),
+            ("lib", "owned", Some(true)),
+            ("zed", "fork", None),
+        ]));
+        assert!(git(&["checkout", "-q", "incoming"]));
+        commit(manifest_of(&[
+            ("docs", "owned", Some(false)),
+            ("zed", "owned", None),
+            ("zee", "owned", None),
+        ]));
+        assert!(git(&["checkout", "-q", "main"]));
+        assert!(!git(&["merge", "-q", "--no-edit", "incoming"]));
+        let stop = ManifestStop {
+            kind: ManifestStopKind::Conflicted,
+            working: std::fs::read_to_string(repo.join(Manifest::FILE_NAME)).unwrap(),
+        };
+        let vcs = crate::git::git_vcs();
+        let Some(Reading::Conflicted { conflicts, taking }) =
+            reading(vcs.as_ref(), repo, Some(&stop)).unwrap()
+        else {
+            panic!("not read as a conflict: {}", stop.working);
+        };
+        let listed: Vec<String> = conflicts.iter().map(|c| entry_name(&c.path)).collect();
+        assert_eq!(listed, ["local/remotes/lib"]);
+        let kept = Manifest::from_toml_str(taking[0].as_ref().unwrap()).unwrap();
+        let role = |name: &str| {
+            kept.get_entry(&RepoPath::new(format!("local/remotes/{name}")).unwrap())
+                .map(|entry| entry.role)
+        };
+        assert_eq!(role("zed"), Some(Role::Fork));
+        assert_eq!(role("zee"), Some(Role::Owned));
+        assert!(role("lib").is_some());
     }
 
     #[test]

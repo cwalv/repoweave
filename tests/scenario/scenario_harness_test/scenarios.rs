@@ -19047,8 +19047,8 @@ pub enum ManifestSettle {
     /// [`ManifestSettle::LinesOnly`] at a landing's stop.
     LinesOnlyLand(ManifestStopHistory),
     /// [`ManifestSettle::LinesOnly`] with the working `rwv.toml` edited,
-    /// markers and all, and not staged: the continue keeps the edit in a
-    /// backup it names.
+    /// markers and all, and not staged: the bare continue and `--keep yours`
+    /// each refuse, naming the hand route and `rwv abort`, and write nothing.
     LinesOnlyHandEdited,
     /// [`ManifestSettle::LinesOnly`] with the markers turned into comments by
     /// hand, not staged: the file declares the merge, and the continue stages
@@ -19124,6 +19124,12 @@ pub enum ManifestSettle {
     /// region in conflict holds the role, the url merges outside it, and
     /// `--keep yours` keeps the workweave's role and `main`'s url.
     TableSplitByARegion,
+    /// Setters only: the workweave sets `app`'s role and removes `docs`,
+    /// `main` removes `app` and adds `lib`. Git's region holds `app` whole
+    /// against `docs` and `lib`, so `app` is in conflict, and the bare
+    /// continue refuses: under merge `--keep yours` keeps `app` as the
+    /// workweave set it; under linear the replay stop lists it too.
+    RegionAcrossMembers(ManifestStopHistory),
     /// `lib` declared as one inline table, its line changed by both sides:
     /// the role both changed is listed, and `--keep yours` keeps the
     /// workweave's role and the `recurse-submodules` only `main` set.
@@ -19559,16 +19565,22 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     "[integrations.vscode-workspace]\nenabled = false\n",
                     "[integrations.vscode-workspace]\nenabled = false\n# half-way through\n",
                 ),
-                continues()
-                    .claim(Claim::OutputContains("wrote the merge"))
-                    .claim(Claim::OutputContains("kept in backup")),
-                Step::rwv_printed_holding(&ww("w"), "git -C ", "show")
+                parked()
+                    .claim(Claim::OutputContains("rwv.toml was edited since the stop"))
+                    .claim(Claim::OutputContains("add -- rwv.toml"))
+                    .claim(Claim::OutputContains("rwv abort"))
+                    .claim(Claim::OutputLacks("wrote the merge")),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "yours"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("rwv.toml was edited since the stop"))
+                    .claim(Claim::OutputLacks("wrote the merge")),
+                Step::git(&ww("w"), Repo::Proj, &["diff", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("# half-way through"))
                     .claim(Claim::OutputContains("<<<<<<<")),
-                both_members().claim(Claim::OutputLacks("half-way through")),
+                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
             ]);
-            "a continue that writes the merge of rwv.toml keeps an unstaged edit of it in a backup"
+            "a continue writes no side of rwv.toml over an edit made since the stop"
         }
         S::HandResolvedUnstaged => {
             steps = lines_only();
@@ -19973,6 +19985,50 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             "an inline member table both sides changed takes the kept side's role and the field \
              only the other side changed"
         }
+        S::RegionAcrossMembers(history) => {
+            steps = vec![
+                Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
+                create("w"),
+                Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "remove", APP]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "add", "url:origin:lib"]).expect(Exit::Succeeds),
+                stop(history)
+                    .claim(Claim::OutputContains(
+                        "rwv.toml entry local/remotes/app is in conflict:",
+                    ))
+                    .claim(Claim::OutputLacks("no entry is in conflict"))
+                    .claim(Claim::OutputLacks("with no conflict")),
+                parked_after(history).claim(Claim::OutputContains("local/remotes/app")),
+            ];
+            match history {
+                H::Merge => {
+                    steps.extend([
+                        keeps("--keep yours", history),
+                        head_manifest()
+                            .claim(Claim::OutputContains(
+                                "[repositories.\"local/remotes/app\"]",
+                            ))
+                            .claim(Claim::OutputContains("role = \"fork\""))
+                            .claim(Claim::OutputContains(
+                                "[repositories.\"local/remotes/lib\"]",
+                            ))
+                            .claim(Claim::OutputLacks("local/remotes/docs")),
+                    ]);
+                    "a region git left across two members' tables lists the member both sides \
+                     changed, and --keep yours keeps it, at a merge stop"
+                }
+                H::Linear => {
+                    steps.push(
+                        Step::rwv(&ww("w"), &["abort"])
+                            .expect(Exit::Succeeds)
+                            .may_rewind(&[Repo::Proj]),
+                    );
+                    "a region git left across two members' tables lists the member both sides \
+                     changed, at a linear stop"
+                }
+            }
+        }
         S::ForeignMerge => {
             steps = lines_only();
             steps.extend([
@@ -20014,6 +20070,12 @@ pub enum TextMerge {
     SettingMovedByHand,
     /// [`TextMerge::SettingMoved`] settled by the printed `--keep text-merge`.
     SettingMovedKeptAsText,
+    /// [`TextMerge::SettingMovedKeptAsText`] in a checkout that converts line
+    /// endings on checkout, as Git for Windows does by default.
+    SettingMovedKeptAsTextConverted,
+    /// [`TextMerge::SettingMoved`] with the working file edited: `--keep
+    /// text-merge` refuses, as the file no longer holds the text merge.
+    SettingMovedEditedThenKeptAsText,
     /// [`TextMerge::SettingMoved`] with a comment `main` added: the bare
     /// continue is refused and writes nothing, so `--keep text-merge` finds
     /// the file as the VCS merged it.
@@ -20196,8 +20258,14 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                 steps,
             )
         }
-        T::SettingMovedKeptAsText => {
+        T::SettingMovedKeptAsText | T::SettingMovedKeptAsTextConverted => {
             let mut steps = moved();
+            if let T::SettingMovedKeptAsTextConverted = how {
+                steps.push(
+                    Step::git(&ww("w"), Repo::Proj, &["config", "core.autocrlf", "true"])
+                        .expect(Exit::Succeeds),
+                );
+            }
             steps.extend([
                 Step::rwv(&ww("w"), &["sync", "--history", "merge"])
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
@@ -20211,7 +20279,42 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .claim(Claim::OutputContains("history = \"merge\"")),
             ]);
             (
-                "a text merge of rwv.toml the check stopped is kept by --keep text-merge",
+                match how {
+                    T::SettingMovedKeptAsText => {
+                        "a text merge of rwv.toml the check stopped is kept by --keep text-merge"
+                    }
+                    _ => {
+                        "a text merge of rwv.toml the check stopped is kept by --keep text-merge \
+                         where checkouts convert line endings"
+                    }
+                },
+                steps,
+            )
+        }
+        T::SettingMovedEditedThenKeptAsText => {
+            let mut steps = moved();
+            steps.extend([
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs)),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[repositories]\n",
+                    "# HAND-NOTE\n[repositories]\n",
+                ),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "text-merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains("rwv.toml was edited since the stop"))
+                    .claim(Claim::OutputLacks("kept the text merge")),
+                Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("rwv.toml")),
+                Step::rwv(&ww("w"), &["abort"]).expect(Exit::Succeeds),
+            ]);
+            (
+                "--keep text-merge refuses a working rwv.toml edited since the check stopped it",
                 steps,
             )
         }

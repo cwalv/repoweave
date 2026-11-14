@@ -550,11 +550,33 @@ pub struct TakeInRecord {
     /// that tip is not judged again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tip_settled: Option<Rebasing>,
+    /// The stop the op is at with `rwv.toml` unmerged, journaled as it is
+    /// entered and cleared once a continue takes it past.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_stop: Option<ManifestStop>,
     /// Each dependent's branch the op carries onto its target's new tip,
     /// written before its replay starts, with the tip the replay composed
     /// once it ends; the branch itself moves only once every carry composed.
     #[serde(default)]
     pub carries: Vec<Carrying>,
+}
+
+/// A stop at which `rwv.toml` is unmerged in the project checkout, and its
+/// working file as the stop left it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ManifestStop {
+    pub kind: ManifestStopKind,
+    pub working: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ManifestStopKind {
+    /// The VCS merged the text with no conflict and the check stopped it.
+    Checked,
+    /// The VCS left regions in conflict.
+    Conflicted,
 }
 
 /// A merge of `source` into the checkout of `repo`.
@@ -1926,6 +1948,25 @@ pub fn journal_tip_settled(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::
     write_owner(workspace_dir, &record)
 }
 
+/// Journal the `rwv.toml` stop the op at `workspace_dir` is at, or, with
+/// `None`, that it is past it.
+pub fn journal_manifest_stop(
+    workspace_dir: &Path,
+    stop: Option<ManifestStop>,
+) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        take_in.manifest_stop = stop;
+    }
+    write_owner(workspace_dir, &record)
+}
+
 /// Journal `carrying` on the op at `workspace_dir`, replacing the record of
 /// the same branch of the same repo. A member's carry makes the same
 /// branch's project carry, composed over the member tips it pinned, one to
@@ -2794,7 +2835,7 @@ mod tests {
     /// `WireOwnerRecord`, attributes and fields, comments and blank lines
     /// left out; a type declared in another module that a field names is
     /// read by its name alone, so a change inside one is not seen here.
-    const PINNED_SHAPE: (u32, &str) = (7, "f0ce7cd8705c3bf8");
+    const PINNED_SHAPE: (u32, &str) = (7, "4543c5512c3f2653");
 
     fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
         let start = source.iter().position(|line| {

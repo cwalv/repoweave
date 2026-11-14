@@ -8289,9 +8289,10 @@ fn apply_project_strategy(
                 &detail,
                 verb,
                 owner,
-                &crate::manifest_conflict::stop_lines(
+                &crate::manifest_conflict::enter_stop(
                     vcs,
                     repo,
+                    owner,
                     &op_state::resume_command_at(verb, owner),
                 ),
             ),
@@ -8303,7 +8304,7 @@ fn apply_project_strategy(
         let staged = stage_merge(vcs, cwd_project_dir, source_tip);
         if fresh
             && matches!(staged, Ok(_) | Err(VcsError::RebaseConflict { .. }))
-            && crate::manifest_conflict::check_merge_in_flight(vcs, cwd_project_dir)?
+            && crate::manifest_conflict::check_merge_in_flight(vcs, cwd_project_dir, owner)?
         {
             return Err(conflict(cwd_project_dir, ConflictOp::Merge));
         }

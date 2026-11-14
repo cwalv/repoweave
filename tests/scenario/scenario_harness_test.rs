@@ -7683,6 +7683,22 @@ fn text_merge_setting_moved_kept_as_text() {
 }
 
 #[test]
+fn text_merge_setting_moved_kept_as_text_converted() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::SettingMovedKeptAsTextConverted,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn text_merge_setting_moved_edited_then_kept_as_text() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::SettingMovedEditedThenKeptAsText,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn text_merge_setting_moved_beside_a_list_both_changed() {
     runner::run(scenarios::check_a_text_merge(
         scenarios::TextMerge::SettingMovedBesideAListBothChanged,
@@ -7853,6 +7869,22 @@ fn manifest_stop_both_changed_outside_the_regions() {
 fn manifest_stop_table_split_by_a_region() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::TableSplitByARegion,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_region_across_members_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::RegionAcrossMembers(scenarios::ManifestStopHistory::Merge),
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_region_across_members_linear() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::RegionAcrossMembers(scenarios::ManifestStopHistory::Linear),
     ))
     .assert_fully_decided_green();
 }

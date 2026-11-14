@@ -1721,7 +1721,7 @@ fn conflict_refusal(
     let workspace = sync.ctx.active_path();
     let resume = crate::op_state::resume_command_at(OpVerb::Sync, workspace);
     let entries = if dir == sync.dir {
-        crate::manifest_conflict::stop_lines(vcs, dir, &resume)
+        crate::manifest_conflict::enter_stop(vcs, dir, workspace, &resume)
     } else {
         Vec::new()
     };

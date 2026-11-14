@@ -418,7 +418,7 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
+        /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing, refused where `rwv.toml` was edited since the stop; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
         /// Resume a sync a conflict stopped, after resolving it; every parameter comes from the op record
@@ -472,7 +472,7 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
+        /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing, refused where `rwv.toml` was edited since the stop; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
         /// Resume a landing a conflict stopped, after resolving it; every parameter comes
@@ -556,7 +556,7 @@ pub enum Commands {
         /// Move the project branch to its upstream, keeping the tip it leaves in a backup. The repo is `projects/<name>`; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
         #[arg(long, value_name = "REPO", conflicts_with = "do_continue")]
         reset_to_upstream: Vec<crate::manifest::ResetOperand>,
-        /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
+        /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing, refused where `rwv.toml` was edited since the stop; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
         /// Resume the pull a conflict stopped, from the workspace it runs in

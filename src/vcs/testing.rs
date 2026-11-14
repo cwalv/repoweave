@@ -977,13 +977,13 @@ impl Vcs for FakeVcs {
         unsupported("record_conflict")
     }
 
-    fn merge_taking(
+    fn conflict_picks(
         &self,
         _checkout: &Path,
-        _sides: &crate::vcs::ConflictSides,
-        _taking: crate::vcs::TakingSide,
-    ) -> Result<String, VcsError> {
-        unsupported("merge_taking")
+        _path: &str,
+        _text: &str,
+    ) -> Result<Option<[String; 2]>, VcsError> {
+        unsupported("conflict_picks")
     }
 
     fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {

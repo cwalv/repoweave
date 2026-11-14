@@ -31,6 +31,7 @@ use std::process::Stdio;
 mod argv;
 mod backup;
 mod carry_edits;
+mod conflict_markers;
 mod merge;
 mod pick;
 mod records;
@@ -5675,33 +5676,25 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
-    fn merge_taking(
+    fn conflict_picks(
         &self,
         checkout: &Path,
-        sides: &crate::vcs::ConflictSides,
-        taking: crate::vcs::TakingSide,
-    ) -> Result<String, VcsError> {
-        let scratch = scratch::Scratch::take(checkout)?;
-        let files = ["yours", "base", "incoming"].map(|name| scratch.path(name));
-        for (file, text) in files
-            .iter()
-            .zip([&sides.yours, &sides.base, &sides.incoming])
-        {
-            std::fs::write(file, text.as_deref().unwrap_or_default()).map_err(|e| {
-                VcsError::Io {
-                    ctx: format!("failed to write {file}"),
-                    source: e,
-                }
-            })?;
-        }
-        let side = match taking {
-            crate::vcs::TakingSide::Yours => "--ours",
-            crate::vcs::TakingSide::Incoming => "--theirs",
+        path: &str,
+        text: &str,
+    ) -> Result<Option<[String; 2]>, VcsError> {
+        let size = Self::run(["check-attr", "conflict-marker-size", "--", path], checkout)?
+            .trim()
+            .rsplit(": ")
+            .next()
+            .and_then(|size| size.parse().ok())
+            .unwrap_or(conflict_markers::DEFAULT_SIZE);
+        let Some([head, other]) = conflict_markers::halves(text, size) else {
+            return Ok(None);
         };
-        Self::run(
-            ["merge-file", "-p", side, &files[0], &files[1], &files[2]],
-            checkout,
-        )
+        Ok(Some(match yours_and_incoming_stages(self, checkout)? {
+            ["2", _] => [head, other],
+            _ => [other, head],
+        }))
     }
 
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {

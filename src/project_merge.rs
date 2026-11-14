@@ -681,7 +681,12 @@ impl ProjectMerge<'_> {
         repo: &str,
     ) -> anyhow::Result<Merged> {
         let stop = |paths: Vec<String>| {
-            let setters = crate::manifest_conflict::stop_lines(vcs, dir, &self.resume);
+            let setters = crate::manifest_conflict::enter_stop(
+                vcs,
+                dir,
+                self.ctx.active_path(),
+                &self.resume,
+            );
             conflict_stop(
                 self.verb,
                 self.ctx.active_path(),
@@ -755,7 +760,7 @@ impl ProjectMerge<'_> {
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
             .collect();
-        if crate::manifest_conflict::check_merge_in_flight(vcs, dir)? {
+        if crate::manifest_conflict::check_merge_in_flight(vcs, dir, self.ctx.active_path())? {
             paths.push(Manifest::FILE_NAME.to_owned());
         }
         if paths.is_empty() {
@@ -806,7 +811,12 @@ impl ProjectMerge<'_> {
                         &self.resume,
                         &conflicted,
                         vcs_for(entry.vcs_type).as_ref(),
-                        &crate::manifest_conflict::stop_lines(vcs, dir, &self.resume),
+                        &crate::manifest_conflict::enter_stop(
+                            vcs,
+                            dir,
+                            self.ctx.active_path(),
+                            &self.resume,
+                        ),
                     ));
                 }
                 Err(MemberStop::Refused(error)) => return Err(error),
