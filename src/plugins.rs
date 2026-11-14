@@ -262,6 +262,9 @@ fn plugin_records(found: Vec<PathBuf>, naming: &LookupNaming) -> Vec<PluginRecor
         let Some((verb, rank)) = naming.verb_of(file_name) else {
             continue;
         };
+        if ranked.iter().any(|seen| seen.path == p) {
+            continue;
+        }
         ranked.push(Candidate {
             dir_index,
             rank,
@@ -885,6 +888,17 @@ mod tests {
             text.contains("rwv <name>") || text.contains("rwv-"),
             "invocation hint missing: {text}"
         );
+    }
+
+    /// A directory named twice on `PATH` lists its plugin once.
+    #[test]
+    fn help_section_lists_a_plugin_once_per_path_entry_repeat() {
+        let tmp = crate::tempdir().expect("tempdir");
+        let dir = tmp.path();
+        make_executable(dir, "rwv-tool");
+        let path = join_paths(&[dir, dir]);
+        let text = external_commands_help_section(Some(path.as_os_str())).expect("a section");
+        assert_eq!(text.matches("  tool\n").count(), 1, "{text}");
     }
 
     /// Shadowed duplicates are NOT listed in the help section (only unique names).
