@@ -52,7 +52,8 @@ backstop unnecessary.
   Consumers call back into `rwv` instead of parsing them.
 - [sync-phase-machine](./sync-phase-machine.md) — the per-phase contract
   behind `rwv sync` and `rwv land`: what each phase persists, its re-entry
-  rule, abort's tip attribution, and the git realization of each mechanism.
+  rule, abort's slots, the `rwv.toml` stops, and the git realization of each
+  mechanism.
 - [concurrency](./concurrency.md) — the budget for judging interference
   concerns: git's correctness effort as goal and ceiling, the two tiers of
   state (including the claim that serializes fetches into one object store),
