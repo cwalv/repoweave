@@ -1355,6 +1355,7 @@ every_scenario!(
         true
     ),
     landing_killed(scenarios::KilledLanding::Carrying, "landed", false),
+    cherry_pick_killed("cherry-pick-project-copy", false),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncLinear),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncMerge),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandLinear),
@@ -8461,6 +8462,22 @@ holding_rwv! {
                     runner::run(scenarios::take_in_killed(which, point, continued))
                         .assert_fully_decided_green();
                 }
+            }
+        }
+    }
+
+    /// A port killed at each of its pause points: `--continue` ports it and
+    /// `rwv abort` puts the feature back.
+    fn a_port_killed_is_continued_or_aborted() {
+        for point in [
+            "op-savepoint-taken",
+            "cherry-pick-member-copied",
+            "cherry-pick-project-copy",
+            "cherry-pick-project-committed",
+        ] {
+            for continued in [true, false] {
+                runner::run(scenarios::cherry_pick_killed(point, continued))
+                    .assert_fully_decided_green();
             }
         }
     }

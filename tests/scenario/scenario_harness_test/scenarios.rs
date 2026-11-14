@@ -17726,6 +17726,51 @@ pub fn cherry_pick_killed_after_each_move() -> Scenario {
     }
 }
 
+/// A port killed at `point`: `cherry-pick --continue` ports it and ends the
+/// operation; `rwv abort` leaves the feature without any of it.
+pub fn cherry_pick_killed(point: &'static str, continued: bool) -> Scenario {
+    let mut steps = stable_lines();
+    steps.extend(port_me_on_main());
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv_paused(&ww("p"), &["cherry-pick", "main"], point, "pick"),
+        Step::kill("pick"),
+    ]);
+    if continued {
+        steps.extend([
+            Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("ported")),
+            Step::git(&ww("p"), Repo::App, &["log", "-3", "--format=%s"])
+                .claim(Claim::OutputInOrder(&["fix-app-2", "fix-app-1"])),
+            Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:port-me.txt"])
+                .claim(Claim::OutputLine("port-me")),
+        ]);
+    } else {
+        steps.extend([
+            Step::rwv(&ww("p"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Lib, Repo::Docs, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Lib, Repo::Docs, Repo::Proj]),
+            Step::git(&ww("p"), Repo::App, &["log", "--format=%s"])
+                .claim(Claim::OutputLacks("fix-app")),
+            Step::git(&ww("p"), Repo::Proj, &["log", "--format=%s"])
+                .claim(Claim::OutputLacks("port-me")),
+        ]);
+    }
+    steps.extend([
+        Step::rwv(&ww("p"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        Step::rwv(&ww("p"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    ]);
+    Scenario {
+        name: "cherry-pick killed, then continued or aborted",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}
+
 /// A seat `w` with work on `app`, and `main` moved on `app` since it was cut,
 /// each locked: a landing needs more than a fast-forward.
 fn seat_behind_a_moved_main() -> Vec<Step> {
