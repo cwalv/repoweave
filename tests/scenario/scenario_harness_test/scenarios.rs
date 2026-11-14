@@ -20200,7 +20200,7 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .claim(Claim::OutputContains(differs))
                     .claim(Claim::OutputContains("local/remotes/app history"))
                     .claim(Claim::OutputContains(
-                        "committed are not kept, as the VCS's own abort does not keep them",
+                        "keeping first as a backup each edit and commit it would discard",
                     ))
                     .claim(Claim::OutputLacks("copy"))
                     .claim(Claim::OutputLacks("--keep yours")),
@@ -20931,7 +20931,7 @@ fn a_later_commit_moves_a_setting(verb: TipVerb) -> Vec<Step> {
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
             .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
             .claim(Claim::OutputContains(
-                "committed are not kept, as the VCS's own abort does not keep them",
+                "keeping first as a backup each edit and commit it would discard",
             )),
     ]
 }

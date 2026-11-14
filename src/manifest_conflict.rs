@@ -660,8 +660,8 @@ pub(crate) fn continue_at_stop(
             text.push('\n');
         }
         text.push_str(&format!(
-            "then run `{resume}`, or `{}` to put everything back as it was; edits to tracked files \
-             not yet committed are not kept, as the VCS's own abort does not keep them",
+            "then run `{resume}`, or `{}` to put everything back as it was, keeping first as a \
+             backup each edit and commit it would discard",
             crate::op_state::abort_command_at(workspace)
         ));
         crate::refusal::refusal(crate::refusal::RefusalKind::OpParked, text)
