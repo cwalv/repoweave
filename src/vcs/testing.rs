@@ -960,14 +960,6 @@ impl Vcs for FakeVcs {
         unsupported("unmerged_paths")
     }
 
-    fn uncompared_paths(
-        &self,
-        _checkout: &Path,
-        _paths: &[String],
-    ) -> Result<crate::vcs::UncomparedPaths, VcsError> {
-        unsupported("uncompared_paths")
-    }
-
     fn conflict_sides(
         &self,
         _checkout: &Path,
@@ -1240,40 +1232,6 @@ impl Vcs for FakeVcs {
         unsupported("file_versions")
     }
 
-    fn left_behind_at(&self, _repo: &Path) -> Result<Option<CommitId>, VcsError> {
-        unsupported("left_behind_at")
-    }
-
-    fn checkout_unrecorded(
-        &self,
-        _repo: &Path,
-    ) -> Result<Option<crate::vcs::Unrecorded>, VcsError> {
-        unsupported("checkout_unrecorded")
-    }
-
-    fn path_standings(
-        &self,
-        _repo: &Path,
-        _left: Option<&CommitId>,
-    ) -> Result<Vec<crate::vcs::PathStanding>, VcsError> {
-        unsupported("path_standings")
-    }
-
-    fn refresh_paths_if_left(
-        &self,
-        _repo: &Path,
-        _left: &CommitId,
-        _head: &CommitId,
-        _paths: &[String],
-        _scope: crate::vcs::RefreshScope,
-    ) -> Result<crate::vcs::RefreshWrite, VcsError> {
-        unsupported("refresh_paths_if_left")
-    }
-
-    fn set_back(&self, _repo: &Path, _at: &CommitId) -> Result<(), VcsError> {
-        unsupported("set_back")
-    }
-
     fn carry_edits_onto(
         &self,
         _repo: &Path,
@@ -1306,18 +1264,6 @@ impl Vcs for FakeVcs {
         _branch: &str,
     ) -> Result<Vec<CommitId>, VcsError> {
         Ok(Vec::new())
-    }
-
-    fn staged_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
-        unsupported("staged_against_head")
-    }
-
-    fn staged_versions_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
-        unsupported("staged_versions_against_head")
-    }
-
-    fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {
-        unsupported("record_checkout_at_head")
     }
 
     fn commit_object_exists(&self, _repo: &Path, _id: &CommitId) -> Result<bool, VcsError> {
