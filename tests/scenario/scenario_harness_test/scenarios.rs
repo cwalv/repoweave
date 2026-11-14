@@ -24212,6 +24212,7 @@ pub enum StoppedMoved {
     LandProject,
     LandMember,
     PullProject,
+    PullMember,
     CherryPickProject,
     CherryPickMember,
 }
@@ -24248,7 +24249,7 @@ pub fn continue_after_another_seat_moves(which: StoppedMoved) -> Scenario {
             "proj--w",
             &["land", "--continue"],
         ),
-        S::PullProject => {
+        S::PullProject | S::PullMember => {
             let mut stopped = both_sides_move_app_conflictingly();
             stopped.splice(
                 1..1,
@@ -24262,7 +24263,11 @@ pub fn continue_after_another_seat_moves(which: StoppedMoved) -> Scenario {
                 stopped,
                 Place::ww(Machine::B, "o"),
                 b(),
-                Repo::Proj,
+                if matches!(which, S::PullProject) {
+                    Repo::Proj
+                } else {
+                    Repo::Lib
+                },
                 "main",
                 &["pull", "--continue"],
             )
@@ -24306,6 +24311,7 @@ pub fn continue_after_another_seat_moves(which: StoppedMoved) -> Scenario {
             S::LandProject => "land --continue after another seat moved the project",
             S::LandMember => "land --continue after another seat moved a member",
             S::PullProject => "pull --continue after another seat moved the project",
+            S::PullMember => "pull --continue after another seat moved a member",
             S::CherryPickProject => "cherry-pick --continue after another seat moved the project",
             S::CherryPickMember => "cherry-pick --continue after another seat moved a member",
         },
