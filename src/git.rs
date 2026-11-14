@@ -750,8 +750,7 @@ fn left_behind_at(repo: &Path) -> Result<LeftBehind, VcsError> {
 }
 
 /// Whether the worktree's own `HEAD` log holds an entry. `HEAD@{now}` reads
-/// that log alone, on either ref storage, and fails quietly with status 128
-/// where it is empty; `log -g HEAD` reads the branch's shared log instead once
+/// that log alone, on either ref storage, and fails quietly where it is empty; `log -g HEAD` reads the branch's shared log instead once
 /// the worktree's is empty, and `HEAD@{0}` answers an empty log with HEAD.
 fn head_log_has_entry(repo: &Path) -> Result<bool, VcsError> {
     Ok(GitVcs::run_or_absent(
@@ -2590,8 +2589,9 @@ enum Absent {
     /// `merge-base`, with or without `--all`: the commits share no history.
     MergeBase,
     /// `rev-parse -q --verify <ref>@{<date>}`: the ref's log holds no entry.
-    /// Git exits 128 for an empty log and 1 for one never written, with
-    /// nothing on stderr for either.
+    /// Git exits 128 for an empty log and 1 for one never written. A failure
+    /// of any other cause reads as no entry, which holds the checkout rather
+    /// than reading its differences.
     EmptyLog,
 }
 
@@ -2601,9 +2601,7 @@ impl Absent {
             Absent::Revision | Absent::ConfigKey | Absent::MergeBase => {
                 output.status.code() == Some(1)
             }
-            Absent::EmptyLog => {
-                matches!(output.status.code(), Some(1 | 128)) && output.stderr.is_empty()
-            }
+            Absent::EmptyLog => matches!(output.status.code(), Some(1 | 128)),
         }
     }
 }
@@ -12109,7 +12107,7 @@ mod drift_tests {
             GitReading::Release { release, .. } if *release >= (2, 45) => {
                 storages.push(&["--ref-format=reftable"]);
             }
-            _ => eprintln!("skipped: git before 2.45 creates no reftable repository"),
+            _ => crate::report_skip("git before 2.45 creates no reftable repository"),
         }
         storages
     }

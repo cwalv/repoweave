@@ -47,6 +47,22 @@ to which page holds it, so the split costs a reader nothing.
 
 ---
 
+### `branch-rewritten`
+
+**Condition.** A checkout on a branch differs from its HEAD, and the record of
+where the checkout last stood names a commit its branch no longer contains: the
+branch was moved backward or sideways by a move made outside the checkout. For
+git, the checkout's newest HEAD reflog entry is a commit HEAD does not contain.
+Carries that commit as `stood_at` and HEAD as `head`.
+
+**What it means.** The checkout's files may hold the old commit's content,
+which would read as edits returning the branch to it; rwv cannot tell them from
+edits made in the checkout. It judges neither, and offers no commit.
+
+**Exits.** Set every difference aside without recording any of it: that leaves
+the checkout at `head`, which ends this. Take back only your own files from
+what was set aside afterwards. (For git, `git stash push`.)
+
 ### `checkout-unrecorded`
 
 **Condition.** A checkout on a branch differs from its HEAD and the VCS holds no
@@ -60,14 +76,15 @@ HEAD. It judges neither. `recording_off` is `true` when the VCS is set never to
 record it, which is why it holds none. (For git, `core.logAllRefUpdates` is
 `false`.)
 
-**Exits.** Set every difference aside without recording any of it. Where the
-differences are all yours, taking them back afterwards makes the VCS record the
-checkout at the current tip and the next verb judges them as edits. With
-`recording_off`, turn recording on first; the message prints the VCS action that
-does. (For git, `git stash push` sets the differences aside, `git stash pop`
-takes them back, and `git config core.logAllRefUpdates true` turns recording
-on.) Differences that are only the branch's move are taken back with the recipe
-on [Shared-refs drift](../explanation/joints/shared-refs-drift.md).
+**Exits.** Set every difference aside without recording any of it; setting
+them aside makes the VCS record the checkout at the current tip, which ends
+this. Where the differences are all yours, taking them back afterwards brings
+them back and the next verb judges them as edits. With `recording_off`, turn
+recording on first; the message prints the VCS action that does. (For git,
+`git stash push` sets the differences aside, `git stash pop` takes them back,
+and `git config core.logAllRefUpdates true` turns recording on.) Differences
+that are only the branch's move are taken back with the recipe on
+[Shared-refs drift](../explanation/joints/shared-refs-drift.md).
 
 ### `command-failed`
 
@@ -159,6 +176,22 @@ moving anything.
 status` names its own continue and abort), then re-run. A verb that judges a
 repo before acting refuses this state up front, as the `edits` kind's
 `mid-operation`; this kind is the same state met by a VCS call partway through.
+
+### `move-taken-in-part`
+
+**Condition.** A checkout's branch moved under it, and the checkout already
+holds the moved tip's entry for some path the move changed, taken in a way its
+history does not record (a hand refresh, a hand `git add` after a refresh that
+wrote some files and not others), while other paths the move changed, listed as
+`paths`, still hold the commit it moved from in both index and file.
+
+**What it means.** Each listed path may be drift a refresh never wrote or a
+return to the old commit staged by hand; nothing tells them apart. rwv judges
+neither, refreshes nothing, and offers no commit.
+
+**Exits.** Set every difference aside: that leaves the checkout at HEAD and
+ends this. Take back only your own files from what was set aside afterwards.
+(For git, `git stash push`.)
 
 ### `not-a-repo`
 

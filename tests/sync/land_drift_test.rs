@@ -4002,7 +4002,7 @@ fn makes_reftable() -> bool {
         .collect();
     let makes = release.as_slice() >= [2, 45].as_slice();
     if !makes {
-        eprintln!("skipped: {version} creates no reftable repository");
+        common::report_skip(&format!("{version} creates no reftable repository"));
     }
     makes
 }
