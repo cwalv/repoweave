@@ -70,7 +70,8 @@ setters still read it; where a ported table changed on both sides, it holds
 this branch's tables and the stop shows the commit's, to set as wanted and
 stage. Where the VCS merged such a table's text with no conflict, the text is
 compared with the merge of both sides' values (the commit's parent, this
-branch's tip and the commit); where it does not parse or differs, the port
+branch's tip and the commit) in each key at most one side changed, a key both
+changed keeping the VCS's text; where it does not parse or differs, the port
 stops the same way, listing what differs. A table only one side changed is
 taken by value, and entries and `history` are never ported, so neither is
 compared. There is no `--keep` at this stop: edit `rwv.toml`, stage it, then
