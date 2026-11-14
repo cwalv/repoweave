@@ -18360,7 +18360,7 @@ pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
             .may_rewind(&[Repo::App, Repo::Lib])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                "local/remotes/app: a tip it held during this operation, which the restore does not reach, is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "remotes/app log ", "README"),
     ];
@@ -18428,11 +18428,9 @@ pub fn sync_continue_judges_dependents_before_a_rejudged_rebase() -> Scenario {
                 repo: Repo::Lib,
                 rev: "proj--w",
                 mark: "w-lib-stop",
-            })
-            .claim(Claim::NoBackup {
-                repo: Repo::Lib,
-                mark: "w-lib-stop",
             }),
+        Step::git(&ww("w"), Repo::Lib, &["log", "-1", "--format=%s", "proj--w"])
+            .claim(Claim::OutputLine("w-lib-stop")),
     ]);
     scenario(
         "sync --continue judges dependents before a rebase it re-judged",
@@ -21984,7 +21982,7 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "projects/proj: its tip, holding commits this operation did not make, is kept as backup",
+                "projects/proj: a tip it held during this operation, which the restore does not reach, is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "projects/proj log ", "operator-own"),
     ]);
