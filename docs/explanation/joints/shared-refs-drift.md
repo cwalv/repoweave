@@ -129,18 +129,23 @@ refreshes only what both answer:
   made from another worktree is not. So a checkout whose newest reflog
   entry is a commit other than HEAD, and an ancestor of it, had its
   branch moved forward from that commit (the *moved-from tip*) by
-  something else. Where the newest entry is HEAD, the branch moved
-  backward or sideways, HEAD is detached, the
+  something else. A checkout whose newest entry is a commit HEAD does not
+  contain had its branch moved backward or sideways by something else: rwv
+  cannot tell what that checkout holds from edits, and holds it (see
+  [Drift rwv cannot show](#drift-rwv-cannot-show)). Where the newest entry
+  is HEAD, HEAD is detached, the
   index lists no path at all, or the checkout is stopped in a merge,
   rebase, cherry-pick, revert or bisect, nothing is shown to have moved
   under the checkout and every difference is an edit. A checkout left behind also holds the moved-from tip's index
   entry at every path the move changed and it did not edit; one whose index
   already holds HEAD's entry at such a path has taken the move, or part of
-  it, in a way its reflog does not record (a hand repair, a lost entry), and
-  every difference there is an edit too, except a path whose index entry is
-  the moved-from tip's and whose file is exactly HEAD's: that is what a
-  refresh stopped between its two writes leaves, and the next verb finishes
-  it.
+  it, in a way its reflog does not record (a hand repair, a lost entry, a
+  hand `git add` after a refresh that wrote some files and not others).
+  There a path whose index entry is the moved-from tip's and whose file is
+  exactly HEAD's is what a refresh stopped between its two writes leaves,
+  and the next verb finishes it; a path the move changed that still holds
+  the moved-from tip in both cannot be told from one returned to it, so the
+  checkout is held (below); every other difference is an edit.
 - **Does this path still hold what the moved-from tip held?** The
   classifier runs per path. A path the move changed whose index entry and
   file both still hold the moved-from tip's content is stale: both take
@@ -216,7 +221,9 @@ stale tracked file deleted, or the branch moved again. Git's merge has no
 option that refuses over an ignored file, and it reads a missing tracked file
 as up to date. A write that fails partway, on a full disk for one, can leave
 some files written while their index entries still hold the old tip's: those
-read as drift in the index alone, and the next run finishes them.
+read as drift in the index alone, and the next run finishes them. Staging
+one of the files it wrote by hand before then takes part of the move, and
+the files it never wrote are held as below.
 
 Git's own rules apply to what the merge writes. In a sparse checkout a path
 outside its patterns is written to the index alone, and a file outside them
@@ -224,7 +231,7 @@ that holds its index entry's content is removed, as any git checkout does;
 nothing is lost, since a commit holds that content. A refreshed index entry
 loses an assume-unchanged mark, and with `core.fileMode=false` an exec bit git
 does not record is set as the commit says: git reads neither as a change, and
-neither does rwv.
+neither does rwv, which with that setting compares no file's exec bit.
 
 `rwv doctor` reports the stale paths as `record-drift` and
 `working-tree-drift` `safe-to-fix`, and everything else as `live-recorded`
@@ -266,15 +273,29 @@ moved: git expires the log of a checkout left idle past its default 90 days,
 and `git reflog expire` or `core.logAllRefUpdates=false` leaves none. Where
 such a checkout differs from HEAD, every verb refuses it as `edits` `drift left
 in place`, naming that, with `git stash push` as its one choice and no commit.
-Where `git diff` shows the differences are yours, `git stash pop` afterwards makes
-git write an entry and the next verb judges them as ordinary edits. When
+The stash makes git write an entry at HEAD; where `git diff` shows the
+differences are yours, `git stash pop` afterwards brings them back and the
+next verb judges them as ordinary edits. When
 `core.logAllRefUpdates` is `false` git writes none, the hold says so, and
 `git config core.logAllRefUpdates true` before the stash and pop is the exit.
-A clean checkout is not held.
+A clean checkout is not held. Where a path is marked to be added with no
+content (`git add -N`), git refuses to stash, so the hold prints the unmark
+first (`git restore --staged` on those paths, which leaves each an untracked
+file) and the stash after it.
+
+The same hold, with the same choices, takes two more checkouts whose record
+says the branch moved but not how to read what they hold. One whose branch
+was moved, from another worktree, backward or sideways to a commit that does
+not contain where the checkout stood: the hold names both commits, and the
+stash leaves the checkout at the branch's new tip, which ends it, the old
+content kept in the stash. And one that took part of a move in a way its
+record does not show while a path the move changed still holds the
+moved-from tip in index and file: that path may be drift a refresh never
+wrote or a return you staged, and the hold lists it.
 
 Where nothing shows that the branch moved under the checkout — the move went
-unrecorded, the checkout already took part of it, it moved backward or
-sideways — a checkout holding an old commit's content reads as edits, and
+unrecorded, or the checkout already took part of it and holds no path at the
+old tip — a checkout holding an old commit's content reads as edits, and
 rwv refreshes none of it: `rwv land` refuses it as `edits` `dirty`, and
 `rwv doctor` reports it `live-recorded` and `live-edits`. If those differences
 are not your work, stash them (`git stash push` in the checkout, the second

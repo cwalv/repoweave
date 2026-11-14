@@ -12,8 +12,8 @@ use crate::op_state::SavepointKey;
 use crate::path_spelling::{CanonicalPath, WirePath};
 use crate::refusal::{refusal, RefusalKind};
 use crate::vcs::{
-    CommitId, Holds, PathStanding, RawRevisionId, RefreshScope, RefreshWrite, ResolvedRevisionId,
-    VcsError,
+    CommitId, Holds, LeftBehind, PathStanding, RawRevisionId, RefreshScope, RefreshWrite,
+    ResolvedRevisionId, VcsError,
 };
 use crate::workspace::{project_dir, project_rel_path, projects_dir, PointerContent, Resolution};
 use anyhow::Context;
@@ -7408,27 +7408,42 @@ impl DriftReading {
 /// A path is drift only where both are shown: the branch moved under the
 /// checkout, and the path still holds what the moved-from tip held. Without
 /// that every difference is an edit, as it is in a checkout stopped in an
-/// operation, and in one holding no record of where it stood. In a checkout
-/// whose index already holds HEAD's entry for a path the move changed, a
-/// checkout left behind holds the old tip at every such path it has not
-/// edited, so one that took part of the move has had it taken by something
-/// its history does not show: there every difference is an edit except a
-/// path whose index entry is the old tip's and whose file is HEAD's, which is
-/// all a refresh stopped between its two writes leaves.
+/// operation. A checkout that differs from HEAD and holds no record of where
+/// it stood, or whose branch was moved to a commit that does not contain
+/// where it stood, cannot be read, since its differences may be the move's
+/// reverse. In a checkout whose index already holds HEAD's entry for a path
+/// the move changed, a checkout left behind holds the old tip at every such
+/// path it has not edited, so one that took part of the move has had it
+/// taken by something its history does not show: there a path whose index
+/// entry is the old tip's and whose file is HEAD's is all a refresh stopped
+/// between its two writes leaves, a path still holding the old tip in both
+/// cannot be told from a return to it, so the checkout cannot be read, and
+/// every other difference is an edit.
 pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading, VcsError> {
     // Refreshing an index entry ends a merge, cherry-pick or revert in
     // progress, so a checkout stopped in one has no drift to refresh.
-    let left = match vcs.mid_operation(repo) {
-        Some(_) => None,
+    let behind = match vcs.mid_operation(repo) {
+        Some(_) => LeftBehind::No,
         None => vcs.left_behind_at(repo)?,
     };
+    let left = match &behind {
+        LeftBehind::At(left) => Some(left.clone()),
+        LeftBehind::No | LeftBehind::Rewritten(_) => None,
+    };
     let standings = vcs.path_standings(repo, left.as_ref())?;
-    if left.is_none()
-        && vcs.mid_operation(repo).is_none()
-        && standings
-            .iter()
-            .any(|standing| (standing.index, standing.file) != (Holds::Head, Holds::Head))
-    {
+    let differs = standings
+        .iter()
+        .any(|standing| (standing.index, standing.file) != (Holds::Head, Holds::Head));
+    if differs {
+        if let LeftBehind::Rewritten(stood_at) = behind {
+            return Err(VcsError::BranchRewritten {
+                repo: repo.to_path_buf(),
+                stood_at,
+                head: vcs.head_revision(repo)?.id().clone(),
+            });
+        }
+    }
+    if left.is_none() && vcs.mid_operation(repo).is_none() && differs {
         if let Some(why) = vcs.checkout_unrecorded(repo)? {
             return Err(VcsError::CheckoutUnrecorded {
                 repo: repo.to_path_buf(),
@@ -7446,6 +7461,22 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
     let partial_take = standings
         .iter()
         .any(|standing| standing.moved && standing.index == Holds::Head);
+    if left.is_some() && partial_take {
+        let returned: Vec<String> = standings
+            .iter()
+            .filter(|standing| {
+                standing.moved
+                    && (standing.index, standing.file) == (Holds::LeftTip, Holds::LeftTip)
+            })
+            .map(|standing| standing.path.clone())
+            .collect();
+        if !returned.is_empty() {
+            return Err(VcsError::MoveTakenInPart {
+                repo: repo.to_path_buf(),
+                paths: returned,
+            });
+        }
+    }
     let head = match left {
         Some(_) => Some(vcs.head_revision(repo)?.id().clone()),
         None => None,
@@ -7666,7 +7697,13 @@ pub fn refresh_drift(
     };
     let first = read_stale(reading);
     crate::test_pause::point("drift-read");
-    let now = read_drift(vcs, repo)?;
+    let now = match read_drift(vcs, repo) {
+        Ok(now) => now,
+        Err(VcsError::MoveTakenInPart { .. } | VcsError::BranchRewritten { .. }) => {
+            return Ok(left_in_place(first, LeftWhy::Changed));
+        }
+        Err(e) => return Err(e),
+    };
     if (&now.left, &now.head) != (&reading.left, &reading.head) {
         let why = match vcs.head_revision(repo)?.id() == moved_to {
             true => LeftWhy::Changed,
@@ -10501,12 +10538,24 @@ fn collect_doctor_violations(
             Err(_) if project_repo => continue,
             Ok(reading) => drift_findings(&reading),
             Err(e) => {
+                let at = |action| {
+                    vcs.hint(action)
+                        .replace("<checkout>", &repo_abs.display().to_string())
+                };
+                let marked = crate::diagnosis::marked_to_add(vcs, repo_abs);
+                let unmark = match marked.is_empty() {
+                    true => String::new(),
+                    false => format!(
+                        "`{}`, which leaves each path marked to be added an untracked file, \
+                         then ",
+                        at(crate::vcs::VcsAction::Unstage).replace("<paths>", &marked.join(" "))
+                    ),
+                };
                 unjudged.push(format!(
                     "{repo_path}: its drift could not be read, so nothing it holds is judged an \
-                     edit, and a commit there could record the move's reverse: {e:#}; `{}` \
+                     edit, and a commit there could record the move's reverse: {e:#}; {unmark}`{}` \
                      keeps every difference and leaves the checkout at HEAD",
-                    vcs.hint(crate::vcs::VcsAction::Stash)
-                        .replace("<checkout>", &repo_abs.display().to_string())
+                    at(crate::vcs::VcsAction::Stash)
                 ));
                 continue;
             }

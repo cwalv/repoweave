@@ -40,8 +40,12 @@ fn commit_file(repo: &Path, file: &str, content: &str, msg: &str) -> String {
 }
 
 fn init_repo(path: &Path) {
+    init_repo_with(path, &[]);
+}
+
+fn init_repo_with(path: &Path, init: &[&str]) {
     std::fs::create_dir_all(path).unwrap();
-    common::git_in(path, &["init", "-q", "-b", "main"]);
+    common::git_in(path, &[&["init", "-q", "-b", "main"], init].concat());
     common::git_in(path, &["config", "user.email", "test@test.com"]);
     common::git_in(path, &["config", "user.name", "Test"]);
     common::git_in(path, &["config", "core.autocrlf", "false"]);
@@ -52,10 +56,14 @@ fn fixture() -> Fixture {
 }
 
 fn fixture_with_lib_config(config: &[(&str, &str)]) -> Fixture {
+    fixture_with_lib(&[], config)
+}
+
+fn fixture_with_lib(init: &[&str], config: &[(&str, &str)]) -> Fixture {
     let tmp = common::tempdir().unwrap();
     let primary = tmp.path().join("primary");
     let primary_lib = primary.join(LIB);
-    init_repo(&primary_lib);
+    init_repo_with(&primary_lib, init);
     for (key, value) in config {
         common::git_in(&primary_lib, &["config", key, value]);
     }
@@ -1179,10 +1187,12 @@ fn a_staged_deletion_after_a_fix_is_kept_in_the_target() {
 
 /// A checkout refreshed by hand, which leaves no record of where it stands,
 /// then given a staged deletion of a file the move added: the other path the
-/// move changed already holds HEAD's entry, so the checkout is no longer one
-/// left behind, and the deletion is an edit.
+/// move changed already holds HEAD's entry, so the move was taken in a way
+/// the checkout's history does not show, and the deletion leaves the path as
+/// the old tip held it, which no reading tells from drift. It is kept as it
+/// stands, held with the stash alone and no commit.
 #[test]
-fn a_staged_deletion_after_a_hand_refresh_is_kept() {
+fn a_staged_deletion_after_a_hand_refresh_is_kept_and_held() {
     let f = fixture();
     f.move_with("ww/project", |elsewhere| {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
@@ -1195,11 +1205,9 @@ fn a_staged_deletion_after_a_hand_refresh_is_kept() {
 
     let out = common::cli::run(&["land"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
-    assert!(
-        edits_listing(&stderr).iter().any(|l| l == "new.txt"),
-        "{stderr}"
-    );
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert!(stderr.contains("new.txt"), "{stderr}");
+    assert!(!stderr.contains(" commit\n"), "{stderr}");
     assert!(!stderr.contains("refreshed"), "{stderr}");
     assert_eq!(path_state(&f.ww_lib, &["new.txt"]), before, "{stderr}");
 }
@@ -3171,11 +3179,13 @@ fn set_writable(dir: &Path, writable: bool) {
 }
 
 /// A refresh git declines part way through its file write, then a hand
-/// refresh and a staged deletion and revert: the refused write left nothing
-/// that makes the later staged changes read as drift, so they are kept.
+/// refresh and a staged deletion and revert: the checkout took the move in a
+/// way its history does not show, and the two files hold the old tip again,
+/// which no reading tells from drift a refresh never wrote. They are kept as
+/// they stand, held with the stash alone and no commit.
 #[cfg(unix)]
 #[test]
-fn staged_changes_after_a_declined_refresh_and_a_hand_refresh_are_kept() {
+fn staged_returns_after_a_declined_refresh_and_a_hand_refresh_are_held() {
     let f = fixture();
     std::fs::create_dir_all(f.ww_lib.join("ro")).unwrap();
     commit_file(&f.ww_lib, "ro/x.txt", "x\n", "ro");
@@ -3197,13 +3207,48 @@ fn staged_changes_after_a_declined_refresh_and_a_hand_refresh_are_kept() {
 
     let out = common::cli::run(&["lock"], &f.ww);
 
-    let stderr = common::cli::refused(&out, State::EditsDirty);
-    assert_eq!(
-        edits_listing(&stderr),
-        vec!["new.txt".to_owned(), "notes.txt".to_owned()]
-    );
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert!(stderr.contains("new.txt, notes.txt"), "{stderr}");
     assert!(!stderr.contains("refreshed"), "{stderr}");
+    assert!(!stderr.contains(" commit\n"), "{stderr}");
     assert_eq!(path_state(&f.ww_lib, &kept), before, "{stderr}");
+}
+
+/// A refresh git declines part way through its file write, then a hand
+/// `git add` of one file it wrote: the file it never wrote still holds the
+/// old tip, which no reading tells from a return to it once part of the move
+/// is taken by hand. It is held with the stash alone, never offered a
+/// commit, and the printed stash leaves the checkout at HEAD.
+#[cfg(unix)]
+#[test]
+fn a_file_a_declined_refresh_never_wrote_is_held_after_a_hand_add() {
+    let f = fixture();
+    std::fs::create_dir_all(f.ww_lib.join("ro")).unwrap();
+    commit_file(&f.ww_lib, "ro/x.txt", "x\n", "ro");
+    commit_file(&f.ww_lib, "zz.txt", "z\n", "zz");
+    let moved = f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("ro/x.txt"), "x2\n").unwrap();
+        std::fs::write(elsewhere.join("zz.txt"), "z2\n").unwrap();
+    });
+    set_writable(&f.ww_lib.join("ro"), false);
+    let out = common::cli::run(&["lock"], &f.ww);
+    set_writable(&f.ww_lib.join("ro"), true);
+    common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert_eq!(read(&f.ww_lib.join("ro/x.txt")).as_deref(), Some("x\n"));
+    common::git_in(&f.ww_lib, &["add", "notes.txt"]);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert!(stderr.contains("ro/x.txt"), "{stderr}");
+    assert!(!stderr.contains(" commit\n"), "{stderr}");
+    assert_eq!(read(&f.ww_lib.join("ro/x.txt")).as_deref(), Some("x\n"));
+    run_every_choice(&stderr, &f.ww);
+    assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), moved);
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+    let out = common::cli::run(&["lock"], &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
 
 /// A refresh killed once its files are written, then a second move of the
@@ -3943,6 +3988,162 @@ fn an_edit_in_a_checkout_with_no_reflog_entry_is_held_with_the_stash_alone() {
     assert!(stderr.contains("where this checkout of"), "{stderr}");
     assert_eq!(printed_commands(&stderr).len(), 1, "{stderr}");
     run_every_choice(&stderr, &f.ww);
+    assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+}
+
+/// Whether the installed git creates repositories on the reftable ref storage.
+fn makes_reftable() -> bool {
+    let version = common::git_in(Path::new("."), &["version"]);
+    let release: Vec<u32> = version
+        .trim_start_matches("git version ")
+        .split('.')
+        .take(2)
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    let makes = release.as_slice() >= [2, 45].as_slice();
+    if !makes {
+        eprintln!("skipped: {version} creates no reftable repository");
+    }
+    makes
+}
+
+/// On the reftable ref storage, which keeps no log file per worktree, a
+/// checkout whose own log was emptied while the branch's log kept the move
+/// is held as one, with no commit offered, as on the files storage.
+#[test]
+fn a_move_under_a_checkout_with_an_emptied_log_is_held_on_reftable() {
+    if !makes_reftable() {
+        return;
+    }
+    let f = fixture_with_lib(&["--ref-format=reftable"], &[]);
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["rev-parse", "--show-ref-format"]),
+        "reftable"
+    );
+    move_notes(&f);
+    common::git_in(&f.ww_lib, &["reflog", "expire", "--expire=now", "HEAD"]);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert!(
+        stderr.contains("holds no record of where this checkout"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("commit"), "{stderr}");
+    run_every_choice(&stderr, &f.ww);
+    let out = common::cli::run(&["lock"], &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+}
+
+/// A checkout with no record of where it stood, clean but for a path marked
+/// to be added with no content: the stash cannot run over that mark, so the
+/// hold unmarks it first, and every printed line runs as printed.
+#[test]
+fn a_held_checkout_with_a_path_marked_to_be_added_is_offered_unmarking_it_first() {
+    let f = fixture_without_entry(NoEntry::ExpiredByHand);
+    std::fs::write(f.ww_lib.join("marked.txt"), "marked\n").unwrap();
+    common::git_in(&f.ww_lib, &["add", "-N", "marked.txt"]);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+    assert_eq!(printed_commands(&stderr).len(), 2, "{stderr}");
+    assert!(!stderr.contains("commit"), "{stderr}");
+    run_every_choice(&stderr, &f.ww);
+    assert_eq!(
+        read(&f.ww_lib.join("marked.txt")).as_deref(),
+        Some("marked\n")
+    );
+    let out = common::cli::run(&["lock"], &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+}
+
+/// The branch rewritten under a checkout that edited nothing, moved to a
+/// sibling commit or back to an ancestor: the checkout's record names a
+/// commit its branch no longer contains, so its differences cannot be told
+/// from edits. Every verb holds it naming both commits, with no commit
+/// offered, and the printed stash leaves it at the branch's new tip and ends
+/// the hold.
+#[test]
+fn a_branch_rewritten_under_a_checkout_is_held_with_no_commit_offered() {
+    for sideways in [true, false] {
+        let f = fixture();
+        let stood = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+        let rewritten = if sideways {
+            let elsewhere = f.scratch.join("rewrite");
+            common::git_in(
+                &f.primary_lib,
+                &[
+                    "worktree",
+                    "add",
+                    "-q",
+                    "--detach",
+                    elsewhere.to_str().unwrap(),
+                    "ww/project~1",
+                ],
+            );
+            commit_file(&elsewhere, "other.txt", "other\n", "rewritten")
+        } else {
+            common::git_in(&f.ww_lib, &["rev-parse", "HEAD~1"])
+        };
+        common::git_in(
+            &f.primary_lib,
+            &["update-ref", "refs/heads/ww/project", &rewritten],
+        );
+        let before = path_state(&f.ww_lib, &["feature.txt", "other.txt"]);
+
+        for verb in [&["lock"][..], &["land"]] {
+            let out = common::cli::run(verb, &f.ww);
+            let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
+            assert!(
+                stderr.contains(&stood[..12]) && stderr.contains(&rewritten[..12]),
+                "{verb:?}:\n{stderr}"
+            );
+            assert!(stderr.contains("does not contain"), "{verb:?}:\n{stderr}");
+            assert!(!stderr.contains(" commit\n"), "{verb:?}:\n{stderr}");
+            assert_eq!(
+                path_state(&f.ww_lib, &["feature.txt", "other.txt"]),
+                before,
+                "{verb:?}"
+            );
+        }
+        let said = common::cli::describe(&common::cli::run(&["doctor"], &f.ww));
+        assert!(said.contains("does not contain"), "{said}");
+
+        let out = common::cli::run(&["lock"], &f.ww);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert_eq!(printed_commands(&stderr).len(), 1, "{stderr}");
+        run_every_choice(&stderr, &f.ww);
+        assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), rewritten);
+        assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
+        let out = common::cli::run(&["lock"], &f.ww);
+        let said = common::cli::describe(&out);
+        assert!(!said.contains("drift left in place"), "{said}");
+    }
+}
+
+/// With `core.fileMode=false` git reads no exec bit from disk: a refresh
+/// killed between its writes, then files reading executable as on a mount
+/// that records none, is finished by the next verb, not held as edited.
+#[cfg(unix)]
+#[test]
+fn a_killed_refresh_where_the_checkout_reads_no_exec_bit_is_finished() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture_with_lib_config(&[("core.fileMode", "false")]);
+    move_notes(&f);
+    drop(held_landing(&f, "drift-write-records"));
+    for file in ["notes.txt", "new.txt"] {
+        let path = f.ww_lib.join(file);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    without_the_killed_landing(&f);
+
+    let out = common::cli::run(&["lock"], &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(out.status.success(), "{said}");
+    assert!(said.contains("refreshed drift"), "{said}");
     assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
 }
 

@@ -748,7 +748,12 @@ impl State {
                         unresolved conflicts, or the write failed. They still hold the old \
                         tip's content, so committing them would record the move's reverse. \
                         The checkout's other edits are judged once the drift is refreshed; a \
-                        landing lists them beside it, with no choice of their own until then",
+                        landing lists them beside it, with no choice of their own until then. \
+                        Where its drift cannot be read at all (no record of where the checkout \
+                        stood, its branch moved to a commit that does not contain where it \
+                        stood, or part of the move taken in a way its history does not show), \
+                        nothing it holds is judged an edit and the one choice is a stash that \
+                        keeps every difference",
                 refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
                              workspace, and every other verb that judges a checkout's edits",
                 offers: &[
@@ -756,6 +761,7 @@ impl State {
                     Form::DriftResolveThenLand,
                     Form::DriftRefreshAgain,
                     Form::StashUnreadDrift,
+                    Form::UnmarkThenStashUnreadDrift,
                 ],
                 verb_offers: &[],
             },
@@ -2024,6 +2030,7 @@ pub enum ChoiceId {
     UnstageThenMerge,
     RemoveLockThenMerge,
     StashUnreadDrift,
+    UnmarkThenStashUnreadDrift,
     FreeBranchThenMerge,
     RecreateBranchThenMerge,
     ClearRefusalThenMerge,
@@ -2395,6 +2402,15 @@ impl ChoiceId {
                          what was set aside afterwards",
                 keeps_work: "what is set aside keeps every difference, edits included",
             },
+            Self::UnmarkThenStashUnreadDrift => &ChoiceRow {
+                id: None,
+                phrase: "unmark the listed paths marked to be added with no content recorded, \
+                         which leaves each an untracked file, then set aside every difference \
+                         from HEAD, the edits with the move's reverse, so the checkout stands at \
+                         HEAD; take back only your own files from what was set aside afterwards",
+                keeps_work: "unmarking leaves each file on disk; what is set aside keeps every \
+                             other difference, edits included",
+            },
             Self::RemoveLockThenMerge => &ChoiceRow {
                 id: None,
                 phrase: "once no VCS process is running in the checkout, remove the lock on the VCS's record of the checkout \
@@ -2633,6 +2649,7 @@ pub enum Form {
     UnstageThenMerge,
     RemoveLockThenMerge,
     StashUnreadDrift,
+    UnmarkThenStashUnreadDrift,
     FreeBranchThenMerge,
     RecreateBranchThenMerge,
     ClearRefusalThenMerge,
@@ -2664,7 +2681,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 118] = [
+    pub const ALL: [Form; 119] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2780,6 +2797,7 @@ impl Form {
         Self::RemoveLockThenMerge,
         Self::TakeBackSetAside,
         Self::StashUnreadDrift,
+        Self::UnmarkThenStashUnreadDrift,
         Self::FreeBranchThenMerge,
         Self::RecreateBranchThenMerge,
         Self::ClearRefusalThenMerge,
@@ -3392,6 +3410,12 @@ impl Form {
             Self::StashUnreadDrift => &FormRow {
                 choice: C::StashUnreadDrift,
                 steps: &[Vcs(A::Stash)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::UnmarkThenStashUnreadDrift => &FormRow {
+                choice: C::UnmarkThenStashUnreadDrift,
+                steps: &[Vcs(A::Unstage), Vcs(A::Stash)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -4429,7 +4453,7 @@ pub fn dirty_beside_drift(
         || vcs.unmerged_paths(dir).is_ok_and(|u| !u.is_empty());
     let reading = match crate::check::read_drift(vcs, dir) {
         Ok(reading) if !held && reading.moved_and_edited().is_empty() => reading,
-        Err(e) if !held && vcs.is_repo(dir) => return Some(drift_unread(repo, &e)),
+        Err(e) if !held && vcs.is_repo(dir) => return Some(drift_unread(vcs, repo, dir, &e)),
         _ => return Some(dirty(vcs, repo, dir, files)),
     };
     if !reading.is_refreshable() {
@@ -4517,12 +4541,36 @@ pub fn settle_project_drift(
 
 /// A checkout whose drift could not be read: nothing it holds is judged an
 /// edit, since any of it may be the move's reverse, so the one choice is a
-/// set-aside, which keeps every difference without recording any.
-pub fn drift_unread(repo: impl fmt::Display, e: &crate::vcs::VcsError) -> Judging {
-    State::EditsDriftLeftInPlace
+/// set-aside, which keeps every difference without recording any. The VCS
+/// refuses to set aside a path marked to be added with no content, so those
+/// are unmarked first.
+pub fn drift_unread(
+    vcs: &dyn Vcs,
+    repo: impl fmt::Display,
+    dir: &Path,
+    e: &crate::vcs::VcsError,
+) -> Judging {
+    let judging = State::EditsDriftLeftInPlace
         .of(repo)
-        .subject(format!("its drift could not be read: {e:#}"))
-        .only_forms(&[Form::StashUnreadDrift])
+        .subject(format!("its drift could not be read: {e:#}"));
+    let marked = marked_to_add(vcs, dir);
+    if marked.is_empty() {
+        return judging.only_forms(&[Form::StashUnreadDrift]);
+    }
+    judging
+        .listing(&marked)
+        .bind_list("<paths>", &marked)
+        .only_forms(&[Form::UnmarkThenStashUnreadDrift])
+}
+
+/// The paths `dir`'s index marks to be added with no content recorded.
+pub fn marked_to_add(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
+    let versions = vcs.staged_versions_against_head(dir).unwrap_or_default();
+    vcs.staged_against_head(dir)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| !versions.contains(path))
+        .collect()
 }
 
 /// Edits beside drift a verb refuses before refreshing: each listed, with

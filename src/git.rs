@@ -8,11 +8,11 @@ use crate::vcs::{
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
     DiffBeyond, DiscardOutcome, FileChange, ForeignTipPolicy, HeadAttachment, HeadObservation,
-    Holds, InTheWay, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth,
-    MidOperation, NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch,
-    PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule,
-    RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge, RefOrigin,
-    RefRestoreOutcome, RefSavepoint, RefreshScope, RefreshWrite, RegistrationPrune,
+    Holds, InTheWay, LeftBehind, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup,
+    MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PathStanding, PinOutcome,
+    PruningFetch, PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId,
+    RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge,
+    RefOrigin, RefRestoreOutcome, RefSavepoint, RefreshScope, RefreshWrite, RegistrationPrune,
     RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
     RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId,
     SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile,
@@ -727,34 +727,45 @@ pub(crate) fn is_linked_worktree(checkout: &Path) -> bool {
 /// A worktree's `HEAD` reflog gains an entry for each move made in that
 /// worktree, `update-ref` of its checked-out branch included, and none for a
 /// move of the same branch made from another worktree; the newest entry's
-/// commit is where the worktree last put HEAD. Where the worktree's log has
-/// no entry, `log -g HEAD` reads the branch's shared log instead, whose
-/// newest entry is the branch's tip unless that move went unlogged. `HEAD@{0}`
-/// is no reading of the log: git answers it with HEAD whenever the newest
-/// entry is not HEAD.
+/// commit is where the worktree last put HEAD.
 ///
 /// An index with no entries holds nothing of the moved-from tip. Where it has
 /// no file at all, git's two-way merge treats the merge as an initial checkout
 /// and writes every path both trees hold, over whatever is on disk there.
-fn left_behind_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
+fn left_behind_at(repo: &Path) -> Result<LeftBehind, VcsError> {
     let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
-        return Ok(None);
+        return Ok(LeftBehind::No);
     };
     let Some(recorded) = newest_head_log_entry(repo)? else {
-        return Ok(None);
+        return Ok(LeftBehind::No);
     };
     let head = GitVcs.head_revision(repo)?;
-    if *head.id() == recorded {
-        return Ok(None);
+    if *head.id() == recorded || !index_has_entries(repo)? {
+        return Ok(LeftBehind::No);
     }
-    let forward = GitVcs.is_ancestor(repo, &ResolvedRevisionId::from(recorded.clone()), &head)?;
-    if !forward || !index_has_entries(repo)? {
-        return Ok(None);
+    match GitVcs.is_ancestor(repo, &ResolvedRevisionId::from(recorded.clone()), &head)? {
+        true => Ok(LeftBehind::At(recorded)),
+        false => Ok(LeftBehind::Rewritten(recorded)),
     }
-    Ok(Some(recorded))
+}
+
+/// Whether the worktree's own `HEAD` log holds an entry. `HEAD@{now}` reads
+/// that log alone, on either ref storage, and fails quietly with status 128
+/// where it is empty; `log -g HEAD` reads the branch's shared log instead once
+/// the worktree's is empty, and `HEAD@{0}` answers an empty log with HEAD.
+fn head_log_has_entry(repo: &Path) -> Result<bool, VcsError> {
+    Ok(GitVcs::run_or_absent(
+        ["rev-parse", "-q", "--verify", "HEAD@{now}"],
+        repo,
+        Absent::EmptyLog,
+    )?
+    .is_some())
 }
 
 fn newest_head_log_entry(repo: &Path) -> Result<Option<CommitId>, VcsError> {
+    if !head_log_has_entry(repo)? {
+        return Ok(None);
+    }
     let newest = GitVcs::run_trimmed(
         [
             "log",
@@ -770,28 +781,11 @@ fn newest_head_log_entry(repo: &Path) -> Result<Option<CommitId>, VcsError> {
 }
 
 /// [`Vcs::checkout_unrecorded`] for git.
-///
-/// The worktree's own `HEAD` log file is read, since `log -g HEAD` answers an
-/// emptied log with the current commit and then the branch's shared log, which
-/// read as an entry saying the branch did not move.
 fn checkout_unrecorded(repo: &Path) -> Result<Option<Unrecorded>, VcsError> {
     let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
         return Ok(None);
     };
-    let log = GitVcs::run_trimmed(
-        [
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            "logs/HEAD",
-        ],
-        repo,
-    )?;
-    let empty = match std::fs::metadata(log) {
-        Ok(log) => log.len() == 0,
-        Err(_) => newest_head_log_entry(repo)?.is_none(),
-    };
-    if !empty {
+    if head_log_has_entry(repo)? {
         return Ok(None);
     }
     let setting = GitVcs::run_trimmed_or_absent(
@@ -1050,17 +1044,24 @@ fn files_holding(repo: &Path, candidates: &[(&str, &str)]) -> BTreeSet<String> {
 }
 
 /// Whether a regular file's exec bit on disk is the one `mode` records. On a
-/// platform without one, always.
-fn exec_bit_matches(repo: &Path, path: &str, mode: &str) -> bool {
+/// platform without one, and in a checkout whose `core.fileMode` is false, so
+/// git reads no exec bit from disk, always. `file_mode` caches that setting
+/// across the paths of one reading.
+fn exec_bit_matches(repo: &Path, path: &str, mode: &str, file_mode: &mut Option<bool>) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::symlink_metadata(repo.join(path))
-            .is_ok_and(|m| (m.permissions().mode() & 0o100 != 0) == (mode == "100755"))
+        let reads_exec_bit = *file_mode.get_or_insert_with(|| {
+            GitVcs::run_trimmed(["config", "--type=bool", "core.fileMode"], repo)
+                .map_or(true, |v| v != "false")
+        });
+        !reads_exec_bit
+            || std::fs::symlink_metadata(repo.join(path))
+                .is_ok_and(|m| (m.permissions().mode() & 0o100 != 0) == (mode == "100755"))
     }
     #[cfg(not(unix))]
     {
-        let _ = (repo, path, mode);
+        let _ = (repo, path, mode, file_mode);
         true
     }
 }
@@ -1072,6 +1073,7 @@ fn unwatched_entries(repo: &Path) -> Result<BTreeSet<String>, VcsError> {
     let none = BTreeSet::new();
     let mut unwatched = BTreeSet::new();
     let mut regular: Vec<(String, String, String)> = Vec::new();
+    let mut file_mode = None;
     for record in text_fields(&["ls-files", "-v", "-s", "-z"], repo)? {
         let Some((head, path)) = record.split_once('\t') else {
             continue;
@@ -1086,7 +1088,10 @@ fn unwatched_entries(repo: &Path) -> Result<BTreeSet<String>, VcsError> {
             continue;
         }
         let is_file = std::fs::symlink_metadata(repo.join(path)).is_ok_and(|m| m.is_file());
-        if matches!(mode, "100644" | "100755") && is_file && exec_bit_matches(repo, path, mode) {
+        if matches!(mode, "100644" | "100755")
+            && is_file
+            && exec_bit_matches(repo, path, mode, &mut file_mode)
+        {
             regular.push((path.to_owned(), object.to_owned(), mode.to_owned()));
         } else {
             unwatched.insert(path.to_owned());
@@ -1247,6 +1252,7 @@ fn standing_as_entries(repo: &Path, candidates: &[(&str, &RawChange)]) -> BTreeS
     let mut regular = Vec::new();
     let mut matching = BTreeSet::new();
     let mut makes_links = None;
+    let mut file_mode = None;
     for (path, entry) in candidates {
         let Ok(meta) = std::fs::symlink_metadata(repo.join(path)) else {
             continue;
@@ -1254,7 +1260,8 @@ fn standing_as_entries(repo: &Path, candidates: &[(&str, &RawChange)]) -> BTreeS
         let object = entry.rev_object.as_str();
         match entry.rev_mode.as_str() {
             "100644" | "100755"
-                if meta.is_file() && exec_bit_matches(repo, path, &entry.rev_mode) =>
+                if meta.is_file()
+                    && exec_bit_matches(repo, path, &entry.rev_mode, &mut file_mode) =>
             {
                 regular.push((*path, object))
             }
@@ -1734,7 +1741,7 @@ impl GitVcs {
                 ctx: format!("failed to spawn git {args:?}"),
                 source: e,
             })?;
-        if output.status.code() == Some(absent.status()) {
+        if absent.answers(&output) {
             return Ok(None);
         }
         if !output.status.success() {
@@ -2582,12 +2589,21 @@ enum Absent {
     ConfigKey,
     /// `merge-base`, with or without `--all`: the commits share no history.
     MergeBase,
+    /// `rev-parse -q --verify <ref>@{<date>}`: the ref's log holds no entry.
+    /// Git exits 128 for an empty log and 1 for one never written, with
+    /// nothing on stderr for either.
+    EmptyLog,
 }
 
 impl Absent {
-    fn status(self) -> i32 {
+    fn answers(self, output: &std::process::Output) -> bool {
         match self {
-            Absent::Revision | Absent::ConfigKey | Absent::MergeBase => 1,
+            Absent::Revision | Absent::ConfigKey | Absent::MergeBase => {
+                output.status.code() == Some(1)
+            }
+            Absent::EmptyLog => {
+                matches!(output.status.code(), Some(1 | 128)) && output.stderr.is_empty()
+            }
         }
     }
 }
@@ -4224,7 +4240,7 @@ impl Vcs for GitVcs {
             .status();
     }
 
-    fn left_behind_at(&self, repo: &Path) -> Result<Option<CommitId>, VcsError> {
+    fn left_behind_at(&self, repo: &Path) -> Result<LeftBehind, VcsError> {
         left_behind_at(repo)
     }
 
@@ -11747,10 +11763,12 @@ mod name_reading_tests {
         );
         git(&repo, &["update-ref", "refs/heads/feat", "main"]);
 
-        let left = left_behind_at(&worktree).unwrap();
-        assert_eq!(left.as_ref(), Some(&base));
+        let LeftBehind::At(left) = left_behind_at(&worktree).unwrap() else {
+            panic!("the move reads as one under the checkout");
+        };
+        assert_eq!(left, base);
         assert_eq!(
-            path_standings(&worktree, left.as_ref()).unwrap(),
+            path_standings(&worktree, Some(&left)).unwrap(),
             vec![PathStanding {
                 path: AWKWARD.to_owned(),
                 moved: true,
@@ -11773,7 +11791,7 @@ mod name_reading_tests {
                 .replace("\r\n", "\n"),
             "ours\n"
         );
-        assert!(path_standings(&worktree, left.as_ref())
+        assert!(path_standings(&worktree, Some(&left))
             .unwrap()
             .iter()
             .all(|s| (s.index, s.file) == (Holds::Head, Holds::Head)));
@@ -11821,10 +11839,14 @@ mod drift_tests {
 
     impl Drift {
         fn new() -> Self {
+            Self::initialized(&[])
+        }
+
+        fn initialized(init: &[&str]) -> Self {
             let tmp = crate::tempdir().unwrap();
             let store = tmp.path().join("store");
             std::fs::create_dir_all(&store).unwrap();
-            git(&store, &["init", "-q", "-b", "main"]);
+            git(&store, &[&["init", "-q", "-b", "main"], init].concat());
             git(&store, &["config", "user.email", "t@t"]);
             git(&store, &["config", "user.name", "T"]);
             std::fs::write(store.join("a.txt"), "a1\n").unwrap();
@@ -11934,7 +11956,7 @@ mod drift_tests {
             &["rev-parse", "--path-format=absolute", "--git-path", "index"],
         );
         std::fs::remove_file(index).unwrap();
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::No);
     }
 
     #[test]
@@ -12037,7 +12059,7 @@ mod drift_tests {
         let d = Drift::new();
         let before = id(&d.worktree, "HEAD");
         d.move_from_outside("a2\n");
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), Some(before));
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::At(before));
     }
 
     #[test]
@@ -12045,7 +12067,7 @@ mod drift_tests {
         let d = Drift::new();
         std::fs::write(d.worktree.join("a.txt"), "own\n").unwrap();
         git(&d.worktree, &["commit", "-q", "-am", "own"]);
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::No);
     }
 
     #[test]
@@ -12055,7 +12077,7 @@ mod drift_tests {
         git(&d.worktree, &["commit", "-q", "-am", "own"]);
         git(&d.worktree, &["reset", "-q", "--soft", "HEAD~1"]);
         git(&d.worktree, &["reset", "-q", "HEAD@{1}"]);
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::No);
     }
 
     #[test]
@@ -12063,17 +12085,71 @@ mod drift_tests {
         let d = Drift::new();
         git(&d.worktree, &["checkout", "-q", "--detach"]);
         d.move_from_outside("a2\n");
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::No);
     }
 
     #[test]
-    fn a_backward_move_is_not_read_as_one_under_the_checkout() {
+    fn a_backward_move_is_read_as_a_rewrite_under_the_checkout() {
         let d = Drift::new();
         let start = id(&d.worktree, "HEAD");
         std::fs::write(d.worktree.join("a.txt"), "own\n").unwrap();
         git(&d.worktree, &["commit", "-q", "-am", "own"]);
+        let own = id(&d.worktree, "HEAD");
         git(&d.store, &["update-ref", "refs/heads/feat", start.as_str()]);
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(
+            left_behind_at(&d.worktree).unwrap(),
+            LeftBehind::Rewritten(own)
+        );
+    }
+
+    /// The ref storages the installed git can create a repository in.
+    fn ref_storages() -> Vec<&'static [&'static str]> {
+        let mut storages: Vec<&'static [&'static str]> = vec![&[]];
+        match git_reading() {
+            GitReading::Release { release, .. } if *release >= (2, 45) => {
+                storages.push(&["--ref-format=reftable"]);
+            }
+            _ => eprintln!("skipped: git before 2.45 creates no reftable repository"),
+        }
+        storages
+    }
+
+    #[test]
+    fn an_emptied_head_log_reads_as_unrecorded_on_either_ref_storage() {
+        for init in ref_storages() {
+            let d = Drift::initialized(init);
+            d.move_from_outside("a2\n");
+            assert_eq!(checkout_unrecorded(&d.worktree).unwrap(), None, "{init:?}");
+
+            git(&d.worktree, &["reflog", "expire", "--expire=now", "HEAD"]);
+
+            assert_eq!(
+                checkout_unrecorded(&d.worktree).unwrap(),
+                Some(Unrecorded::Expired),
+                "{init:?}"
+            );
+            assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::No);
+        }
+    }
+
+    #[test]
+    fn a_sideways_move_is_read_as_a_rewrite_under_the_checkout() {
+        let d = Drift::new();
+        let stood = id(&d.worktree, "HEAD");
+        git(&d.store, &["checkout", "-q", "--detach", "feat"]);
+        std::fs::write(d.store.join("b.txt"), "b\n").unwrap();
+        git(&d.store, &["add", "b.txt"]);
+        git(&d.store, &["commit", "-q", "--amend", "-m", "rewritten"]);
+        let rewritten = id(&d.store, "HEAD");
+        git(
+            &d.store,
+            &["update-ref", "refs/heads/feat", rewritten.as_str()],
+        );
+        git(&d.store, &["checkout", "-q", "main"]);
+        assert_eq!(
+            left_behind_at(&d.worktree).unwrap(),
+            LeftBehind::Rewritten(stood)
+        );
     }
 
     #[test]
@@ -12081,7 +12157,7 @@ mod drift_tests {
         let d = Drift::new();
         let head = d.move_from_outside("a2\n");
         record_checkout_at_head(&d.worktree, &head).unwrap();
-        assert_eq!(left_behind_at(&d.worktree).unwrap(), None);
+        assert_eq!(left_behind_at(&d.worktree).unwrap(), LeftBehind::No);
         assert_eq!(
             git(&d.store, &["rev-parse", "feat"]),
             git(&d.worktree, &["rev-parse", "HEAD"])

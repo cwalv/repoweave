@@ -555,6 +555,15 @@ fn every_vcs_error() -> Vec<VcsError> {
             repo: repo(),
             recording_off: None,
         },
+        VcsError::BranchRewritten {
+            repo: repo(),
+            stood_at: repoweave::vcs::CommitId::parse(&"a".repeat(40)).unwrap(),
+            head: repoweave::vcs::CommitId::parse(&"b".repeat(40)).unwrap(),
+        },
+        VcsError::MoveTakenInPart {
+            repo: repo(),
+            paths: vec!["f".into()],
+        },
         VcsError::Io {
             ctx: "spawn".into(),
             source: std::io::Error::other("boom"),
@@ -575,6 +584,8 @@ fn every_vcs_error() -> Vec<VcsError> {
             | VcsError::HookRejected { .. }
             | VcsError::UntrackedCollision { .. }
             | VcsError::CheckoutUnrecorded { .. }
+            | VcsError::BranchRewritten { .. }
+            | VcsError::MoveTakenInPart { .. }
             | VcsError::Io { .. }
             | VcsError::CommandFailed { .. } => {}
         }

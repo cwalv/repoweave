@@ -818,6 +818,18 @@ pub enum VcsError {
         repo: PathBuf,
         recording_off: Option<String>,
     },
+    /// The checkout's branch was moved from where the checkout last stood to
+    /// a commit that does not contain it, by a move the checkout did not
+    /// make, so what it holds cannot be told from edits.
+    BranchRewritten {
+        repo: PathBuf,
+        stood_at: CommitId,
+        head: CommitId,
+    },
+    /// The checkout took part of its branch's move by something its history
+    /// does not show, and `paths` still hold the commit it moved from, which
+    /// cannot be told from a return to that commit.
+    MoveTakenInPart { repo: PathBuf, paths: Vec<String> },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -842,12 +854,14 @@ pub enum VcsErrorKind {
     HookRejected,
     UntrackedCollision,
     CheckoutUnrecorded,
+    BranchRewritten,
+    MoveTakenInPart,
     Io,
     CommandFailed,
 }
 
 impl VcsErrorKind {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 12] = [
         Self::NotARepo,
         Self::RevisionNotFound,
         Self::RebaseConflict,
@@ -856,6 +870,8 @@ impl VcsErrorKind {
         Self::HookRejected,
         Self::UntrackedCollision,
         Self::CheckoutUnrecorded,
+        Self::BranchRewritten,
+        Self::MoveTakenInPart,
         Self::Io,
         Self::CommandFailed,
     ];
@@ -878,6 +894,8 @@ impl VcsError {
             Self::HookRejected { .. } => VcsErrorKind::HookRejected,
             Self::UntrackedCollision { .. } => VcsErrorKind::UntrackedCollision,
             Self::CheckoutUnrecorded { .. } => VcsErrorKind::CheckoutUnrecorded,
+            Self::BranchRewritten { .. } => VcsErrorKind::BranchRewritten,
+            Self::MoveTakenInPart { .. } => VcsErrorKind::MoveTakenInPart,
             Self::Io { .. } => VcsErrorKind::Io,
             Self::CommandFailed { .. } => VcsErrorKind::CommandFailed,
         }
@@ -924,6 +942,15 @@ pub enum VcsErrorOutput {
     CheckoutUnrecorded {
         repo: crate::path_spelling::WirePath,
         recording_off: bool,
+    },
+    BranchRewritten {
+        repo: crate::path_spelling::WirePath,
+        stood_at: String,
+        head: String,
+    },
+    MoveTakenInPart {
+        repo: crate::path_spelling::WirePath,
+        paths: Vec<String>,
     },
     Io {
         ctx: String,
@@ -981,6 +1008,19 @@ impl From<&VcsError> for VcsErrorOutput {
             } => Self::CheckoutUnrecorded {
                 repo: crate::path_spelling::WirePath::of(repo),
                 recording_off: recording_off.is_some(),
+            },
+            VcsError::BranchRewritten {
+                repo,
+                stood_at,
+                head,
+            } => Self::BranchRewritten {
+                repo: crate::path_spelling::WirePath::of(repo),
+                stood_at: stood_at.to_string(),
+                head: head.to_string(),
+            },
+            VcsError::MoveTakenInPart { repo, paths } => Self::MoveTakenInPart {
+                repo: crate::path_spelling::WirePath::of(repo),
+                paths: paths.clone(),
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -1042,9 +1082,9 @@ impl fmt::Display for VcsError {
             } => write!(
                 f,
                 "the VCS holds no record of where this checkout of {} last stood, so rwv \
-                 cannot tell drift from edits; where every difference is yours, taking back \
-                 what was set aside makes the VCS record where the checkout stands and ends \
-                 this",
+                 cannot tell drift from edits; setting every difference aside makes the VCS \
+                 record where the checkout stands and ends this; where every difference is \
+                 yours, taking back what was set aside brings them back as edits",
                 repo.display()
             ),
             Self::CheckoutUnrecorded {
@@ -1054,8 +1094,34 @@ impl fmt::Display for VcsError {
                 f,
                 "the VCS is set never to record where this checkout of {} stands, so rwv \
                  cannot tell drift from edits; run the {turn_on} to let it record it, after which \
-                 taking back what was set aside ends this",
+                 setting every difference aside ends this, and taking back what was set aside \
+                 brings the differences back as edits",
                 repo.display()
+            ),
+            Self::BranchRewritten {
+                repo,
+                stood_at,
+                head,
+            } => write!(
+                f,
+                "the branch of {} was moved from {} to {}, a commit that does not contain {}, \
+                 by a move this checkout did not make, so rwv cannot tell what it holds from \
+                 edits; where none of the differences is yours, setting them aside leaves it at \
+                 {} and ends this",
+                repo.display(),
+                stood_at.short(),
+                head.short(),
+                stood_at.short(),
+                head.short()
+            ),
+            Self::MoveTakenInPart { repo, paths } => write!(
+                f,
+                "{} took part of its branch's move by something its history does not show, and \
+                 these files still hold the commit it moved from, which rwv cannot tell from a \
+                 return to it: {}; setting the differences aside leaves the checkout at HEAD \
+                 and ends this",
+                repo.display(),
+                paths.join(", ")
             ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
             Self::CommandFailed { args, repo, stderr } => write!(
@@ -3115,6 +3181,19 @@ impl ContentIdentity {
     }
 }
 
+/// Where a checkout's branch stands against where the checkout last put it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeftBehind {
+    /// Nothing shows the branch moved under the checkout.
+    No,
+    /// The branch moved forward from this commit by a move the checkout did
+    /// not make.
+    At(CommitId),
+    /// The branch moved from this commit, by a move the checkout did not
+    /// make, to a commit that does not contain it.
+    Rewritten(CommitId),
+}
+
 /// Why a checkout holds no record of where it stood.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unrecorded {
@@ -4154,17 +4233,19 @@ pub trait Vcs: Send + Sync {
     /// if the fetch was needed but didn't run.
     fn fetch_objects_from(&self, dst_repo: &Path, src_repo: &Path);
 
-    /// The commit `repo`'s checkout last recorded itself at, when the branch
-    /// it has checked out has since moved forward from there by a move the
-    /// checkout did not make. `None` when HEAD is where the checkout last put
-    /// it, when HEAD is not on a branch, when the branch moved anywhere but
-    /// forward, and when nothing records where the checkout was.
+    /// Where `repo`'s checkout last recorded itself, when the branch it has
+    /// checked out has since moved from there by a move the checkout did not
+    /// make: [`LeftBehind::At`] for a move forward, [`LeftBehind::Rewritten`]
+    /// for one to a commit that does not contain it. [`LeftBehind::No`] when
+    /// HEAD is where the checkout last put it, when HEAD is not on a branch,
+    /// when the index lists no path, and when nothing records where the
+    /// checkout was.
     ///
     /// For git: the newest entry of the worktree's own `HEAD` reflog, which
     /// every move made in that worktree appends to and a move made from
     /// another worktree does not.
-    fn left_behind_at(&self, _repo: &Path) -> Result<Option<CommitId>, VcsError> {
-        Ok(None)
+    fn left_behind_at(&self, _repo: &Path) -> Result<LeftBehind, VcsError> {
+        Ok(LeftBehind::No)
     }
 
     /// Whether `repo` is on a branch and its checkout holds no record at all
