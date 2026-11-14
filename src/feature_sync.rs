@@ -1698,7 +1698,13 @@ fn act(
                 .collect(),
         });
     }
-    let repos = savepoint_repos(sync);
+    let mut repos = savepoint_repos(sync);
+    for (path, entry) in pre_manifest.iter_entries() {
+        let store = sync.ctx.primary_path().join(path.as_path());
+        if !sync.ctx.active_path().join(path.as_path()).exists() && store.exists() {
+            repos.push((store, vcs_for(entry.vcs_type)));
+        }
+    }
     let kept = crate::op_state::read_owner(&op.workspace)?
         .and_then(|owner| owner.take_in)
         .map(|take_in| take_in.backups)

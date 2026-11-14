@@ -24220,6 +24220,32 @@ fn abort_keeps_another_seats_commit(
     steps
 }
 
+/// A sync that prunes a member `main` dropped, then one under `history`
+/// that gives the workweave a checkout of it once `main` adds it back: each
+/// ends with no savepoint of its operation left in the member's store, the
+/// pruned checkout's included.
+pub fn a_sync_taking_in_an_added_member_leaves_no_savepoint(history: &'static str) -> Scenario {
+    scenario(
+        match history {
+            "linear" => "a linear sync taking in an added member leaves no savepoint",
+            _ => "a merge sync taking in an added member leaves no savepoint",
+        },
+        vec![
+            create("w"),
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Docs, &["for-each-ref", "refs/rwv/pre-op"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("refs/rwv/pre-op")),
+            Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", history]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Docs, &["for-each-ref", "refs/rwv/pre-op"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("refs/rwv/pre-op")),
+        ],
+    )
+}
+
 /// A port stopped on `app`'s copy, which the operator finishes with the
 /// VCS and then commits on: `--continue` finds the finished copy below the
 /// hand commit, takes both in, and copies nothing again.
