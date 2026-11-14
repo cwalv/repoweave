@@ -377,12 +377,23 @@ Every guard runs before the manifest is written, so a refused delete leaves
 - *work no other clone reaches* refuses
   (`dropped-repo-has-unique-commits`): in the primary, where the clone is the
   repo's only store, anything it holds whose commits no remote-tracking branch
-  reaches, each named: a branch, a tag, a backup (`rwv backup list` shows them;
-  `rwv backup drop <repo> <name>` drops the ones that are not wanted), edits
-  the VCS set aside, or a checked-out commit on no branch; in a workweave, a
-  worktree tip the canonical clone does not contain. Because edits set aside in
-  the primary's clone go with it, the uncommitted-changes refusal there offers
-  only to commit them.
+  of a remote it has reaches, each named: a branch, a tag, a backup (`rwv
+  backup list` shows them; `rwv backup drop <repo> <name>` drops the ones that
+  are not wanted), an operation's savepoint (`rwv doctor --fix` keeps one no
+  operation holds as a backup), edits the VCS set aside, or a checked-out
+  commit on no branch; each submodule store inside the clone is asked the
+  same, and what it holds is named with the submodule's path. In a workweave,
+  a worktree tip the canonical clone does not contain. Because edits set aside
+  in the primary's clone go with it, the uncommitted-changes refusal there
+  offers only to commit them;
+- before that question, the clone's remotes, and each submodule's, are
+  fetched, so it is asked of the remotes as they are; a remote that does not
+  answer refuses (`remotes-unconfirmed`), and `rwv member remove <path>`
+  without `--delete` removes the member and keeps the clone.
+
+A local branch whose commits a remote reaches holds nothing alone, so it does
+not refuse the delete: its name and the upstream configured for it go with
+the clone.
 
 Ignored files go with the checkout, as they do when the VCS removes a working
 tree.

@@ -234,6 +234,27 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   no branch. A branch whose commits a remote holds no longer blocks it.
 - The uncommitted-changes refusal of such a removal offers only to commit the
   edits: setting them aside would leave them in the clone being removed.
+- Each submodule store inside the clone is asked the same question, and what
+  it holds is named with the submodule's path. A tag on a tree or blob no
+  remote has counts; a remote-tracking branch of a remote the clone no longer
+  has does not count as a remote reaching anything.
+- The removal fetches the clone's remotes, and each submodule's, before it
+  asks, so a commit a remote dropped since the last fetch is the clone's
+  alone. A remote that does not answer refuses `member remove --delete`
+  (`remotes-unconfirmed`), which offers `rwv member remove <repo>` without
+  `--delete`; a landing or sync skips that prune and says so.
+- A landing or sync that does not prune a checkout always prints the checkout,
+  why, and the removal that takes it later, `rwv -C <ws> member remove <repo>
+  --delete` where it was typed elsewhere; the refusal names `rwv doctor --fix`
+  for a savepoint it holds.
+- `rwv doctor`'s `orphaned-clone` and `unknown-segment-clone` name `rwv member
+  remove <path> --delete` where they said to remove the directory by hand.
+- `target moved mid-operation` offers the landing again with the flags it was
+  started with; `alignment project detached` offers `rwv switch` with the
+  branch the project repo left and the commit it holds, and no longer `rwv
+  update`, which refuses the same state.
+- `rwv abort --discard-unreadable-record` lists a repo it leaves stopped in an
+  operation with the line that ends it.
 - `rwv pull` reads the upstream tip's `rwv.toml` before it moves the project
   branch, and refuses one that does not parse (`unparseable-project at`), as
   `rwv sync` does, for a fast-forward, `--reset-to-upstream` and

@@ -13379,7 +13379,7 @@ mod tests {
     }
 
     /// [`primary_with_cloned_store`] whose origin holds a submodule at `sub`,
-    /// initialised in the store, and the submodule's checkout there.
+    /// initialized in the store, and the submodule's checkout there.
     fn primary_with_a_submodule(tmp: &Path) -> (WorkspaceContext, PathBuf, PathBuf) {
         let sub_origin = tmp.join("sub-origin");
         init_repo(&sub_origin);

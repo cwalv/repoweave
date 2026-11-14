@@ -4081,7 +4081,7 @@ pub trait Vcs: Send + Sync {
     /// removing it removes, at any depth, each as a path relative to
     /// `checkout`, outermost first.
     ///
-    /// For git: every initialised submodule, `git submodule foreach
+    /// For git: every initialized submodule, `git submodule foreach
     /// --recursive`.
     fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
