@@ -328,18 +328,19 @@ src/vcs.rs	unsupported-vcs-tool	tests/vcs/vcs_tool_floor_test.rs	2
 src/workspace.rs	(untokened:owed)	-	2
 src/workspace.rs	cwd-in-inactive-project	tests/weave/project_and_source_spelling_test.rs	1
 src/workspace.rs	dangling-active-project	-	1
+src/workspace.rs	legacy-workweave-marker	tests/weave/workweave_registry_test.rs	1
 src/workspace.rs	marker-binding-disagreement	-	1
 src/workspace.rs	no-active-project	tests/weave/project_and_source_spelling_test.rs	3
 src/workspace.rs	no-weave-root	-	1
 src/workspace.rs	occupied-bootstrap-dir	-	1
 src/workspace.rs	project-dir-missing	-	1
 src/workspace.rs	unreadable-active-project	tests/doctor/unreadable_active_project_test.rs	1
-src/workspace.rs	unreadable-marker	-	1
 src/workspace.rs	unregistered-workweave	-	1
 src/workspace/reconcile.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	2
 src/workspace/root_identity.rs	weave-root-identity-conflict	-	1
 src/workweave.rs	(untokened:environment-passthrough)	-	1
 src/workweave.rs	(untokened:hook-input)	-	4
+src/workweave.rs	(untokened:internal-invariant)	-	1
 src/workweave.rs	(untokened:owed)	-	1
 src/workweave.rs	(untokened:tally)	-	2
 src/workweave.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	1
