@@ -1332,6 +1332,11 @@ every_scenario!(
     update_remote_aborted_after_a_hand_commit_and_a_continue,
     cherry_pick_aborted_after_a_hand_commit_and_a_continue,
     sync_abort_keeps_another_seats_commit,
+    continue_after_another_seat_moves(scenarios::StoppedMoved::LandProject),
+    continue_after_another_seat_moves(scenarios::StoppedMoved::LandMember),
+    continue_after_another_seat_moves(scenarios::StoppedMoved::PullProject),
+    continue_after_another_seat_moves(scenarios::StoppedMoved::CherryPickProject),
+    continue_after_another_seat_moves(scenarios::StoppedMoved::CherryPickMember),
     continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::Commits),
     continue_reads_drift_a_stop_left("merge", Repo::Lib, scenarios::SeatMove::Commits),
     continue_reads_drift_a_stop_left("linear", Repo::Proj, scenarios::SeatMove::Commits),
@@ -4079,6 +4084,46 @@ fn linear_sync_continue_holds_a_member_moved_with_no_record() {
 #[test]
 fn linear_sync_continue_holds_a_member_moved_back() {
     continue_reads_drift("linear", Repo::Lib, scenarios::SeatMove::MovesBack);
+}
+
+#[test]
+fn land_continue_after_another_seat_moved_the_project() {
+    runner::run(scenarios::continue_after_another_seat_moves(
+        scenarios::StoppedMoved::LandProject,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn land_continue_after_another_seat_moved_a_member() {
+    runner::run(scenarios::continue_after_another_seat_moves(
+        scenarios::StoppedMoved::LandMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn pull_continue_after_another_seat_moved_the_project() {
+    runner::run(scenarios::continue_after_another_seat_moves(
+        scenarios::StoppedMoved::PullProject,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_continue_after_another_seat_moved_the_project() {
+    runner::run(scenarios::continue_after_another_seat_moves(
+        scenarios::StoppedMoved::CherryPickProject,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_continue_after_another_seat_moved_a_member() {
+    runner::run(scenarios::continue_after_another_seat_moves(
+        scenarios::StoppedMoved::CherryPickMember,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

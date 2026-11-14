@@ -10,7 +10,7 @@
 //! moves, and the copies run under the op record.
 
 use crate::alignment::{Accounting, Aligner, Member};
-use crate::diagnosis::{ChoiceId, Form, Report, State};
+use crate::diagnosis::{ChoiceId, Form, Judging, Report, State};
 use crate::entry_report::fields_between;
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoEntry, RepoKey, RepoOperand, RepoPath, Role,
@@ -1456,6 +1456,7 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
                 found.as_deref(),
             ));
         }
+        crate::sync::hold_on_drift(vcs, path, &dir, Judging::member, OpVerb::CherryPick)?;
         let head = vcs.head_revision(&dir)?.id().clone();
         let next = pick.remaining().first();
         if vcs.mid_operation(&dir).is_some() {
@@ -1474,6 +1475,13 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
     }
     if !record.project_started {
         let vcs = here.vcs.as_ref();
+        crate::sync::hold_on_drift(
+            vcs,
+            here.label(),
+            &here.dir,
+            Judging::project_repo,
+            OpVerb::CherryPick,
+        )?;
         if let Some(busy) =
             crate::diagnosis::judge_edits(vcs, here.label(), &here.dir, Vec::new(), None)
         {

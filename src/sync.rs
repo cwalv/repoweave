@@ -5639,6 +5639,28 @@ fn classify_lock_relations(
     }
 }
 
+/// Refresh the drift a branch's move left in `dir` before an operation's
+/// `verb` takes it in, refusing where the drift holds it, the op left parked;
+/// a checkout stopped in an operation is that operation's to finish.
+pub(crate) fn hold_on_drift(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    role: fn(crate::diagnosis::Judging) -> crate::diagnosis::Judging,
+    verb: op_state::OpVerb,
+) -> anyhow::Result<()> {
+    if vcs.mid_op(dir).is_some() || !vcs.is_repo(dir) {
+        return Ok(());
+    }
+    let Some(held) = crate::diagnosis::drift_held(vcs, repo, dir) else {
+        return Ok(());
+    };
+    let mut report = Report::default();
+    report.add(role(held).checkout(dir).judge(vcs));
+    report.note(parked_note(verb));
+    report.into_result()
+}
+
 /// What is true of a refused resume and of no fresh refusal: the op is still
 /// recorded, and both ways out of it are still open.
 pub(crate) fn parked_note(verb: op_state::OpVerb) -> String {
@@ -5726,6 +5748,23 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // rule: per-repo state is derived from the VCS itself — already-
     // converged repos no-op via `sync_one_repo`'s head-equals-target check.
     let snapshot = &ctx.snapshot;
+
+    hold_on_drift(
+        ctx.project_vcs.as_ref(),
+        crate::workspace::project_rel_path(&ctx.cwd_project_name),
+        &ctx.cwd_project_dir,
+        crate::diagnosis::Judging::project_repo,
+        ctx.verb,
+    )?;
+    for (path, entry) in pre_op_manifest(ctx)?.iter_entries() {
+        hold_on_drift(
+            vcs_for(entry.vcs_type).as_ref(),
+            path,
+            &ctx.cwd_workspace_dir.join(path.as_path()),
+            crate::diagnosis::Judging::member,
+            ctx.verb,
+        )?;
+    }
 
     // CWD project tip — read before any side effects so Phase 1' has the
     // pre-op starting state for its `cwd_tip == source_tip` short-circuit.

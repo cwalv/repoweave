@@ -24205,6 +24205,114 @@ fn abort_keeps_another_seats_commit(
     steps
 }
 
+/// Which stopped operation [`continue_after_another_seat_moves`] resumes,
+/// and which of its repos another seat moves during the stop.
+#[derive(Debug, Clone, Copy)]
+pub enum StoppedMoved {
+    LandProject,
+    LandMember,
+    PullProject,
+    CherryPickProject,
+    CherryPickMember,
+}
+
+/// An operation stopped on `app` and resolved; during the stop another
+/// seat commits on the branch of a repo the operation has yet to take in
+/// or commit. The continue finishes with that commit on the branch and its
+/// file in the checkout, never committing its reverse.
+pub fn continue_after_another_seat_moves(which: StoppedMoved) -> Scenario {
+    use StoppedMoved as S;
+    let resolve = |at: &Place, side: &'static str| {
+        [
+            Step::git(at, Repo::App, &["checkout", side, "README"]),
+            Step::git(at, Repo::App, &["add", "README"]),
+        ]
+    };
+    let (mut steps, from, at, repo, branch, resume): (
+        Vec<Step>,
+        Place,
+        Place,
+        Repo,
+        &str,
+        &[&str],
+    ) = match which {
+        S::LandProject | S::LandMember => (
+            land_linear_stopped_on_app(),
+            a(),
+            ww("w"),
+            if matches!(which, S::LandProject) {
+                Repo::Proj
+            } else {
+                Repo::Lib
+            },
+            "proj--w",
+            &["land", "--continue"],
+        ),
+        S::PullProject => {
+            let mut stopped = both_sides_move_app_conflictingly();
+            stopped.splice(
+                1..1,
+                [
+                    Step::rwv(&b(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                    Step::rwv(&b(), &["workweave", "create", "--project", "proj", "o"])
+                        .expect(Exit::Succeeds),
+                ],
+            );
+            (
+                stopped,
+                Place::ww(Machine::B, "o"),
+                b(),
+                Repo::Proj,
+                "main",
+                &["pull", "--continue"],
+            )
+        }
+        S::CherryPickProject | S::CherryPickMember => (
+            app_conflicting_port(),
+            a(),
+            ww("p"),
+            if matches!(which, S::CherryPickProject) {
+                Repo::Proj
+            } else {
+                Repo::Lib
+            },
+            "proj--p",
+            &["cherry-pick", "--continue"],
+        ),
+    };
+    let side = match which {
+        S::CherryPickProject | S::CherryPickMember => "--theirs",
+        _ => "--ours",
+    };
+    steps.extend(resolve(&at, side));
+    steps.extend([
+        another_seat_commits(&from, repo, branch),
+        Step::rwv(&at, resume)
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App]),
+        Step::git(
+            &at,
+            repo,
+            &["cat-file", "-e", &format!("{branch}:other-seat.txt")],
+        )
+        .expect(Exit::Succeeds),
+        Step::git(&at, repo, &["status", "--porcelain"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("other-seat.txt")),
+    ]);
+    scenario(
+        match which {
+            S::LandProject => "land --continue after another seat moved the project",
+            S::LandMember => "land --continue after another seat moved a member",
+            S::PullProject => "pull --continue after another seat moved the project",
+            S::CherryPickProject => "cherry-pick --continue after another seat moved the project",
+            S::CherryPickMember => "cherry-pick --continue after another seat moved a member",
+        },
+        steps,
+    )
+}
+
 /// A `linear` sync stopped mid-rebase of `lib`, a commit of another seat's
 /// on `lib`'s branch, aborted.
 pub fn sync_abort_keeps_another_seats_commit() -> Scenario {
