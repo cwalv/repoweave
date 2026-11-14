@@ -17500,6 +17500,31 @@ pub fn cherry_pick_project_conflict_committed_by_hand() -> Scenario {
     scenario("cherry-pick project conflict committed by hand", steps)
 }
 
+/// `cherry-pick-conflict` in the project repo, where the operator also
+/// stages by hand a change the ported commit does not make: `--continue`
+/// commits it inside the port, and a line says so.
+pub fn cherry_pick_continue_names_a_change_staged_by_hand() -> Scenario {
+    let mut steps = project_conflicting_port();
+    let pick = steps.len() - 2;
+    steps.insert(pick, Step::commit(&ww("p"), Repo::Proj, "extra"));
+    steps.extend([
+        Step::git(&ww("p"), Repo::Proj, &["rm", "-q", "--cached", "extra.txt"]),
+        Step::git(&ww("p"), Repo::Proj, &["checkout", "--theirs", "notes.txt"]),
+        Step::git(&ww("p"), Repo::Proj, &["add", "notes.txt"]),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "also records extra.txt, staged here by hand",
+            )),
+        Step::git(&ww("p"), Repo::Proj, &["ls-tree", "--name-only", "HEAD"])
+            .claim(Claim::OutputLacks("extra.txt")),
+    ]);
+    scenario(
+        "cherry-pick --continue names a change staged by hand",
+        steps,
+    )
+}
+
 /// `cherry-pick-conflict` in the project repo, abandoned: `rwv abort` runs
 /// and puts the project repo back.
 pub fn cherry_pick_project_conflict_aborts() -> Scenario {

@@ -1969,6 +1969,26 @@ fn commit_project(
     }
 
     let mut paths: Vec<String> = vcs.staged_paths(dir)?;
+    if let Some(parent) = &parent {
+        let copied = vcs.changed_paths_between(dir, &rev(parent), &rev(&commit))?;
+        let by_hand: Vec<&str> = paths
+            .iter()
+            .map(String::as_str)
+            .filter(|path| {
+                ![Manifest::FILE_NAME, LockFile::FILE_NAME].contains(path)
+                    && !copied.iter().any(|c| c == path)
+            })
+            .collect();
+        if !by_hand.is_empty() {
+            say(
+                output,
+                &format!(
+                    "{label}: the ported commit also records {}, staged here by hand",
+                    by_hand.join(", ")
+                ),
+            );
+        }
+    }
     for file in [Manifest::FILE_NAME, LockFile::FILE_NAME] {
         if !paths.iter().any(|p| p == file) {
             paths.push(file.to_owned());

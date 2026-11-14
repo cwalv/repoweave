@@ -3573,6 +3573,7 @@ impl Vcs for GitVcs {
             [
                 "diff",
                 "--name-only",
+                "--no-renames",
                 "-z",
                 from.id().as_str(),
                 to.id().as_str(),
