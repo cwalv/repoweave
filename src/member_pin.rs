@@ -180,7 +180,7 @@ pub fn run_pin(
     }
 
     if let Some(message) = commit {
-        let pending = lock::PendingLockCommit::new(project_name, dir_of_project, new, old, message)
+        let pending = lock::PendingLockCommit::new(project_name, dir_of_project, new, message)
             .by_name("member pin", [path]);
         lock::commit_project_lock(&pending, &BTreeSet::new())?;
     }

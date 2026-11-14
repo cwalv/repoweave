@@ -210,6 +210,17 @@ fn a_continue_records_the_consent_it_was_given_for_a_rerun_after_a_kill() {
 }
 
 #[test]
+fn a_landing_says_it_is_done_once() {
+    runner::run(scenarios::a_landing_says_done_once()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_lock_commit_after_a_bare_lock_names_the_pins_it_changes() {
+    runner::run(scenarios::a_lock_commit_names_what_the_committed_lock_lacks())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_continued_landing_reports_the_push_branch_once() {
     runner::run(scenarios::a_continued_landing_reports_the_push_branch_once())
         .assert_fully_decided_green();
@@ -1320,6 +1331,8 @@ every_scenario!(
     dc06_member_set_from_merge,
     continue_rejudges_the_resolved_manifest,
     a_continued_landing_reports_the_push_branch_once,
+    a_landing_says_done_once,
+    a_lock_commit_names_what_the_committed_lock_lacks,
     continue_keeps_the_consent_it_was_given,
     continue_refused_on_its_resolution_aborts,
     raw_merge_member_change,

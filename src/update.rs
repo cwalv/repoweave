@@ -206,12 +206,14 @@ pub(crate) struct UpdateRun {
 pub(crate) struct Flavor {
     pub(crate) verb: &'static str,
     pub(crate) carry_edits: bool,
+    pub(crate) closes_the_run: bool,
 }
 
 impl Flavor {
     pub(crate) const UPDATE: Self = Self {
         verb: "update",
         carry_edits: false,
+        closes_the_run: true,
     };
 }
 
@@ -259,6 +261,7 @@ pub(crate) fn align_after_switch(ctx: &WorkspaceContext, verb: &'static str) -> 
         Flavor {
             verb,
             carry_edits: true,
+            closes_the_run: true,
         },
     )?
     .tail
@@ -266,11 +269,12 @@ pub(crate) fn align_after_switch(ctx: &WorkspaceContext, verb: &'static str) -> 
 
 /// The alignment a landing runs in the workspace that has the target
 /// checked out, and then in its source: `rwv update`'s, reported under
-/// `land`'s name.
+/// `land`'s name. Only the alignment that ends the landing says it is done.
 pub(crate) fn align_after_landing(
     ctx: &WorkspaceContext,
     jobs: usize,
     output: OutputMode,
+    closes_the_run: bool,
 ) -> anyhow::Result<UpdateRun> {
     update_members_for(
         ctx,
@@ -282,6 +286,7 @@ pub(crate) fn align_after_landing(
         Flavor {
             verb: "land",
             carry_edits: false,
+            closes_the_run,
         },
     )
 }
@@ -314,6 +319,7 @@ pub(crate) fn align_after(
         Flavor {
             verb,
             carry_edits: false,
+            closes_the_run: true,
         },
     )
 }
@@ -436,6 +442,7 @@ fn update_members_for(
         output,
         Some(ctx.resolution()),
         duty,
+        flavor.closes_the_run,
     ) {
         Ok(run) => run,
         Err(aborted) => {
@@ -734,6 +741,7 @@ pub(crate) fn bring_members(
     output: OutputMode,
     resolution: Option<Resolution>,
     duty: CloneDuty<'_>,
+    says_done: bool,
 ) -> Result<MembersRun, Box<MembersAborted>> {
     let setup = || -> anyhow::Result<(Manifest, Option<LockFile>)> {
         let manifest_path = project_dir.join(Manifest::FILE_NAME);
@@ -957,7 +965,7 @@ pub(crate) fn bring_members(
         }));
     }
 
-    if output == OutputMode::Text {
+    if output == OutputMode::Text && says_done {
         outln!("rwv {verb}: done ({succeeded} repo(s) ready)");
     }
 

@@ -386,7 +386,7 @@ fn commit_lock_file(
     let message = match &pending.message {
         CommitMessage::Generated => build_commit_message(
             &pending.new_lock,
-            pending.old_lock.as_ref(),
+            committed_lock(vcs, project_dir).as_ref(),
             paths.contains(&Manifest::FILE_NAME),
         ),
         CommitMessage::Given(message) => message.clone(),
@@ -404,6 +404,14 @@ fn commit_lock_file(
         eprintln!("Lock unchanged, nothing to commit.");
     }
     report_left_edits(vcs, &pending.project_name, project_dir, authored)
+}
+
+fn committed_lock(vcs: &dyn Vcs, project_dir: &Path) -> Option<LockFile> {
+    let head = vcs.head_revision(project_dir).ok()?;
+    let text = vcs
+        .read_file_at_revision(project_dir, &head, Path::new(LockFile::FILE_NAME))
+        .ok()?;
+    LockFile::from_json_str(&text).ok()
 }
 
 /// Execute `rwv lock` for the current workspace context.
@@ -881,7 +889,6 @@ pub(crate) fn relock(
         project_name,
         project_dir,
         new_lock: new,
-        old_lock: old,
         message,
         naming: Naming::Unnamed,
     }))
@@ -1027,7 +1034,6 @@ pub(crate) struct PendingLockCommit {
     project_name: crate::manifest::ProjectName,
     project_dir: PathBuf,
     new_lock: LockFile,
-    old_lock: Option<LockFile>,
     message: CommitMessage,
     naming: Naming,
 }
@@ -1037,14 +1043,12 @@ impl PendingLockCommit {
         project_name: crate::manifest::ProjectName,
         project_dir: PathBuf,
         new_lock: LockFile,
-        old_lock: Option<LockFile>,
         message: CommitMessage,
     ) -> Self {
         Self {
             project_name,
             project_dir,
             new_lock,
-            old_lock,
             message,
             naming: Naming::Unnamed,
         }

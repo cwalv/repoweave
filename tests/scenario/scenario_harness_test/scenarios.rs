@@ -17659,6 +17659,43 @@ pub fn history_member_override_lands() -> Scenario {
     )
 }
 
+/// A landing says it is done once, whether or not it retires the workweave.
+pub fn a_landing_says_done_once() -> Scenario {
+    scenario(
+        "a landing says done once",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputOnce("rwv land: done")),
+            create("v"),
+            Step::commit(&ww("v"), Repo::App, "v-app"),
+            Step::rwv(&ww("v"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputOnce("rwv land: done")),
+        ],
+    )
+}
+
+/// A commit of a lock an earlier run wrote names the pins it changes against
+/// the lock the repo holds.
+pub fn a_lock_commit_names_what_the_committed_lock_lacks() -> Scenario {
+    scenario(
+        "a lock commit names what the committed lock lacks",
+        vec![
+            Step::commit(&a(), Repo::App, "a-app"),
+            Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%s"])
+                .claim(Claim::OutputContains("lock: refresh 1 repo"))
+                .claim(Claim::OutputLacks("no changes")),
+        ],
+    )
+}
+
 /// A landing killed once it has reported its target's push branch behind
 /// says so once when it is continued.
 pub fn a_continued_landing_reports_the_push_branch_once() -> Scenario {

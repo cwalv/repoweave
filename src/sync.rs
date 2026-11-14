@@ -7248,6 +7248,7 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     }
     report_target_ahead(ctx)?;
 
+    let cwd_aligns = ctx.switches_primary.is_some() || !ctx.retire;
     if let (Some((dest_workspace_dir, target_ctx)), Some(dest_project_dir)) =
         (in_checkouts, &ctx.dest_project_dir)
     {
@@ -7262,14 +7263,14 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
         crate::test_pause::point("aligning-target");
         let aligning = journal_alignment(ctx, dest_workspace_dir, dest_project_dir)?;
-        align_after_landing(ctx, target_ctx);
+        align_after_landing(ctx, target_ctx, !cwd_aligns);
         unjournal_unmoved(ctx, dest_workspace_dir, &aligning)?;
     }
     if ctx.switches_primary.is_some() {
         switch_primary_to_target(ctx, target_branch)?;
-        align_after_landing(ctx, &ctx.cwd_ctx);
-    } else if !ctx.retire {
-        align_after_landing(ctx, &ctx.cwd_ctx);
+    }
+    if cwd_aligns {
+        align_after_landing(ctx, &ctx.cwd_ctx, true);
     }
     crate::test_pause::point("landed");
     Ok(())
@@ -7914,13 +7915,13 @@ fn unjournal(ctx: &OpContext<'_>, key: &RepoKey) -> anyhow::Result<()> {
 /// was is reported and fails nothing: a refusal with the choices it judged,
 /// anything else with the `rwv update` that finishes it, naming the project,
 /// since that workspace may present another.
-fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext) {
+fn align_after_landing(op: &OpContext<'_>, ctx: &WorkspaceContext, closes_the_run: bool) {
     let output = if op.handler.emit_text() {
         OutputMode::Text
     } else {
         OutputMode::Json
     };
-    let run = crate::update::align_after_landing(ctx, op.jobs, output);
+    let run = crate::update::align_after_landing(ctx, op.jobs, output, closes_the_run);
     let left = match run {
         Ok(run) => {
             for placement in run.envelope.placements {

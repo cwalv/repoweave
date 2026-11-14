@@ -665,7 +665,6 @@ fn commit_addition(
             project.clone(),
             project_dir.to_path_buf(),
             new,
-            old,
             crate::lock::CommitMessage::Given(message),
         ),
         &authored,

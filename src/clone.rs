@@ -170,6 +170,7 @@ pub fn run_clone(
         output,
         None,
         CloneDuty::Checkouts,
+        true,
     ) {
         Ok(run) => run,
         Err(aborted) => {
