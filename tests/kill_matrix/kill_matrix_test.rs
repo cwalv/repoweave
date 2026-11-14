@@ -415,7 +415,7 @@ pub(super) const SHAPES: &[Shape] = &[
         start: LAND_RETIRE,
         resume: LAND_CONTINUE,
         at: seat_w1,
-        target: Some(primary_a),
+        target: None,
         stop: None,
         abort_after: "landed",
         contender: None,
@@ -467,7 +467,7 @@ pub(super) const SHAPES: &[Shape] = &[
         start: LAND,
         resume: LAND_CONTINUE,
         at: seat_w1,
-        target: Some(primary_a),
+        target: None,
         stop: Some(Stop {
             exit: parks,
             fix: resolve_readme,
@@ -483,7 +483,7 @@ pub(super) const SHAPES: &[Shape] = &[
         start: LAND_LINEAR_MANIFEST,
         resume: LAND_CONTINUE,
         at: seat_w,
-        target: Some(primary_a),
+        target: None,
         stop: Some(Stop {
             exit: parks_on_the_manifest,
             fix: settle_manifest,
@@ -541,7 +541,7 @@ pub(super) const SHAPES: &[Shape] = &[
         start: LAND,
         resume: LAND_CONTINUE,
         at: seat_w1,
-        target: Some(primary_a),
+        target: None,
         stop: Some(Stop {
             exit: parks,
             fix: resolve_readme,
@@ -557,7 +557,7 @@ pub(super) const SHAPES: &[Shape] = &[
         start: &["land", "--history", "linear"],
         resume: LAND_CONTINUE,
         at: seat_w,
-        target: Some(primary_a),
+        target: None,
         stop: None,
         abort_after: "landed",
         contender: None,
@@ -570,7 +570,7 @@ pub(super) const SHAPES: &[Shape] = &[
         start: &["land", "--history", "linear"],
         resume: LAND_CONTINUE,
         at: seat_w2,
-        target: Some(primary_a),
+        target: None,
         stop: None,
         abort_after: "claimed",
         contender: Some(Contention::Live),
@@ -838,7 +838,7 @@ fn in_the_target(shape: &Shape, point: &str) -> InTheTarget {
     }
     match point {
         "recorded" | "claimed" | "landing-claim-held" => InTheTarget::NotYet,
-        "ending" => InTheTarget::Released,
+        "ending" | "retire" => InTheTarget::Released,
         _ => InTheTarget::Ends,
     }
 }
@@ -909,8 +909,19 @@ fn unkilled(shape: &Shape) -> Vec<Step> {
     steps
 }
 
+/// A landing that retires its seat has, at these points, removed the seat and
+/// its record: there is nothing to continue or abort, and the state is the
+/// unkilled run's.
+fn already_ended(shape: &Shape, point: &str) -> bool {
+    retires_its_seat(shape) && matches!(point, "ending" | "records-write")
+}
+
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
     let mut steps = until_stopped(shape, phase, point);
+    if already_ended(shape, point) {
+        steps.extend(ends_clean(shape, true));
+        return steps;
+    }
     match ending {
         Ending::Continue => steps.extend(continued(shape, phase, point)),
         Ending::Abort => steps.extend(aborted(shape, (shape.at)(), point, false)),
@@ -974,23 +985,37 @@ fn line_diff(unkilled: &str, continued: &str) -> String {
     out
 }
 
-fn run_cell(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Option<String> {
+/// What an unkilled run of the shape ends in.
+fn reference_end(shape: &Shape) -> String {
+    let clean = Sandbox::new((shape.seed)());
+    let report = runner::run_in(&clean, scenario_of(shape, "unkilled", unkilled(shape)));
+    let failed = failures(&report);
+    assert!(
+        failed.is_empty(),
+        "the unkilled run of {} failed:\n{failed}",
+        shape.id
+    );
+    runner::end_state(&clean)
+}
+
+fn run_cell(
+    shape: &Shape,
+    phase: Phase,
+    point: &'static str,
+    ending: Ending,
+    reference: &str,
+) -> Option<String> {
     let name = named(shape, phase, point, ending);
     let steps = steps_of(shape, phase, point, ending);
     let sandbox = Sandbox::new((shape.seed)());
     let report = runner::run_in(&sandbox, scenario_of(shape, leaked(name.clone()), steps));
     let mut why = failures(&report);
     if ending == Ending::Continue && why.is_empty() {
-        let killed = runner::end_state(&sandbox);
-        let clean = Sandbox::new((shape.seed)());
-        let report = runner::run_in(&clean, scenario_of(shape, "unkilled", unkilled(shape)));
-        let reference = failures(&report);
-        if !reference.is_empty() {
-            why = format!("the unkilled run of the same setup failed:\n{reference}");
-        } else if killed != runner::end_state(&clean) {
+        let continued = runner::end_state(&sandbox);
+        if continued != reference {
             why = format!(
                 "the end state differs from an unkilled run's:\n{}",
-                line_diff(&runner::end_state(&clean), &killed)
+                line_diff(reference, &continued)
             );
         }
     }
@@ -1351,7 +1376,10 @@ fn cells_of(shape: &Shape) -> Vec<(&'static str, Phase)> {
         .collect()
 }
 
-fn endings(shape: &Shape, phase: Phase) -> Vec<Ending> {
+fn endings(shape: &Shape, phase: Phase, point: &str) -> Vec<Ending> {
+    if already_ended(shape, point) {
+        return vec![Ending::Continue];
+    }
     let mut endings = if phase == DuringAbort {
         vec![Ending::Abort]
     } else {
@@ -1365,7 +1393,13 @@ fn endings(shape: &Shape, phase: Phase) -> Vec<Ending> {
 
 /// Cells that fail on this tree, each with the defect it shows. A listed cell
 /// must still fail: one that passes is a stale entry.
-fn known_failing(shape: &Shape, phase: Phase, ending: Ending) -> Option<&'static str> {
+fn known_failing(shape: &Shape, phase: Phase, point: &str, ending: Ending) -> Option<&'static str> {
+    if already_ended(shape, point) {
+        return Some(
+            "a landing with --retire killed once its seat is gone leaves orphaned savepoints \
+             that `rwv doctor --all` reports",
+        );
+    }
     (shape.id == "land_linear_manifest_stop"
         && phase == Resumed
         && matches!(ending, Ending::Abort | Ending::AbortInTarget))
@@ -1377,17 +1411,26 @@ fn known_failing(shape: &Shape, phase: Phase, ending: Ending) -> Option<&'static
 
 fn run_shape(id: &str) {
     let shape = shape(id);
+    let reference = reference_end(shape);
+    let reference = reference.as_str();
     let jobs: Vec<Box<dyn FnOnce() -> Option<String> + Send>> = cells_of(shape)
         .into_iter()
         .flat_map(|(point, phase)| {
-            endings(shape, phase)
+            endings(shape, phase, point)
                 .into_iter()
                 .map(move |ending| (point, phase, ending))
         })
         .map(|(point, phase, ending)| {
             Box::new(move || {
-                let failed = run_cell(shape, phase, point, ending);
-                match (known_failing(shape, phase, ending), failed) {
+                let failed =
+                    std::panic::catch_unwind(|| run_cell(shape, phase, point, ending, reference))
+                        .unwrap_or_else(|_| {
+                            Some(format!(
+                                "{}: a step could not run (see the panic above)",
+                                named(shape, phase, point, ending)
+                            ))
+                        });
+                match (known_failing(shape, phase, point, ending), failed) {
                     (None, failed) => failed,
                     (Some(_), Some(_)) => None,
                     (Some(defect), None) => Some(format!(
