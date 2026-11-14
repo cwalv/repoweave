@@ -4479,22 +4479,17 @@ pub fn dirty_beside_drift(
     (!left.is_empty()).then(|| dirty(vcs, repo, dir, left))
 }
 
-/// The project repo at `dir` given [`dirty_beside_drift`]'s judgment before a
-/// verb reads its manifest or stages anything there: drift its branch's move
-/// left is refreshed, and the verb is refused where that move's content cannot
-/// be told from what the verb would commit, or where a file is conflicted.
-/// Edits of the operator's own are the verb's to handle.
-pub fn settle_project_drift(
-    project: &crate::manifest::ProjectName,
-    dir: &Path,
-) -> anyhow::Result<()> {
-    let vcs = crate::vcs::project_vcs();
+/// `dir` given [`dirty_beside_drift`]'s judgment before a verb reads, stages,
+/// commits or moves anything there: drift its branch's move left is refreshed,
+/// and the checkout is held where that move's content cannot be told from what
+/// the verb would carry or commit, or where a file is conflicted. Edits of the
+/// operator's own are the verb's to handle.
+pub fn drift_held(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path) -> Option<Judging> {
     if !vcs.is_repo(dir) || vcs.head_revision(dir).is_err() {
-        return Ok(());
+        return None;
     }
     let files = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
-    let repo = crate::workspace::project_rel_path(project);
-    let Some(judging) = dirty_beside_drift(vcs.as_ref(), &repo, dir, files).filter(|judging| {
+    dirty_beside_drift(vcs, repo, dir, files).filter(|judging| {
         matches!(
             judging.judged_state(),
             State::EditsMovedAndEdited
@@ -4502,7 +4497,17 @@ pub fn settle_project_drift(
                 | State::EditsSetBack
                 | State::EditsUnresolved
         )
-    }) else {
+    })
+}
+
+/// [`drift_held`] for the project repo at `dir`, refused.
+pub fn settle_project_drift(
+    project: &crate::manifest::ProjectName,
+    dir: &Path,
+) -> anyhow::Result<()> {
+    let vcs = crate::vcs::project_vcs();
+    let repo = crate::workspace::project_rel_path(project);
+    let Some(judging) = drift_held(vcs.as_ref(), &repo, dir) else {
         return Ok(());
     };
     let mut report = Report::default();

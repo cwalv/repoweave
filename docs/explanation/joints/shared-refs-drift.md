@@ -97,15 +97,19 @@ checkout, in either workspace, whose edits it judges, before judging
 them; every other verb that refuses on a checkout's edits or writes to it
 (`rwv lock`, `rwv update --remote`, `rwv switch`, `rwv sync`,
 `rwv workweave delete` and the rest), which refreshes that checkout's drift
-before judging what is left; and the end of `rwv sync`, for each checkout
+before judging what is left, and every verb that renames, creates or
+switches a checkout's branch (`rwv branch rename`, `rwv branch create`,
+`rwv switch`), which does so before the branch moves; and the end of `rwv sync`, for each checkout
 the sync took in. `rwv doctor` without `--fix` only reports it, as drift. The interesting question is *what counts as drift*.
 
 The project repo is judged the same way. Every verb that writes or commits
 there (`rwv lock`, `rwv member` and its setters, `rwv branch set-history`,
 `rwv update --remote`, `rwv sync`, `rwv land`, `rwv pull`,
-`rwv cherry-pick`) refreshes the project repo's drift before it reads
-`rwv.toml`, so its commit never carries the move's reverse of `rwv.toml` or
-`rwv.lock`. Where the move changed a file you edited there too, the verb is
+`rwv cherry-pick`), and every verb that renames, creates or switches its
+branch (`rwv branch rename`, `rwv branch create`, `rwv switch`), refreshes
+the project repo's drift before it reads `rwv.toml`, so no commit carries the
+move's reverse of `rwv.toml` or `rwv.lock`, and no rename or switch records
+the stale files as where the checkout stands. Where the move changed a file you edited there too, the verb is
 refused as `moved and edited` and commits nothing. `rwv doctor` reports the
 project repo's drift where its branch moved under it, and both
 `rwv doctor --fix` and its two flags act on it as on a member.

@@ -2836,54 +2836,327 @@ fn a_set_back_project_repo_is_named_set_back_alone() {
     }
 }
 
-/// Every verb that commits in the project repo settles its drift first: run
-/// over a project branch moved under the workweave, none commits the move's
-/// reverse or leaves it standing beside its commit, whether it proceeds or
-/// refuses.
-#[test]
-fn no_verb_commits_the_reverse_of_a_project_branch_move() {
-    let verbs: Vec<Vec<String>> = vec![
-        vec!["member", "set-role", LIB, "fork"],
-        vec!["member", "set-recurse-submodules", LIB, "true"],
-        vec!["member", "pin", LIB, "HEAD"],
-        vec!["member", "set-branch", LIB, "main"],
-        vec!["member", "remove", LIB],
-        vec!["member", "add", "<other>"],
-        vec!["branch", "set-history", "merge"],
-        vec!["lock", "--commit"],
-        vec!["land"],
-        vec!["sync"],
-        vec!["cherry-pick", "HEAD"],
-    ]
-    .into_iter()
-    .map(|v| v.into_iter().map(str::to_owned).collect())
-    .collect();
-    let mut reversed = Vec::new();
-    for verb in &verbs {
-        let f = fixture();
-        let other = f.scratch.join("other");
-        init_repo(&other);
-        commit_file(&other, "o.txt", "o\n", "o");
-        let other_url = common::file_url(&other);
-        f.move_project_manifest();
-        let project = f.ww_project();
-        let args: Vec<&str> = verb
-            .iter()
-            .map(|a| match a.as_str() {
-                "<other>" => other_url.as_str(),
-                a => a,
-            })
+/// Each run of every leaf of rwv's command tree the sweep below makes, as the
+/// words after `rwv`; `<other>` is a repository no weave holds.
+const SWEPT: &[(&str, &[&[&str]])] = &[
+    (
+        "activate",
+        &[&["activate", PROJECT], &["activate", PROJECT, "--update"]],
+    ),
+    ("materialize", &[&["materialize"]]),
+    ("prime", &[&["prime"]]),
+    ("resolve", &[&["resolve"]]),
+    ("clone", &[&["clone", "<other>"]]),
+    ("init", &[&["init", "fresh"]]),
+    ("member add", &[&["member", "add", "<other>"]]),
+    ("member remove", &[&["member", "remove", LIB]]),
+    ("member set-role", &[&["member", "set-role", LIB, "fork"]]),
+    ("member pin", &[&["member", "pin", LIB, "HEAD"]]),
+    (
+        "member set-branch",
+        &[&["member", "set-branch", LIB, "main"]],
+    ),
+    ("member set-url", &[&["member", "set-url", LIB, "<other>"]]),
+    (
+        "member set-recurse-submodules",
+        &[&["member", "set-recurse-submodules", LIB, "true"]],
+    ),
+    ("branch list", &[&["branch", "list"]]),
+    ("branch set-mode", &[&["branch", "set-mode", "declared"]]),
+    ("branch set-history", &[&["branch", "set-history", "merge"]]),
+    ("branch rename", &[&["branch", "rename", "nb"]]),
+    ("branch create", &[&["branch", "create", "nb"]]),
+    ("branch delete", &[&["branch", "delete", "main"]]),
+    (
+        "switch",
+        &[&["switch", "main"], &["switch", "--detach", "HEAD"]],
+    ),
+    ("workweave create", &[&["workweave", "create", "w2"]]),
+    ("workweave delete", &[&["workweave", "delete", "ww"]]),
+    ("workweave list", &[&["workweave", "list"]]),
+    (
+        "workweave set-default-create-basedir",
+        &[&["workweave", "set-default-create-basedir", "elsewhere"]],
+    ),
+    ("doctor", &[&["doctor"], &["doctor", "--fix"]]),
+    (
+        "lock",
+        &[&["lock"], &["lock", "--commit"], &["lock", "--dirty"]],
+    ),
+    ("status", &[&["status"]]),
+    ("log", &[&["log"]]),
+    ("abort", &[&["abort"]]),
+    ("backup list", &[&["backup", "list"]]),
+    ("backup drop", &[&["backup", "drop", LIB, "--all"]]),
+    ("backup prune", &[&["backup", "prune"]]),
+    ("sync", &[&["sync"]]),
+    ("land", &[&["land"]]),
+    ("cherry-pick", &[&["cherry-pick", "HEAD"]]),
+    ("fetch", &[&["fetch"]]),
+    ("pull", &[&["pull"]]),
+    (
+        "update",
+        &[
+            &["update"],
+            &["update", "--remote"],
+            &["update", "--remote", "--commit"],
+        ],
+    ),
+    ("push", &[&["push"], &["push", "--dry-run"]]),
+    ("completions", &[&["completions", "bash"]]),
+    ("explain", &[&["explain", "edits"]]),
+    ("setup claude", &[&["setup", "claude"]]),
+];
+
+/// Every leaf of rwv's command tree, hidden ones included, as the words that
+/// name it.
+fn leaf_verbs() -> Vec<String> {
+    use clap::CommandFactory;
+    fn walk(cmd: &clap::Command, prefix: &str, out: &mut Vec<String>) {
+        let subs: Vec<&clap::Command> = cmd
+            .get_subcommands()
+            .filter(|sub| sub.get_name() != "help")
             .collect();
-
-        let out = common::cli::run(&args, &f.ww);
-
-        let notes = common::git_in(&project, &["ls-tree", "--name-only", "HEAD", "NOTES.md"]);
-        let standing = common::git_in(&project, &["status", "--porcelain", "--", "NOTES.md"]);
-        if notes != "NOTES.md" || !standing.is_empty() {
-            reversed.push(format!("{args:?}:\n{}", common::cli::describe(&out)));
+        if subs.is_empty() && !prefix.is_empty() {
+            out.push(prefix.to_owned());
+        }
+        for sub in subs {
+            let name = match prefix {
+                "" => sub.get_name().to_owned(),
+                _ => format!("{prefix} {}", sub.get_name()),
+            };
+            walk(sub, &name, out);
         }
     }
-    assert!(reversed.is_empty(), "{}", reversed.join("\n"));
+    let mut out = Vec::new();
+    walk(&repoweave::cli::Cli::command(), "", &mut out);
+    out
+}
+
+/// Which checkout of the workweave the sweep moves the branch of.
+#[derive(Debug, Clone, Copy)]
+enum Swept {
+    Project,
+    Member,
+}
+
+/// What a run left in `checkout`, whose branch moved to `moved` adding
+/// `witness`, that reads the move's reverse as the checkout's own: a commit
+/// containing the move whose tree lacks the witness, or the checkout's
+/// record naming HEAD as where it stands while what it holds still differs
+/// from HEAD.
+fn reverse_taken(checkout: &Path, moved: &str, witness: &str) -> Option<String> {
+    let head = common::git_in(checkout, &["rev-parse", "HEAD"]);
+    let contains = common::git()
+        .args(["merge-base", "--is-ancestor", moved, &head])
+        .current_dir(checkout)
+        .status()
+        .unwrap()
+        .success();
+    if contains && common::git_in(checkout, &["ls-tree", "--name-only", "HEAD", witness]).is_empty()
+    {
+        return Some(format!("HEAD {head} records the move's reverse"));
+    }
+    let newest = common::git_in(checkout, &["log", "-g", "-n1", "--format=%H", "HEAD"]);
+    let standing = common::git_in(
+        checkout,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=no",
+            "--",
+            ".",
+            ":!rwv.lock",
+        ],
+    );
+    (newest == head && !standing.is_empty())
+        .then(|| format!("its record says it stands at HEAD {head}, beside:\n{standing}"))
+}
+
+/// Every leaf verb, run over a workweave whose project branch, or whose
+/// member's branch, was moved forward under it: none commits the move's
+/// reverse, and none leaves the checkout reading as standing at HEAD while it
+/// still holds the old tip's content. A verb that moves, renames or switches a
+/// branch, or commits, settles the drift first or refuses with nothing
+/// changed. The population is the command tree itself, so a new verb fails
+/// here until it is given its runs above.
+fn sweep(swept: Swept) {
+    let leaves = leaf_verbs();
+    assert!(leaves.contains(&"branch rename".to_owned()), "{leaves:?}");
+    let unlisted: Vec<&String> = leaves
+        .iter()
+        .filter(|leaf| !SWEPT.iter().any(|(name, _)| name == leaf))
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "give these verbs their runs in SWEPT: {unlisted:?}"
+    );
+    let mut taken = Vec::new();
+    for (_, runs) in SWEPT {
+        for args in *runs {
+            let f = fixture();
+            let other = f.scratch.join("other");
+            init_repo(&other);
+            commit_file(&other, "o.txt", "o\n", "o");
+            let other_url = common::file_url(&other);
+            let (checkout, moved, witness) = match swept {
+                Swept::Project => (f.ww_project(), f.move_project_manifest(), "NOTES.md"),
+                Swept::Member => (
+                    f.ww_lib.clone(),
+                    f.move_with("ww/project", |elsewhere| {
+                        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+                        std::fs::write(elsewhere.join("witness.txt"), "w\n").unwrap();
+                    }),
+                    "witness.txt",
+                ),
+            };
+            let args: Vec<&str> = args
+                .iter()
+                .map(|a| match *a {
+                    "<other>" => other_url.as_str(),
+                    a => a,
+                })
+                .collect();
+            let home = f.scratch.join("home");
+            std::fs::create_dir_all(&home).unwrap();
+
+            let out = common::rwv()
+                .args(&args)
+                .current_dir(&f.ww)
+                .env("HOME", &home)
+                .output()
+                .unwrap();
+
+            if let Some(why) = reverse_taken(&checkout, &moved, witness) {
+                taken.push(format!("{args:?}: {why}\n{}", common::cli::describe(&out)));
+            }
+        }
+    }
+    assert!(taken.is_empty(), "{}", taken.join("\n\n"));
+}
+
+#[test]
+fn no_verb_takes_the_reverse_of_a_project_branch_move() {
+    sweep(Swept::Project);
+}
+
+#[test]
+fn no_verb_takes_the_reverse_of_a_member_branch_move() {
+    sweep(Swept::Member);
+}
+
+const RENAME: [&str; 3] = ["branch", "rename", "nb"];
+const CREATE: [&str; 3] = ["branch", "create", "nb"];
+
+/// Whether `repo` has a local branch `nb`.
+fn has_nb(repo: &Path) -> bool {
+    !common::git_in(repo, &["branch", "--list", "nb"]).is_empty()
+}
+
+/// `rwv branch rename` and `rwv branch create` over a member whose branch
+/// moved under it: the drift is refreshed before any branch is renamed or
+/// switched, so the checkout stands at the moved tip, renamed where the
+/// rename goes ahead. (The create refuses this fixture's member for its
+/// alignment, after the refresh.)
+#[test]
+fn renaming_or_creating_a_branch_refreshes_a_member_left_behind_first() {
+    for verb in [RENAME, CREATE] {
+        let f = fixture();
+        let moved = f.move_with("ww/project", |elsewhere| {
+            std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        });
+
+        let out = common::cli::run(&verb, &f.ww);
+
+        let said = common::cli::describe(&out);
+        assert_eq!(out.status.success(), verb == RENAME, "{verb:?}:\n{said}");
+        assert!(said.contains("refreshed drift"), "{verb:?}:\n{said}");
+        assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), moved);
+        assert_eq!(
+            common::git_in(&f.ww_lib, &["status", "--porcelain"]),
+            "",
+            "{verb:?}:\n{said}"
+        );
+        assert_eq!(
+            read(&f.ww_lib.join("notes.txt")).as_deref(),
+            Some("three\n")
+        );
+    }
+}
+
+/// The member states a refresh cannot finish refuse `rwv branch rename` and
+/// `rwv branch create` with no branch renamed or created anywhere: files both
+/// the move and an edit changed, a checkout whose record of where it stood is
+/// gone, and one a merge of its edits left set back.
+#[test]
+fn renaming_or_creating_a_branch_refuses_a_member_held_by_its_drift() {
+    for verb in [RENAME, CREATE] {
+        let f = fixture();
+        f.move_with("ww/project", |elsewhere| {
+            std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        });
+        std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+        let out = common::cli::run(&verb, &f.ww);
+        common::cli::refused(&out, State::EditsMovedAndEdited);
+        assert!(!has_nb(&f.ww_lib) && !has_nb(&f.ww_project()), "{verb:?}");
+        assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
+
+        let f = fixture_without_entry(NoEntry::ExpiredByHand);
+        move_notes(&f);
+        let out = common::cli::run(&verb, &f.ww);
+        common::cli::refused(&out, State::EditsDriftLeftInPlace);
+        assert!(!has_nb(&f.ww_lib) && !has_nb(&f.ww_project()), "{verb:?}");
+
+        let f = fixture();
+        f.move_with("ww/project", |elsewhere| {
+            std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        });
+        std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+        drop(held_at(&f, &f.ww, &MERGE, "drift-merge-set-back"));
+        assert!(!on_branch(&f.ww_lib));
+        let out = common::cli::run(&verb, &f.ww);
+        common::cli::refused(&out, State::EditsSetBack);
+        assert!(!has_nb(&f.ww_lib) && !has_nb(&f.ww_project()), "{verb:?}");
+    }
+}
+
+/// `rwv branch rename` and `rwv branch create` over a project branch moved
+/// under the workweave: the drift is refreshed before the branch is renamed
+/// or switched, and the next `rwv lock --commit` keeps the move's lines.
+/// Where `rwv.toml` was edited too, both refuse as moved and edited.
+#[test]
+fn renaming_or_creating_a_branch_settles_the_project_repo_first() {
+    for verb in [RENAME, CREATE] {
+        let f = fixture();
+        f.move_project_manifest();
+        let project = f.ww_project();
+
+        let out = common::cli::run(&verb, &f.ww);
+
+        let said = common::cli::describe(&out);
+        assert!(out.status.success(), "{verb:?}:\n{said}");
+        assert!(said.contains("refreshed drift"), "{verb:?}:\n{said}");
+        assert_eq!(
+            common::git_in(&project, &["symbolic-ref", "--short", "HEAD"]),
+            "nb"
+        );
+        let out = common::cli::run(&["lock", "--commit"], &f.ww);
+        let said = common::cli::describe(&out);
+        assert!(
+            committed_manifest(&project).contains(MOVED_NOTE.trim()),
+            "{verb:?}:\n{said}"
+        );
+
+        let f = fixture();
+        f.move_project_manifest();
+        let project = f.ww_project();
+        let manifest = project.join("rwv.toml");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(&manifest, format!("# mine\n{text}")).unwrap();
+        let out = common::cli::run(&verb, &f.ww);
+        common::cli::refused(&out, State::EditsMovedAndEdited);
+        assert!(!has_nb(&project), "{verb:?}");
+    }
 }
 
 // ---------------------------------------------------------------------------

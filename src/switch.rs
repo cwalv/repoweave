@@ -557,6 +557,7 @@ pub(crate) fn write_created_record(
 /// `rwv branch create <W> [--target <T> | --declared] [--at <rev>]`.
 pub fn run_create(ctx: &WorkspaceContext, request: Create) -> anyhow::Result<()> {
     let (project, dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &dir)?;
     let vcs = project_vcs();
     let vcs = vcs.as_ref();
     let mut report = Report::default();
@@ -875,6 +876,7 @@ pub(crate) fn localize_opened(vcs: &dyn Vcs, dir: &Path, opening: &Opening) -> a
 /// <rev>`.
 pub fn run_switch(ctx: &WorkspaceContext, request: Switch) -> anyhow::Result<()> {
     let (project, dir) = find_project(ctx)?;
+    crate::diagnosis::settle_project_drift(&project, &dir)?;
     let vcs = project_vcs();
     let vcs = vcs.as_ref();
     let text = match &request {

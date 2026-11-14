@@ -848,6 +848,7 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
             "there is no branch to rename",
         ));
     };
+    crate::diagnosis::settle_project_drift(&project, &dir)?;
     let old = named(vcs.as_ref(), &project, &dir, &old_text)?;
     let new = named(vcs.as_ref(), &project, &dir, &request.new)?;
     let old_raw = RawRefName::new(old.as_str());
@@ -965,6 +966,13 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
     }
     for repo in &mut repos {
         judge_rename_of(repo, &request, &old, &new, &scan, &mut report)?;
+        if repo.member.is_some() {
+            if let Some(held) =
+                crate::diagnosis::drift_held(repo.vcs.as_ref(), &repo.label, &repo.dir)
+            {
+                report.add(held.checkout(&repo.dir).judge(repo.vcs.as_ref()));
+            }
+        }
     }
     report.into_result()?;
 
