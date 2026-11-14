@@ -25207,6 +25207,9 @@ pub enum StoppedMidMerge {
     PullMember,
     /// A port's copy into a member, resolved.
     CherryPickMember,
+    /// [`StoppedMidMerge::CherryPickMember`], the checkout's record of where
+    /// it stood gone once the branch moved.
+    CherryPickMemberUnrecorded,
     /// `update --remote --merge-upstream`'s member merge, resolved.
     UpdateRemoteMember,
 }
@@ -25280,7 +25283,7 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
                 &["pull", "--continue"],
             )
         }
-        S::CherryPickMember => {
+        S::CherryPickMember | S::CherryPickMemberUnrecorded => {
             let mut stopped = app_conflicting_port();
             stopped.extend([
                 Step::git(&ww("p"), Repo::App, &["checkout", "--theirs", "README"]),
@@ -25314,7 +25317,10 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
     };
     let slot = format!("refs/rwv/backup/{branch}/aborted");
     steps.push(another_seat_commits(&from, repo, branch));
-    if matches!(which, S::SyncMemberUnrecorded) {
+    if matches!(
+        which,
+        S::SyncMemberUnrecorded | S::CherryPickMemberUnrecorded
+    ) {
         steps.push(Step::git(
             &at,
             repo,
@@ -25350,6 +25356,10 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
             S::LandMember => "land --continue refuses a member moved mid-merge",
             S::PullMember => "pull --continue refuses a member moved mid-merge",
             S::CherryPickMember => "cherry-pick --continue refuses a member moved mid-copy",
+            S::CherryPickMemberUnrecorded => {
+                "cherry-pick --continue refuses a member moved mid-copy with no record of where it \
+                 stood"
+            }
             S::UpdateRemoteMember => "update --remote --continue refuses a member moved mid-merge",
         },
         steps,

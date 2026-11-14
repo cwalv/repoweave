@@ -1466,12 +1466,20 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
         crate::sync::hold_on_drift(vcs, path, &dir, Judging::member, OpVerb::CherryPick)?;
         let head = vcs.head_revision(&dir)?.id().clone();
         let next = pick.remaining().first();
-        if vcs.mid_operation(&dir).is_some() {
-            let own = pick.copying
-                && head == *pick.expected()
-                && next.is_some()
-                && vcs.copy_in_flight(&dir)?.as_ref() == next;
-            if !own {
+        if let Some(stopped) = vcs.mid_operation(&dir) {
+            let copying_next =
+                pick.copying && next.is_some() && vcs.copy_in_flight(&dir)?.as_ref() == next;
+            if copying_next && head != *pick.expected() {
+                return Err(crate::sync::moved_under_stop(
+                    vcs,
+                    path,
+                    &dir,
+                    &stopped,
+                    pick.expected(),
+                    Judging::member,
+                )?);
+            }
+            if !copying_next {
                 if let Some(busy) = crate::diagnosis::judge_edits(vcs, path, &dir, Vec::new(), None)
                 {
                     return Err(busy.refused());

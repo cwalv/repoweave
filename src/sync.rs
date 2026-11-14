@@ -5907,19 +5907,7 @@ pub(crate) fn hold_on_drift(
         else {
             return Ok(());
         };
-        let held = State::EditsDriftLeftInPlace
-            .of(repo)
-            .subject(format!(
-                "its branch moved from {} to {} outside this checkout while the {stopped} \
-                 here was in progress, and concluding the {stopped} would record that move's \
-                 reverse",
-                from.short(),
-                vcs.head_revision(dir)?.id().short()
-            ))
-            .bind_list("<abort>", ["rwv", "abort"])
-            .only_forms(&[crate::diagnosis::Form::AbortOperation]);
-        report.add(role(held).checkout(dir).judge(vcs));
-        return report.into_result();
+        return Err(moved_under_stop(vcs, repo, dir, &stopped, &from, role)?);
     }
     let Some(held) = crate::diagnosis::drift_held(vcs, repo, dir) else {
         return Ok(());
@@ -5927,6 +5915,32 @@ pub(crate) fn hold_on_drift(
     report.add(role(held).checkout(dir).judge(vcs));
     report.note(parked_note(verb));
     report.into_result()
+}
+
+/// The refusal of a checkout stopped in `stopped` whose branch moved from
+/// `from` outside it: concluding the stop would record that move's reverse,
+/// so abandoning the operation is the one way on.
+pub(crate) fn moved_under_stop(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    stopped: &dyn std::fmt::Display,
+    from: &CommitId,
+    role: fn(crate::diagnosis::Judging) -> crate::diagnosis::Judging,
+) -> anyhow::Result<anyhow::Error> {
+    let held = State::EditsDriftLeftInPlace
+        .of(repo)
+        .subject(format!(
+            "its branch moved from {} to {} outside this checkout while the {stopped} here \
+             was in progress, and concluding the {stopped} would record that move's reverse",
+            from.short(),
+            vcs.head_revision(dir)?.id().short()
+        ))
+        .bind_list("<abort>", ["rwv", "abort"])
+        .only_forms(&[crate::diagnosis::Form::AbortOperation]);
+    let mut report = Report::default();
+    report.add(role(held).checkout(dir).judge(vcs));
+    Ok(report.into_result().expect_err("a judged state refuses"))
 }
 
 /// [`hold_on_drift`] for each member of `workspace` the manifest named
