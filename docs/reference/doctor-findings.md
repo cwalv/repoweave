@@ -119,7 +119,6 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
 | [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--release-unreadable-claims`) |
-| [`claim-format-unknown`](#claim-format-unknown) | Warning | Report-only |
 | [`claim-unopenable`](#claim-unopenable) | Warning | Report-only |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
@@ -1634,8 +1633,8 @@ releases the claim, and the next landing into the target runs.
 
 **Warning. Report-only by default.** A target's landing claim, or a takeover
 guard beside one, holds what this rwv does not read: it names no `format`
-marker, or names this rwv's and holds something else, so it is corrupt or an
-older release wrote it. The finding names the file and shows what it holds. Whether the operation it stands for
+marker, names another release's format, or names this rwv's and holds
+something else, so it is corrupt or another release wrote it. The finding names the file and shows what it holds. Whether the operation it stands for
 still runs cannot be told, so no landing takes it over: a landing into the
 target waits on it and then refuses with this kind. Bare `--fix` reports it
 and changes nothing.
@@ -1651,19 +1650,6 @@ claim a live landing of another release would hold, which is the consent the
 flag stands for, and the next landing into the target runs. A file that holds
 something else by the time the release reaches it, readable again or not, is
 left for the next report. Both flags are refused without `--fix`.
-
-### `claim-format-unknown`
-
-**Warning. Report-only.** A target's landing claim, or a takeover guard beside
-one, carries a `format` marker that names a format this rwv does not write: a
-different rwv version wrote it, and its landing may stand. The finding names the
-file and the marker. Whether that landing stands cannot be told from here, and
-an older rwv must not release a newer one's live claim, so no flag of this rwv
-releases it: a landing into the target waits on it and then refuses with this
-kind.
-
-**What to do:** end that landing with the rwv version that started it, by its
-`--continue` or `rwv abort`; that version removes the claim. Then rerun.
 
 ### `claim-unopenable`
 

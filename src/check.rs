@@ -504,15 +504,6 @@ pub enum CheckViolation {
         seen: Vec<u8>,
     },
 
-    /// A landing claim, or a takeover guard beside one, whose `format` marker
-    /// names a format this rwv does not write: a different rwv version's,
-    /// which may be live. Nothing in this rwv releases it.
-    ClaimFormatUnknown {
-        file: PathBuf,
-        /// The marker it carries, as written.
-        marker: String,
-    },
-
     /// A landing claim, or a takeover guard beside one, that this rwv cannot
     /// read at all: a file this user may not read, or something that is not a
     /// file. Whose it is cannot be told and its bytes cannot be compared, so
@@ -728,7 +719,6 @@ impl CheckViolation {
 
             CheckViolation::ClaimUnreadable { .. } => Consented("--release-unreadable-claims"),
             CheckViolation::ClaimUnopenable { .. } => ReportOnly,
-            CheckViolation::ClaimFormatUnknown { .. } => ReportOnly,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -840,7 +830,6 @@ impl CheckViolation {
             | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::ClaimUnreadable { .. }
             | CheckViolation::ClaimUnopenable { .. }
-            | CheckViolation::ClaimFormatUnknown { .. }
             | CheckViolation::OrphanedSavepoint { .. }
             | CheckViolation::UnrecognizedSavepointRef { .. }
             | CheckViolation::ConfusableSiblings { .. }
@@ -920,7 +909,6 @@ impl CheckViolation {
             CheckViolation::ClaimOwnerUnreachable { .. } => ViolationKind::ClaimOwnerUnreachable,
             CheckViolation::ClaimUnreadable { .. } => ViolationKind::ClaimUnreadable,
             CheckViolation::ClaimUnopenable { .. } => ViolationKind::ClaimUnopenable,
-            CheckViolation::ClaimFormatUnknown { .. } => ViolationKind::ClaimFormatUnknown,
             CheckViolation::OrphanedSavepoint { .. } => ViolationKind::OrphanedSavepoint,
             CheckViolation::UnrecognizedSavepointRef { .. } => {
                 ViolationKind::UnrecognizedSavepointRef
@@ -977,7 +965,6 @@ pub enum ViolationKind {
     ClaimOwnerUnreachable,
     ClaimUnreadable,
     ClaimUnopenable,
-    ClaimFormatUnknown,
     OrphanedSavepoint,
     UnrecognizedSavepointRef,
     ConfusableSiblings,
@@ -989,7 +976,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 45] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1027,7 +1014,6 @@ impl ViolationKind {
         Self::ClaimOwnerUnreachable,
         Self::ClaimUnreadable,
         Self::ClaimUnopenable,
-        Self::ClaimFormatUnknown,
         Self::OrphanedSavepoint,
         Self::UnrecognizedSavepointRef,
         Self::ConfusableSiblings,
@@ -2284,12 +2270,6 @@ pub enum ViolationOutput {
         /// Rendered read error.
         error: String,
     },
-    ClaimFormatUnknown {
-        /// Absolute path to the claim or takeover guard.
-        file: WirePath,
-        /// The `format` marker it carries, as written.
-        marker: String,
-    },
     OrphanedSavepoint {
         path: String,
         absolute_path: WirePath,
@@ -2771,10 +2751,6 @@ impl ViolationOutput {
             CheckViolation::ClaimUnopenable { file, error } => Self::ClaimUnopenable {
                 file: WirePath::of(&file),
                 error,
-            },
-            CheckViolation::ClaimFormatUnknown { file, marker } => Self::ClaimFormatUnknown {
-                file: WirePath::of(&file),
-                marker,
             },
             CheckViolation::OrphanedSavepoint {
                 workweave,
@@ -5847,14 +5823,6 @@ pub fn scan_state_hygiene(
                         }),
                 );
                 violations.extend(
-                    crate::landing_claim::other_format_claims(vcs, &repo.abs)
-                        .into_iter()
-                        .map(|claim| CheckViolation::ClaimFormatUnknown {
-                            file: claim.file,
-                            marker: claim.marker,
-                        }),
-                );
-                violations.extend(
                     crate::landing_claim::unopenable_claims(vcs, &repo.abs)
                         .into_iter()
                         .map(|claim| CheckViolation::ClaimUnopenable {
@@ -7163,15 +7131,6 @@ impl CheckViolation {
                  release would lose its claim.",
                 file.display(),
                 unreadable_claim_text(&seen)
-            ),
-            CheckViolation::ClaimFormatUnknown { file, marker } => format!(
-                "{}: claim-format-unknown — a different rwv version wrote it (its format is \
-                 {marker}; this rwv writes {}), so whether its landing stands cannot be told, \
-                 and this rwv releases nothing it did not write. No landing takes it over. End \
-                 that landing with the rwv version that started it, by its `--continue` or \
-                 `rwv abort`.",
-                file.display(),
-                crate::landing_claim::CLAIM_FORMAT
             ),
             CheckViolation::ClaimUnopenable { file, error } => format!(
                 "{}: claim-unopenable — it cannot be read ({error}), so whose it is cannot be \

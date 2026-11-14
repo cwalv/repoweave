@@ -928,9 +928,8 @@ workspace is not here to read is refused as
 one that holds what this rwv does not read as
 [`claim-unreadable`](doctor-findings.md#claim-unreadable), and one it cannot
 read at all as [`claim-unopenable`](doctor-findings.md#claim-unopenable). A
-claim whose `format` marker names a format this rwv does not write is refused
-as [`claim-format-unknown`](doctor-findings.md#claim-format-unknown), which no
-flag releases.
+claim whose `format` marker names a format this rwv does not write is one it
+does not read, refused as `claim-unreadable`.
 
 ### `surfacing-path-occupied`
 

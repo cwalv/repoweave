@@ -109,9 +109,6 @@ pub enum RefusalKind {
     ClaimUnreadable,
     /// A landing claim, or a takeover guard beside one, cannot be read at all.
     ClaimUnopenable,
-    /// A landing claim, or a takeover guard beside one, carries a format
-    /// marker this rwv does not write: a different rwv version's.
-    ClaimFormatUnknown,
     /// The filesystem makes neither a hard link nor a no-replace rename, so
     /// rwv's records and claims cannot be published on it exclusively.
     FilesystemWithoutExclusivePublish,

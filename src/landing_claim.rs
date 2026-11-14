@@ -66,14 +66,6 @@ struct Holder {
     owner: CanonicalPath,
 }
 
-/// What the bytes of a claim file or takeover guard are.
-enum Read {
-    Holder(Holder),
-    /// A `format` marker other than this rwv writes: a different rwv version's.
-    OtherFormat(String),
-    Unreadable,
-}
-
 impl Holder {
     fn new(op: OpId, owner: CanonicalPath) -> Self {
         Self {
@@ -87,26 +79,10 @@ impl Holder {
         serde_json::to_vec(self).context("failed to serialize a landing claim")
     }
 
-    fn read(bytes: &[u8]) -> Read {
-        if let Ok(holder) = serde_json::from_slice(bytes) {
-            return Read::Holder(holder);
-        }
-        match serde_json::from_slice::<serde_json::Value>(bytes)
-            .ok()
-            .and_then(|value| value.get("format").cloned())
-        {
-            Some(marker) if marker != CLAIM_FORMAT => {
-                Read::OtherFormat(marker.to_string().chars().take(40).collect())
-            }
-            _ => Read::Unreadable,
-        }
-    }
-
+    /// The holder `bytes` name, or none where they are not a claim this rwv
+    /// writes: corrupt, or another release's, whatever format it marks.
     fn parse(bytes: &[u8]) -> Option<Self> {
-        match Self::read(bytes) {
-            Read::Holder(holder) => Some(holder),
-            Read::OtherFormat(_) | Read::Unreadable => None,
-        }
+        serde_json::from_slice(bytes).ok()
     }
 }
 
@@ -184,12 +160,6 @@ enum Standing {
     Unreachable(Holder),
     /// The file names no op this rwv reads.
     Unread(String),
-    /// The file's `format` marker names a format this rwv does not write: a
-    /// different rwv version's live claim, never released from here.
-    OtherFormat {
-        file: std::path::PathBuf,
-        marker: String,
-    },
     /// The file, the claim or a takeover guard beside it, cannot be read at
     /// all: whose it is cannot be told, so nothing here releases it.
     Unopenable {
@@ -198,22 +168,16 @@ enum Standing {
     },
 }
 
-fn standing(file: &Path, seen: &[u8]) -> Standing {
-    match Holder::read(seen) {
-        Read::Unreadable => Standing::Unread(String::from_utf8_lossy(seen).trim().to_owned()),
-        Read::OtherFormat(marker) => Standing::OtherFormat {
-            file: file.to_owned(),
-            marker,
-        },
-        Read::Holder(holder) => {
-            match crate::op_state::records_op(holder.owner.as_path(), &holder.op) {
-                Some(false) if crate::workspace::is_workspace_root(holder.owner.as_path()) => {
-                    Standing::Dead(holder)
-                }
-                Some(false) => Standing::Unreachable(holder),
-                Some(true) | None => Standing::Live(holder),
+fn standing(seen: &[u8]) -> Standing {
+    match Holder::parse(seen) {
+        None => Standing::Unread(String::from_utf8_lossy(seen).trim().to_owned()),
+        Some(holder) => match crate::op_state::records_op(holder.owner.as_path(), &holder.op) {
+            Some(false) if crate::workspace::is_workspace_root(holder.owner.as_path()) => {
+                Standing::Dead(holder)
             }
-        }
+            Some(false) => Standing::Unreachable(holder),
+            Some(true) | None => Standing::Live(holder),
+        },
     }
 }
 
@@ -331,7 +295,7 @@ fn refuse_claimed_in(
                 && spelled.as_deref() == Some(&claim_dir_name(project, branch))
         });
         let judged = match read {
-            Ok(seen) => standing(&path.reported(), &seen),
+            Ok(seen) => standing(&seen),
             Err(e) => Standing::Unopenable {
                 file: path.reported(),
                 why: format!("{e:#}"),
@@ -357,12 +321,6 @@ fn refuse_claimed_in(
                      would lose it.",
                     release = release_command(project, branch)
                 ),
-            },
-            Standing::OtherFormat { file, marker } => match on_target {
-                None => continue,
-                Some((_, branch)) => {
-                    return Err(other_format_refusal(&format!("'{branch}'"), &file, &marker))
-                }
             },
             Standing::Unopenable { file, why } => match on_target {
                 None => continue,
@@ -454,10 +412,7 @@ pub fn unreachable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreachableClai
         .flatten()
         .filter_map(|entry| {
             let seen = StateFile::LandingClaim.in_dir(&entry.path()).read().ok()?;
-            match standing(
-                &StateFile::LandingClaim.in_dir(&entry.path()).reported(),
-                &seen,
-            ) {
+            match standing(&seen) {
                 Standing::Unreachable(holder) => Some(UnreachableClaim {
                     dir: entry.path(),
                     op: holder.op,
@@ -482,7 +437,7 @@ pub fn release_unreachable(claim: &UnreachableClaim, fixer: &Path) -> anyhow::Re
             return Err(anyhow::Error::new(e).context(format!("failed to read the claim {path}")))
         }
     };
-    match standing(&path.reported(), &seen) {
+    match standing(&seen) {
         Standing::Unreachable(holder) if holder.op == claim.op => {}
         _ => return Ok(false),
     }
@@ -506,32 +461,6 @@ pub fn unreadable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreadableClaim>
         Ok(dir) => unreadable_in(&dir),
         Err(_) => Vec::new(),
     }
-}
-
-/// A claim, or a takeover guard beside one, whose `format` marker names a
-/// format this rwv does not write, as `rwv doctor` reports it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OtherFormatClaim {
-    pub file: std::path::PathBuf,
-    pub marker: String,
-}
-
-/// Every claim and takeover guard in the store of `repo_dir` whose `format`
-/// marker names a format this rwv does not write.
-pub fn other_format_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<OtherFormatClaim> {
-    let Ok(dir) = claims_dir(vcs, repo_dir) else {
-        return Vec::new();
-    };
-    claim_files_in(&dir)
-        .into_iter()
-        .filter_map(|file| {
-            let seen = std::fs::read(&file).ok()?;
-            match Holder::read(&seen) {
-                Read::OtherFormat(marker) => Some(OtherFormatClaim { file, marker }),
-                Read::Holder(_) | Read::Unreadable => None,
-            }
-        })
-        .collect()
 }
 
 /// A claim, or a takeover guard beside one, that this rwv cannot read at
@@ -584,7 +513,8 @@ fn unreadable_in(dir: &Path) -> Vec<UnreadableClaim> {
         .into_iter()
         .filter_map(|file| {
             let seen = std::fs::read(&file).ok()?;
-            matches!(Holder::read(&seen), Read::Unreadable)
+            Holder::parse(&seen)
+                .is_none()
                 .then_some(UnreadableClaim { file, seen })
         })
         .collect()
@@ -653,7 +583,7 @@ fn take_within(
         }
         let (seen, judged) = match path.read() {
             Ok(seen) => {
-                let judged = standing(&path.reported(), &seen);
+                let judged = standing(&seen);
                 (seen, judged)
             }
             Err(e)
@@ -709,10 +639,7 @@ fn take_within(
                     .read()
                     .ok()
             }
-            Standing::Unreachable(_)
-            | Standing::Unread(_)
-            | Standing::OtherFormat { .. }
-            | Standing::Unopenable { .. } => None,
+            Standing::Unreachable(_) | Standing::Unread(_) | Standing::Unopenable { .. } => None,
         };
         let now = (seen, progress);
         if last_seen.as_ref() != Some(&now) {
@@ -754,9 +681,6 @@ fn take_within(
                      live landing of another release would lose it.",
                     release = release_command(project, target)
                 ),
-                Standing::OtherFormat { file, marker } => {
-                    return Err(other_format_refusal(&format!("'{target}'"), &file, &marker))
-                }
                 Standing::Unopenable { file, why } => {
                     return Err(unopenable_refusal(&format!("'{target}'"), &file, &why))
                 }
@@ -788,29 +712,11 @@ fn waiting_on(blocking: &Standing) -> String {
             "an operation of another rwv release holds it ({text}). The wait ends when that \
              operation ends."
         ),
-        Standing::OtherFormat { file, marker } => format!(
-            "{} was written by a different rwv version (format {marker}). The wait ends when \
-             that operation ends.",
-            file.display()
-        ),
         Standing::Unopenable { file, why } => format!(
             "{} cannot be read ({why}). The wait ends when it goes or becomes readable.",
             file.display()
         ),
     }
-}
-
-/// The refusal for a claim or guard a different rwv version wrote. No release
-/// is offered: a live landing of a newer release must not be released by an
-/// older one.
-fn other_format_refusal(moving: &str, file: &Path, marker: &str) -> anyhow::Error {
-    crate::refusal::refusal(
-        RefusalKind::ClaimFormatUnknown,
-        format!(
-            "a landing may hold {moving}, but {file} was written by a different rwv version              (its format is {marker}; this rwv writes {CLAIM_FORMAT}), so whether it stands              cannot be told and this rwv releases nothing it did not write. End that landing              with the rwv version that started it, resuming or aborting it, then rerun.",
-            file = file.display()
-        ),
-    )
 }
 
 /// The refusal for a claim or guard this rwv cannot read at all. No release is
@@ -879,7 +785,7 @@ fn remove_dead(
                 }))
             }
         };
-        match standing(&guard, &held) {
+        match standing(&held) {
             Standing::Live(holder) if holder.op == mine.op => break,
             Standing::Dead(holder) => {
                 if let Some(blocking) =
@@ -980,7 +886,7 @@ fn sweep_dead_takeovers(dir: &Path, mine: &Holder) {
         let Ok(held) = std::fs::read(&guard) else {
             continue;
         };
-        if let Standing::Dead(holder) = standing(&guard, &held) {
+        if let Standing::Dead(holder) = standing(&held) {
             let _ = remove_dead(Removable::Guard(&guard), &held, &holder.op, mine);
         }
     }
@@ -1580,23 +1486,18 @@ mod tests {
     fn a_claim_carries_the_marker_this_rwv_reads() {
         let bytes = holder(op(1), Path::new("/w")).bytes().unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("\"format\":1"));
-        assert!(matches!(Holder::read(&bytes), Read::Holder(_)));
-        assert!(matches!(
-            Holder::read(br#"{"op":"1","owner":"/w"}"#),
-            Read::Unreadable
-        ));
-        assert!(matches!(
-            Holder::read(br#"{"format":1,"op":"x"}"#),
-            Read::Unreadable
-        ));
-        assert!(matches!(
-            Holder::read(br#"{"format":2,"op":"1","owner":"/w","more":true}"#),
-            Read::OtherFormat(marker) if marker == "2"
-        ));
+        assert!(Holder::parse(&bytes).is_some());
+        for unread in [
+            &br#"{"op":"1","owner":"/w"}"#[..],
+            br#"{"format":1,"op":"x"}"#,
+            br#"{"format":2,"op":"1","owner":"/w","more":true}"#,
+        ] {
+            assert!(Holder::parse(unread).is_none());
+        }
     }
 
     #[test]
-    fn a_claim_of_another_format_is_refused_by_its_own_kind_and_never_offered_a_release() {
+    fn a_claim_of_another_format_is_unreadable_and_released_by_the_consented_fix() {
         let tmp = crate::tempdir().unwrap();
         let (dir, path) = claims_on(tmp.path(), "main");
         std::fs::create_dir_all(path.dir()).unwrap();
@@ -1610,59 +1511,22 @@ mod tests {
             take_within(path.clone(), &p(), "main", &op(2), &next, Duration::ZERO).unwrap_err();
         assert_eq!(
             crate::refusal::kind_of(&refused),
-            Some(RefusalKind::ClaimFormatUnknown)
+            Some(RefusalKind::ClaimUnreadable)
         );
         let text = format!("{refused:#}");
-        assert!(
-            text.contains(&path.reported().display().to_string()),
-            "{text}"
-        );
-        assert!(text.contains("different rwv version"), "{text}");
-        assert!(!text.contains("release-unreadable"), "{text}");
+        assert!(text.contains(&release_command(&p(), "main")), "{text}");
         assert_eq!(path.read().unwrap(), theirs);
-
-        assert!(unreadable_in(&dir).is_empty());
-        assert_eq!(
-            claim_files_in(&dir)
-                .into_iter()
-                .filter(|file| matches!(
-                    Holder::read(&std::fs::read(file).unwrap()),
-                    Read::OtherFormat(_)
-                ))
-                .count(),
-            1
-        );
 
         let main = [(RepoKey::Project, "main".to_owned())];
         let moved = refuse_claimed_in(&dir, &p(), &main, None).unwrap_err();
         assert_eq!(
             crate::refusal::kind_of(&moved),
-            Some(RefusalKind::ClaimFormatUnknown)
+            Some(RefusalKind::ClaimUnreadable)
         );
-    }
 
-    #[test]
-    fn a_takeover_guard_of_another_format_blocks_the_takeover_by_its_own_kind() {
-        let tmp = crate::tempdir().unwrap();
-        let (path, _, dead) = dead_claim(tmp.path());
-        let guard = path
-            .dir()
-            .join(format!("{LANDING_CLAIM_FILE}.takeover.{}", dead.op));
-        std::fs::write(&guard, br#"{"format":2,"op":"9","owner":"/w"}"#).unwrap();
-        let next = tmp.path().join("next");
-        std::fs::create_dir_all(next.join("projects")).unwrap();
-        record(&next, &op(3));
-
-        let refused =
-            take_within(path.clone(), &p(), "t", &op(3), &next, Duration::ZERO).unwrap_err();
-        assert_eq!(
-            crate::refusal::kind_of(&refused),
-            Some(RefusalKind::ClaimFormatUnknown)
-        );
-        let text = format!("{refused:#}");
-        assert!(text.contains(&guard.display().to_string()), "{text}");
-        assert!(!text.contains("release-unreadable"), "{text}");
-        assert!(unreadable_in(&tmp.path().join("claims")).is_empty());
+        let [reported] = unreadable_in(&dir).try_into().unwrap();
+        assert!(release_unreadable(&reported).unwrap());
+        take_within(path, &p(), "main", &op(2), &next, Duration::ZERO).unwrap();
     }
 
     #[test]

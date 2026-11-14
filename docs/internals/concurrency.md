@@ -252,10 +252,8 @@ again. The claim path is never emptied while it holds a live claim
 separate processes). No process id, host or clock is consulted, so a
 claim whose op is recorded is never taken from it. A claim and a takeover guard carry
 a `format` marker (`CLAIM_FORMAT`, written by `Holder`, read only as it); one
-that names another format is a different rwv version's, which may be live: a
-landing waits on it and refuses `claim-format-unknown`, `rwv doctor` reports it
-under that kind, and no flag releases it. A claim whose bytes this
-rwv does not read, or a takeover guard beside it that this rwv does not read,
+that names another format is a claim this rwv does not read. A claim whose
+bytes this rwv does not read, another release's included, or a takeover guard beside it that this rwv does not read,
 is never judged dead either: a landing waits on it and refuses
 `claim-unreadable`, and `rwv doctor` reports it and releases it only under
 `--fix --release-unreadable-claims`, or on one target only under

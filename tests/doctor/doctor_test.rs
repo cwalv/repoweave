@@ -1447,10 +1447,6 @@ mod doctor_json {
             file: String,
             content: String,
         },
-        ClaimFormatUnknown {
-            file: String,
-            marker: String,
-        },
         ClaimUnopenable {
             file: String,
             error: String,
@@ -2614,10 +2610,11 @@ fn a_release_on_one_target_leaves_every_other_unreadable_claim() {
     );
 }
 
-/// A claim a different rwv version wrote is reported under its own kind, and no
-/// flag releases it.
+/// A claim whose format this rwv does not write is a claim it does not read:
+/// reported as `claim-unreadable`, and released by the consent that releases
+/// those.
 #[test]
-fn a_claim_of_another_format_is_reported_and_never_released() {
+fn a_claim_of_another_format_is_unreadable_and_released_by_consent() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("github")).unwrap();
@@ -2647,20 +2644,16 @@ fn a_claim_of_another_format_is_reported_and_never_released() {
         )
     };
     let json = doctor(&["doctor", "--json"]);
-    assert!(json.contains("\"claim-format-unknown\""), "{json}");
-    assert!(!json.contains("\"claim-unreadable\""), "{json}");
+    assert!(json.contains("\"claim-unreadable\""), "{json}");
 
-    for flag in [
-        "--release-unreadable-claims",
-        "--release-unreadable-claims-on=main",
-    ] {
-        let released = doctor(&["doctor", "--fix", flag]);
-        assert!(claim.exists(), "{flag} releases nothing: {released}");
-        assert!(
-            released.contains("claim-format-unknown") && !released.contains("[fixed] core: claim"),
-            "{released}"
-        );
-    }
+    let reported = doctor(&["doctor", "--fix"]);
+    assert!(claim.exists(), "--fix alone releases nothing: {reported}");
+    let released = doctor(&["doctor", "--fix", "--release-unreadable-claims"]);
+    assert!(!claim.exists(), "{released}");
+    assert!(
+        released.contains("[fixed] core: claim-unreadable at"),
+        "{released}"
+    );
 }
 
 /// A landing claim rwv cannot read at all is reported as such, and no flag
