@@ -6835,6 +6835,10 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     let named = crate::repin::Naming::by_name("land", named_members);
     if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
+        op_state::journal_relocking(
+            &ctx.owner_workspace_dir,
+            vec![target.clone(), head.id().clone()],
+        )?;
         let merge = crate::repin::commit_merge_annotated(
             vcs,
             dir,
@@ -6844,6 +6848,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
             &named,
             rebased,
         )?;
+        crate::test_pause::point("relock-merge-committed");
         op_state::journal_tip(&ctx.owner_workspace_dir, RepoKey::Project, &merge)?;
         if ctx.handler.emit_text() {
             eprintln!(
@@ -6854,6 +6859,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         }
         return Ok(());
     }
+    op_state::journal_relocking(&ctx.owner_workspace_dir, vec![head.id().clone()])?;
     let committed = crate::lock::commit_lock_file_annotated(
         vcs,
         dir,
@@ -8839,6 +8845,14 @@ fn abort_op(
         op_state::OwnerReading::Whole(record) => record.own_steps(),
         op_state::OwnerReading::HeaderOnly { .. } => Default::default(),
     };
+    let relocking: Vec<CommitId> = match &reading {
+        op_state::OwnerReading::Whole(record) => record
+            .take_in
+            .as_ref()
+            .map(|take_in| take_in.relocking.clone())
+            .unwrap_or_default(),
+        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
+    };
     let carries: Vec<op_state::Carrying> = match &reading {
         op_state::OwnerReading::Whole(record) => record
             .take_in
@@ -8869,6 +8883,7 @@ fn abort_op(
             operates_in.as_ref(),
             &carries,
             &own_steps,
+            &relocking,
             &mut plan,
         );
 
@@ -8903,6 +8918,7 @@ fn abort_op(
                                 operates_in.as_ref(),
                                 &carries,
                                 &own_steps,
+                                &relocking,
                                 &mut plan,
                             );
                             other_ws_dir = Some(dir);
@@ -9716,6 +9732,7 @@ fn plan_abort_workspace(
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
     carries: &[op_state::Carrying],
     own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
+    relocking: &[CommitId],
     plan: &mut AbortPlan,
 ) {
     let empty_tips = std::collections::BTreeMap::new();
@@ -9810,6 +9827,10 @@ fn plan_abort_workspace(
             own_steps: match side {
                 AbortSide::Replay => own_steps.get(&repo_key).map_or(&[], Vec::as_slice),
                 AbortSide::LandTarget => &[],
+            },
+            relocking: match (side, &repo_key) {
+                (AbortSide::Replay, RepoKey::Project) => relocking,
+                _ => &[],
             },
         };
         plan_checkout(plan, at, &restore_key, &attribution);
@@ -9915,6 +9936,7 @@ fn plan_in_place(
                 started_from: None,
                 integrates: Integrates::No,
                 own_steps: &[],
+                relocking: &[],
             };
             plan_checkout(plan, at, &key, &attribution);
         }

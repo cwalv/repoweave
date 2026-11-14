@@ -23060,6 +23060,38 @@ pub fn a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry
     )
 }
 
+/// `verb` under `history`, killed at `point`, right after its relock
+/// commit and before it journaled that commit's tip: `rwv abort` reads the
+/// commit as the operation's own, puts everything back and keeps no backup.
+pub fn a_verb_killed_after_its_relock_commit_is_aborted(
+    verb: &'static str,
+    history: &'static str,
+    point: &'static str,
+) -> Scenario {
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::commit(&ww("w1"), Repo::Proj, "w1-proj"),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv_paused(&ww("w1"), &[verb], point, "relocking"),
+        Step::kill("relocking"),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputLacks("kept as backup")),
+        Step::rwv(&ww("w1"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+        Step::git(&ww("w1"), Repo::Proj, &["log", "-1", "--format=%s"])
+            .claim(Claim::OutputLine("w1-proj")),
+    ];
+    scenario("a verb killed after its relock commit, aborted", steps)
+}
+
 /// A sync or a landing whose relock commit was made and killed before its
 /// tip was journaled, then continued into a stop on the carry of `w2` in
 /// `app`: the printed `rwv abort` puts back what the verb moved, the relock

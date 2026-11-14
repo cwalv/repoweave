@@ -936,6 +936,7 @@ every_scenario!(
     a_sync_killed_after_journaling_a_composed_carry_continues,
     a_sync_resumed_after_its_carry_moved_reports_the_carry,
     a_rebase_that_stops_without_a_conflict_is_not_reported_as_one,
+    a_verb_killed_after_its_relock_commit_is_aborted("land", "linear", "relock-committed"),
     a_verb_killed_after_its_relock_commit_then_stopped("land", "relock-committed"),
     a_verb_killed_after_its_relock_commit_then_stopped("sync", "sync-relock-committed"),
     a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues,
@@ -3907,6 +3908,23 @@ fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
 fn update_remote_abort_over_a_ref_moved_since_keeps_the_new_tip() {
     runner::run(scenarios::update_remote_abort_over_a_ref_moved_since())
         .assert_fully_decided_green();
+}
+
+/// A sync or a landing killed between its relock commit and the journal of
+/// that commit's tip is aborted with no backup of rwv's own commit, for the
+/// linear relock and a landing's merge.
+#[test]
+fn a_verb_killed_after_its_relock_commit_is_aborted() {
+    for (verb, history, point) in [
+        ("land", "linear", "relock-committed"),
+        ("sync", "linear", "sync-relock-committed"),
+        ("land", "merge", "relock-merge-committed"),
+    ] {
+        runner::run(scenarios::a_verb_killed_after_its_relock_commit_is_aborted(
+            verb, history, point,
+        ))
+        .assert_fully_decided_green();
+    }
 }
 
 /// A commit made at a stop in a repo the `--continue` then takes in is kept

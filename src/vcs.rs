@@ -1193,6 +1193,9 @@ pub struct Attribution<'a> {
     pub converged: Option<&'a CommitId>,
     /// The tip a carry stopped here began from.
     pub started_from: Option<&'a CommitId>,
+    /// The parents the op journaled for a relock commit it was about to
+    /// make here.
+    pub relocking: &'a [CommitId],
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
     pub own_steps: &'a [OwnStep],

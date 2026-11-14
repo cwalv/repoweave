@@ -6027,6 +6027,30 @@ impl GitVcs {
         Ok((discarded || tracked_dirt).then_some(forced))
     }
 
+    /// Whether `tip` is the relock commit the op journaled `parents` for: a
+    /// commit on exactly those, changing only the lock over its one parent,
+    /// or merging the two.
+    fn relock_of(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        parents: &[CommitId],
+    ) -> Result<bool, VcsError> {
+        if parents.is_empty() || self.parents(repo, tip)? != parents {
+            return Ok(false);
+        }
+        Ok(match parents {
+            [parent] => {
+                self.changed_paths_between(
+                    repo,
+                    &ResolvedRevisionId::from(parent.clone()),
+                    &ResolvedRevisionId::from(tip.clone()),
+                )? == [crate::manifest::LockFile::FILE_NAME]
+            }
+            _ => true,
+        })
+    }
+
     /// Whether `savepoint` reaches `tip`, so moving a ref from `tip` back to
     /// `savepoint` leaves no commit behind.
     fn reached_from(
@@ -6055,7 +6079,13 @@ impl GitVcs {
         key: &SavepointKey,
         held: CheckoutHolds,
     ) -> Result<CheckoutRestorePlan, VcsError> {
-        let attributable = |tip: &CommitId| tip == savepoint || attribution.wrote(tip);
+        let attributable = |tip: &CommitId| {
+            tip == savepoint
+                || attribution.wrote(tip)
+                || self
+                    .relock_of(repo, tip, attribution.relocking)
+                    .unwrap_or(false)
+        };
         let keeps = |tip: &CommitId| -> Result<bool, VcsError> {
             Ok(!attributable(tip) && !self.reached_from(repo, tip, savepoint)?)
         };
@@ -6172,7 +6202,7 @@ impl GitVcs {
         }
         let why = if attribution.intent == Some(&held.head) {
             RestoredFrom::Intent
-        } else if attribution.wrote(&held.head) {
+        } else if attributable(&held.head) {
             RestoredFrom::Converged
         } else if keeps(&held.head)? {
             RestoredFrom::Kept
