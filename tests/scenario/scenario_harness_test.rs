@@ -1349,9 +1349,12 @@ every_scenario!(
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::CherryPickMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::UpdateRemoteMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncMemberUnrecorded),
-    pull_reset_killed("op-savepoint-taken", true),
-    pull_reset_killed("reset-to-upstream", true),
-    pull_reset_killed("reset-to-upstream", false),
+    take_in_killed(
+        scenarios::FlaggedTakeIn::PullReset,
+        "reset-to-upstream",
+        true
+    ),
+    landing_killed(scenarios::KilledLanding::Carrying, "landed", false),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncLinear),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncMerge),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandLinear),
@@ -8442,14 +8445,40 @@ fn manifest_stop_inline_table() {
 }
 
 holding_rwv! {
-    /// `pull --reset-to-upstream` killed before and after its reset: the
-    /// continue finishes and clears the record, and abort puts the commit
-    /// back.
-    fn pull_reset_killed_then_continued_or_aborted() {
-        for point in ["op-savepoint-taken", "reset-to-upstream"] {
-            for continued in [true, false] {
-                runner::run(scenarios::pull_reset_killed(point, continued))
-                    .assert_fully_decided_green();
+    /// Pull and `update --remote`, under each flag that records an operation,
+    /// killed at each pause point their run reaches: `--continue` finishes and
+    /// ends the operation, and `rwv abort` puts the local commit back.
+    fn a_flagged_take_in_killed_is_continued_or_aborted() {
+        use scenarios::FlaggedTakeIn as F;
+        for (which, points) in [
+            (F::PullMerge, &["op-savepoint-taken"][..]),
+            (F::PullReset, &["op-savepoint-taken", "reset-to-upstream"][..]),
+            (F::UpdateRemoteMerge, &["op-savepoint-taken"][..]),
+            (F::UpdateRemoteReset, &["op-savepoint-taken", "reset-to-upstream"][..]),
+        ] {
+            for point in points {
+                for continued in [true, false] {
+                    runner::run(scenarios::take_in_killed(which, point, continued))
+                        .assert_fully_decided_green();
+                }
+            }
+        }
+    }
+
+    /// An in-place landing and a carrying landing, killed at each pause
+    /// point past the start their run reaches: `--continue` lands and
+    /// `rwv abort` puts every branch back.
+    fn a_landing_killed_is_continued_or_aborted() {
+        use scenarios::KilledLanding as L;
+        for (which, points) in [
+            (L::InPlace, &["leased-in-place", "advance-target-move", "landed"][..]),
+            (L::Carrying, &["composed", "carry-composed", "carry-moved", "landed"][..]),
+        ] {
+            for point in points {
+                for continued in [true, false] {
+                    runner::run(scenarios::landing_killed(which, point, continued))
+                        .assert_fully_decided_green();
+                }
             }
         }
     }

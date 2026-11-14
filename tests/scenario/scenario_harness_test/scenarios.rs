@@ -13580,52 +13580,185 @@ pub fn update_remote_reset_killed_after_the_move(detached: bool) -> Scenario {
     scenario("update --remote reset killed after the move", steps)
 }
 
-/// `pull --reset-to-upstream projects/proj` killed at `point`, machine B's
-/// project commit diverged from its upstream's: `pull --continue` finishes
-/// the reset and ends the operation, and abort puts the commit back.
-pub fn pull_reset_killed(point: &'static str, continued: bool) -> Scenario {
+/// Which take-in a flag runs under the op record [`take_in_killed`] kills.
+#[derive(Debug, Clone, Copy)]
+pub enum FlaggedTakeIn {
+    PullMerge,
+    PullReset,
+    UpdateRemoteMerge,
+    UpdateRemoteReset,
+}
+
+/// A branch diverged from its upstream by one commit each side, taken in
+/// by `which` and killed at `point`: `--continue` finishes the take-in and
+/// ends the operation; `rwv abort` puts the local commit back alone.
+pub fn take_in_killed(which: FlaggedTakeIn, point: &'static str, continued: bool) -> Scenario {
+    use FlaggedTakeIn as F;
+    let (at, other, repo, args, resume): (Place, Place, Repo, &[&str], &[&str]) = match which {
+        F::PullMerge => (
+            b(),
+            a(),
+            Repo::Proj,
+            &["pull", "--merge-upstream"],
+            &["pull", "--continue"],
+        ),
+        F::PullReset => (
+            b(),
+            a(),
+            Repo::Proj,
+            &["pull", "--reset-to-upstream", "projects/proj"],
+            &["pull", "--continue"],
+        ),
+        F::UpdateRemoteMerge => (
+            a(),
+            b(),
+            Repo::Lib,
+            &["update", "--remote", "--merge-upstream"],
+            &["update", "--remote", "--continue"],
+        ),
+        F::UpdateRemoteReset => (
+            a(),
+            b(),
+            Repo::Lib,
+            &["update", "--remote", "--reset-to-upstream", LIB],
+            &["update", "--remote", "--continue"],
+        ),
+    };
+    let resets = matches!(which, F::PullReset | F::UpdateRemoteReset);
     let mut steps = vec![
         Step::new_machine(Machine::B),
-        Step::commit(&a(), Repo::Proj, "alpha-proj"),
-        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
-            .pushes(Remote::origin(Repo::Proj), "main"),
-        Step::commit(&b(), Repo::Proj, "beta-proj"),
-        Step::rwv_paused(
-            &b(),
-            &["pull", "--reset-to-upstream", "projects/proj"],
-            point,
-            "pull",
-        )
-        .may_rewrite(&[Repo::Proj]),
-        Step::kill("pull"),
+        Step::commit(&other, repo, "upstream-side"),
+        Step::git(&other, repo, &["push", "origin", "main"]).pushes(Remote::origin(repo), "main"),
+        Step::commit(&at, repo, "local-side"),
+        Step::rwv_paused(&at, args, point, "taking")
+            .may_rewrite(&[repo])
+            .may_strand(&[repo]),
+        Step::kill("taking"),
     ];
+    let log = || Step::git(&at, repo, &["log", "--format=%s", "main"]);
     if continued {
         steps.extend([
-            Step::rwv(&b(), &["pull", "--continue"])
+            Step::rwv(&at, resume)
                 .expect(Exit::Succeeds)
-                .may_rewrite(&[Repo::Proj]),
-            Step::git(&b(), Repo::Proj, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputContains("alpha-proj"))
-                .claim(Claim::OutputLacks("beta-proj")),
-            Step::rwv(&b(), &["status"])
+                .may_rewrite(&[repo])
+                .may_strand(&[repo]),
+            if resets {
+                log()
+                    .claim(Claim::OutputContains("upstream-side"))
+                    .claim(Claim::OutputLacks("local-side"))
+            } else {
+                log()
+                    .claim(Claim::OutputContains("upstream-side"))
+                    .claim(Claim::OutputContains("local-side"))
+            },
+            Step::rwv(&at, &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("in progress")),
         ]);
     } else {
         steps.extend([
-            Step::rwv(&b(), &["abort"])
+            Step::rwv(&at, &["abort"])
                 .expect(Exit::Succeeds)
-                .may_restore(&[Repo::Proj]),
-            Step::git(&b(), Repo::Proj, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputContains("beta-proj"))
-                .claim(Claim::OutputLacks("alpha-proj")),
+                .may_restore(&[repo])
+                .may_rewind(&[repo]),
+            log()
+                .claim(Claim::OutputContains("local-side"))
+                .claim(Claim::OutputLacks("upstream-side")),
         ]);
     }
-    steps.push(Step::rwv(&b(), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)));
-    scenario(
-        "pull --reset-to-upstream killed, then continued or aborted",
-        steps,
-    )
+    steps.extend([
+        Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        Step::rwv(&at, resume).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    scenario("a flagged take-in killed, then continued or aborted", steps)
+}
+
+/// Which landing [`landing_killed`] kills.
+#[derive(Debug, Clone, Copy)]
+pub enum KilledLanding {
+    /// The primary detached on the project: the landing moves `main` as a
+    /// ref and fast-forwards the primary's member checkouts in place.
+    InPlace,
+    /// `w1` carrying its dependent `w2`, `main` having moved.
+    Carrying,
+}
+
+/// A landing killed at `point`: `land --continue` lands it and leaves no
+/// lease behind, so a landing after it runs; `rwv abort` puts every branch
+/// back, the dependent's included.
+pub fn landing_killed(which: KilledLanding, point: &'static str, continued: bool) -> Scenario {
+    let (mut steps, source, args): (Vec<Step>, Place, &[&str]) = match which {
+        KilledLanding::InPlace => (
+            vec![
+                create("w"),
+                Step::git(&a(), Repo::Proj, &["switch", "-q", "--detach"]),
+                Step::commit(&ww("w"), Repo::App, "w1-app"),
+            ],
+            ww("w"),
+            &["land", "--history", "linear"],
+        ),
+        KilledLanding::Carrying => {
+            let mut steps = stack_on_a_seat();
+            steps.extend(main_moves_app("main-app"));
+            (steps, ww("w1"), &["land"])
+        }
+    };
+    let touched = [Repo::App, Repo::Proj];
+    steps.extend([
+        Step::rwv_paused(&source, args, point, "landing")
+            .may_rewind(&touched)
+            .may_strand(&touched),
+        Step::kill("landing"),
+    ]);
+    if continued {
+        steps.extend([
+            Step::rwv(&source, &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&touched)
+                .may_strand(&touched),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputContains("w1-app")),
+        ]);
+        if matches!(which, KilledLanding::Carrying) {
+            steps.push(
+                Step::git(&source, Repo::App, &["log", "--format=%s", "w2"])
+                    .claim(Claim::OutputContains("main-app"))
+                    .claim(Claim::OutputContains("w2-app")),
+            );
+        }
+    } else {
+        steps.extend([
+            Step::rwv(&source, &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&touched)
+                .may_restore(&touched)
+                .may_strand(&touched),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .claim(Claim::OutputLacks("w1-app")),
+        ]);
+        if matches!(which, KilledLanding::Carrying) {
+            steps.push(
+                Step::git(&source, Repo::App, &["log", "--format=%s", "w2"])
+                    .claim(Claim::OutputLacks("main-app"))
+                    .claim(Claim::OutputContains("w2-app")),
+            );
+        }
+    }
+    steps.extend([
+        Step::rwv(&source, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+    ]);
+    if matches!(which, KilledLanding::InPlace) {
+        steps.extend([
+            Step::commit(&ww("w"), Repo::App, "w-app-after"),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::Succeeds)
+                .may_strand(&touched),
+        ]);
+    }
+    scenario("a landing killed, then continued or aborted", steps)
 }
 
 /// `update --remote --merge-upstream --reset-to-upstream lib` resets
