@@ -941,7 +941,7 @@ every_scenario!(
     a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues,
     a_sync_killed_between_recording_a_carry_remap_and_moving_to_it_continues,
     a_landing_whose_carry_stopped_in_the_project_continues,
-    abort_refuses_a_tip_amended_during_a_stop,
+    abort_keeps_a_tip_amended_during_a_stop,
     sync_continue_refuses_a_tip_amended_during_a_stop,
     vcs_continue_mid_rebase(
         scenarios::MidRebase::Member,
@@ -6672,8 +6672,8 @@ fn a_stopped_carry_under_update_refs_moves_no_dependent_and_aborts_clean() {
 }
 
 #[test]
-fn abort_refuses_a_tip_amended_during_a_stop_and_keeps_it() {
-    runner::run(scenarios::abort_refuses_a_tip_amended_during_a_stop())
+fn abort_keeps_a_tip_amended_during_a_stop_as_a_backup() {
+    runner::run(scenarios::abort_keeps_a_tip_amended_during_a_stop())
         .assert_fully_decided_green();
 }
 

@@ -18379,7 +18379,7 @@ fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
     ]
 }
 
-/// `abort-refuses-a-tip-amended-during-a-stop`'s stop, continued instead:
+/// [`abort_keeps_a_tip_amended_during_a_stop`]'s stop, continued instead:
 /// the re-map refuses naming the tip it read, and each choice it prints, run
 /// as printed, ends the state.
 pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
@@ -18407,23 +18407,24 @@ pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
         Step::git(&ww("w"), Repo::Lib, &["add", "README"]),
         Step::rwv(&ww("w"), &["sync", "--continue"])
             .expect(Exit::refuses_kind(RefusalKind::ReplayUnrecorded))
+            .may_rewind(&[Repo::App, Repo::Lib]),
+        Step::rwv_printed_exactly(&ww("w"), "rwv abort")
+            .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App, Repo::Lib])
-            .claim(Claim::OutputLacks("rwv abort\n")),
-        Step::rwv_printed_exactly(
-            &ww("w"),
-            "rwv abort --abandon-foreign-tip local/remotes/app",
-        )
-        .expect(Exit::Succeeds)
-        .may_rewind(&[Repo::App, Repo::Lib])
-        .may_restore(&[Repo::App, Repo::Proj]),
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+            )),
+        kept_backup_shown(&ww("w"), "remotes/app log ", "README"),
     ];
     scenario("sync continue refuses a tip amended during a stop", steps)
 }
 
 /// A sync rebases `app` and stops on a conflict in `lib`; while stopped, the
 /// operator amends `app`'s rebased tip, which keeps its author date. Abort
-/// refuses that tip as foreign and leaves the amended commit where it is.
-pub fn abort_refuses_a_tip_amended_during_a_stop() -> Scenario {
+/// puts `app` back, keeping the amended tip as a backup whose printed show
+/// line returns it.
+pub fn abort_keeps_a_tip_amended_during_a_stop() -> Scenario {
     let steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
         create("w"),
@@ -18444,20 +18445,19 @@ pub fn abort_refuses_a_tip_amended_during_a_stop() -> Scenario {
             Repo::App,
             &["commit", "-qa", "--amend", "--no-edit"],
         ),
-        abort_refused_whole(
-            Step::rwv(&ww("w"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::ForeignTip)),
-            false,
-            &[ww("w")],
-        ),
-        Step::git(
-            &ww("w"),
-            Repo::App,
-            &["grep", "-q", "app amended", "HEAD", "--", "README"],
-        )
-        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Lib])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+            )),
+        Step::rwv_printed_holding(&ww("w"), "git -C ", "remotes/app log ")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("w-app")),
     ];
     scenario(
-        "abort refuses a tip the operator amended during a stop",
+        "abort keeps a tip the operator amended during a stop",
         steps,
     )
 }
