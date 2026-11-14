@@ -3619,10 +3619,10 @@ pub fn both_sides_move_app_conflictingly() -> Vec<Step> {
 
 /// `pull --merge-upstream` stopped on its conflict in `app`, its merge
 /// having also brought in `a-clean.txt` cleanly; the operator edits that
-/// file and does not stage it, so the VCS's own abort of the merge refuses.
-/// `rwv abort` refuses with the VCS's message and the choices that clear
-/// it; the printed `--abandon-foreign-tip` keeps the edit as a backup and
-/// puts `app` back.
+/// file and does not stage it, so the VCS's own abort of the merge would
+/// refuse. `rwv abort` keeps the working copy as a backup, clears the edit
+/// and cancels the merge in one run, and the printed show line returns the
+/// edit.
 pub fn pull_abort_over_a_cancel_the_vcs_refuses() -> Scenario {
     scenario(
         "pull abort over a cancel the VCS refuses",
@@ -3650,34 +3650,17 @@ pub fn pull_abort_over_a_cancel_the_vcs_refuses() -> Scenario {
                 "edited mid-merge",
             ),
             Step::rwv(&b(), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputContains("could not be canceled"))
-                .claim(Claim::OutputLacks("abort stopped there"))
-                .claim(Claim::OutputContains("not uptodate"))
-                .claim(Claim::OutputContains("rwv abort --abandon-foreign-tip"))
-                .claim(Claim::LocalStateUnchanged(b())),
-            Step::git(
-                &b(),
-                Repo::App,
-                &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-            ),
-            Step::rwv_printed(&b(), "rwv abort --abandon-foreign-tip")
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
-                    "its uncommitted edits are kept as backup",
+                    "local/remotes/app: its uncommitted edits are kept as backup",
                 )),
+            kept_backup_shown(&b(), "remotes/app diff ", "edited mid-merge"),
             Step::git(
                 &b(),
                 Repo::App,
                 &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
             )
             .expect(Exit::Code(1)),
-            Step::git(
-                &b(),
-                Repo::App,
-                &["log", "--all", "--format=kept %s", "-Sedited mid-merge"],
-            )
-            .claim(Claim::OutputContains("kept ")),
             Step::rwv(&b(), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
         ],
     )
@@ -18669,9 +18652,9 @@ pub fn landing_merge_continued_writes_one_project_merge() -> Scenario {
 /// A landing stopped in its own merge in `app`, the merge having also
 /// brought in `main-clean.txt` cleanly; the operator edits that file and
 /// does not stage it, so the VCS's own cancel of the merge would refuse.
-/// `rwv abort` sees that before anything moves and refuses whole; the
-/// printed `--abandon-foreign-tip` keeps the edit as a backup and ends the
-/// landing.
+/// `rwv abort` sees that before anything moves, keeps the working copy as a
+/// backup, clears it and cancels the merge, ending the landing; the printed
+/// show line returns the edit.
 pub fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() -> Scenario {
     let mut steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
@@ -18694,17 +18677,12 @@ pub fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() -> Scenario {
             "edited mid-merge",
         ),
         Step::rwv(&ww("w"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputContains("could not be canceled"))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::LocalStateUnchanged(a()))
-            .claim(Claim::LocalStateUnchanged(ww("w"))),
-        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
-                "its uncommitted edits are kept as backup",
+                "local/remotes/app: its uncommitted edits are kept as backup",
             ))
             .claim(Claim::LocalStateUnchanged(a())),
+        kept_backup_shown(&ww("w"), "remotes/app diff ", "edited mid-merge"),
         Step::git(
             &ww("w"),
             Repo::App,
@@ -23656,9 +23634,8 @@ pub fn abort_a_carried_stack_killed_after_putting_it_back() -> Scenario {
 
 /// `stack-carry-conflict` stopped on `w2` in `app`, and the operator leaves
 /// the replay with `git rebase --quit`, its conflicted edits in the
-/// worktree: `rwv abort` refuses before anything moves, since no checkout
-/// switches over an unresolved index, and naming `app` on
-/// `--abandon-foreign-tip` gives the edits up, kept as a backup.
+/// worktree: `rwv abort` keeps them as a backup before it switches the
+/// checkout back, and the printed show line returns them.
 pub fn abort_over_a_carry_left_by_a_quit() -> Scenario {
     let steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
@@ -23676,16 +23653,12 @@ pub fn abort_over_a_carry_left_by_a_quit() -> Scenario {
         Step::rwv(&ww("w1"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
         Step::git(&ww("w1"), Repo::App, &["rebase", "--quit"]),
         Step::rwv(&ww("w1"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputContains("nothing is restored"))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::LocalStateUnchanged(ww("w1"))),
-        Step::rwv_printed_exactly(
-            &ww("w1"),
-            "rwv abort --abandon-foreign-tip local/remotes/app",
-        )
-        .expect(Exit::Succeeds)
-        .may_rewind(&[Repo::App]),
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: its uncommitted edits are kept as backup",
+            )),
+        kept_backup_shown(&ww("w1"), "remotes/app diff ", "README"),
         Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLine("w2-app")),
@@ -23776,9 +23749,9 @@ pub fn a_dependent_moved_as_its_carry_moves(then: MovedAsCarried) -> Scenario {
 /// `stack-carry-conflict` stopped on `w2` in `app`, and the operator leaves
 /// the replay with `git rebase --quit`: the checkout is detached on `main`'s
 /// work with no record of what became of `w2`'s commit, so `--continue`
-/// refuses `replay-unrecorded` rather than moving `w2` there, and an abort
-/// that gives up the quit's conflicted edits, kept as a backup, puts
-/// everything back.
+/// refuses `replay-unrecorded` rather than moving `w2` there, and `rwv
+/// abort` keeps the quit's conflicted edits as a backup and puts everything
+/// back.
 pub fn a_carry_left_by_a_quit_is_unrecorded() -> Scenario {
     let steps = vec![
         Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
@@ -23798,12 +23771,13 @@ pub fn a_carry_left_by_a_quit_is_unrecorded() -> Scenario {
         Step::rwv(&ww("w1"), &["sync", "--continue"])
             .expect(Exit::refuses_kind(RefusalKind::ReplayUnrecorded))
             .claim(Claim::LocalStateUnchanged(ww("w1"))),
-        Step::rwv(
-            &ww("w1"),
-            &["abort", "--abandon-foreign-tip", "local/remotes/app"],
-        )
-        .expect(Exit::Succeeds)
-        .may_rewind(&[Repo::App]),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: its uncommitted edits are kept as backup",
+            )),
+        kept_backup_shown(&ww("w1"), "remotes/app diff ", "README"),
         Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLine("w2-app")),
@@ -26146,8 +26120,8 @@ fn the_fix_is_in_the_tip(taking_in: TakingIn) -> Vec<Step> {
 /// at the re-map's record, before the branch moves to the copy of the
 /// replayed tip that holds the fix, or after it moved, the tip then holding
 /// the fix. Run again, the `--continue` finishes with the fix in the tip;
-/// `rwv abort` puts the workweave back with no `--abandon-foreign-tip`,
-/// keeping the fix as a backup: still uncommitted before the move, and in
+/// `rwv abort` puts the workweave back, keeping the fix as a backup whose
+/// printed show line returns it: still uncommitted before the move, and in
 /// the replayed tip after a sync's move, until its relock.
 pub fn a_carried_fix_killed_part_way(
     taking_in: TakingIn,
@@ -26188,13 +26162,22 @@ pub fn a_carried_fix_killed_part_way(
                         "uncommitted edits are kept as backup",
                     )),
                     "remap-moved" => abort.claim(Claim::OutputContains(
-                        "the replayed tip with your resolved rwv.toml is kept as backup",
+                        "projects/proj: its tip, holding commits this operation did not make, is kept as backup",
                     )),
                     _ => abort,
                 },
                 &ww("w"),
                 &[Repo::Lib],
             ));
+            match point {
+                "remap-recorded" => {
+                    steps.push(kept_backup_shown(&ww("w"), "projects/proj diff ", "rwv.toml"))
+                }
+                "remap-moved" => {
+                    steps.push(kept_backup_shown(&ww("w"), "projects/proj log ", "rwv.toml"))
+                }
+                _ => {}
+            }
         }
     }
     scenario("a carried fix killed part way", steps)

@@ -6349,7 +6349,7 @@ fn an_abort_of_a_carried_stack_whose_dependent_is_gone_refuses_whole() {
 }
 
 #[test]
-fn an_abort_over_a_carry_left_by_a_quit_refuses_before_anything_moves() {
+fn an_abort_over_a_carry_left_by_a_quit_keeps_its_edits() {
     runner::run(scenarios::abort_over_a_carry_left_by_a_quit()).assert_fully_decided_green();
 }
 
