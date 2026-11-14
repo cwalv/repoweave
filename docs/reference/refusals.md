@@ -384,7 +384,7 @@ The others follow.
 | `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | `rwv land --allow-member-change <changed>` | the workspace with that feature | only named entries change; the lineage rule still judges |
 | `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | the stopped operation's `--continue --allow-member-change <m>` | the workspace with that feature | only named entries change; the lineage rule still judges |
 | `member changes` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
-| `moved mid-operation` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
+| `moved mid-operation` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` with the flags the stopped landing was started with | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
 | `moved mid-operation` | end the landing, putting back the source and leaving the target as it stands, the landing's tips in it included | `rwv abort --leave-target` | here | each tip the landing wrote in the target is kept as a backup first where no branch reaches it |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
@@ -629,10 +629,14 @@ so the previous state is intact.
 **Condition.** A checkout being dropped from the lock, or deleted by `rwv
 member remove --delete`, carries work no other clone reaches. In the primary
 weave, where the clone is the repo's only store, that is anything the store
-holds whose commits no remote-tracking branch reaches, each named: a branch, a
-tag, a [backup](../explanation/destructive-operations.md), edits the VCS set
-aside, or a checked-out commit on no branch. In a workweave, it is a worktree
-tip the canonical clone does not contain.
+holds whose commits no remote-tracking branch of a remote it has reaches,
+each named: a branch, a tag, a [backup](../explanation/destructive-operations.md),
+an operation's savepoint, edits the VCS set aside, or a checked-out commit on
+no branch. Each submodule store inside the clone is asked the same, and what
+it holds is named with the submodule's path. The remotes are fetched first,
+so the comparison is with what they hold now; a remote that does not answer
+is [`remotes-unconfirmed`](#remotes-unconfirmed). In a workweave, it is a
+worktree tip the canonical clone does not contain.
 
 **Why.** Dropping a repo removes its checkout. If it holds the only copy of
 some work, removal destroys it, and no `rwv abort` recovers work that was
@@ -643,12 +647,31 @@ construction, so they count.
 survives; take back edits set aside and commit them; then re-run `rwv member
 remove --delete`. `rwv backup list` shows the
 backups and what each holds; `rwv backup drop <repo> <name>` drops the ones that are
-not wanted; the refusal prints that line with the backups it names. Other
+not wanted; the refusal prints that line with the backups it names. `rwv
+doctor --fix` keeps a savepoint no operation holds as a backup. Other
 work that is genuinely unwanted is deleted with the VCS (the branch or tag
-deleted, the set-aside edits dropped), so the loss is a deliberate act. A sync
-whose replay refuses this prune still completes, reports the checkout and
-exits 1; re-running it will not prune the checkout, so run `rwv member remove
-<repo> --delete` once nothing in it is needed.
+deleted, the set-aside edits dropped), so the loss is a deliberate act. A
+landing or sync whose prune this refuses still completes and prints the
+checkout it kept, why, and the removal that takes it later, `rwv -C <ws>
+member remove <repo> --delete`; a sync then exits 1. Re-running it will not
+prune the checkout.
+
+**Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
+
+### `remotes-unconfirmed`
+
+**Condition.** Removing a checkout would destroy its repo's only store — the
+clone in the primary weave, or a submodule store inside it — and fetching
+one of that store's remotes failed: the remote is offline, gone, or refused.
+
+**Why.** Whether the store holds what no remote has is read against what the
+remotes hold now. A remote that does not answer leaves that unknowable, and
+what it held as last fetched may no longer be there.
+
+**Exits.** Run the removal again once the remote answers. To remove the
+member and keep its clone on disk, run `rwv member remove <repo>` without
+`--delete`. A landing or sync that meets this skips the prune, keeps the
+checkout, and prints the removal that takes it once the remote answers.
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md).
 

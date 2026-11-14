@@ -1399,7 +1399,7 @@ A member's checkout, or the project repo's, is not where the checked-out project
 | `project moved` | C30: return the project repo to a branch, or start one carrying the edits | `rwv switch <b>` | here | moves only what alignment moves |
 | `project moved` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
 | `project unaligned` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
-| `project detached` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv update` | any workspace | the branch holds the work before anything moves |
+| `project detached` | C14: keep this work on a branch, then return to the expected branch | VCS action (git: `git -C <checkout> branch <name> <sha>`); then `rwv switch <b>` | here | the branch holds the work before anything moves |
 | `project detached` | C30: return the project repo to a branch, or start one carrying the edits | `rwv switch <b>` | here | moves only what alignment moves |
 | `project detached` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
 
