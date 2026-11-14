@@ -6158,7 +6158,7 @@ fn cherry_pick_port_edits_a_hand_ordered_manifest_in_place() {
 }
 
 #[test]
-fn cherry_pick_continue_rechecks_each_member_and_takes_no_hand_commit_for_a_copy() {
+fn cherry_pick_continue_rechecks_each_member_and_takes_a_hand_commit_in() {
     runner::run(scenarios::cherry_pick_continue_rechecks_members()).assert_fully_decided_green();
 }
 
