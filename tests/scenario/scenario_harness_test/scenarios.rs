@@ -5821,6 +5821,29 @@ pub fn a_withheld_publish_prints_a_push_that_runs() -> Scenario {
     )
 }
 
+/// `main` commits an emptied `rwv.toml`: a landing into it refuses in the
+/// words a sync onto it uses, naming the commit and its fix.
+pub fn a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does() -> Scenario {
+    scenario(
+        "a landing onto an emptied manifest refuses as a sync does",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::hand_commit(&a(), Repo::Proj, "main", &[("rwv.toml", "")]),
+            Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
+                .claim(Claim::OutputContains("holds no `repositories` table"))
+                .claim(Claim::OutputContains(
+                    "a commit on main that makes its rwv.toml parse fixes it",
+                ))
+                .claim(Claim::OutputLacks("the source's manifest"))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

@@ -471,7 +471,8 @@ A merge or rebase of the project repo that merges `rwv.toml` as text without a c
 ```
 Error: sync completed: replay and relock finished and the op record is cleared, so `rwv abort` does not apply. Pruning was refused for 1 member checkout the manifest no longer names, and it is still on disk:
   local/owner/extra
-Re-running sync will not prune it. Once nothing in it is needed, `rwv member remove <path> --delete` removes it.
+Re-running sync will not prune it. Once nothing in it is needed, remove it with:
+  rwv member remove local/owner/extra --delete
 ```
 
 **Exit codes:** `0` when the sync completes or has nothing to take in; `1` when it refuses, stops on a conflict (op record kept; `--continue` or `rwv abort`), or completes with a checkout it could not prune (op record cleared). Under `--json` the envelope's `complete` field tells a stopped sync from a completed one.

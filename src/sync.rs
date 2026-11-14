@@ -3291,8 +3291,13 @@ fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[&str]) -> anyh
          does not apply. Pruning was refused for {n} member checkout{s} the manifest no longer \
          names, and {them} {are} still on disk:\n  {list}\n\
          Re-running {verb} will not prune {them}. Once nothing in {them} is needed, \
-         `rwv member remove <path> --delete` removes {them}.",
+         remove {them} with:\n{removals}",
         list = stranded.join("\n  "),
+        removals = stranded
+            .iter()
+            .map(|path| format!("  rwv member remove {path} --delete"))
+            .collect::<Vec<_>>()
+            .join("\n"),
     ))
 }
 
@@ -3669,14 +3674,30 @@ fn run_preconditions_after_acquire(
         Some((project_dir, workspace)) => (project_dir, workspace, ClassifySource::Relations),
         None => (cwd_project_dir, primary, ClassifySource::Refs),
     };
-    let snapshot = pin_source_snapshot(
+    let snapshot = match pin_source_snapshot(
         project_vcs,
         read_in,
         read_root,
         primary,
         Some(ResolvedRevisionId::from(landing.target_tip.clone())),
         classify,
-    )?;
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(e) => {
+            if crate::land::manifest_at(project_vcs, cwd_project_dir, &landing.target_tip).is_some()
+            {
+                return Err(e);
+            }
+            report.add(crate::land::unparseable_target(
+                landing,
+                project_vcs,
+                cwd_project_dir,
+                &crate::workspace::project_rel_path(cwd_project_name),
+            ));
+            report.into_result()?;
+            unreachable!("a report holding a refusal does not read as clean");
+        }
+    };
     let tip_manifest = manifest_at_revision(project_vcs, read_in, &snapshot.source_project_tip);
     if let (Some(tip_class), Ok(tip_manifest)) = (snapshot.source_class.as_ref(), &tip_manifest) {
         judge_unreachable_target_pins(tip_class, read_root, tip_manifest, &mut report);

@@ -21,6 +21,7 @@ use crate::vcs::{
 };
 use crate::workspace::{project_dir, project_rel_path, Checkout, WorkspaceContext};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// A landing as resolved before it claims its target: what it lands and
@@ -741,7 +742,53 @@ fn pin_of(lock: Option<&LockFile>, path: &RepoPath) -> Option<CommitId> {
         .and_then(|e| e.version.as_commit_id())
 }
 
-fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
+/// The line for a target whose `rwv.toml` at the tip the landing reads does
+/// not parse.
+pub(crate) fn unparseable_target(
+    landing: &Landing,
+    vcs: &dyn Vcs,
+    dir: &Path,
+    label: &impl fmt::Display,
+) -> Judged {
+    State::UnparseableProjectAt
+        .of(label)
+        .project_repo()
+        .subject(format!(
+            "'{}' at {}",
+            landing.target,
+            landing.target_tip.short()
+        ))
+        .listing(
+            manifest_error_at(vcs, dir, &landing.target_tip)
+                .into_iter()
+                .collect::<Vec<_>>(),
+        )
+        .bind("<b>", &landing.target)
+        .doctor_fix_for(
+            vcs.read_file_at_revision(
+                dir,
+                &ResolvedRevisionId::from(landing.target_tip.clone()),
+                Path::new(Manifest::FILE_NAME),
+            )
+            .ok()
+            .as_deref(),
+            &landing.target,
+        )
+        .checkout(dir)
+        .judge(vcs)
+}
+
+fn manifest_error_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<String> {
+    let text = vcs
+        .read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
+        .map_err(|e| format!("{e:#}"))
+        .ok()?;
+    Manifest::from_toml_str(&text)
+        .err()
+        .map(|e| format!("{e:#}"))
+}
+
+pub(crate) fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
     let text = vcs
         .read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
         .ok()?;
@@ -770,29 +817,7 @@ pub fn judge(
     let label = project_rel_path(&landing.project);
     let head = vcs.head_revision(&dir)?.id().clone();
     let Some(theirs) = manifest_at(vcs, &dir, &landing.target_tip) else {
-        report.add(
-            State::UnparseableProjectAt
-                .of(&label)
-                .project_repo()
-                .subject(format!(
-                    "'{}' at {}",
-                    landing.target,
-                    landing.target_tip.short()
-                ))
-                .bind("<b>", &landing.target)
-                .doctor_fix_for(
-                    vcs.read_file_at_revision(
-                        &dir,
-                        &ResolvedRevisionId::from(landing.target_tip.clone()),
-                        Path::new(Manifest::FILE_NAME),
-                    )
-                    .ok()
-                    .as_deref(),
-                    &landing.target,
-                )
-                .checkout(&dir)
-                .judge(vcs),
-        );
+        report.add(unparseable_target(landing, vcs, &dir, &label));
         return Ok(Plan::default());
     };
     let sides = Sides::read(

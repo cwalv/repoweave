@@ -1711,6 +1711,7 @@ every_scenario!(
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
     a_target_judged_alignment_choice_runs_in_the_target,
+    a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does,
     a_withheld_publish_prints_a_push_that_runs,
     update_remote_at_a_diverged_pin_prints_every_way_on,
     a_replayed_recorded_resolution_stops_the_sync_as_a_conflict,
@@ -5508,6 +5509,12 @@ fn update_remote_at_a_diverged_pin_offers_the_reset() {
 #[test]
 fn a_withheld_publishs_printed_push_runs() {
     runner::run(scenarios::a_withheld_publish_prints_a_push_that_runs())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_onto_an_emptied_manifest_names_the_commit_and_its_fix() {
+    runner::run(scenarios::a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does())
         .assert_fully_decided_green();
 }
 
