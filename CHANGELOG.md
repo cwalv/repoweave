@@ -110,8 +110,8 @@ stands.
   the choice that clears it, instead of a pin choice that refuses.
 - `sync --continue` names `rwv abort` alone where the branch its rebase moves
   was deleted.
-- `cherry-pick --continue` names each path staged by hand that the ported
-  commit records beyond its own change.
+- `cherry-pick --continue` names each path recorded by hand for the next
+  commit that the ported commit records beyond its own change.
 
 ### A conflict in `rwv.toml` stops with the entries it concerns
 

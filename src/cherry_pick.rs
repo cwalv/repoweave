@@ -1983,7 +1983,7 @@ fn commit_project(
             say(
                 output,
                 &format!(
-                    "{label}: the ported commit also records {}, staged here by hand",
+                    "{label}: the ported commit also holds {}, recorded here by hand for the next commit",
                     by_hand.join(", ")
                 ),
             );

@@ -17647,7 +17647,7 @@ pub fn cherry_pick_continue_names_a_change_staged_by_hand() -> Scenario {
         Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
-                "also records extra.txt, staged here by hand",
+                "also holds extra.txt, recorded here by hand for the next commit",
             )),
         Step::git(&ww("p"), Repo::Proj, &["ls-tree", "--name-only", "HEAD"])
             .claim(Claim::OutputLacks("extra.txt")),
