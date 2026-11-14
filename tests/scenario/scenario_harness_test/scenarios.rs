@@ -17365,6 +17365,28 @@ pub fn cherry_pick_project_conflict() -> Scenario {
     scenario("cherry-pick project conflict continued", steps)
 }
 
+/// `cherry-pick-conflict` in the project repo, which the operator resolves
+/// and commits by hand, then commits on: `--continue` takes both commits in,
+/// copying nothing again.
+pub fn cherry_pick_project_conflict_committed_by_hand() -> Scenario {
+    let mut steps = project_conflicting_port();
+    steps.extend([
+        Step::git(&ww("p"), Repo::Proj, &["checkout", "--theirs", "notes.txt"]),
+        Step::git(&ww("p"), Repo::Proj, &["add", "notes.txt"]),
+        Step::git(&ww("p"), Repo::Proj, &["commit", "-qm", "hand-port"]),
+        Step::commit(&ww("p"), Repo::Proj, "hand-on-top"),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("stopped on a conflict")),
+        Step::git(&ww("p"), Repo::Proj, &["log", "--format=%s", "-2"])
+            .claim(Claim::OutputLine("hand-on-top"))
+            .claim(Claim::OutputLine("hand-port")),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("notes")),
+    ]);
+    scenario("cherry-pick project conflict committed by hand", steps)
+}
+
 /// `cherry-pick-conflict` in the project repo, abandoned: `rwv abort` runs
 /// and puts the project repo back.
 pub fn cherry_pick_project_conflict_aborts() -> Scenario {

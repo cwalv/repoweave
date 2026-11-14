@@ -1336,6 +1336,7 @@ every_scenario!(
     continue_after_another_seat_moves(scenarios::StoppedMoved::LandMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::PullProject),
     pull_continue_pins_a_member_merge_committed_by_hand,
+    cherry_pick_project_conflict_committed_by_hand,
     doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places,
     a_sync_taking_in_an_added_member_leaves_no_savepoint("linear"),
     a_sync_taking_in_an_added_member_leaves_no_savepoint("merge"),
@@ -4176,6 +4177,12 @@ fn a_sync_taking_in_an_added_member_leaves_no_savepoint() {
 #[test]
 fn doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places() {
     runner::run(scenarios::doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_project_conflict_committed_by_hand() {
+    runner::run(scenarios::cherry_pick_project_conflict_committed_by_hand())
         .assert_fully_decided_green();
 }
 
