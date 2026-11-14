@@ -2700,7 +2700,7 @@ mod tests {
     /// `WireOwnerRecord`, attributes and fields, comments and blank lines
     /// left out; a type declared in another module that a field names is
     /// read by its name alone, so a change inside one is not seen here.
-    const PINNED_SHAPE: (u32, &str) = (7, "4543c5512c3f2653");
+    const PINNED_SHAPE: (u32, &str) = (7, "1a2aec635f53d03e");
 
     fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
         let start = source.iter().position(|line| {

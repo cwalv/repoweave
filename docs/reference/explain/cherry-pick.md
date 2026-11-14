@@ -80,9 +80,10 @@ a member's way, a hook) also holds the op (`op-parked`), naming what failed.
 
 `--continue` rechecks every repo the port moves before it moves anything: a
 member on another branch than the one the port copies onto refuses
-(`head-not-on-branch`), and a commit the port did not make, such as one made
-by hand in a member during the stop, is a foreign tip (`foreign-tip`), never
-taken for a copy; it names the way out, moving that commit off. An `--except`
+(`head-not-on-branch`). A commit made by hand on a branch during the stop is
+taken in, as every `--continue` takes one in: the port copies on top of it,
+and `rwv abort` keeps it in the branch's slot before it puts the branch back.
+An `--except`
 member is judged again at its tip, so a hand port finished during the stop is
 recorded where it ends.
 
