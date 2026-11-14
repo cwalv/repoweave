@@ -149,8 +149,7 @@ fn make_registered_workweave(ws: &Path) -> PathBuf {
 }
 
 /// Create workweave `seat` at a directory whose basename names no workweave of
-/// the project. Once its record is gone nothing can derive a name for it, so a
-/// verb run inside it cannot list it again: the unregistered state stays.
+/// the project, and remove its record: only its marker names it.
 fn make_unlistable_workweave(ws: &Path, container: &Path) -> PathBuf {
     let dir = container.join("seat-dir");
     rwv()
@@ -270,74 +269,49 @@ fn drifted_basename_mints_the_recorded_name() {
 // Arm 2 — a marker-bearing directory no record names
 // ---------------------------------------------------------------------------
 
-/// A verb that acts on the workweave's identity refuses, naming the state and
-/// routing to the condition. The repairs are the entry's to carry: which one
-/// applies turns on where the directory sits, and a message that cannot
-/// evaluate that can only recite both.
+/// A workweave whose entry is gone, in a directory whose basename names no
+/// workweave, is listed again by the first verb run inside it, under the name
+/// its marker records, and the verb acts on that identity.
 #[test]
-fn unregistered_workweave_refuses_an_identity_consuming_verb() {
+fn a_workweave_whose_entry_is_gone_is_listed_again_by_a_verb_run_inside_it() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
     let dir = make_unlistable_workweave(&ws, &tmp.path().join("elsewhere"));
 
     let out = rwv()
-        .args(["member", "add", &a_member_to_add(tmp.path())])
+        .args(["status"])
         .current_dir(&dir)
         .output()
         .expect("verb should run");
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(
-        !out.status.success(),
-        "`rwv member add` must refuse an unregistered workweave: {stderr}"
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
     );
+    assert!(out.status.success(), "{combined}");
+    assert!(combined.contains("listed workweave `seat`"), "{combined}");
     assert!(
-        stderr.contains("no entry in that project's workweave index records this directory"),
-        "`rwv member add` must name the state: {stderr}"
+        !combined.contains("the workweave index has no entry for this directory"),
+        "{combined}"
     );
-    assert!(
-        stderr.ends_with("\n\nrwv explain unregistered-workweave\n"),
-        "`rwv member add` must route to the condition: {stderr}"
+    assert_eq!(
+        status_resolution(&dir)
+            .get("workweave")
+            .and_then(|v| v.as_str()),
+        Some("web-app--seat")
     );
 }
 
-/// The diagnostic exemption: the verbs an operator reaches for to understand
-/// and repair the state must run in it. They report the absence rather than
-/// inventing a name for it, and the machine surface omits the identity it
-/// does not have.
+/// `rwv doctor` in the primary reports a workweave whose entry is gone
+/// wherever its directory is, and `--fix` adopts it under its marker's name.
 #[test]
-fn unregistered_workweave_lets_diagnostics_proceed_and_report() {
+fn doctor_reports_and_adopts_a_workweave_whose_entry_is_gone_wherever_it_sits() {
     let tmp = common::tempdir().unwrap();
     let ws = make_workspace(tmp.path());
-    let dir = make_unlistable_workweave(&ws, &tmp.path().join("elsewhere"));
+    let outside = tmp.path().join("elsewhere");
+    std::fs::create_dir_all(&outside).unwrap();
+    let dir = make_unlistable_workweave(&ws, &outside);
 
-    for verb in [vec!["status"], vec!["prime"]] {
-        let out = rwv()
-            .args(&verb)
-            .current_dir(&dir)
-            .output()
-            .expect("verb should run");
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(
-            out.status.success(),
-            "`rwv {}` must proceed in an unregistered workweave: {combined}",
-            verb.join(" ")
-        );
-        assert!(
-            combined.contains("the workweave index has no entry for this directory"),
-            "`rwv {}` must report the absence: {combined}",
-            verb.join(" ")
-        );
-    }
-
-    // doctor is the verb that repairs this, so it above all must run. A
-    // workweave whose name its directory spells is reported from the primary;
-    // run inside, any verb would list it again.
-    make_registered_workweave(&ws);
-    deregister(&ws, "feat");
     let doctor = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();
     let doctor_out = format!(
         "{}{}",
@@ -348,11 +322,17 @@ fn unregistered_workweave_lets_diagnostics_proceed_and_report() {
         doctor_out.contains("present on disk but not recorded in the workweave index"),
         "doctor must report the unregistered workweave: {doctor_out}"
     );
-
-    let resolution = status_resolution(&dir);
-    assert!(
-        resolution.get("workweave").is_none(),
-        "an unregistered workweave has no identity to report: {resolution}"
+    let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).output();
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(common::index_file_of(ws.join("projects/web-app"))).unwrap(),
+    )
+    .unwrap();
+    assert!(index["workweaves"].get("seat").is_some(), "{index}");
+    assert_eq!(
+        status_resolution(&dir)
+            .get("workweave")
+            .and_then(|v| v.as_str()),
+        Some("web-app--seat")
     );
 }
 
@@ -386,51 +366,6 @@ fn doctor_fix_restores_the_recorded_name_the_refusals_named() {
     // remedy honest about being a repair rather than a restoration: the name
     // that came back is the one the directory spells.
     assert_eq!(identity, "web-app--feat");
-}
-
-/// The other half of that loop, which does not close.
-///
-/// Adoption enumerates recorded containers. A workweave placed outside them
-/// all is not a candidate for it, so `--fix` reports nothing and repairs
-/// nothing here. Byte-for-byte the fixture above except for the placement:
-/// the basename still spells `web-app--drifted`, so what fails is the
-/// placement and nothing else. The verb refuses either way and routes to the
-/// same condition — which repair applies is what differs, and that is why the
-/// message does not attempt to say.
-#[test]
-fn a_dir_placed_workweave_still_refuses_and_routes_to_the_condition() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
-    let outside = tmp.path().join("elsewhere");
-    std::fs::create_dir_all(&outside).unwrap();
-    let dir = make_unlistable_workweave(&ws, &outside);
-
-    // The no-op is the premise, so measure it rather than assume it.
-    let _ = rwv().args(["doctor", "--fix"]).current_dir(&ws).output();
-    let resolution = status_resolution(&dir);
-    assert!(
-        resolution.get("workweave").is_none(),
-        "`--fix` cannot adopt what its container walk never reaches: {resolution}"
-    );
-
-    let out = rwv()
-        .args(["member", "add", &a_member_to_add(tmp.path())])
-        .current_dir(&dir)
-        .output()
-        .expect("verb should run");
-    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
-    assert!(
-        !out.status.success(),
-        "the verb must still refuse: {stderr}"
-    );
-    assert!(
-        stderr.contains("no entry in that project's workweave index records this directory"),
-        "the refusal must name the state: {stderr}"
-    );
-    assert!(
-        stderr.ends_with("\n\nrwv explain unregistered-workweave\n"),
-        "and must route to it from a placement `--fix` cannot reach: {stderr}"
-    );
 }
 
 // ---------------------------------------------------------------------------

@@ -3893,12 +3893,14 @@ enum NoEntry {
     ExpiredByHand,
     ExpiredWhileIdle,
     NeverLogged,
+    HeadLogRemoved,
 }
 
-const NO_ENTRY: [NoEntry; 3] = [
+const NO_ENTRY: [NoEntry; 4] = [
     NoEntry::ExpiredByHand,
     NoEntry::ExpiredWhileIdle,
     NoEntry::NeverLogged,
+    NoEntry::HeadLogRemoved,
 ];
 
 fn fixture_without_entry(how: NoEntry) -> Fixture {
@@ -3931,6 +3933,18 @@ fn fixture_without_entry(how: NoEntry) -> Fixture {
             assert!(out.status.success(), "{}", common::cli::describe(&out));
         }
         NoEntry::NeverLogged => {}
+        NoEntry::HeadLogRemoved => {
+            let log = f.ww_lib.join(common::git_in(
+                &f.ww_lib,
+                &["rev-parse", "--git-path", "logs/HEAD"],
+            ));
+            std::fs::remove_file(log).unwrap();
+            assert_ne!(
+                common::git_in(&f.ww_lib, &["reflog", "show", "HEAD"]),
+                "",
+                "the branch keeps its log, which git reads for HEAD's"
+            );
+        }
     }
     assert_eq!(
         std::fs::metadata(f.ww_lib.join(common::git_in(

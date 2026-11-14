@@ -586,6 +586,7 @@ fn reset_project(
             ctx.active_path(),
             project,
             OpVerb::Pull,
+            None,
             how.flags.to_record(),
             &repos,
         )?),
@@ -664,6 +665,7 @@ fn merge_project(
                 ctx.active_path(),
                 project,
                 OpVerb::Pull,
+                None,
                 how.flags.to_record(),
                 &repos,
             )?;

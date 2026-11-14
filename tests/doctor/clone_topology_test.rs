@@ -59,7 +59,12 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
         repoweave::path_spelling::resolve(primary).unwrap_or_else(|_| primary.to_path_buf());
     let parent_canon =
         repoweave::path_spelling::resolve(parent).unwrap_or_else(|_| parent.to_path_buf());
-    let content = common::workweave_marker(&primary_canon, project, &parent_canon);
+    let content = common::workweave_marker(
+        &primary_canon,
+        project,
+        &common::workweave_name_of(ww_dir),
+        &parent_canon,
+    );
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 }
 

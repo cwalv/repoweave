@@ -44,7 +44,9 @@ use crate::vcs::{
     project_vcs, vcs_for, DestroyProof, EphemeralRefName, FoundBranch, RawRefName, RefOrigin,
     RegistrationPrune, ResolvedRevisionId, Site, Vcs, VcsError,
 };
-use crate::workspace::{project_dir, project_rel_dir, project_rel_path, WorkweaveMarker};
+use crate::workspace::{
+    project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
+};
 use crate::workweave_index;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -4392,7 +4394,19 @@ pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(Workweave
             continue;
         }
         let project_name = marker.project().clone();
-        let name = marker.name().clone();
+        let dir_name = entry.file_name().to_string_lossy().into_owned();
+        let recorded = workweave_name_for_path(ws_root, &project_name, &dir)
+            .ok()
+            .flatten();
+        let name = match recorded {
+            Some(n) => n,
+            None => match workweave_name_in(&project_name, &dir_name) {
+                // No record, and a basename this project could not have
+                // rendered: the misnamed-dir finding owns this state.
+                Some(from_basename) => from_basename,
+                None => continue,
+            },
+        };
         result.push((
             WorkweaveId {
                 project: project_name,

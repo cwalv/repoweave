@@ -413,13 +413,27 @@ pub fn json_escaped(path: impl AsRef<std::path::Path>) -> String {
 pub fn workweave_marker(
     primary: impl AsRef<std::path::Path>,
     project: &str,
+    name: &str,
     parent: impl AsRef<std::path::Path>,
 ) -> String {
     format!(
-        "{{\"primary\":\"{}\",\"project\":\"{project}\",\"parent\":\"{}\"}}",
+        "{{\"primary\":\"{}\",\"project\":\"{project}\",\"name\":\"{name}\",\"parent\":\"{}\"}}",
         json_escaped(primary),
         json_escaped(parent),
     )
+}
+
+/// The name a workweave directory `<project>--<name>` spells, as
+/// `workweave create` names the directory it places.
+pub fn workweave_name_of(dir: impl AsRef<std::path::Path>) -> String {
+    let base = dir
+        .as_ref()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    base.split_once("--")
+        .map_or(base.clone(), |(_, name)| name.to_owned())
 }
 
 /// Record `dir` as `project`'s workweave `name` in the primary-side index.

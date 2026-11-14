@@ -1687,6 +1687,7 @@ fn settle_diverged(
                 ctx.active_path(),
                 project,
                 OpVerb::UpdateRemote,
+                None,
                 record,
                 &repos,
             )?

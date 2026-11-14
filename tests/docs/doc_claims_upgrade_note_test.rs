@@ -64,7 +64,7 @@ fn step_1_quotes_the_refusal_the_binary_actually_prints() {
 
     let tmp = common::tempdir().unwrap();
     let primary = make_workspace(tmp.path(), "ws");
-    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "ws--feat");
+    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "my-app--feat");
 
     common::rwv()
         .arg("doctor")
@@ -81,7 +81,7 @@ fn step_1_quotes_the_refusal_the_binary_actually_prints() {
 fn doctor_fix_run_from_inside_the_workweave_does_not_migrate_its_own_marker() {
     let tmp = common::tempdir().unwrap();
     let primary = make_workspace(tmp.path(), "ws");
-    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "ws--feat");
+    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "my-app--feat");
     let marker_path = ww_dir.join(".rwv-workweave");
     let before = std::fs::read_to_string(&marker_path).unwrap();
 
@@ -122,7 +122,7 @@ fn doctor_fix_run_from_inside_the_workweave_does_not_migrate_its_own_marker() {
 fn the_refusal_names_a_repair_that_works_from_the_shell_showing_it() {
     let tmp = common::tempdir().unwrap();
     let primary = make_workspace(tmp.path(), "ws");
-    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "ws--feat");
+    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "my-app--feat");
     let marker_path = ww_dir.join(".rwv-workweave");
 
     let refusal = String::from_utf8(
@@ -168,7 +168,7 @@ fn the_refusal_names_a_repair_that_works_from_the_shell_showing_it() {
 fn doctor_fix_dash_c_primary_migrates_the_marker_from_inside_the_workweave() {
     let tmp = common::tempdir().unwrap();
     let primary = make_workspace(tmp.path(), "ws");
-    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "ws--feat");
+    let ww_dir = make_legacy_workweave(tmp.path(), &primary, "my-app--feat");
     let marker_path = ww_dir.join(".rwv-workweave");
 
     // Not asserted `.success()`: this minimal fixture has no `projects/my-app`

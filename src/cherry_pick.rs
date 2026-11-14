@@ -581,6 +581,7 @@ fn fresh(
         ctx.active_path(),
         &here.project,
         OpVerb::CherryPick,
+        None,
         take_in,
         &repos,
     )?;

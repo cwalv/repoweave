@@ -24,7 +24,12 @@ fn make_workspace(parent: &Path, name: &str) -> std::path::PathBuf {
 /// been removed.
 fn write_marker(weave_dir: &Path, primary: &Path, project: &str) {
     let primary_canon = repoweave::path_spelling::resolve(primary).unwrap();
-    let marker = common::workweave_marker(&primary_canon, project, &primary_canon);
+    let marker = common::workweave_marker(
+        &primary_canon,
+        project,
+        &common::workweave_name_of(weave_dir),
+        &primary_canon,
+    );
     fs::write(weave_dir.join(".rwv-workweave"), marker).unwrap();
 }
 

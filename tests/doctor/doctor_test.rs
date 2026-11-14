@@ -1637,7 +1637,7 @@ fn doctor_fix_migrates_legacy_workweave_marker() {
     // created via `rwv workweave create`.
     let ww_dir_container = tmp.path().join(".workweaves");
     std::fs::create_dir_all(&ww_dir_container).unwrap();
-    let ww_dir = ww_dir_container.join("ws--feat");
+    let ww_dir = ww_dir_container.join("my-app--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
 
     // Write a legacy marker without `parent:`.

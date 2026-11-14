@@ -80,11 +80,13 @@ impl Op {
         workspace: &Path,
         project: &ProjectName,
         verb: OpVerb,
+        history: Option<crate::manifest::History>,
         take_in: TakeInRecord,
         repos: &[(PathBuf, Box<dyn Vcs>)],
     ) -> anyhow::Result<Self> {
         let id = OpId::new_now();
-        let record = OwnerRecord::new_take_in(&id, verb, project.clone(), workspace, take_in);
+        let mut record = OwnerRecord::new_take_in(&id, verb, project.clone(), workspace, take_in);
+        record.history = history;
         let touched = TouchedWorkspaces::of(verb, workspace, Some(workspace));
         let held: AcquiredOp = op_state::acquire_op(&touched, &record)?;
         let key = SavepointKey::Op(id.clone());

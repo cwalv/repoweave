@@ -632,7 +632,7 @@ fn sync_to_continue_from_lease_workspace_drives_owner_to_clean_state() {
 /// (here the primary, since this is a direct child of primary).
 fn write_workweave_marker(workweave_dir: &Path, primary_root: &Path, name: &str) {
     common::register_workweave(primary_root, "web-app", name, workweave_dir);
-    let content = common::workweave_marker(primary_root, "web-app", primary_root);
+    let content = common::workweave_marker(primary_root, "web-app", name, primary_root);
     std::fs::write(workweave_dir.join(".rwv-workweave"), content).unwrap();
 }
 

@@ -98,7 +98,7 @@ fn two_kind_fixture(parent: &Path) -> PathBuf {
     let primary = repoweave::path_spelling::resolve(&root).unwrap();
     std::fs::write(
         ww_dir.join(".rwv-workweave"),
-        common::workweave_marker(&primary, "my-app", &primary),
+        common::workweave_marker(&primary, "my-app", "feat-x", &primary),
     )
     .unwrap();
     root

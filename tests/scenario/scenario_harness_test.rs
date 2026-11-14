@@ -971,6 +971,7 @@ every_scenario!(
     a_sync_resumed_after_its_carry_moved_reports_the_carry,
     a_rebase_that_stops_without_a_conflict_is_not_reported_as_one,
     a_verb_killed_after_its_relock_commit_is_aborted("land", "linear", "relock-committed"),
+    a_sync_killed_as_its_op_starts_continues_under_its_history,
     a_verb_killed_after_its_relock_commit_then_stopped("land", "relock-committed"),
     a_verb_killed_after_its_relock_commit_then_stopped("sync", "sync-relock-committed"),
     a_sync_killed_between_recording_a_remap_and_moving_the_branch_continues,
@@ -3991,6 +3992,14 @@ fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
 #[test]
 fn update_remote_abort_over_a_ref_moved_since_keeps_the_new_tip() {
     runner::run(scenarios::update_remote_abort_over_a_ref_moved_since())
+        .assert_fully_decided_green();
+}
+
+/// A sync killed as its op starts resumes under the `--history` it was run
+/// with.
+#[test]
+fn a_sync_killed_as_its_op_starts_continues_under_its_history() {
+    runner::run(scenarios::a_sync_killed_as_its_op_starts_continues_under_its_history())
         .assert_fully_decided_green();
 }
 

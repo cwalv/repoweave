@@ -1669,7 +1669,7 @@ fn make_retire_fixture(parent: &Path) -> RetireFixture {
     // the two files are mutually exclusive and resolution now refuses a root
     // carrying both, so a fixture that planted one here would be pinning the
     // state this design removed.
-    let marker = common::workweave_marker(&primary.root, "web-app", &primary.root);
+    let marker = common::workweave_marker(&primary.root, "web-app", "ww", &primary.root);
     std::fs::write(ww_root.join(".rwv-workweave"), marker).unwrap();
     common::register_workweave(&primary.root, "web-app", "ww", &ww_root);
 

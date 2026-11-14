@@ -166,7 +166,7 @@ fn write_marker(dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(dir).unwrap();
     std::fs::write(
         dir.join(".rwv-workweave"),
-        common::workweave_marker(primary, project, parent),
+        common::workweave_marker(primary, project, &common::workweave_name_of(dir), parent),
     )
     .unwrap();
 }
@@ -682,7 +682,7 @@ fn doctor_fix_leaves_a_registry_holding_root_alone() {
     // registry.
     std::fs::write(
         ws.join(".rwv-workweave"),
-        common::workweave_marker(&ws, "demo", &ws),
+        common::workweave_marker(&ws, "demo", "ww", &ws),
     )
     .unwrap();
     std::fs::write(ws.join(".rwv-active"), "demo\n").unwrap();
@@ -813,7 +813,7 @@ fn doctor_reports_a_distinct_marker_unverifiable_finding_per_defect() {
         "got: {dangling_line}"
     );
     assert!(
-        legacy_line.contains("missing the required `parent:` field"),
+        legacy_line.contains("missing the required `parent` or `name` field"),
         "got: {legacy_line}"
     );
     assert!(

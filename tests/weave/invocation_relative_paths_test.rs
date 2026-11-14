@@ -156,7 +156,12 @@ fn adopt_weave(tmp: &Path) -> AdoptWeave {
     let primary_canonical = repoweave::path_spelling::resolve(&primary).unwrap();
     std::fs::write(
         workweave.join(".rwv-workweave"),
-        common::workweave_marker(&primary_canonical, "test-project", &primary_canonical),
+        common::workweave_marker(
+            &primary_canonical,
+            "test-project",
+            "feat",
+            &primary_canonical,
+        ),
     )
     .unwrap();
     common::register_workweave(&primary_canonical, "test-project", "feat", &workweave);

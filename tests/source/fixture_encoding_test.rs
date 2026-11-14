@@ -55,6 +55,7 @@ fn workweave_marker_parses_as_json_and_preserves_the_recorded_spelling() {
     let marker = common::workweave_marker(
         Path::new(WINDOWS_SHAPED),
         "web-app",
+        "ww",
         Path::new(WINDOWS_SHAPED),
     );
     let parsed: serde_json::Value = serde_json::from_str(&marker).unwrap();

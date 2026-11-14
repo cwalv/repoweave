@@ -852,8 +852,9 @@ fn live_op_state_protects_matching_savepoint() {
     );
 }
 
-/// A record whose tip table does not parse still names its op, and `rwv
-/// abort` restores from that op's savepoints, so `--fix` must keep them.
+/// A record whose tip table does not parse is unreadable, and still names
+/// its op: the rwv that wrote it aborts from that op's savepoints, so `--fix`
+/// must keep them.
 #[test]
 fn a_record_whose_header_parses_keeps_its_savepoints_under_fix() {
     let tmp = common::tempdir().unwrap();
@@ -885,7 +886,7 @@ fn a_record_whose_header_parses_keeps_its_savepoints_under_fix() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("stale-op-state"),
+        stdout.contains("unreadable-op-record"),
         "the record must be reported; got:\n{stdout}"
     );
     assert!(
@@ -1430,7 +1431,7 @@ fn a_new_non_reclamation_finding_stays_itemized_beside_the_count_lines() {
     let primary = repoweave::path_spelling::resolve(&root).unwrap();
     std::fs::write(
         ww_dir.join(".rwv-workweave"),
-        common::workweave_marker(&primary, "my-app", &primary),
+        common::workweave_marker(&primary, "my-app", "feat-x", &primary),
     )
     .unwrap();
 

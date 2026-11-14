@@ -337,7 +337,12 @@ fn add_workweave_without_slot(fx: &Fixture, name: &str) -> PathBuf {
     }
     std::fs::write(
         dir.join(".rwv-workweave"),
-        common::workweave_marker(&fx.workspace, "my-app", &fx.workspace),
+        common::workweave_marker(
+            &fx.workspace,
+            "my-app",
+            &common::workweave_name_of(&dir),
+            &fx.workspace,
+        ),
     )
     .unwrap();
     dir

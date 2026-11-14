@@ -468,15 +468,10 @@ fn fresh(
         ctx.active_path(),
         &sync.project,
         OpVerb::Sync,
+        sync.history,
         take_in.clone(),
         &repos,
     )?;
-    {
-        let mut owner = crate::op_state::read_owner(&op.workspace)?
-            .context("the op record vanished as it began")?;
-        owner.history = sync.history;
-        crate::op_state::write_owner(&op.workspace, &owner)?;
-    }
     if let Some(merge) = &planned.merged {
         report_integration(
             output,

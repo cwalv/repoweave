@@ -134,7 +134,7 @@ fn make_workspace_with_ww(parent: &Path) -> (Workspace, String) {
         .unwrap()
         .display()
         .to_string();
-    let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
+    let marker_content = common::workweave_marker(&primary_canon, "web-app", "ww", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
 
@@ -353,7 +353,7 @@ fn sync_post_refresh_clears_stale_working_tree() {
         .unwrap()
         .display()
         .to_string();
-    let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
+    let marker_content = common::workweave_marker(&primary_canon, "web-app", "ww", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
     // Action verbs need the primary's pointer (or --project); in the
@@ -517,7 +517,7 @@ fn sync_leaves_drift_in_a_checkout_stopped_in_a_revert() {
         .unwrap()
         .display()
         .to_string();
-    let marker_content = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
+    let marker_content = common::workweave_marker(&primary_canon, "web-app", "ww", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), marker_content).unwrap();
     common::register_workweave(&primary_canon, "web-app", "ww", &ww_root);
     // Action verbs need the primary's pointer (or --project); in the
@@ -606,7 +606,7 @@ fn doctor_detects_working_tree_drift_in_three_worktrees() {
         .unwrap()
         .display()
         .to_string();
-    let marker2 = common::workweave_marker(&primary_canon2, "web-app", &primary_canon2);
+    let marker2 = common::workweave_marker(&primary_canon2, "web-app", "ww2", &primary_canon2);
     std::fs::write(ww2_root.join(".rwv-workweave"), marker2).unwrap();
     common::register_workweave(&primary_canon2, "web-app", "ww2", &ww2_root);
 

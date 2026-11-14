@@ -621,7 +621,7 @@ primary's registry records this exact directory. The tree is a workweave, so
 #### `marker-unverifiable`
 
 **Report-only.** The marker itself cannot witness what it claims: it is
-unreadable, a legacy marker (YAML, or missing the required `parent:` field),
+unreadable, a legacy marker (YAML, or missing the required `parent` or `name` field),
 or names a `primary:` that verifies as no workspace at all. A marker that
 cannot prove its own claim cannot prove which of the two files is the stray
 either.

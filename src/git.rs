@@ -748,10 +748,32 @@ fn left_behind_at(repo: &Path) -> Result<LeftBehind, VcsError> {
     }
 }
 
-/// Whether the worktree's own `HEAD` log holds an entry. `HEAD@{now}` reads
-/// that log alone, on either ref storage, and fails quietly where it is empty; `log -g HEAD` reads the branch's shared log instead once
-/// the worktree's is empty, and `HEAD@{0}` answers an empty log with HEAD.
+/// Whether the worktree's own `HEAD` log holds an entry. On the files ref
+/// storage a worktree whose `logs/HEAD` file does not exist has `HEAD@{now}`
+/// and `log -g HEAD` read the checked-out branch's shared log instead, so the
+/// file is looked for first; where it exists, and on reftable, `HEAD@{now}`
+/// reads the worktree's own log alone and fails quietly where it is empty,
+/// and `HEAD@{0}` answers an empty log with HEAD.
 fn head_log_has_entry(repo: &Path) -> Result<bool, VcsError> {
+    let storage = GitVcs::run_trimmed_or_absent(
+        ["config", "--get", "extensions.refStorage"],
+        repo,
+        Absent::ConfigKey,
+    )?;
+    if storage.as_deref() != Some("reftable") {
+        let log = GitVcs::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "logs/HEAD",
+            ],
+            repo,
+        )?;
+        if !Path::new(&log).exists() {
+            return Ok(false);
+        }
+    }
     Ok(GitVcs::run_or_absent(
         ["rev-parse", "-q", "--verify", "HEAD@{now}"],
         repo,

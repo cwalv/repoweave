@@ -1178,7 +1178,7 @@ fn primary_and_workweave(parent: &Path) -> (PathBuf, PathBuf) {
     common::register_workweave(&primary, "web-app", "ww", &ww_root);
     std::fs::write(
         ww_root.join(".rwv-workweave"),
-        common::workweave_marker(&primary, "web-app", &primary),
+        common::workweave_marker(&primary, "web-app", "ww", &primary),
     )
     .unwrap();
 

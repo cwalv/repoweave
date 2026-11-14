@@ -159,7 +159,7 @@ as `weave-root-identity-conflict`.
   the pointer is provably the redundant copy. `--fix` deletes `.rwv-active`
   and leaves the marker.
 - **`marker-unverifiable`** — the marker itself cannot witness what it
-  claims: unreadable, missing the required `parent:` field (a legacy marker),
+  claims: unreadable, missing the required `parent` or `name` field (a legacy marker),
   or naming a `primary:` that verifies as no workspace at all. Report-only —
   a marker that cannot prove its own claim cannot prove which file is the
   stray either. Never auto-fixed: repairing the marker (`rwv doctor --fix`

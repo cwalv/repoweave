@@ -50,7 +50,12 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
         repoweave::path_spelling::resolve(primary).unwrap_or_else(|_| primary.to_path_buf());
     let parent_str =
         repoweave::path_spelling::resolve(parent).unwrap_or_else(|_| parent.to_path_buf());
-    let content = common::workweave_marker(&primary_str, project, &parent_str);
+    let content = common::workweave_marker(
+        &primary_str,
+        project,
+        &common::workweave_name_of(ww_dir),
+        &parent_str,
+    );
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 }
 
@@ -276,7 +281,8 @@ fn foreign_primary_is_reported() {
     // Write a marker whose `primary` points at a completely different path
     // (simulating an rsync'd workweave from another machine).
     let foreign_primary = PathBuf::from("/some/other/machine/workspace");
-    let content = common::workweave_marker(&foreign_primary, "my-project", &foreign_primary);
+    let content =
+        common::workweave_marker(&foreign_primary, "my-project", "foreign", &foreign_primary);
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
 
     let out = rwv().args(["doctor"]).current_dir(&ws).output().unwrap();

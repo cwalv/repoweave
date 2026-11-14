@@ -75,7 +75,7 @@ fn write_workweave_marker(ww_dir: &Path, primary: &Path, project: &str, workweav
     // The marker format is JSON: {"primary": <absolute path>, "project":
     // <project name>, "parent": <absolute path of the workspace this was
     // forked from>}
-    let marker = common::workweave_marker(primary, project, primary);
+    let marker = common::workweave_marker(primary, project, workweave_name, primary);
     std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
     common::register_workweave(primary, project, workweave_name, ww_dir);
 }

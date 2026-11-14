@@ -124,7 +124,7 @@ fn a_marker_written_in_a_symlinked_spelling_reads_as_the_primary_it_names() {
     std::fs::write(
         ww.join(".rwv-workweave"),
         format!(
-            "{{\"primary\": \"{p}\", \"project\": \"{PROJECT}\", \"parent\": \"{p}\"}}\n",
+            "{{\"primary\": \"{p}\", \"project\": \"{PROJECT}\", \"name\": \"feat\", \"parent\": \"{p}\"}}\n",
             p = common::json_escaped(&primary),
         ),
     )

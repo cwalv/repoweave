@@ -23822,6 +23822,34 @@ pub fn a_verb_killed_after_its_relock_commit_is_aborted(
     scenario("a verb killed after its relock commit, aborted", steps)
 }
 
+/// A sync run with `--history` for one run, killed as its op starts, before
+/// anything moved: `--continue` resumes it under the history it was run with.
+pub fn a_sync_killed_as_its_op_starts_continues_under_its_history() -> Scenario {
+    let steps = vec![
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["sync"]).expect(Exit::refuses(Repo::App, State::HistoryUnset)),
+        Step::rwv_paused(
+            &ww("w1"),
+            &["sync", "--history", "linear"],
+            "op-savepoint-taken",
+            "syncing",
+        ),
+        Step::kill("syncing"),
+        Step::rwv(&ww("w1"), &["sync", "--continue"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w1"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("in progress")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-2"])
+            .claim(Claim::OutputLine("w1-app"))
+            .claim(Claim::OutputLine("main-app")),
+    ];
+    scenario("a sync killed as its op starts, continued", steps)
+}
+
 /// A sync or a landing whose relock commit was made and killed before its
 /// tip was journaled, then continued into a stop on the carry of `w2` in
 /// `app`: the printed `rwv abort` puts back what the verb moved, the relock

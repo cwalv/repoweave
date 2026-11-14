@@ -2067,7 +2067,7 @@ fn list_omits_unregistered_workweave_and_doctor_can_adopt_it() {
         .unwrap()
         .display()
         .to_string();
-    let marker = common::workweave_marker(&ws_canon, "web-app", &ws_canon);
+    let marker = common::workweave_marker(&ws_canon, "web-app", "from-old", &ws_canon);
     std::fs::write(legacy.join(".rwv-workweave"), marker).unwrap();
 
     // List omits it: no registry entry → not visible.

@@ -599,7 +599,7 @@ fn a_plugin_under_w_starts_in_the_workweave() {
     fs::create_dir_all(ww_dir.join("projects").join("myproj")).unwrap();
     fs::write(
         ww_dir.join(".rwv-workweave"),
-        common::workweave_marker(&ws_canon, "myproj", &ws_canon),
+        common::workweave_marker(&ws_canon, "myproj", "feat", &ws_canon),
     )
     .unwrap();
     common::register_workweave(&ws, "myproj", "feat", &ww_dir);
@@ -889,7 +889,7 @@ fn envelope_via_w_flag_sets_workweave_var() {
         .join("myproj--feat");
     std::fs::create_dir_all(&ww_dir).unwrap();
     // Write the .rwv-workweave marker.
-    let marker_content = common::workweave_marker(&ws_canon, "myproj", &ws_canon);
+    let marker_content = common::workweave_marker(&ws_canon, "myproj", "feat", &ws_canon);
     std::fs::write(ww_dir.join(".rwv-workweave"), &marker_content).unwrap();
     // Replicate workspace structure in the workweave dir.
     std::fs::create_dir_all(ww_dir.join("github")).unwrap();
@@ -945,7 +945,7 @@ fn envelope_marks_an_unregistered_workweave_apart_from_primary() {
     std::fs::create_dir_all(ww_dir.join("projects").join("myproj")).unwrap();
     std::fs::write(
         ww_dir.join(".rwv-workweave"),
-        common::workweave_marker(&ws_canon, "myproj", &ws_canon),
+        common::workweave_marker(&ws_canon, "myproj", "unrecorded", &ws_canon),
     )
     .unwrap();
 

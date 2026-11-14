@@ -91,7 +91,12 @@ fn add_workweave_checkout(canonical_repo: &Path, ww_dir: &Path, rel_repo_path: &
 }
 
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str) {
-    let marker = common::workweave_marker(primary, project, primary);
+    let marker = common::workweave_marker(
+        primary,
+        project,
+        &common::workweave_name_of(ww_dir),
+        primary,
+    );
     std::fs::write(ww_dir.join(".rwv-workweave"), marker).unwrap();
     // Register in the primary-side `.rwv-workweave-index` so the
     // registry-backed delete path can find this hand-crafted fixture.

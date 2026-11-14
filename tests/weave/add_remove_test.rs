@@ -1947,7 +1947,12 @@ fn setup_workweave_for_add_tests(
 
     // Marker file pointing at primary (canonical, so resolve matches).
     let primary_canonical = repoweave::path_spelling::resolve(&primary).unwrap();
-    let marker = common::workweave_marker(&primary_canonical, "test-project", &primary_canonical);
+    let marker = common::workweave_marker(
+        &primary_canonical,
+        "test-project",
+        "feat",
+        &primary_canonical,
+    );
     std::fs::write(workweave_dir.join(".rwv-workweave"), marker).unwrap();
     common::register_workweave(&primary_canonical, "test-project", "feat", &workweave_dir);
 

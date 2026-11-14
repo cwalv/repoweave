@@ -1031,7 +1031,7 @@ fn make_marker_ww(parent: &Path) -> (Workspace, PathBuf, PathBuf, PathBuf, Strin
         .unwrap()
         .display()
         .to_string();
-    let marker = common::workweave_marker(&primary_canon, "web-app", &primary_canon);
+    let marker = common::workweave_marker(&primary_canon, "web-app", "feat", &primary_canon);
     std::fs::write(ww_root.join(".rwv-workweave"), &marker).unwrap();
     common::register_workweave(&primary_canon, "web-app", "feat", &ww_root);
 
