@@ -76,7 +76,7 @@ historical: the consent flags `--detach-checkouts` (on `update`,
 `ReattachConsent` (§4.4); §5.3's refusal with a flag as its exit; §5.2's
 carve-out for a `reference` member, which is now a worktree like any other and
 is detached at its pin, as a `dependency` member is; and the migration passes
-of §7, whose pre-flat shape now refuses as `health-floor-too-low` naming the
+of §7, whose pre-flat shape now refuses as `pre-flat-branch-shape` naming the
 bridge version. In force are the type split (§4), the flat ephemeral name
 (§3.5), and the backups (§4.4.1).
 

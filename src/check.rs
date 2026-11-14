@@ -186,9 +186,7 @@ pub enum CheckViolation {
     /// survive a mechanical cross-format rewrite.
     ///
     /// MIGRATORY finding: the pre-TOML manifest was written by rwv <=
-    /// v0.16.0. The report arm is removable once every owned weave's health
-    /// floor records a clean doctor at >= v0.18 (see
-    /// [`crate::health_floor`]).
+    /// v0.16.0.
     LegacyManifestFormat {
         /// Project the manifest belongs to. Derived from the directory rather
         /// than read off a `Project`, which cannot load without a manifest
@@ -9848,11 +9846,6 @@ pub fn run_check(
 ) -> anyhow::Result<Verdict> {
     use crate::integration::Severity;
 
-    // The P2 gate: a binary whose release removed migratory arms refuses a
-    // weave whose recorded floor predates them, naming the bridge version.
-    // A no-op while no removal has named a requirement.
-    crate::health_floor::enforce(ctx.primary_path())?;
-
     let mut fix_errors: Vec<String> = Vec::new();
     let mut held = HeldDrift {
         resolving: edited_drift
@@ -9926,22 +9919,6 @@ pub fn run_check(
         );
     }
 
-    // Read before `violations` moves into rendering. A violation holds
-    // the health floor back only while rwv itself could repair it: every
-    // migratory arm the floor licenses removing is an Auto or Consented
-    // repair, so requiring that set discharged is what keeps the
-    // attestation honest. A report-only warning is an observatory over
-    // state that is not always this weave's to clear — version skew
-    // across sovereign repos, submodules in a reference checkout, a
-    // sibling weave's workweaves in the shared container — and blocking
-    // on those makes such a weave permanently floorless. Error-severity
-    // findings, converted violations included, block through
-    // `has_errors` below.
-    let violations_all_report_only = findings
-        .violations
-        .iter()
-        .all(|v| matches!(v.fix_disposition(), FixDisposition::ReportOnly));
-
     let issue_repair = match kind_filter {
         Some(_) => Repair::Report,
         None => repair,
@@ -9959,26 +9936,6 @@ pub fn run_check(
         outln!("[{severity}: {token}] {}: {}", issue.source, issue.message);
     }
     let verdict = doctor_verdict(kind_filter, lines.iter().map(|line| line.issue.severity));
-
-    // The P1 record: a clean weave-wide unfiltered run advances the health
-    // floor. Weave-wide because the floor licenses arm removal for the
-    // whole weave and a scoped run proves nothing beyond its project;
-    // unfiltered because `--kind` narrows what was even looked at. Clean
-    // means no error-severity finding and no violation rwv can still
-    // repair; report-only warnings do not block, per the classification
-    // where `violations_all_report_only` is computed. Best-effort: a
-    // floor is a record, not a precondition of the run that earned it.
-    if scope == Scope::Weave
-        && kind_filter.is_none()
-        && violations_all_report_only
-        && verdict == Verdict::Pass
-    {
-        if let Err(e) =
-            crate::health_floor::record_clean_run(ctx.primary_path(), world.vcs.as_ref())
-        {
-            eprintln!("warning: could not record the health floor: {e:#}");
-        }
-    }
 
     held.refused.into_result()?;
     if let (true, Some(resolution), false, false, false) = (
@@ -10817,10 +10774,6 @@ pub fn run_check_json(
     scope: Scope,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
-    // The P2 gate, same as the text path. This surface never RECORDS a
-    // floor — `--json` is a machine-reading surface and does not mutate
-    // weave state; the floor records from the operator's text-mode run.
-    crate::health_floor::enforce(ctx.primary_path())?;
     let world = load_doctor_world(ctx, scope)?;
     let findings = collect_doctor_violations(ctx, &world, ScanProgress::Silent)
         .with_issues(collect_doctor_issues(&world, Repair::Report))

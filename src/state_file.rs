@@ -34,8 +34,6 @@ pub enum StateFile {
     WorkweaveIndex,
     /// Read, and removed once its content is in [`StateFile::WorkweaveIndex`].
     LegacyWorkweaveIndex,
-    /// Replaced.
-    HealthFloor,
     /// Replaced, when its content changes.
     WorkspaceState,
     /// Created exclusively by the op that acquires its workspace, then
@@ -66,14 +64,13 @@ pub const OPERATOR_AUTHORED: [&str; 2] = [
 ];
 
 impl StateFile {
-    pub const ALL: [StateFile; 15] = [
+    pub const ALL: [StateFile; 14] = [
         StateFile::OwnedDigests,
         StateFile::ActiveProject,
         StateFile::WorkweaveMarker,
         StateFile::ProjectLock,
         StateFile::WorkweaveIndex,
         StateFile::LegacyWorkweaveIndex,
-        StateFile::HealthFloor,
         StateFile::WorkspaceState,
         StateFile::OpRecord,
         StateFile::OpLease,
@@ -92,7 +89,6 @@ impl StateFile {
             StateFile::ProjectLock => crate::manifest::LockFile::FILE_NAME,
             StateFile::WorkweaveIndex => crate::workweave_index::INDEX_FILENAME,
             StateFile::LegacyWorkweaveIndex => crate::workweave_index::LEGACY_INDEX_FILENAME,
-            StateFile::HealthFloor => crate::health_floor::FLOOR_FILE,
             StateFile::WorkspaceState => crate::alignment::WORKSPACE_STATE_FILE,
             StateFile::OpRecord => crate::op_state::OP_STATE_FILE,
             StateFile::OpLease => crate::op_state::OP_LEASE_FILE,

@@ -28,7 +28,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 
 - [Reconcile repos with the lock](./reconcile-repos.md) — `rwv status`, `rwv doctor --locked`, and `rwv update` repair
 - [Regenerate ecosystem workspace files](./regenerate-ecosystem-files.md) — `rwv doctor --fix` to re-author, `rwv materialize` to settle drift and run hooks
-- [Upgrade to a new rwv on an existing weave](./upgrade-rwv.md) — clearing marker, manifest, and lock refusals in order when upgrading `rwv`, and the health-floor refusal
+- [Upgrade to a new rwv on an existing weave](./upgrade-rwv.md) — clearing marker, manifest, and lock refusals in order when upgrading `rwv`, and the pre-flat branch refusal
 
 ## Release and integration
 

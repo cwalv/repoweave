@@ -138,7 +138,6 @@ src/feature_sync.rs	target no target	tests/sync/land_drift_test.rs	1
 src/feature_sync.rs	unparseable-project at	tests/sync/deletion_rule_test.rs	1
 src/fetch.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
 src/fetch_claim.rs	state-claim-held	-	1
-src/health_floor.rs	health-floor-too-low	-	1
 src/init.rs	(untokened:owed)	-	1
 src/init.rs	malformed-provider	-	1
 src/init.rs	nested-project-name	-	1
@@ -348,12 +347,12 @@ src/workweave.rs	alignment detached with unpushed commits	tests/doctor/benign_st
 src/workweave.rs	edits drift left in place	tests/sync/land_drift_test.rs	1
 src/workweave.rs	edits moved and edited	tests/sync/land_drift_test.rs	1
 src/workweave.rs	edits set back	tests/sync/land_drift_test.rs	1
-src/workweave.rs	health-floor-too-low	-	1
 src/workweave.rs	missing-canonical-clone	-	1
 src/workweave.rs	name exists	-	1
 src/workweave.rs	name taken	-	1
 src/workweave.rs	no-active-project	tests/weave/project_and_source_spelling_test.rs	1
 src/workweave.rs	no-such-workweave	-	1
+src/workweave.rs	pre-flat-branch-shape	-	1
 src/workweave.rs	registry-path-disagreement	-	1
 src/workweave.rs	repo-without-commits	-	1
 src/workweave.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	5

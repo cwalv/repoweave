@@ -28,6 +28,10 @@
 //!   orphans. Silent auto-adoption in read paths is deliberately not done —
 //!   adoption is a doctor act with the operator's consent.
 
+/// The newest release that still migrates the pre-flat workweave branch shape
+/// `{project}--{workweave}/<segment>`.
+const PRE_FLAT_BRIDGE: &str = "0.25.0";
+
 use crate::cli::consent::{DiscardUncommittedConsent, DiscardUnlandedConsent};
 use crate::manifest::{
     LockFile, Manifest, ProjectName, RepoPath, Role, SubmoduleRecursion, WorkweaveId, WorkweaveName,
@@ -1561,18 +1565,17 @@ pub(crate) fn birth_ephemeral_worktree(
         .collect();
     if !occupied.is_empty() {
         crate::refuse!(
-            RefusalKind::HealthFloorTooLow,
+            RefusalKind::PreFlatBranchShape,
             "cannot create branch `{ephemeral}` in {store}: {n} branch(es) already occupy \
              its namespace, and git cannot hold both `refs/heads/{ephemeral}` and \
              `refs/heads/{ephemeral}/...`:\n  {list}\n\n\
              These carry the shape `{{project}}--{{workweave}}/<segment>`, which rwv minted \
-             before version {bridge} and no longer migrates, so this weave's health floor is \
-             below what this rwv requires. Install rwv {bridge}, run `rwv doctor --fix --all` \
-             until `rwv doctor --all` reports clean, then upgrade again; a branch you made \
-             yourself is yours to rename or delete.",
+             before version {bridge} and no longer migrates. Install rwv {bridge}, run `rwv doctor \
+             --fix --all` until `rwv doctor --all` reports clean, then upgrade again; a branch \
+             you made yourself is yours to rename or delete.",
             store = store.display(),
             n = occupied.len(),
-            bridge = crate::health_floor::PRE_FLAT_BRIDGE,
+            bridge = PRE_FLAT_BRIDGE,
             list = occupied
                 .iter()
                 .map(|b| b.as_str().to_owned())

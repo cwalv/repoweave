@@ -8,7 +8,7 @@ Before replacing the binaries, finish or abort any in-flight sync using the **ol
 rwv status
 rwv abort                           # if an operation is in progress
 rwv doctor --fix --all
-rwv doctor --all                    # a clean run records the health floor
+rwv doctor --all
 
 # 2. After installing the new binaries (from the primary weave root):
 rwv doctor --fix                    # migrate .rwv-workweave markers, the workweave index, reference worktrees and rwv.toml member keys
@@ -182,7 +182,7 @@ rwv update
 
 It records the state, and puts each member where the checked-out project branch expects it: a `dependency` or `reference` member of a feature whose branch is checked out in another workspace detached at its pin, and any member on a branch other than the expected one back on it, where every commit it holds stays on some other ref. A member that would leave commits behind stays where it is and is reported with them and the commands that keep them. `rwv update` never writes `rwv.lock`. A workweave made by the new release records its state when it is created, so it needs no run.
 
-A member of a workweave that still carries the branch shape an earlier release used, `<project>--<name>/<segment>`, makes `rwv workweave create` and `rwv update` refuse with `health-floor-too-low` and name the bridge version to step through, as the next section describes.
+A member of a workweave that still carries the branch shape an earlier release used, `<project>--<name>/<segment>`, makes `rwv workweave create` and `rwv update` refuse with `pre-flat-branch-shape` and name the bridge version to step through, as the next section describes.
 
 ## Step 8 — a workweave index at the old path
 
@@ -210,17 +210,9 @@ rwv doctor --fix
 
 It rewrites the line in the checked-out commit's `.gitattributes`, committing only that, and in the working file with its other edits in place, and replaces the clone's config. Every workweave shares its clone's config; another branch carries its own `.gitattributes` and is migrated where it is checked out.
 
-## The health floor and bridge versions
+## Branches in the pre-flat shape
 
-A release can drop the repair arms for on-disk states older than some version. Before it does, a weave has to record that it was clean under a version that still had them: that record is the health floor. A text-mode `rwv doctor --all` run with no `--kind` filter records it when the run is clean, meaning no error and nothing left that `rwv doctor --fix` would repair. `rwv doctor` without `--all`, with `--kind`, or with `--json` records nothing. The record names the rwv version that made the run, and a run by an older binary never lowers it.
-
-A binary whose release dropped such arms refuses `rwv doctor` (`health-floor-too-low`, exit 1) when the weave's floor is below the version it requires, or when no floor was ever recorded, and names a bridge version:
-
-```text
-Error: this weave's health floor records version <recorded>, below the <minimum> this rwv requires: migratory repair arms for older states were removed in this release. Step through version <bridge>: install rwv <bridge>, run `rwv doctor --fix --all` until `rwv doctor --all` reports clean (which records the floor), then upgrade again
-```
-
-Follow it: install the bridge version, run `rwv doctor --fix --all` until `rwv doctor --all` reports clean, then install the newer rwv again. Running the pre-upgrade commands at the top of this page, which end with a clean `rwv doctor --all` under the old binary, keeps the floor current so the refusal does not arise.
+A release drops the repair arms for on-disk states older than some version. The one state whose absence of repair is not silent is a workweave's branch name occupied by branches of the shape `<project>--<name>/<segment>`: `rwv workweave create` and `rwv update` refuse with `pre-flat-branch-shape` and name the bridge version, the newest release that still migrates them. Install it, run `rwv doctor --fix --all` until `rwv doctor --all` reports clean, then install the newer rwv again.
 
 ## Related
 

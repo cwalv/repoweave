@@ -20,7 +20,6 @@ mod doctor_unreadable_projects_dir_test;
 mod doctor_workweave_cargo_lock_fix_test;
 mod doctor_workweave_content_fix_isolation_test;
 mod doctor_workweave_identity_test;
-mod health_floor_test;
 mod index_drift_test;
 mod leftover_checkout_test;
 mod lock_totality_agreement_test;

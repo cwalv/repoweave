@@ -23,7 +23,7 @@
 //! description; `docs/explanation/joints/` holds the normative contracts.
 
 /// The version `Cargo.toml` declares: the only version `--version`, the plugin
-/// envelope's `RWV_VERSION` and the health floor carry.
+/// envelope's `RWV_VERSION` carries.
 pub fn rwv_version() -> &'static semver::Version {
     static VERSION: std::sync::LazyLock<semver::Version> = std::sync::LazyLock::new(|| {
         env!("CARGO_PKG_VERSION")
@@ -150,7 +150,6 @@ pub mod feature_sync;
 pub mod fetch;
 pub mod fetch_claim;
 pub mod git;
-pub mod health_floor;
 pub mod init;
 pub mod integration;
 pub mod integration_runner;

@@ -767,18 +767,17 @@ unborn branch, make an initial commit first.
 
 **Where this sits.** [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md).
 
-### `health-floor-too-low`
+### `pre-flat-branch-shape`
 
-**Condition.** The weave records a health floor below the version this binary
-requires.
+**Condition.** A workweave's branch name is occupied by branches of the shape
+`<project>--<name>/<segment>`, which an earlier release minted.
 
-**Why.** Repair arms for older states are removed at each release rather than
-carried forever. A binary that cannot repair the state it finds must say so
-instead of acting on assumptions that no longer hold.
+**Why.** The VCS cannot hold both a branch and branches below its name, and
+this release no longer migrates the old shape.
 
 **Exits.** Step through the bridge version the message names: install it, run
-`rwv doctor --fix --all` until `rwv doctor --all` reports clean — which records
-the floor — then upgrade again.
+`rwv doctor --fix --all` until `rwv doctor --all` reports clean, then upgrade
+again. A branch made by hand is the operator's to rename or delete.
 
 **Where this sits.** [Upgrade rwv](../how-to/upgrade-rwv.md).
 

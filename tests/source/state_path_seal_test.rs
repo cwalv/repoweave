@@ -78,7 +78,7 @@ fn file_create_refuses_a_state_path() {
         use repoweave::state_file::StateFile;
         use std::path::Path;
         pub fn open(dir: &Path) -> std::io::Result<std::fs::File> {
-            std::fs::File::create(StateFile::HealthFloor.in_dir(dir))
+            std::fs::File::create(StateFile::WorkspaceState.in_dir(dir))
         }
         "#,
     );

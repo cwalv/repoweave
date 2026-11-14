@@ -217,8 +217,9 @@ pub enum RefusalKind {
     UncompilableSelector,
     /// The object `--fix` re-observed before acting is gone or moved.
     RepairTargetChanged,
-    /// The weave's recorded health floor is below this binary's requirement.
-    HealthFloorTooLow,
+    /// A branch carries the shape an earlier release minted for a workweave's
+    /// branches, which this release no longer migrates.
+    PreFlatBranchShape,
     /// The installed VCS tool is older than its backend's minimum release, or
     /// names no release.
     UnsupportedVcsTool,

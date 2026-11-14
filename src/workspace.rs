@@ -2092,9 +2092,7 @@ impl WorkweaveMarker {
     /// that precondition rather than handed us a data problem.
     ///
     /// MIGRATORY arm: repairs markers written by rwv <= v0.16.0 (YAML
-    /// shape) and < v0.10.0 (missing `parent:`). Removable once every
-    /// owned weave's health floor records a clean doctor at >= v0.18 (see
-    /// [`crate::health_floor`]).
+    /// shape) and < v0.10.0 (missing `parent:`).
     pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
         let path = Self::path_in(dir);
         let content = path

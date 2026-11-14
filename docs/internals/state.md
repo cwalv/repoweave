@@ -34,7 +34,6 @@ Each is a variant of `StateFile` (`src/state_file.rs`) and is written through
 | `.rwv-op` | the workspace that owns an operation | one operation | the record, by design; `rwv abort` or `--continue` ends it |
 | `.rwv-op-lease` | each other workspace an operation mutates | one operation | the lease; `rwv abort` removes it, and `rwv doctor --fix` removes a dead one |
 | `.rwv-landing.lock` | `rwv-landings/<digest>/` in the store of the project clone | one operation (a landing carries it) | the claim; the next landing takes over a dead one |
-| `.rwv-health-floor` | primary weave root | the weave | nothing: published whole |
 | `.rwv-fetch.lock`, `rwv-workweave-index.lock`, `.rwv-owned-digests.lock` | store, store, project | one critical section | a file whose holder died, which the next claimant takes over |
 | `<name>.tmp.<pid>.<key>.<n>` | beside each file above | one write | a temp, swept by the next publish of its name |
 
