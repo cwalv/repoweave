@@ -63,12 +63,6 @@ enum Act {
     Reset(CommitId),
 }
 
-impl Act {
-    fn rewrites(&self) -> bool {
-        matches!(self, Self::Follow(_) | Self::Rebase(_) | Self::Reset(_))
-    }
-}
-
 struct Member {
     path: RepoPath,
     dir: PathBuf,
@@ -803,7 +797,6 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         &sync.project,
         crate::alignment::Accounting::default(),
     )?;
-    let accounting = crate::alignment::Accounting::scan(sync.ctx.primary_path())?;
     let dependents = crate::merge_upstream::dependents_of(vcs, dir, &sync.branch)?;
     let mut members = Vec::new();
     for (path, entry) in ours.iter_entries() {
@@ -842,26 +835,6 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
             &mut report,
         )?;
         if let Some(member) = member {
-            let on = match member.vcs.head_attachment(&member.dir)? {
-                HeadAttachment::Attached(attached) => Some(attached.to_string()),
-                _ => None,
-            };
-            if let (true, Some(on)) = (member.act.rewrites(), on) {
-                let declarers = accounting.declarers(path, &on);
-                if !declarers.is_empty() {
-                    report.add(
-                        State::ProtectedDeclared
-                            .of(path)
-                            .member()
-                            .subject(&on)
-                            .listing(declarers)
-                            .bind("<m>", path)
-                            .without(&[ChoiceId::C12])
-                            .by_verb("sync")
-                            .judge(member.vcs.as_ref()),
-                    );
-                }
-            }
             members.push(member);
         }
     }
@@ -2071,20 +2044,6 @@ fn integration_now(
         return Ok((how, merged));
     }
     let mut report = Report::default();
-    if let (Some(path), HeadAttachment::Attached(on)) = (repo, vcs.head_attachment(dir)?) {
-        let on = on.to_string();
-        let declarers =
-            crate::alignment::Accounting::scan(sync.ctx.primary_path())?.declarers(path, &on);
-        if !declarers.is_empty() {
-            report.add(
-                scoped(State::ProtectedDeclared)
-                    .subject(&on)
-                    .listing(declarers)
-                    .without(&[ChoiceId::C12])
-                    .judge(vcs),
-            );
-        }
-    }
     let manifest = Manifest::from_path(&sync.dir.join(Manifest::FILE_NAME))?;
     let repos = crate::stack::Repos {
         root: sync.ctx.active_path(),
