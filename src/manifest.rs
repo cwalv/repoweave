@@ -1678,7 +1678,6 @@ pub struct Manifest {
     /// that has none of its own.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub history: Option<History>,
-    #[serde(default)]
     pub(crate) repositories: BTreeMap<RepoPath, RepoEntry>,
     #[serde(default, deserialize_with = "deserialize_integrations")]
     pub integrations: BTreeMap<String, IntegrationConfig>,
@@ -2060,7 +2059,14 @@ impl Manifest {
                         .map(|nearest| format!("; did you mean `{nearest}`?"))
                 })
                 .unwrap_or_default();
-            let annotated = if suggestion.is_empty() {
+            let annotated = if msg.contains("missing field `repositories`") {
+                anyhow::Error::new(e).context(format!(
+                    "{} holds no `repositories` table, which every manifest declares, bare for a \
+                     project with no members yet as `rwv init` writes it: an emptied or truncated \
+                     file is no manifest; restore it from the VCS",
+                    Self::FILE_NAME
+                ))
+            } else if suggestion.is_empty() {
                 anyhow::Error::new(e)
             } else {
                 // Wrap with the suggestion so it appears in the error chain
@@ -2964,12 +2970,13 @@ role = "owned"
     }
 
     #[test]
-    fn manifest_from_path_without_repositories_key_has_no_members() {
+    fn manifest_from_path_without_repositories_key_is_no_manifest() {
         let dir = crate::tempdir().unwrap();
         let path = dir.path().join("missing.toml");
         std::fs::write(&path, "[integrations]\n").unwrap();
 
-        assert!(Manifest::from_path(&path).unwrap().is_empty());
+        let err = format!("{:#}", Manifest::from_path(&path).unwrap_err());
+        assert!(err.contains("holds no `repositories` table"), "{err}");
     }
 
     #[test]
@@ -4018,11 +4025,18 @@ copy = [".env"]
     // -- iter_repo_paths ------------------------------------------------------
 
     #[test]
-    fn a_manifest_with_no_repositories_key_declares_no_members() {
-        for text in ["", "history = \"merge\"\n", "[integrations]\n"] {
-            let m = Manifest::from_toml_str(text).unwrap();
-            assert!(m.is_empty(), "{text:?}");
+    fn a_file_with_no_repositories_key_is_no_manifest_and_a_bare_one_has_no_members() {
+        for text in [
+            "",
+            "# header only\n",
+            "history = \"merge\"\n",
+            "[integrations]\n",
+        ] {
+            assert!(Manifest::from_toml_str(text).is_err(), "{text:?}");
         }
+        assert!(Manifest::from_toml_str("[repositories]\n")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

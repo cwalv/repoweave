@@ -374,13 +374,14 @@ fn edit_table(
 /// taking the key with it; it gets a header where its last table stood.
 fn reveal_emptied(doc: &mut Tbl<'_>, path: &[Seg], removed: Item, plan: &mut Plan) {
     let Tbl::Std(parent) = doc else { return };
-    if path.is_empty() || !parent.is_implicit() || !parent.is_empty() {
+    if path.is_empty() || !(parent.is_implicit() || parent.is_dotted()) || !parent.is_empty() {
         return;
     }
     let Item::Table(removed) = removed else {
         return;
     };
     parent.set_implicit(false);
+    parent.set_dotted(false);
     parent.decor_mut().set_prefix("\n");
     if let Some(pos) = extent(&Item::Table(removed)).map(|(lo, _)| lo) {
         parent.set_position(pos);

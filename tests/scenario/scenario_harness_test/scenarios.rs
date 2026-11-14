@@ -24835,8 +24835,9 @@ pub fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter(history: &'static
 
 /// On a hand-ordered `rwv.toml` with no `[repositories]` header and an
 /// integration table between its two member tables, the primary and the
-/// workweave each remove one of the members. The sync takes both removals in,
-/// and the manifest it produces has no members.
+/// workweave each remove one of the members. Git's merge of the two holds no
+/// `repositories` table, which is no manifest: the sync stops, and once the
+/// bare table is declared and staged, the continue ends with no members.
 pub fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest(
     history: &'static str,
 ) -> Scenario {
@@ -24868,7 +24869,26 @@ pub fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest
         Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
         Step::rwv(&ww("w"), &["member", "remove", APP]).expect(Exit::Succeeds),
         Step::rwv(&ww("w"), &["sync", "--history", history])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains("holds no `repositories` table")),
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]",
+            "[repositories]\n\n[integrations.vscode-workspace]",
+        ),
+        Step::rwv_printed_holding(&ww("w"), "git -C ", "add -- rwv.toml").expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["sync", "--continue"])
             .expect(Exit::Succeeds)
+            .may_strand(if history == "linear" {
+                &[Repo::Proj]
+            } else {
+                &[]
+            })
             .claim(Claim::ManifestLists {
                 at: ww("w"),
                 rev: "HEAD",
@@ -24876,7 +24896,7 @@ pub fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest
             }),
     ]);
     scenario(
-        "removals from both sides that leave no member sync into an empty manifest",
+        "removals from both sides that leave no member stop until the empty table is declared",
         steps,
     )
 }
