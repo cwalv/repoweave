@@ -1711,6 +1711,7 @@ every_scenario!(
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
     a_target_judged_alignment_choice_runs_in_the_target,
+    a_withheld_publish_prints_a_push_that_runs,
     update_remote_at_a_diverged_pin_prints_every_way_on,
     a_replayed_recorded_resolution_stops_the_sync_as_a_conflict,
     a_stopped_sync_with_an_unresolved_lock_prints_the_way_on,
@@ -5501,6 +5502,12 @@ fn a_replayed_recorded_resolution_stops_the_sync_with_its_way_on() {
 #[test]
 fn update_remote_at_a_diverged_pin_offers_the_reset() {
     runner::run(scenarios::update_remote_at_a_diverged_pin_prints_every_way_on())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_withheld_publishs_printed_push_runs() {
+    runner::run(scenarios::a_withheld_publish_prints_a_push_that_runs())
         .assert_fully_decided_green();
 }
 

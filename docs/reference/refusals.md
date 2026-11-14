@@ -404,11 +404,11 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `unset` | C23: say how `<T>` accepts landings | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
-| `unset` | C23: say how `<T>` accepts landings | `rwv branch set-history <h> --repo <m>` | a workspace on `<T>` | records only |
-| `unset` | C23: say how `<T>` accepts landings | rerun with `--history <h>` | here | records only |
-| `contradicted` | C23: say how `<T>` accepts landings | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
-| `contradicted` | C23: say how `<T>` accepts landings | `rwv branch set-history <h> --repo <m>` | a workspace on `<T>` | records only |
+| `unset` | C23: say how `<T>` accepts landings, `<h>` being `linear`, `merge` or `ff-only` | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
+| `unset` | C23: say how `<T>` accepts landings, `<h>` being `linear`, `merge` or `ff-only` | `rwv branch set-history <h> --repo <m>` | a workspace on `<T>` | records only |
+| `unset` | C23: say how `<T>` accepts landings, `<h>` being `linear`, `merge` or `ff-only` | rerun with `--history <h>` | here | records only |
+| `contradicted` | C23: say how `<T>` accepts landings, `<h>` being `linear`, `merge` or `ff-only` | `rwv branch set-history <h>` | a workspace on `<T>` | records only |
+| `contradicted` | C23: say how `<T>` accepts landings, `<h>` being `linear`, `merge` or `ff-only` | `rwv branch set-history <h> --repo <m>` | a workspace on `<T>` | records only |
 | `contradicted` | integrate by the setting the branch records | rerun without `--history` | here | nothing changes |
 | `not fast-forward` | C36: take the target's new work in first | `rwv sync` | the workspace with that feature | by the target's setting; `rwv abort` undoes it |
 

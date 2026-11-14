@@ -2091,7 +2091,7 @@ impl ChoiceId {
             },
             Self::C23 => &ChoiceRow {
                 id: Some("C23"),
-                phrase: "say how `<T>` accepts landings",
+                phrase: "say how `<T>` accepts landings, `<h>` being `linear`, `merge` or `ff-only`",
                 keeps_work: "records only",
             },
             Self::C24 => &ChoiceRow {

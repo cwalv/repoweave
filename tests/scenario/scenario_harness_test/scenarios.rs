@@ -4135,6 +4135,9 @@ pub fn sync_takes_in_the_target() -> Scenario {
                 .expect(Exit::refuses(Repo::App, State::HistoryUnset))
                 .claim(Claim::OutputContains(" branch set-history <h> --repo"))
                 .claim(Claim::OutputContains("rerun with --history <h>"))
+                .claim(Claim::OutputContains(
+                    "`<h>` being `linear`, `merge` or `ff-only`",
+                ))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(&ww("w"), &["sync", "--history", "linear"])
                 .expect(Exit::Succeeds)
@@ -5776,6 +5779,43 @@ pub fn update_remote_at_a_diverged_pin_prints_every_way_on() -> Scenario {
                     repo: Repo::App,
                     mark: "app-mine",
                     marked: None,
+                }),
+        ],
+    )
+}
+
+/// A pin no remote-tracking branch reaches: the withheld refusal's publish
+/// under a branch name of the operator's own runs as printed once the name is
+/// filled, its commit and remote named by the line itself.
+pub fn a_withheld_publish_prints_a_push_that_runs() -> Scenario {
+    scenario(
+        "a withheld publish prints a push that runs",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w",
+                    "--new-branch",
+                    "feat",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["push"]).expect(Exit::refuses(Repo::App, State::PublishWithheld)),
+            Step::rwv_printed_filling(&ww("w"), "git -C", " push", &[("<name>", "rescue")])
+                .pushes(Remote::origin(Repo::App), "rescue")
+                .expect(Exit::Succeeds)
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "rescue",
+                    mark: "w-app",
                 }),
         ],
     )

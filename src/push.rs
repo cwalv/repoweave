@@ -1990,13 +1990,19 @@ fn publish(
             }
             PushOutcome::Failed(message) => {
                 push_errors.push(message.clone());
+                let item_vcs = vcs_for(item.vcs_type);
+                let failed = State::PublishWithheld
+                    .of(&item.repo_path)
+                    .listing(message.lines())
+                    .checkout(dir)
+                    .bind("<b>", &item.branch)
+                    .bind("<r>", &item.target);
                 withheld.add(
-                    State::PublishWithheld
-                        .of(&item.repo_path)
-                        .listing(message.lines())
-                        .checkout(dir)
-                        .bind("<b>", &item.branch)
-                        .judge(vcs_for(item.vcs_type).as_ref()),
+                    match item_vcs.resolve_revision(dir, &item.branch) {
+                        Ok(tip) => failed.bind("<sha>", tip.id().short()),
+                        Err(_) => failed.without(&[ChoiceId::C27]),
+                    }
+                    .judge(item_vcs.as_ref()),
                 );
                 json_outcomes.push(PushOutcomeOutput::Failed {
                     path,
@@ -2326,8 +2332,21 @@ fn gate_reachability(
                 reaching.join(", ")
             )
         };
-        let withheld = judging(State::PublishWithheld)
-            .bind("<b>", member.entry.branch.local_counterpart().as_str());
+        let mut withheld = judging(State::PublishWithheld)
+            .bind("<b>", member.entry.branch.local_counterpart().as_str())
+            .bind("<sha>", pin.id().short());
+        let publishing_remote = vcs
+            .push_target_of(
+                &member.dir,
+                &RawRefName::new(member.entry.branch.local_counterpart().as_str()),
+                fetched.url_remote(path),
+            )
+            .ok()
+            .flatten();
+        withheld = match publishing_remote {
+            Some(remote) => withheld.bind("<r>", remote),
+            None => withheld.without(&[ChoiceId::C27]),
+        };
         gate.add(
             match pushed.record.target().filter(|_| in_target.contains(path)) {
                 Some(target) => withheld
