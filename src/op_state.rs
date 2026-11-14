@@ -2645,7 +2645,7 @@ mod tests {
             );
             let message = format!("{refused:#}");
             assert!(
-                message.contains("an rwv release before")
+                message.contains("an rwv release that records no version")
                     && message.contains("resumes or aborts it")
                     && message.contains(&discard_unreadable_record_at(tmp.path())),
                 "{message}"

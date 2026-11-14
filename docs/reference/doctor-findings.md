@@ -96,7 +96,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`member-permissions`](#member-permissions) (`writable-reference`, `read-only-member`) | Warning | Auto-fixable |
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
 | [`history-disagreement`](#history-disagreement) | Warning | Report-only |
-| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-gone` | Warning | Auto-fixable |
+| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-gone`, `directory-moved` | Warning | Auto-fixable |
 | [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands` | Warning | Report-only |
 | [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
 | [`clone-topology`](#clone-topology) / `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree` | Error | Report-only |
@@ -1077,6 +1077,20 @@ registration and says so.
 **What to do:** move the directory away, keeping whatever you need from it,
 then run `rwv doctor --fix`: the finding becomes `directory-gone`, and the fix
 drops the registration.
+
+#### `directory-moved`
+
+**Warning. Auto-fixable.** Nothing stands at the registered path, and the
+checkout it registers stands in a workweave directory elsewhere, moved by hand:
+a workweave directory in a workweave container, or the workspace `rwv doctor`
+runs in. The finding names both paths.
+
+**What to do:** `rwv doctor --fix` records the checkout where it stands, through
+the VCS's own repair for a moved checkout, so what the registration holds of it
+(the commit it is on, the changes marked for its next commit) moves with it.
+The workweave is then listed under the name its marker records. A workweave
+moved anywhere else is out of sight of this scan, so its registrations read as
+`directory-gone`: run `rwv doctor --fix` from inside the moved workweave first.
 
 ---
 

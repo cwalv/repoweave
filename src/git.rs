@@ -4329,6 +4329,20 @@ impl Vcs for GitVcs {
             .collect())
     }
 
+    fn checkout_recorded_elsewhere(&self, checkout: &Path) -> Option<PathBuf> {
+        let GitDirLink::Linked(registration) = git_dir_link(checkout)? else {
+            return None;
+        };
+        let recorded = std::fs::read_to_string(registration.join("gitdir")).ok()?;
+        let recorded = Path::new(recorded.trim()).parent()?.to_path_buf();
+        (!same_location(&recorded, checkout)).then_some(recorded)
+    }
+
+    fn record_checkout_moved(&self, checkout: &Path) -> Result<(), VcsError> {
+        Self::run_awaiting_peers(["worktree", "repair"], checkout)?;
+        Ok(())
+    }
+
     fn prune_stale_worktree_registration(
         &self,
         repo: &Path,

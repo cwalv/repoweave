@@ -44,9 +44,7 @@ use crate::vcs::{
     project_vcs, vcs_for, DestroyProof, EphemeralRefName, FoundBranch, RawRefName, RefOrigin,
     RegistrationPrune, ResolvedRevisionId, Site, Vcs, VcsError,
 };
-use crate::workspace::{
-    project_dir, project_rel_dir, project_rel_path, workweave_name_in, WorkweaveMarker,
-};
+use crate::workspace::{project_dir, project_rel_dir, project_rel_path, WorkweaveMarker};
 use crate::workweave_index;
 use anyhow::Context;
 use std::path::{Path, PathBuf};
@@ -4385,19 +4383,10 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
 /// `.rwv-workweave` marker whose `primary` resolves to `ws_root`, each with
 /// its identity.
 ///
-/// **Identity is by record, never by name shape.** The PROJECT comes from
-/// the marker — the record the directory itself carries — and the NAME
-/// comes from the registry entry naming this path when one exists
-/// ([`workweave_name_for_path`]), falling back for unregistered directories
-/// to the name half the marker's project would have rendered, which is an
-/// exact strip of that project's own spelling and not a split at the first
-/// separator in the basename. The basename is discovery, not identity: a
-/// hand-renamed directory keeps its recorded identity, so the branch scans
-/// keep validating the branch the records own instead of deriving a new
-/// expectation from the rename. A directory whose identity is unrecoverable
-/// (no registry entry, and a basename the marker's project does not render)
-/// is skipped here; the tree-integrity scan's misnamed-dir finding owns
-/// reporting it.
+/// **Identity is by record, never by name shape.** The project and the name
+/// come from the marker, the record the directory itself carries. The
+/// basename is discovery, not identity: a hand-renamed directory keeps its
+/// recorded identity.
 ///
 /// This is the ONLY surviving on-disk scan (the pre-registry list/delete
 /// scan was deleted). Every other code path resolves via the registry.
@@ -4420,24 +4409,10 @@ pub fn doctor_scan_container(ws_root: &Path, container: &Path) -> Vec<(Workweave
         if !marker.names_primary(&primary) {
             continue;
         }
-        let project_name = marker.project().clone();
-        let dir_name = entry.file_name().to_string_lossy().into_owned();
-        let recorded = workweave_name_for_path(ws_root, &project_name, &dir)
-            .ok()
-            .flatten();
-        let name = match recorded {
-            Some(n) => n,
-            None => match workweave_name_in(&project_name, &dir_name) {
-                // No record, and a basename this project could not have
-                // rendered: the misnamed-dir finding owns this state.
-                Some(from_basename) => from_basename,
-                None => continue,
-            },
-        };
         result.push((
             WorkweaveId {
-                project: project_name,
-                name,
+                project: marker.project().clone(),
+                name: marker.name().clone(),
             },
             dir,
         ));

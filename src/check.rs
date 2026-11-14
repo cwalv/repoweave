@@ -384,8 +384,8 @@ pub enum CheckViolation {
         listed: Vec<String>,
     },
     /// A worktree registration in a repo that no longer leads to a
-    /// worktree: its directory is gone, or stands without its link back to
-    /// the repo. [`RegistrationDirectoryKind`] says which.
+    /// worktree: its directory is gone, stands without its link back to the
+    /// repo, or moved. [`RegistrationDirectoryKind`] says which.
     StaleWorktreeRegistration {
         /// The workweave the *registering* repo (the one that holds the
         /// stale `.git/worktrees/` entry) lives in; `None` when it is in the
@@ -396,6 +396,9 @@ pub enum CheckViolation {
         /// Absolute path of the registered worktree, as recorded in the
         /// VCS's worktree list.
         worktree_path: PathBuf,
+        /// Where the checkout the registration records now stands, for
+        /// [`RegistrationDirectoryKind::DirectoryMoved`].
+        stands_at: Option<PathBuf>,
         sub_kind: RegistrationDirectoryKind,
     },
 
@@ -722,7 +725,8 @@ impl CheckViolation {
                 SubmoduleCommitKind::Unfetched => ReportOnly,
             },
             CheckViolation::StaleWorktreeRegistration { sub_kind, .. } => match sub_kind {
-                RegistrationDirectoryKind::DirectoryGone => Auto,
+                RegistrationDirectoryKind::DirectoryGone
+                | RegistrationDirectoryKind::DirectoryMoved => Auto,
                 RegistrationDirectoryKind::DirectoryStands => ReportOnly,
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
@@ -1434,6 +1438,11 @@ pub enum RegistrationDirectoryKind {
     /// its files may be the operator's work, so `--fix` keeps the
     /// registration until the directory is moved away.
     DirectoryStands,
+    /// Nothing, while the checkout the registration records stands in a
+    /// workweave elsewhere, its directory moved by hand. Auto-fixable:
+    /// `--fix` records the checkout where it stands, keeping what the
+    /// registration holds of it.
+    DirectoryMoved,
 }
 
 /// How stale recorded content should be treated.
@@ -2171,6 +2180,9 @@ pub enum ViolationOutput {
         workweave: Option<WorkweaveId>,
         /// Absolute path of the registered worktree.
         worktree_path: WirePath,
+        /// Where the checkout now stands, for `directory-moved`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        stands_at: Option<WirePath>,
         #[serde(rename = "sub_kind")]
         sub_kind: RegistrationDirectoryKind,
     },
@@ -2649,12 +2661,14 @@ impl ViolationOutput {
                 workweave,
                 repo,
                 worktree_path,
+                stands_at,
                 sub_kind,
             } => Self::StaleWorktreeRegistration {
                 absolute_path: abs_in(&workweave, workspace_dir, workweave_dirs, &repo),
                 path: repo.to_string(),
                 workweave: workweave.clone(),
                 worktree_path: WirePath::of(&worktree_path),
+                stands_at: stands_at.as_deref().map(WirePath::of),
                 sub_kind,
             },
             CheckViolation::StaleOpState {
@@ -5717,6 +5731,7 @@ pub fn scan_state_hygiene(
     vcs: &dyn crate::vcs::Vcs,
     repos: &[StateHygieneScanTarget],
     op_state_targets: &[StateHygieneOpStateTarget],
+    moved: &[MovedCheckout],
 ) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
@@ -5793,8 +5808,15 @@ pub fn scan_state_hygiene(
         // Stale worktree registrations.
         if let Ok(stale_paths) = vcs.list_stale_worktree_registrations(&repo.abs) {
             for worktree_path in stale_paths {
+                let registered = CanonicalPath::of(&worktree_path);
+                let stands_at = moved
+                    .iter()
+                    .find(|checkout| CanonicalPath::of(&checkout.recorded) == registered)
+                    .map(|checkout| checkout.stands.clone());
                 let sub_kind = if worktree_path.symlink_metadata().is_ok() {
                     RegistrationDirectoryKind::DirectoryStands
+                } else if stands_at.is_some() {
+                    RegistrationDirectoryKind::DirectoryMoved
                 } else {
                     RegistrationDirectoryKind::DirectoryGone
                 };
@@ -5802,6 +5824,7 @@ pub fn scan_state_hygiene(
                     workweave: repo.workweave.clone(),
                     repo: repo.repo.clone(),
                     worktree_path,
+                    stands_at,
                     sub_kind,
                 });
             }
@@ -5881,6 +5904,63 @@ pub fn scan_state_hygiene(
     violations
 }
 
+/// A linked checkout whose store records it where it no longer stands.
+pub struct MovedCheckout {
+    pub recorded: PathBuf,
+    pub stands: PathBuf,
+}
+
+/// The checkouts of each workweave of this primary found in a workweave
+/// container or at the invoking workspace, wherever their store records them,
+/// that it records elsewhere: what a workweave directory moved by hand
+/// leaves.
+fn moved_checkouts(ctx: &crate::workspace::WorkspaceContext) -> Vec<MovedCheckout> {
+    let primary = CanonicalPath::of(ctx.primary_path());
+    let roots = workweave_containers_for_scan(ctx.primary_path())
+        .into_iter()
+        .filter_map(|container| std::fs::read_dir(container.as_path()).ok())
+        .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
+        .chain(std::iter::once(ctx.active_path().to_path_buf()));
+    let mut moved = Vec::new();
+    let mut seen = BTreeSet::new();
+    for root in roots {
+        if !seen.insert(CanonicalPath::of(&root)) {
+            continue;
+        }
+        let Ok(Some(marker)) = crate::workspace::WorkweaveMarker::read(&root) else {
+            continue;
+        };
+        if !marker.names_primary(&primary) {
+            continue;
+        }
+        let project_checkout = project_dir(&root, marker.project());
+        let members = Manifest::from_path(&project_checkout.join(Manifest::FILE_NAME))
+            .map(|manifest| {
+                manifest
+                    .iter_entries()
+                    .map(|(path, entry)| {
+                        (
+                            root.join(path.as_path()),
+                            crate::vcs::vcs_for(entry.vcs_type),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        for (checkout, vcs) in
+            std::iter::once((project_checkout, crate::vcs::project_vcs())).chain(members)
+        {
+            if let Some(recorded) = vcs.checkout_recorded_elsewhere(&checkout) {
+                moved.push(MovedCheckout {
+                    recorded,
+                    stands: checkout,
+                });
+            }
+        }
+    }
+    moved
+}
+
 /// Each tip filed under `key` in `repo`'s store, the checkout's and every
 /// branch's, that no branch reaches, with what a backup of it backs up.
 fn unreached_savepoint_tips(
@@ -5944,6 +6024,16 @@ pub fn fix_state_hygiene(
     repo_abs: &Path,
 ) -> anyhow::Result<bool> {
     match violation {
+        CheckViolation::StaleWorktreeRegistration {
+            stands_at: Some(stands_at),
+            sub_kind: RegistrationDirectoryKind::DirectoryMoved,
+            ..
+        } => {
+            vcs.record_checkout_moved(stands_at).with_context(|| {
+                format!("could not record {} where it stands", stands_at.display())
+            })?;
+            Ok(true)
+        }
         CheckViolation::StaleWorktreeRegistration {
             worktree_path,
             sub_kind: RegistrationDirectoryKind::DirectoryGone,
@@ -7040,6 +7130,7 @@ impl CheckViolation {
                 workweave,
                 repo,
                 worktree_path,
+                stands_at,
                 sub_kind,
             } => {
                 let location = match workweave {
@@ -7058,6 +7149,17 @@ impl CheckViolation {
                          --fix` keeps its registration. Move the directory away to \
                          keep its files, then run `rwv doctor --fix` to prune it",
                         worktree_path.display()
+                    ),
+                    RegistrationDirectoryKind::DirectoryMoved => format!(
+                        "{location}: stale-worktree-registration: the checkout registered \
+                         at {} stands at {}, its directory moved by hand (run `rwv doctor \
+                         --fix` to record it where it stands)",
+                        worktree_path.display(),
+                        stands_at
+                            .as_deref()
+                            .map(Path::display)
+                            .map(|p| p.to_string())
+                            .unwrap_or_default()
                     ),
                 }
             }
@@ -8821,7 +8923,8 @@ fn apply_finding_repairs(
         matches!(
             v,
             CheckViolation::StaleWorktreeRegistration {
-                sub_kind: RegistrationDirectoryKind::DirectoryGone,
+                sub_kind: RegistrationDirectoryKind::DirectoryGone
+                    | RegistrationDirectoryKind::DirectoryMoved,
                 ..
             }
         )
@@ -8830,7 +8933,10 @@ fn apply_finding_repairs(
     let mut kept = Vec::with_capacity(violations.len() + registrations.len());
     for v in registrations {
         let CheckViolation::StaleWorktreeRegistration {
-            workweave, repo, ..
+            workweave,
+            repo,
+            stands_at,
+            ..
         } = &v
         else {
             unreachable!()
@@ -8838,10 +8944,18 @@ fn apply_finding_repairs(
         let repaired = match repo_locations.get(&(workweave.clone(), repo.clone())) {
             Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
                 Ok(true) => {
-                    outln!(
-                        "[fixed] core: stale-worktree-registration for {}: pruned",
-                        location_of(workweave, repo)
-                    );
+                    match stands_at {
+                        Some(stands_at) => outln!(
+                            "[fixed] core: stale-worktree-registration for {}: recorded the \
+                             checkout where it stands, at {}",
+                            location_of(workweave, repo),
+                            stands_at.display()
+                        ),
+                        None => outln!(
+                            "[fixed] core: stale-worktree-registration for {}: pruned",
+                            location_of(workweave, repo)
+                        ),
+                    }
                     true
                 }
                 Ok(false) => false,
@@ -10612,6 +10726,7 @@ fn collect_doctor_violations(
         vcs,
         &hygiene_targets,
         &hygiene_op_state_targets,
+        &moved_checkouts(ctx),
     ));
 
     for project in &input.projects {

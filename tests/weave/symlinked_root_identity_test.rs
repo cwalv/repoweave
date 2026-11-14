@@ -150,7 +150,7 @@ fn a_container_scan_from_a_symlinked_primary_finds_the_workweave() {
             .iter()
             .map(|(id, _)| (id.project.as_str(), id.name.as_str()))
             .collect::<Vec<_>>(),
-        vec![(PROJECT, "feat")],
+        vec![(PROJECT, "ww")],
         "the scan must recognize a marker naming this primary in either spelling"
     );
 }

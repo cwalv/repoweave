@@ -1225,6 +1225,13 @@ Schema:
           "enum": [
             "directory-stands"
           ]
+        },
+        {
+          "description": "Nothing, while the checkout the registration records stands in a workweave elsewhere, its directory moved by hand. Auto-fixable: `--fix` records the checkout where it stands, keeping what the registration holds of it.",
+          "type": "string",
+          "enum": [
+            "directory-moved"
+          ]
         }
       ]
     },
@@ -2231,6 +2238,17 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "stands_at": {
+              "description": "Where the checkout now stands, for `directory-moved`.",
+              "anyOf": [
+                {
+                  "$ref": "#/definitions/WirePath"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "sub_kind": {
               "$ref": "#/definitions/RegistrationDirectoryKind"

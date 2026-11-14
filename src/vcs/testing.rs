@@ -1297,6 +1297,14 @@ impl Vcs for FakeVcs {
         unsupported("prune_stale_worktree_registration")
     }
 
+    fn checkout_recorded_elsewhere(&self, _checkout: &Path) -> Option<PathBuf> {
+        unsupported("checkout_recorded_elsewhere")
+    }
+
+    fn record_checkout_moved(&self, _checkout: &Path) -> Result<(), VcsError> {
+        unsupported("record_checkout_moved")
+    }
+
     fn live_worktree_branches(&self, _repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
         unsupported("live_worktree_branches")
     }

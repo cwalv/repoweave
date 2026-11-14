@@ -4337,6 +4337,20 @@ pub trait Vcs: Send + Sync {
     /// [`worktree_prune`]: Vcs::worktree_prune
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
+    /// Where the store of the linked checkout at `checkout` records it, when
+    /// that is not where it stands: a checkout whose directory was moved
+    /// without the VCS. `None` for a checkout recorded where it stands, and
+    /// for anything that is no linked checkout.
+    fn checkout_recorded_elsewhere(&self, checkout: &Path) -> Option<PathBuf>;
+
+    /// Record in its store that the linked checkout at `checkout` stands
+    /// there, for one [`Vcs::checkout_recorded_elsewhere`] answers for. What
+    /// the store keeps of the checkout (where it stood, its record of the
+    /// next commit) moves with it.
+    ///
+    /// For git: `git worktree repair` run in the checkout.
+    fn record_checkout_moved(&self, checkout: &Path) -> Result<(), VcsError>;
+
     /// Drop `repo`'s registration of the worktree at `worktree` when nothing
     /// stands at that path and the registration is not locked; otherwise
     /// leave it and say why. A path whose directory is gone is free for a

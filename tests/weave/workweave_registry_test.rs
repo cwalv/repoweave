@@ -880,6 +880,60 @@ fn a_workweave_no_record_names_is_reported_with_the_verb_that_names_it() {
     assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
 
+/// A workweave directory renamed by hand: `rwv doctor --all --fix` records
+/// its checkouts where they stand instead of pruning them, and lists it under
+/// its marker's name. What a checkout had marked for its next commit stays.
+#[test]
+fn a_workweave_moved_by_hand_is_recorded_where_it_stands_under_its_marker_name() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "ww"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let was = tmp.path().join(".workweaves").join("web-app--ww");
+    let now = tmp.path().join(".workweaves").join("web-app--zz");
+    let checkout = now.join("projects/web-app");
+    std::fs::write(was.join("projects/web-app/staged.txt"), "staged\n").unwrap();
+    common::git_in(was.join("projects/web-app"), &["add", "staged.txt"]);
+    std::fs::rename(&was, &now).unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--all", "--fix", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(
+        !String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|line| line.contains("stale-worktree-registration") && line.ends_with("pruned")),
+        "{}",
+        common::cli::describe(&out)
+    );
+
+    let listed = read_index(&ws, "web-app")["workweaves"]["ww"]["path"]
+        .as_str()
+        .map(PathBuf::from)
+        .expect("the workweave stays listed as `ww`");
+    assert_eq!(
+        repoweave::path_spelling::resolve(&listed).unwrap(),
+        repoweave::path_spelling::resolve(&now).unwrap()
+    );
+    assert!(read_index(&ws, "web-app")["workweaves"].get("zz").is_none());
+    assert_eq!(
+        common::git_in(&checkout, &["status", "--porcelain"]).trim(),
+        "A  staged.txt"
+    );
+    for repo in [checkout.clone(), now.join("github/org/repo")] {
+        let listed = common::git_in(&repo, &["worktree", "list", "--porcelain"]);
+        assert!(!listed.contains("prunable"), "{listed}");
+    }
+    let out = rwv().args(["status"]).current_dir(&now).output().unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+}
+
 fn shell_words(line: &str) -> Vec<String> {
     line.split_whitespace()
         .map(|word| word.trim_matches('`').to_owned())
