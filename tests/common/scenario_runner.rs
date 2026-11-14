@@ -2695,7 +2695,7 @@ pub fn end_state(sb: &Sandbox) -> String {
                 .bytes()
                 .take_while(u8::is_ascii_hexdigit)
                 .count();
-            run >= 7 && run < 40
+            (7..40).contains(&run)
         })
     {
         let run = text[at..].bytes().take_while(u8::is_ascii_hexdigit).count();
