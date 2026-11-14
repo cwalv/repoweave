@@ -101,7 +101,7 @@ fn a_tip_the_savepoint_reaches_is_reset_keeping_nothing() {
     let p = repo();
     commit(p.path(), "ahead");
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    git(p.path(), &["reset", "-q", "--hard", "HEAD~1"]);
+    git(p.path(), &["reset", "-q", "--keep", "HEAD~1"]);
     let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
     assert_eq!(outcome, VerifiedRestoreOutcome::Restored);
     assert_eq!(&head(p.path()), saved.id());

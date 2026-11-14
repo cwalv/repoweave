@@ -424,7 +424,7 @@ const ALLOWLIST: &[Allowed] = &[
         pattern: "\"--hard\"",
         count: 4,
         callers: &[
-            ("reset_and_drop_savepoint", 1),
+            ("reset_to_savepoint", 1),
             ("hard_reset", 1),
             ("discard_edits_kept", 1),
             ("keep_working_copy_before_cancel", 1),
@@ -437,16 +437,13 @@ const ALLOWLIST: &[Allowed] = &[
             BackupWitness of the tip being left, refusing a witness that \
             backs up another repo or tip, so the rewind is type-gated and \
             the commits it leaves stay reachable from the backup. \
-            (2) reset_and_drop_savepoint(): its one caller executes a \
+            (2) reset_to_savepoint(): its one caller executes a \
             planned Reset of a checkout to its savepoint; the executor first \
-            checks the checkout still holds the tip the plan judged. A tip \
-            the savepoint reaches, or one the record names as written by \
-            the op, leaves no commit behind; any other tip is kept as a \
-            backup (a BackupWitness held before the reset) in the same arm, \
-            so the commits it moves the branch off remain reachable. Before \
-            every reset the helper keeps, as a backup, the uncommitted edits \
-            the reset would discard, or refuses where they are in another \
-            workspace than the one abort runs in. A checkout stopped \
+            checks the checkout still holds the tip the plan judged. In the \
+            same function, before the reset, the working copy the move \
+            discards is kept in the checkout's slot and the tip, where it \
+            holds a commit no other branch reaches, in the branch's slot, \
+            so the commits it moves the branch off remain reachable. A checkout stopped \
             mid-operation is never reset directly: it is canceled and its \
             tip classified again. \
             (3) discard_edits_kept(): the reset to HEAD that lets a \
@@ -567,7 +564,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git/backup.rs",
         pattern: "\"update-ref\"",
-        count: 2,
+        count: 3,
         callers: &[],
         justification: "(1) write_backup_ref: creates \
             refs/rwv/backup/<branch>/<id> where no ref of that name exists \
@@ -578,7 +575,13 @@ const ALLOWLIST: &[Allowed] = &[
             the name having come from a listing of that namespace; the \
             caller's pin rule runs first, and the operator names the \
             repo (`rwv backup drop <repo>`) or runs `rwv backup prune`, \
-            which drops only backups a branch already reaches in full.",
+            which drops only backups a branch already reaches in full. \
+            (3) write_backup_ref, for an abort slot: points the fixed name \
+            refs/rwv/backup/<branch>/aborted or .../aborted-working-copy at \
+            the tip abort keeps, over what the slot held. The slot is one \
+            deep by design, as the VCS's own record of the last tip a reset \
+            moved off is; what it held stays in the ref's own log until \
+            that expires.",
     },
     Allowed {
         file: "git/pick.rs",
