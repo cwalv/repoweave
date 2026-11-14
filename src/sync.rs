@@ -8744,8 +8744,8 @@ fn abort_op(
     if let op_state::OwnerReading::HeaderOnly { parse_error, .. } = &reading {
         eprintln!(
             "owner record at {} does not parse past op {}'s id and workspaces: {parse_error}\n\
-             No tips it recorded are read: each repo is put back at its savepoint, every tip \
-             it leaves that holds commits the savepoint does not reach kept as a backup first.",
+             No tips it recorded are read, and none is needed: each repo is put back at its \
+             savepoint, what that discards kept first.",
             op_state::OwnerRecord::path_in(owner_workspace.as_path()),
             header.id,
         );

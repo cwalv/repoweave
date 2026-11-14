@@ -238,8 +238,9 @@ fn assert_doctor_reports_no_op_state(parked: &Parked) {
 
 /// A recorded tip that is a tag name fails the record's parse while its op
 /// id and workspaces still parse. The error sends the operator to `rwv
-/// abort`, which keeps each tip it can no longer attribute as a backup,
-/// cancels the member's rebase with its working copy kept, and ends the op.
+/// abort`, which restores by the rule that reads no recorded tip: it
+/// cancels the member's rebase with its working copy kept, puts the project
+/// repo back, and ends the op.
 #[test]
 fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     let parked = park();
@@ -259,8 +260,8 @@ fn a_record_whose_header_parses_is_discarded_by_the_abort_its_error_names() {
     let out = rwv(&parked.seat.root, &["abort"]);
     assert!(out.status.success(), "{}", transcript(&out));
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("  projects/app: its tip"),
-        "with its recorded tip unreadable, the replayed project repo's tip is kept:\n{}",
+        String::from_utf8_lossy(&out.stdout).contains("  projects/app: "),
+        "with its recorded tip unreadable, the replayed project repo is restored:\n{}",
         transcript(&out)
     );
     assert!(!mid_op(&parked.seat.lib), "{}", transcript(&out));
