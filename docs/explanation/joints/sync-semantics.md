@@ -144,7 +144,7 @@ back.
 The op record is an owner record at the initiating workspace and a lease
 pointer at every other workspace the op mutates, which keeps a second
 operation out. See
-[formats](../../reference/formats.md#rwv-op--owner-op-state-record).
+[formats](../../reference/formats.md#rwv-op--owner-op-record).
 
 ## Abort: verified-restore contract
 
