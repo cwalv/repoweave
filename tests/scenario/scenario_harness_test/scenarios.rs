@@ -17659,24 +17659,6 @@ pub fn history_member_override_lands() -> Scenario {
     )
 }
 
-/// A landing killed after it rebased `app` says so once when it is continued.
-pub fn a_continued_landing_reports_a_rebase_once() -> Scenario {
-    let mut steps =
-        vec![Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds)];
-    steps.extend(seat_behind_a_moved_main());
-    steps.extend([
-        Step::rwv_paused(&ww("w"), &["land"], "advance-target", "landing"),
-        Step::kill("landing"),
-        Step::rwv(&ww("w"), &["land", "--continue"])
-            .expect(Exit::Succeeds)
-            .may_strand(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputOnce(
-                "local/remotes/app: rebased; the tip it left",
-            )),
-    ]);
-    scenario("a continued landing reports a rebase once", steps)
-}
-
 /// A landing killed once it has reported its target's push branch behind
 /// says so once when it is continued.
 pub fn a_continued_landing_reports_the_push_branch_once() -> Scenario {

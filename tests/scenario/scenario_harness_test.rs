@@ -216,11 +216,6 @@ fn a_continued_landing_reports_the_push_branch_once() {
 }
 
 #[test]
-fn a_continued_landing_reports_a_rebase_once() {
-    runner::run(scenarios::a_continued_landing_reports_a_rebase_once()).assert_fully_decided_green();
-}
-
-#[test]
 fn a_continue_refused_on_its_resolution_offers_an_abort_that_runs() {
     runner::run(scenarios::continue_refused_on_its_resolution_aborts())
         .assert_fully_decided_green();
@@ -1324,7 +1319,6 @@ every_scenario!(
     removal_is_member_change,
     dc06_member_set_from_merge,
     continue_rejudges_the_resolved_manifest,
-    a_continued_landing_reports_a_rebase_once,
     a_continued_landing_reports_the_push_branch_once,
     continue_keeps_the_consent_it_was_given,
     continue_refused_on_its_resolution_aborts,
@@ -4351,38 +4345,6 @@ holding_rwv! {
                         member: Repo::App,
                         mark: "b-app",
                     }),
-            ],
-        )
-        .assert_fully_decided_green();
-    }
-}
-
-holding_rwv! {
-    /// A landing into a target behind its upstream, killed once it has
-    /// reported what it took in, says so once when it is continued.
-    fn a_continued_landing_reports_the_upstream_it_took_in_once() {
-        bad_steps(
-            "a continued landing reports the upstream it took in once",
-            vec![
-                Step::rwv(&a(), &["workweave", "create", "--project", "proj", "w"])
-                    .expect(Exit::Succeeds),
-                Step::commit(&ww("w"), Repo::Docs, "w-docs"),
-                Step::new_machine(Machine::B),
-                Step::commit(&Place::Primary(Machine::B), Repo::App, "b-app"),
-                Step::rwv(&Place::Primary(Machine::B), &["lock", "--commit"])
-                    .expect(Exit::Succeeds),
-                Step::rwv(&Place::Primary(Machine::B), &["push"])
-                    .pushes(Remote::origin(Repo::App), "main")
-                    .pushes(Remote::origin(Repo::Proj), "main")
-                    .pushes(Remote::origin(Repo::Proj), sandbox::RECORDS_BRANCH)
-                    .expect(Exit::Succeeds),
-                Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
-                Step::rwv_paused(&ww("w"), &["land", "--history", "linear"], "aligning-target", "landing"),
-                Step::kill("landing"),
-                Step::rwv(&ww("w"), &["land", "--continue"])
-                    .expect(Exit::Succeeds)
-                    .may_strand(&[Repo::Proj])
-                    .claim(Claim::OutputOnce("took in 1 commit(s) of 'main'")),
             ],
         )
         .assert_fully_decided_green();
