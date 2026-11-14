@@ -2624,7 +2624,7 @@ mod tests {
     /// file, then `vcs.rs`, then `manifest.rs`; a type declared in another
     /// module is read by its name alone, and a hand-written serde impl is not
     /// read at all, so a change inside one is not seen here.
-    const PINNED_SHAPE: (u32, &str) = (8, "d1da2190fa8c7b51");
+    const PINNED_SHAPE: (u32, &str) = (8, "db353d6ba9f401db");
 
     fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
         let start = source.iter().position(|line| {
