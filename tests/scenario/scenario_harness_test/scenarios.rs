@@ -12725,61 +12725,19 @@ pub fn cherry_pick_two_tables_stop_aborts() -> Scenario {
 }
 
 /// `main`'s commit moves the `[workweave]` table to the end of `rwv.toml`
-/// and adds a key; the feature removes it where it stood. Git merges the
-/// text with no conflict into a file that parses and keeps both keys, where
-/// the values conflict on the table. The port stops listing that, and the
-/// printed staging of a resolution and continue commit it.
-pub fn cherry_pick_text_merge_differing_from_the_values_stops() -> Scenario {
+/// and adds a key; the feature removes it where it stood. Both sides changed
+/// the table, so git's text merge, which keeps `main`'s, is the port's.
+pub fn cherry_pick_a_table_both_sides_changed_takes_the_text_merge() -> Scenario {
     let mut steps = text_merged_port(PortedText::TableMovedOnOneSide);
     steps.extend([
         Step::rwv(&ww("p"), &["cherry-pick", "main"])
-            .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .claim(Claim::OutputContains(
-                "the VCS merged its text with no conflict, into a manifest that differs from the \
-                 merge of both sides' values",
-            ))
-            .claim(Claim::OutputContains("workweave changed on both sides"))
-            .claim(Claim::OutputContains("rwv cherry-pick --continue"))
-            .claim(Claim::OutputContains("rwv abort")),
-        Step::git(
-            &ww("p"),
-            Repo::Proj,
-            &["diff", "--name-only", "--diff-filter=U"],
-        )
-        .claim(Claim::OutputLine("rwv.toml")),
-        Step::hand_edit(
-            &ww("p"),
-            Repo::Proj,
-            "rwv.toml",
-            VSCODE_TABLE,
-            &format!("{VSCODE_TABLE}\n[workweave]\ncopy = [\"b\"]\n"),
-        ),
-        Step::rwv_printed_holding(&ww("p"), "git -C", "add").expect(Exit::Succeeds),
-        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
             .expect(Exit::Succeeds)
-            .claim(Claim::OutputContains("ported")),
+            .claim(Claim::OutputContains("ported"))
+            .claim(Claim::OutputLacks("differs from the merge")),
         Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-            .claim(Claim::OutputContains("[workweave]\ncopy = [\"b\"]"))
-            .claim(Claim::OutputLacks("link")),
+            .claim(Claim::OutputContains("[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]")),
     ]);
-    scenario("cherry-pick text merge differing from the values", steps)
-}
-
-/// [`cherry_pick_text_merge_differing_from_the_values_stops`], abandoned.
-pub fn cherry_pick_text_merge_differing_from_the_values_aborts() -> Scenario {
-    let mut steps = text_merged_port(PortedText::TableMovedOnOneSide);
-    steps.extend([
-        Step::rwv(&ww("p"), &["cherry-pick", "main"])
-            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
-        Step::rwv_printed_exactly(&ww("p"), "rwv abort")
-            .expect(Exit::Succeeds)
-            .may_strand(&[Repo::Proj]),
-        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
-            .claim(Claim::OutputLacks("rwv.toml")),
-        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
-            .claim(Claim::OutputLacks("[workweave]")),
-    ]);
-    scenario("cherry-pick text merge differing aborted", steps)
+    scenario("cherry-pick a table both sides changed", steps)
 }
 
 /// Both sides change keys of one `[workweave]` table, apart: git's text
@@ -20332,6 +20290,132 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
         }
     };
     scenario(name, steps)
+}
+
+/// An entry of `rwv.toml` both sides changed, in [`an_entry_both_sides_changed`].
+#[derive(Debug, Clone, Copy)]
+pub enum BothChanged {
+    /// Each side adds an element to a multi-line `[workweave] copy`, far
+    /// apart: git's text merge holds both.
+    ListAdds,
+    /// The workweave sets `app`'s `history` to the run's own, `main` makes
+    /// the same change on its own, then the workweave sets `ff-only`. A
+    /// replay drops the change already upstream and keeps `ff-only`; a merge
+    /// conflicts on the line.
+    AlreadyUpstream,
+}
+
+/// An entry both sides changed is the VCS's to merge or to conflict on: no
+/// check stops a clean text merge of it, nothing either side added is lost,
+/// and where the VCS conflicts the bare continue takes no side.
+pub fn an_entry_both_sides_changed(shape: BothChanged, taking_in: TakingIn) -> Scenario {
+    let lands_at = if taking_in.lands() { a() } else { ww("w") };
+    let mut steps = Vec::new();
+    let holds: &[&'static str] = match shape {
+        BothChanged::ListAdds => {
+            steps.extend([
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    UNDER_INTEGRATIONS,
+                    "enabled = false\n\n[workweave]\ncopy = [\n  \"a.env\",\n  \"b.env\",\n  \
+                     \"c.env\",\n  \"d.env\",\n  \"e.env\",\n]\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "copy list"]),
+                create("w"),
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "  \"a.env\",\n",
+                    "  \"0-main.env\",\n  \"a.env\",\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "copy 0-main"]),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "  \"e.env\",\n",
+                    "  \"e.env\",\n  \"z-w.env\",\n",
+                ),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "copy z-w"]),
+            ]);
+            &["\"0-main.env\"", "\"z-w.env\""]
+        }
+        BothChanged::AlreadyUpstream => {
+            let first = taking_in.args()[2];
+            steps.extend([
+                create("w"),
+                Step::rwv(&ww("w"), &["branch", "set-history", first, "--repo", APP])
+                    .expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "set-role", DOCS, "fork"]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["branch", "set-history", first, "--repo", APP])
+                    .expect(Exit::Succeeds),
+                Step::rwv(
+                    &ww("w"),
+                    &["branch", "set-history", "ff-only", "--repo", APP],
+                )
+                .expect(Exit::Succeeds),
+            ]);
+            &["history = \"ff-only\""]
+        }
+    };
+    let mut start = taking_in.args().to_vec();
+    if taking_in.lands() && matches!(shape, BothChanged::AlreadyUpstream) {
+        start.extend(["--allow-member-change", APP]);
+    }
+    let start = Step::rwv(&ww("w"), &start);
+    let held = |step: Step| {
+        holds.iter().fold(step, |step, holds| {
+            step.claim(Claim::OutputContains(holds))
+        })
+    };
+    let conflicts = matches!(shape, BothChanged::AlreadyUpstream) && !taking_in.linear();
+    if conflicts {
+        steps.extend([
+            start
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(
+                    "history: \"ff-only\" in yours, \"merge\" incoming",
+                )),
+            Step::rwv(&ww("w"), &[taking_in.args()[0], "--continue"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains("rwv.toml is still in conflict")),
+            Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("rwv.toml")),
+            Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep yours").expect(Exit::Succeeds),
+        ]);
+    } else {
+        steps.push(
+            start
+                .expect(Exit::Succeeds)
+                .may_strand(if taking_in.linear() {
+                    &[Repo::Proj]
+                } else {
+                    &[]
+                })
+                .claim(Claim::OutputLacks("differs from the merge")),
+        );
+    }
+    steps.push(held(
+        Step::git(&lands_at, Repo::Proj, &["show", "HEAD:rwv.toml"]).expect(Exit::Succeeds),
+    ));
+    scenario(
+        match (shape, conflicts) {
+            (BothChanged::ListAdds, _) => {
+                "an element each side added to one list is kept from the text merge"
+            }
+            (BothChanged::AlreadyUpstream, false) => {
+                "a change again of an entry whose first change is upstream is replayed"
+            }
+            (BothChanged::AlreadyUpstream, true) => {
+                "an entry both sides changed that the VCS conflicts on takes the side named"
+            }
+        },
+        steps,
+    )
 }
 
 /// What the operator does at a `sync` merge stop on `NOTES.txt`, a file of

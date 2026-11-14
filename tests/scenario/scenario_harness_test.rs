@@ -1021,6 +1021,26 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::KeepsLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
     settle_a_manifest_stop(scenarios::ManifestSettle::ForeignMerge),
+    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::SyncMerge),
+    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::SyncLinear),
+    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::LandMerge),
+    an_entry_both_sides_changed(scenarios::BothChanged::ListAdds, scenarios::TakingIn::LandLinear),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::AlreadyUpstream,
+        scenarios::TakingIn::SyncMerge
+    ),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::AlreadyUpstream,
+        scenarios::TakingIn::SyncLinear
+    ),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::AlreadyUpstream,
+        scenarios::TakingIn::LandMerge
+    ),
+    an_entry_both_sides_changed(
+        scenarios::BothChanged::AlreadyUpstream,
+        scenarios::TakingIn::LandLinear
+    ),
     check_a_text_merge(scenarios::TextMerge::SettingMoved),
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
@@ -1521,8 +1541,7 @@ every_scenario!(
     cherry_pick_port_edits_a_hand_ordered_manifest_in_place,
     cherry_pick_two_tables_stop,
     cherry_pick_two_tables_stop_aborts,
-    cherry_pick_text_merge_differing_from_the_values_stops,
-    cherry_pick_text_merge_differing_from_the_values_aborts,
+    cherry_pick_a_table_both_sides_changed_takes_the_text_merge,
     cherry_pick_text_merge_matching_the_values_passes,
     cherry_pick_port_landing_merge,
     cherry_pick_conflict,
@@ -5993,14 +6012,8 @@ fn cherry_pick_two_tables_stop_aborts() {
 }
 
 #[test]
-fn cherry_pick_text_merge_differing_from_the_values_stops() {
-    runner::run(scenarios::cherry_pick_text_merge_differing_from_the_values_stops())
-        .assert_fully_decided_green();
-}
-
-#[test]
-fn cherry_pick_text_merge_differing_from_the_values_aborts() {
-    runner::run(scenarios::cherry_pick_text_merge_differing_from_the_values_aborts())
+fn cherry_pick_a_table_both_sides_changed_takes_the_text_merge() {
+    runner::run(scenarios::cherry_pick_a_table_both_sides_changed_takes_the_text_merge())
         .assert_fully_decided_green();
 }
 
@@ -7447,6 +7460,28 @@ fn an_untracked_file_in_the_way_of_the_merge_is_named() {
 fn an_unparseable_intermediate_manifest_is_replayed_and_landed() {
     runner::run(scenarios::an_unparseable_intermediate_manifest_is_replayed())
         .assert_fully_decided_green();
+}
+
+fn each_taking_in(shape: scenarios::BothChanged) {
+    for taking_in in [
+        scenarios::TakingIn::SyncMerge,
+        scenarios::TakingIn::SyncLinear,
+        scenarios::TakingIn::LandMerge,
+        scenarios::TakingIn::LandLinear,
+    ] {
+        runner::run(scenarios::an_entry_both_sides_changed(shape, taking_in))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn an_element_each_side_added_to_one_list_is_kept() {
+    each_taking_in(scenarios::BothChanged::ListAdds);
+}
+
+#[test]
+fn a_change_again_of_an_entry_already_changed_upstream_is_kept() {
+    each_taking_in(scenarios::BothChanged::AlreadyUpstream);
 }
 
 #[test]

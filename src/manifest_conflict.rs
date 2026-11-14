@@ -131,12 +131,28 @@ impl Sides {
     /// Ours, with each entry only theirs changed taken from theirs, and each
     /// entry in conflict too where `take_theirs`.
     fn merged(&self, take_theirs: bool) -> anyhow::Result<Manifest> {
+        self.merged_with(|_, ours, theirs| if take_theirs { theirs } else { ours }.cloned())
+    }
+
+    /// The merge of the values with each entry in conflict as `text_merge`
+    /// holds it: an entry both sides changed is the text merge's to make.
+    fn merged_over(&self, text_merge: &Manifest) -> anyhow::Result<Manifest> {
+        let text_merge = text_merge.declared()?;
+        self.merged_with(|path, _, _| at(&text_merge, path).cloned())
+    }
+
+    fn merged_with(
+        &self,
+        in_conflict: impl Fn(&[String], Option<&toml::Value>, Option<&toml::Value>) -> Option<toml::Value>,
+    ) -> anyhow::Result<Manifest> {
         let [base, ours, theirs] = self.tables()?;
         let mut merged = ours.clone();
         for path in entries(&[&base, &ours, &theirs]) {
             let (b, o, t) = (at(&base, &path), at(&ours, &path), at(&theirs, &path));
-            if o == b || (take_theirs && t != b) {
+            if o == b {
                 put(&mut merged, &path, t.cloned());
+            } else if t != b && t != o {
+                put(&mut merged, &path, in_conflict(&path, o, t));
             }
         }
         let text = toml::to_string(&merged).context("failed to serialize the merged rwv.toml")?;
@@ -239,26 +255,35 @@ pub(crate) fn reading(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Option<Readin
     let Some(recorded) = vcs.conflict_sides(dir, Manifest::FILE_NAME)? else {
         return Ok(None);
     };
+    let working = std::fs::read_to_string(dir.join(Manifest::FILE_NAME)).ok();
     Ok(Some(match read(&recorded) {
-        Ok(sides) => Reading::Entries {
-            conflicts: sides.conflicts()?,
-            text_merge: text_merge_left(dir, &sides)?,
-        },
+        Ok(sides) => sides.reading(working.as_deref())?,
         Err((side, why)) => Reading::Unreadable { side, why },
     }))
 }
 
-/// How the text merge a check wrote into `dir`'s working `rwv.toml`, above
-/// the merge of the values, differs from it; nothing where the file holds
-/// none.
-fn text_merge_left(dir: &Path, sides: &Sides) -> anyhow::Result<Vec<String>> {
-    let Ok(working) = std::fs::read_to_string(dir.join(Manifest::FILE_NAME)) else {
-        return Ok(Vec::new());
-    };
-    let Some(text_merge) = text_merge_written(&working) else {
-        return Ok(Vec::new());
-    };
-    differences(text_merge, sides)
+impl Sides {
+    /// Where `working` holds a text merge a check stopped, the entries both
+    /// sides changed are the ones it holds, and none is in conflict.
+    fn reading(&self, working: Option<&str>) -> anyhow::Result<Reading> {
+        Ok(match checked(working) {
+            Some((text, _)) => Reading::Entries {
+                conflicts: Vec::new(),
+                text_merge: differences(text, self)?,
+            },
+            None => Reading::Entries {
+                conflicts: self.conflicts()?,
+                text_merge: Vec::new(),
+            },
+        })
+    }
+}
+
+/// The text merge a check wrote into `working`, above the merge of the
+/// values, and the manifest it reads as, where it parses.
+fn checked(working: Option<&str>) -> Option<(&str, Manifest)> {
+    let text = working.and_then(text_merge_written)?;
+    Some((text, Manifest::from_toml_str(text).ok()?))
 }
 
 /// The text merge a check wrote into `working`, above the merge of the
@@ -272,58 +297,44 @@ fn text_merge_written(working: &str) -> Option<&str> {
 }
 
 /// How `text_merge`, a text merge of `rwv.toml`, differs from the merge of
-/// the values of `sides`; nothing where it declares that merge, or does not
-/// parse, which the stop for an unparseable result answers.
+/// the values of `sides` in an entry at most one side changed; nothing where
+/// none does, or where it does not parse, which the stop for an unparseable
+/// result answers.
 fn differences(text_merge: &str, sides: &Sides) -> anyhow::Result<Vec<String>> {
-    let (mut lines, in_conflict) = differing_entries(text_merge, sides)?;
-    if in_conflict {
-        lines.push("  and both sides changed the entries below differently".to_owned());
-    }
-    Ok(lines)
-}
-
-/// [`differences`] without the line about entries in conflict, and whether
-/// any is.
-fn differing_entries(text_merge: &str, sides: &Sides) -> anyhow::Result<(Vec<String>, bool)> {
     let Ok(text_merge) = Manifest::from_toml_str(text_merge) else {
-        return Ok((Vec::new(), false));
+        return Ok(Vec::new());
     };
-    let conflicts = sides.conflicts()?;
-    let merged = sides.merged(false)?;
-    if conflicts.is_empty() && text_merge.declares_same(&merged) {
-        return Ok((Vec::new(), false));
-    }
-    let lines = listing(&text_merge.declared()?, &merged.declared()?, &conflicts);
-    Ok((lines, !conflicts.is_empty()))
+    let values = sides.merged_over(&text_merge)?;
+    Ok(listing(&text_merge.declared()?, &values.declared()?))
 }
 
-/// The lines naming each entry, outside `conflicts`, where `text_merge` and
-/// `values` differ.
-fn listing(
-    text_merge: &toml::Table,
-    values: &toml::Table,
-    conflicts: &[EntryConflict],
-) -> Vec<String> {
-    let mut lines = vec![
+/// The lines naming each entry where `text_merge` and `values` differ, under
+/// a heading; nothing where none does.
+fn listing(text_merge: &toml::Table, values: &toml::Table) -> Vec<String> {
+    let differing: Vec<String> = entries(&[text_merge, values])
+        .into_iter()
+        .filter_map(|path| {
+            let (t, v) = (at(text_merge, &path), at(values, &path));
+            (t != v).then(|| {
+                format!(
+                    "  {}: {} in the text merge, {} in the merge of the values",
+                    entry_name(&path),
+                    shown(t),
+                    shown(v)
+                )
+            })
+        })
+        .collect();
+    if differing.is_empty() {
+        return Vec::new();
+    }
+    std::iter::once(
         "rwv.toml: the VCS merged its text with no conflict, into a manifest that differs from \
          the merge of both sides' values:"
             .to_owned(),
-    ];
-    for path in entries(&[text_merge, values]) {
-        if conflicts.iter().any(|c| path.starts_with(&c.path)) {
-            continue;
-        }
-        let (t, v) = (at(text_merge, &path), at(values, &path));
-        if t != v {
-            lines.push(format!(
-                "  {}: {} in the text merge, {} in the merge of the values",
-                entry_name(&path),
-                shown(t),
-                shown(v)
-            ));
-        }
-    }
-    lines
+    )
+    .chain(differing)
+    .collect()
 }
 
 /// The sides of `sides`, read, where `text_merge` differs from the merge of
@@ -356,12 +367,13 @@ pub(crate) fn check_tip(sides: &ConflictSides, tip: &str) -> anyhow::Result<Opti
     let (Ok(read), Ok(at_tip)) = (read(sides), Manifest::from_toml_str(tip)) else {
         return Ok(None);
     };
-    let merged = read.merged(false)?;
-    if at_tip.declares_same(&merged) {
+    let merged = read.merged_over(&at_tip)?;
+    let lines = listing(&at_tip.declared()?, &merged.declared()?);
+    if lines.is_empty() {
         return Ok(None);
     }
     Ok(Some(TipDiffers {
-        lines: listing(&at_tip.declared()?, &merged.declared()?, &[]),
+        lines,
         values: Manifest::edit_text(tip, |m| *m = merged)?.0,
     }))
 }
@@ -379,7 +391,7 @@ pub(crate) fn check_text_merge(
     let Some(read) = differing(sides, text_merge)? else {
         return Ok(false);
     };
-    let values = read.text(read.merged(false)?)?;
+    let values = read.text(read.merged_over(&Manifest::from_toml_str(text_merge)?)?)?;
     let newline = |text: &str| if text.ends_with('\n') { "" } else { "\n" };
     let working = format!(
         "{TEXT_MERGE_MARK}\n{text_merge}{}=======\n{values}{}{VALUES_MARK}\n",
@@ -428,7 +440,7 @@ pub(crate) fn check_ported_text_merge(
             let Ok(read) = read(&held) else {
                 return Ok(None);
             };
-            differing_entries(&hold(text_merge)?, &read)?.0
+            differences(&hold(text_merge)?, &read)?
         }
     };
     if lines.is_empty() {
@@ -590,12 +602,12 @@ pub(crate) fn continue_at_stop(
             ));
         }
     };
-    let conflicts = sides.conflicts()?;
-    if record.verb != typed || (keep.is_none() && !conflicts.is_empty()) {
-        let reading = Reading::Entries {
-            text_merge: text_merge_left(&dir, &sides)?,
-            conflicts,
-        };
+    let reading = sides.reading(working.as_deref())?;
+    let conflicts = match &reading {
+        Reading::Entries { conflicts, .. } => conflicts.len(),
+        Reading::Unreadable { .. } => 0,
+    };
+    if record.verb != typed || (keep.is_none() && conflicts > 0) {
         return Err(refused(
             "rwv.toml is still in conflict",
             reading_lines(vcs, &dir, &reading, Some(&resume)),
@@ -630,7 +642,11 @@ pub(crate) fn continue_at_stop(
         return Ok(());
     }
     let replaying = vcs.rebase_in_flight(&dir)?.is_some();
-    let merged = sides.merged(keep.is_some_and(|side| side.is_recorded_theirs(replaying)))?;
+    let checked = checked(working.as_deref());
+    let merged = match &checked {
+        Some((_, text_merge)) => sides.merged_over(text_merge)?,
+        None => sides.merged(keep.is_some_and(|side| side.is_recorded_theirs(replaying)))?,
+    };
     if let Some(working) = working
         .as_deref()
         .and_then(|text| Manifest::from_toml_str(text).ok())
@@ -649,8 +665,8 @@ pub(crate) fn continue_at_stop(
             ],
         ));
     }
-    let (text, dropped) = match working.as_deref().and_then(text_merge_written) {
-        Some(text_merge) => (Manifest::edit_text(text_merge, |m| *m = merged)?.0, None),
+    let (text, dropped) = match checked {
+        Some((text_merge, _)) => (Manifest::edit_text(text_merge, |m| *m = merged)?.0, None),
         None => (
             sides.text(merged)?,
             Some(if replaying { "yours" } else { "incoming" }),
@@ -660,7 +676,7 @@ pub(crate) fn continue_at_stop(
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
     vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
     let took = match keep {
-        Some(side) if conflicts.is_empty() => format!(
+        Some(side) if conflicts == 0 => format!(
             "; no entry was in conflict, so `--keep {}` took nothing",
             side.word()
         ),
