@@ -6332,7 +6332,7 @@ mod tests {
         let errors = check_published_tokens_have_no_git_words([
             ("finding kind", "live-staged".to_owned()),
             ("finding kind", "index-drift".to_owned()),
-            ("finding kind", "legacy-workweave-index".to_owned()),
+            ("finding kind", "unreadable-workweave-index".to_owned()),
             ("refusal state", "drift left in place".to_owned()),
         ]);
         assert_eq!(errors.len(), 2, "got:\n{}", errors.join("\n"));
@@ -9357,8 +9357,7 @@ mod tests {
     fn the_findings_entry_is_written_from_its_heading_to_the_next_heading() {
         let stub = findings_page(
             "### `unparseable-project`\n\nhand-written\n\n### `pin`\n\nhand-written\n\n\
-             ### `alignment`\n\nhand-written\n\n### `legacy-workweave-index`\n\nhand-written\n\n\
-             ### `history-disagreement`\n\nhand-written\n\n\
+             ### `alignment`\n\nhand-written\n\n### `history-disagreement`\n\nhand-written\n\n\
              ### `missing-lock-merge-driver`\n\nhand-written\n\n",
         );
         let spliced = splice_finding_entries(&stub).unwrap();
@@ -9368,7 +9367,6 @@ mod tests {
         assert!(spliced.contains("#### `malformed`"));
         assert!(spliced.contains("#### `unreachable`"));
         assert!(spliced.contains("#### `on-branch`"));
-        assert!(spliced.contains("#### `old-path`"));
         assert!(spliced.contains("#### `config-legacy`"));
         assert!(!spliced.contains("hand-written"));
         assert!(spliced.ends_with("### `after`\n\nafter\n"));
