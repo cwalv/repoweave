@@ -1195,6 +1195,14 @@ struct RootSite {
 /// it cannot witness is not a directory to walk past, because every workweave
 /// is shaped exactly like a primary and walking past one hands the tree a
 /// primary's authority on the strength of its own broken claim.
+/// The root of the workspace an invocation from `cwd` acts on, where one
+/// encloses it.
+pub(crate) fn enclosing_root(cwd: &Path) -> Option<PathBuf> {
+    walk_to_weave_root(cwd)
+        .ok()
+        .map(|(site, _)| site.dir.into_path_buf())
+}
+
 fn walk_to_weave_root(cwd: &Path) -> anyhow::Result<(RootSite, RootObservation)> {
     let cwd = CanonicalPath::existing(cwd)
         .with_context(|| format!("failed to canonicalize {}", cwd.display()))?;

@@ -49,7 +49,6 @@ pub(crate) fn judge(project_dir: &Path) -> anyhow::Result<()> {
             project_dir.display()
         ));
     }
-    crate::op_state::check_no_op_in_progress(&[project_dir])?;
     Ok(())
 }
 

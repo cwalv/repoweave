@@ -136,11 +136,7 @@ pub fn run_update_remote(
 ) -> anyhow::Result<()> {
     let resumed = match &take {
         Take::Continue => Some(Op::resume(ctx, OpVerb::UpdateRemote)?),
-        Take::Fresh(..) => {
-            // Only reads the op-state; the sync engine takes its own exclusion.
-            crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-            None
-        }
+        Take::Fresh(..) => None,
     };
     let record_selection;
     let (dirty, commit, selection, opts, state) = match (take, resumed) {
@@ -615,11 +611,6 @@ fn update_for_project(
             first_pins: lock::FirstPins::Taken,
             unaligned: lock::Unaligned::Placed,
             whole: lock::WholeFile::default(),
-            op: if settled.op.is_some() {
-                lock::OpHeld::ByThisRun
-            } else {
-                lock::OpHeld::None
-            },
             by_name: Some(&settled.named),
         },
         commit,

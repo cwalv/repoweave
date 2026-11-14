@@ -15595,8 +15595,9 @@ impl ClaimedMove {
 }
 
 /// A landing into `main` stopped holding its claim: an rwv verb that would
-/// move `main`, or a branch the landing moves, refuses before it touches
-/// anything, naming the landing and the abort that ends it; that abort runs.
+/// move `main`, or a branch the landing moves, run in the target the landing
+/// leases, refuses before it touches anything, naming the landing and the
+/// abort that ends it; that abort runs.
 pub fn a_verb_refuses_a_branch_a_stopped_landing_claims(verb: ClaimedMove) -> Scenario {
     scenario(
         "a verb refuses a branch a stopped landing claims",
@@ -15609,11 +15610,11 @@ pub fn a_verb_refuses_a_branch_a_stopped_landing_claims(verb: ClaimedMove) -> Sc
             Step::rwv_paused(&ww("w"), &["land"], "landed", "landing"),
             Step::kill("landing"),
             Step::rwv(&a(), verb.args())
-                .expect(Exit::refuses_kind(RefusalKind::StateClaimHeld))
-                .claim(Claim::OutputContains("landing into 'main' holds it"))
+                .expect(Exit::refuses_kind(RefusalKind::OpInProgress))
+                .claim(Claim::OutputContains("land in progress"))
                 .claim(Claim::LocalStateUnchanged(a()))
                 .claim(Claim::LocalStateUnchanged(ww("w2"))),
-            Step::rwv_printed(&ww("w"), "rwv abort")
+            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App])
@@ -22965,7 +22966,7 @@ pub fn a_stopped_carry_continued_meets_a_dependent_checked_out(
                 .claim(Claim::OutputContains("carried 'w2' along")),
         ]),
         ContinuedCarryMeets::Rebind => steps.extend([
-            Step::rwv_printed(&ww("w1"), "rwv branch set-mode w3 ").expect(Exit::Succeeds),
+            Step::rwv_printed(&ww("w3"), "rwv branch set-mode w3 ").expect(Exit::Succeeds),
             Step::rwv(&ww("w1"), &["sync", "--continue"])
                 .expect(Exit::Succeeds)
                 .resolved_by_hand(&[Repo::App])

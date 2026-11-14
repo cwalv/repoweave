@@ -429,7 +429,6 @@ pub fn lock(
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
     crate::branch::require_record(ctx)?;
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let (project, _) = scope(ctx)?;
     crate::diagnosis::settle_project_drift(
         &project,
@@ -442,7 +441,6 @@ pub fn lock(
         first_pins: FirstPins::Withheld,
         unaligned: Unaligned::Refused,
         whole: WholeFile::default(),
-        op: OpHeld::None,
         by_name: None,
     };
     if commit.is_some() {
@@ -485,17 +483,8 @@ pub(crate) struct Relocking<'a> {
     pub(crate) first_pins: FirstPins,
     pub(crate) unaligned: Unaligned,
     pub(crate) whole: WholeFile<'a>,
-    pub(crate) op: OpHeld,
     /// Members the verb names to re-pin, backward included.
     pub(crate) by_name: Option<&'a BTreeSet<RepoPath>>,
-}
-
-/// Whether the run committing the relock holds an op of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum OpHeld {
-    None,
-    /// The relock is a step of it, so its op is no other run's in flight.
-    ByThisRun,
 }
 
 /// What a relock that commits the whole of `rwv.toml` adds to the plain one.
@@ -778,10 +767,6 @@ pub(crate) fn relock(
     relocking: &Relocking<'_>,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<Option<PendingLockCommit>> {
-    if commit.is_some() && relocking.op == OpHeld::None {
-        crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-    }
-
     let (project_name, workweave_dir) = scope(ctx)?;
 
     let project_dir = project_dir(ctx.active_path(), &project_name);

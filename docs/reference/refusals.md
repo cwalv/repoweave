@@ -1081,11 +1081,17 @@ present and the exits are resume-or-abort rather than retry.
 
 ### `op-in-progress`
 
-**Condition.** A sync or land operation already holds op-state covering
-this workspace.
+**Condition.** An operation (`rwv sync`, `rwv land`, `rwv cherry-pick`, or
+`rwv pull` or `rwv update --remote` that merges or resets) is recorded in this
+workspace or leases it, and the verb is not one that runs during it. Those
+are the verbs that only read (`rwv status`, `rwv log`, `rwv doctor`, `rwv
+backup list`, `rwv branch list`, `rwv workweave list`), `rwv doctor --fix`,
+whose repairs leave the operation's savepoints and record as they stand, the
+operation's own `--continue`, and `rwv abort`. Every other verb refuses before
+it reads or writes anything.
 
 **Why.** An operation in flight is rewriting the very repos another verb would
-read or move. Op-state persists across a crash — there is no
+read or move, and saved where each of them stood. Op-state persists across a crash — there is no
 auto-expiry, because a stale record and a live one are indistinguishable from
 outside.
 

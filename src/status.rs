@@ -855,14 +855,7 @@ fn print_op_header(op: &op_state::ResolvedOwner) {
     outln!(
         "  resume with `{resume}`; or {abort}",
         resume = op_state::resume_command_at(op.record.verb, op.owner_workspace.as_path()),
-        abort = op_state::ABORT_ROLLS_BACK.replacen(
-            "`rwv abort`",
-            &format!(
-                "`{}`",
-                op_state::abort_command_at(op.owner_workspace.as_path())
-            ),
-            1
-        ),
+        abort = op_state::abort_rolls_back_at(op.owner_workspace.as_path()),
     );
 }
 

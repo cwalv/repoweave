@@ -9,6 +9,7 @@
 
 pub mod consent;
 pub mod dispatch;
+pub mod during_op;
 pub mod operand;
 
 use std::ffi::OsString;

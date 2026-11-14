@@ -727,8 +727,11 @@ pub fn run() -> anyhow::Result<()> {
     // (no stable on-error footer override in derive mode), so detect `--help`
     // in the raw args and, on a clap error, re-render it with that one footer
     // line filtered out. Non-help invocations keep clap's default error path.
-    let cli = match cmd.try_get_matches() {
-        Ok(matches) => Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
+    let (cli, spelling) = match cmd.try_get_matches() {
+        Ok(matches) => (
+            Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit()),
+            super::during_op::spelling(&Cli::command(), &matches),
+        ),
         Err(err) => {
             if rejects_force(&err) {
                 crate::refuse!(
@@ -844,6 +847,12 @@ pub fn run() -> anyhow::Result<()> {
         writes_project: writes_project(cli.command.as_ref()),
         commits_project: commits_project(cli.command.as_ref()),
     };
+
+    super::during_op::refuse_where_held(
+        &spelling,
+        crate::workspace::enclosing_root(origin_dir).as_deref(),
+        binding.commits_project,
+    )?;
 
     // Step 3: the root's marker against the index and the worktree relation,
     // before the verb resolves the root it runs in. A verb that destroys the

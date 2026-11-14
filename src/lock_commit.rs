@@ -93,7 +93,6 @@ fn relocking_for<'a>(relocking: &Relocking<'a>, whole: WholeFile<'a>) -> Relocki
         first_pins: relocking.first_pins,
         unaligned: relocking.unaligned,
         whole,
-        op: relocking.op,
         by_name: relocking.by_name,
     }
 }
@@ -104,7 +103,6 @@ pub(crate) fn run(
     changes: WholeChanges,
     commit: Option<CommitMessage>,
 ) -> anyhow::Result<()> {
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let loaded = Loaded::open(ctx, VERB)?;
     let working = loaded.manifest.clone();
     let committed =

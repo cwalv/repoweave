@@ -265,7 +265,6 @@ fn take(
     };
     match run {
         Run::Fresh(args) => {
-            crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
             crate::branch::require_recorded(ctx)?;
             fresh(ctx, project, dir, vcs, branch, args, output, reported)
         }

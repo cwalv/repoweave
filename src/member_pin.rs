@@ -72,9 +72,6 @@ pub fn run_pin(
     ctx: &WorkspaceContext,
 ) -> anyhow::Result<()> {
     crate::branch::require_recorded(ctx)?;
-    if commit.is_some() {
-        crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-    }
     let (project_name, workweave_dir) = lock::scope(ctx)?;
     let dir_of_project = project_dir(ctx.active_path(), &project_name);
     crate::diagnosis::settle_project_drift(&project_name, &dir_of_project)?;

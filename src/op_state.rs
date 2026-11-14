@@ -2071,18 +2071,28 @@ enum InFlight {
 pub const ABORT_ROLLS_BACK: &str = "`rwv abort` rolls it back whole, or refuses before \
      anything moves, naming what is in the way and the command that ends it";
 
+/// [`ABORT_ROLLS_BACK`] with its abort spelled to run against `workspace`,
+/// the one the operation is owned by.
+pub(crate) fn abort_rolls_back_at(workspace: &Path) -> String {
+    ABORT_ROLLS_BACK.replacen(
+        "`rwv abort`",
+        &format!("`{}`", abort_command_at(workspace)),
+        1,
+    )
+}
+
 fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<InFlight>> {
     // Owner record: full detail is right here.
     if let Some(record) = read_owner(dir)? {
         let elapsed = elapsed_since(&record.started_at);
         return Ok(Some(InFlight::Op(format!(
             "{verb} in progress (started {elapsed} ago, mid `{phase}`) at {dir}.\n\
-             Rerun with `{resume}` from that workspace after resolving; or \
-             {ABORT_ROLLS_BACK}.",
+             Rerun with `{resume}` after resolving; or {abort}.",
             verb = record.verb,
             phase = record.phase,
             dir = dir.display(),
-            resume = resume_command(record.verb),
+            resume = resume_command_at(record.verb, dir),
+            abort = abort_rolls_back_at(dir),
         ))));
     }
     // Lease: follow the pointer to the owner record so the refusal carries
@@ -2094,13 +2104,13 @@ fn in_flight_sentence_for(dir: &Path) -> anyhow::Result<Option<InFlight>> {
                 return Ok(Some(InFlight::Op(format!(
                     "{verb} in progress (started {elapsed} ago, mid `{phase}`); this \
                      workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
-                     Rerun with `{resume}` from the owner workspace after \
-                     resolving; or {ABORT_ROLLS_BACK}.",
+                     Rerun with `{resume}` after resolving; or {abort}.",
                     verb = record.verb,
                     phase = record.phase,
                     dir = dir.display(),
                     owner = lease.owner.as_path().display(),
-                    resume = resume_command(record.verb),
+                    resume = resume_command_at(record.verb, lease.owner.as_path()),
+                    abort = abort_rolls_back_at(lease.owner.as_path()),
                 ))));
             }
             _ => {
@@ -3806,8 +3816,7 @@ mod tests {
             err,
             format!(
                 "land in progress (started {elapsed} ago, mid `replay`) at {dir}.\n\
-                 Rerun with `rwv land --continue` from that workspace after \
-                 resolving; or {ABORT_ROLLS_BACK}.",
+                 Rerun with `rwv land --continue` after resolving; or {ABORT_ROLLS_BACK}.",
                 elapsed = elapsed_since(&record.started_at),
                 dir = dir.display(),
             )
@@ -3851,8 +3860,7 @@ mod tests {
             format!(
                 "land in progress (started {elapsed} ago, mid `replay`); this \
                  workspace ({dir}) is leased to it. Owner workspace: {owner}.\n\
-                 Rerun with `rwv land --continue` from the owner workspace after \
-                 resolving; or {ABORT_ROLLS_BACK}.",
+                 Rerun with `rwv land --continue` after resolving; or {ABORT_ROLLS_BACK}.",
                 elapsed = elapsed_since(&record.started_at),
                 dir = lease_dir.display(),
                 owner = owner_dir.display(),

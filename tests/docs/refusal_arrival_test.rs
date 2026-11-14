@@ -129,35 +129,15 @@ fn an_inline_refusal_routes_to_its_token() {
 }
 
 // ---------------------------------------------------------------------------
-// Shared helper, and the same error under a `.context()` wrap
+// Shared helper
 // ---------------------------------------------------------------------------
 
-/// `rwv materialize` over a planted op record. The kind is minted once inside
-/// the in-flight helper; `materialize` then wraps it with a `.context()` that
-/// replaces the headline. The route line must still name the condition that
-/// fired, and there must be exactly one of it.
+/// `rwv activate` over a planted op record: the kind is minted once inside
+/// the in-flight helper that dispatch runs for every verb. A wrap above a
+/// tagged error routes to the kind beneath it too; that is pinned where the
+/// render is, in `src/refusal.rs`.
 #[test]
-fn a_wrapped_refusal_routes_once_to_the_kind_beneath_the_wrap() {
-    let tmp = common::tempdir().unwrap();
-    let ws = plain_weave(tmp.path());
-    std::fs::write(ws.join(".rwv-op"), owner_record_json(&ws)).unwrap();
-
-    let stderr = refusal_stderr(&["materialize"], &ws);
-    assert!(
-        stderr.contains("does not start while an operation is in flight"),
-        "precondition: the wrapping context is the headline:\n{stderr}"
-    );
-    assert!(
-        stderr.contains("Caused by:"),
-        "precondition: the helper's error is a cause under the wrap:\n{stderr}"
-    );
-    assert_routes_to(&stderr, "op-in-progress");
-}
-
-/// The same condition reached through `activate`, which wraps it with its own
-/// sentence — one kind, two headlines, one token.
-#[test]
-fn a_second_wrapper_over_one_condition_routes_to_the_same_token() {
+fn the_in_flight_refusal_routes_to_its_token() {
     let tmp = common::tempdir().unwrap();
     let ws = plain_weave(tmp.path());
     std::fs::write(ws.join(".rwv-op"), owner_record_json(&ws)).unwrap();

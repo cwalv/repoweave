@@ -279,10 +279,7 @@ fn pick(
         vcs,
     };
     match run {
-        Run::Fresh(args) => {
-            crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-            fresh(&here, args, output, reported)
-        }
+        Run::Fresh(args) => fresh(&here, args, output, reported),
         Run::Continue => {
             let (op, recorded, take_in) = Op::resume(ctx, OpVerb::CherryPick)?;
             if recorded != here.project {

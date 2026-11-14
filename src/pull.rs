@@ -184,10 +184,7 @@ pub fn run_pull(
 ) -> anyhow::Result<()> {
     let resumed = match &take {
         Take::Continue => Some(Op::resume(ctx, OpVerb::Pull)?),
-        Take::Fresh(_) => {
-            crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-            None
-        }
+        Take::Fresh(_) => None,
     };
     let fetched = match &resumed {
         Some(_) => None,

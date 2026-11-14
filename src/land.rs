@@ -148,9 +148,7 @@ pub fn resolve(
     allow_member_change: Vec<RepoOperand>,
     retire: bool,
 ) -> anyhow::Result<Request> {
-    let request = resolve_resumed(ctx, target_flag, allow_member_change, retire)?;
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
-    Ok(request)
+    resolve_resumed(ctx, target_flag, allow_member_change, retire)
 }
 
 /// [`resolve`] for a landing whose own op record stands in the workspace

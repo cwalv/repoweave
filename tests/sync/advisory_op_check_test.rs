@@ -1,24 +1,19 @@
-//! The in-flight-op check `materialize` and `activate` run is advice, and the
+//! The in-flight-op check every verb passes at dispatch is advice, and the
 //! window behind it is accepted.
 //!
-//! Checking a marker and acquiring a lease are different acts. These verbs do
-//! the first: they read the marker once, at the start, and hold nothing
-//! afterwards. An operation that lands between that read and the work proceeds
-//! unnoticed, and that is the decided position rather than an oversight — the
-//! stamp-time attestation guard is what makes the record honest regardless, so
-//! buying exclusion here would cost the wedged-workspace failure mode for a
-//! guarantee already covered.
+//! Checking a marker and acquiring a lease are different acts. A verb that
+//! is not an operation does the first: it reads the marker once, at the
+//! start, and holds nothing afterwards. An operation that lands between that
+//! read and the work proceeds unnoticed, and that is the decided position
+//! rather than an oversight — the stamp-time attestation guard is what makes
+//! the record honest regardless, so buying exclusion here would cost the
+//! wedged-workspace failure mode for a guarantee already covered.
 //!
 //! What this file pins is that both halves stay true: the check refuses the
-//! common case, and it does NOT become exclusion. The refusal half lives with
-//! the rest of the family in `tests/sync/e2e_op_state_test.rs`; what is here is the
-//! half a later reader is likely to "fix".
-//!
-//! Also here: the callers that inherit the check without naming it. `activate`
-//! is not a verb but a shared entry point — `init` and `fetch` activate
-//! in-process once their own work is done — so the refusal describes the act it
-//! declines rather than a verb it cannot know, and each inheriting caller is
-//! driven here rather than argued about.
+//! common case, and it does NOT become exclusion. The refusal half for every
+//! verb lives in `tests/sync/verbs_during_an_operation_test.rs`; what is here
+//! is the half a later reader is likely to "fix", and the verbs that bootstrap
+//! a workspace, which meet the check only where one already exists.
 //!
 //! One test is UNIX ONLY, marked at the test. Its instrument is a `#!/bin/sh`
 //! script dispatched as `cargo` off PATH, which is how a test gets a foothold
@@ -203,14 +198,9 @@ fn an_op_landing_after_the_check_does_not_stop_the_verb() {
     assert!(ok, "{cleared}");
 }
 
-/// A workspace an op record can sit in.
-///
-/// Bootstrap mode is not that workspace, and the difference is the whole
-/// reachable population for the two callers below: `init` and `fetch` refuse an
-/// occupied directory before they get anywhere near activation, and an op record
-/// is itself an occupant. So these paths reach the check only where the
-/// workspace already exists — which is also the only place an op could have been
-/// started.
+/// A workspace an op record can sit in. A directory `init` or `clone`
+/// bootstraps holds none: an op record is itself an occupant, which they
+/// refuse.
 fn bootstrapped_workspace(root: &Path) -> PathBuf {
     let ws = root.join("ws");
     std::fs::create_dir_all(&ws).unwrap();
@@ -219,51 +209,29 @@ fn bootstrapped_workspace(root: &Path) -> PathBuf {
     ws
 }
 
-/// `rwv init` into an existing workspace inherits the refusal, and it names the
-/// act rather than `activate`, which is not the verb the operator ran.
-///
-/// The refusal lands AFTER init has minted the project: the check sits in the
-/// in-process activation, which is the last thing init does. That is the shape
-/// an activate-hook failure already has — the verb's own work stands, the
-/// activation is what is declined — and it is asserted so the ordering is on the
-/// record rather than incidental.
+/// `rwv init` into a workspace an op holds refuses before it mints anything.
 #[test]
-fn init_inherits_the_refusal_and_it_names_the_act() {
+fn init_refuses_before_it_mints_the_project() {
     let tmp = common::tempdir().unwrap();
     let ws = bootstrapped_workspace(tmp.path());
     std::fs::write(ws.join(".rwv-op"), owner_record_json(&ws)).unwrap();
 
-    let (ok, refused) = rwv(&["init", "app"], &ws);
-    assert!(!ok, "{refused}");
-    assert!(
-        refused.contains("running its install hooks does not start"),
-        "the refusal must name the act it declines: an operator who ran `init` \
-         never ran `activate` and must not be told activate refused:\n{refused}"
-    );
-    assert!(
-        !refused.contains("activate does not start"),
-        "and must not name a verb it cannot know:\n{refused}"
-    );
+    let out = common::cli::run(&["init", "app"], &ws);
+    let refused = common::cli::refused(&out, repoweave::refusal::RefusalKind::OpInProgress);
     assert!(
         refused.contains("land in progress"),
-        "the op that caused it is still named:\n{refused}"
+        "the op that holds the workspace is named:\n{refused}"
     );
-    assert!(
-        ws.join("projects/app/rwv.toml").is_file(),
-        "init's own work stands; it is the activation that was declined"
-    );
+    assert!(!ws.join("projects/app").exists(), "{refused}");
 }
 
-/// `rwv fetch` inherits it on the same terms. This is the operator-visible
-/// widening: a fetch into a workspace carrying an op record now exits non-zero
-/// where it used to succeed, and clears when the record does.
+/// `rwv clone` into a workspace an op holds refuses before it clones, and
+/// runs once the record is gone.
 #[test]
-fn fetch_inherits_the_refusal_and_it_names_the_act() {
+fn clone_refuses_before_it_clones_and_runs_once_the_record_clears() {
     let tmp = common::tempdir().unwrap();
     let ws = bootstrapped_workspace(tmp.path());
 
-    // `fetch <source>` clones the source as a PROJECT, so each source carries a
-    // manifest; a bare repo without one fails before reaching activation.
     let project_source = |name: &str| {
         let bare = tmp.path().join(format!("{name}.git"));
         common::git_in(
@@ -286,33 +254,18 @@ fn fetch_inherits_the_refusal_and_it_names_the_act() {
         common::git_in(&work, &["push", "origin", "main"]);
         common::file_url(&bare)
     };
-    let refused_source = project_source("dep");
-    let cleared_source = project_source("dep2");
+    let source = project_source("dep");
 
-    // `fetch` auto-activates only where no project is selected yet; with one
-    // selected it says so and skips, and the check is never reached. That is
-    // the narrow shape this inherits, so it is the shape driven here.
     std::fs::remove_file(ws.join(".rwv-active")).unwrap();
     std::fs::write(ws.join(".rwv-op"), owner_record_json(&ws)).unwrap();
 
-    let (ok, refused) = rwv(&["clone", &refused_source], &ws);
-    assert!(
-        !ok,
-        "a fetch into a workspace with an op in flight must refuse:\n{refused}"
-    );
-    assert!(
-        refused.contains("running its install hooks does not start"),
-        "naming the act, not `activate`:\n{refused}"
-    );
-    assert!(
-        refused.contains("land in progress"),
-        "and naming the op:\n{refused}"
-    );
+    let out = common::cli::run(&["clone", &source], &ws);
+    let refused = common::cli::refused(&out, repoweave::refusal::RefusalKind::OpInProgress);
+    assert!(refused.contains("land in progress"), "{refused}");
+    assert!(!ws.join("projects/dep").exists(), "{refused}");
 
-    // A second source, because the refused fetch had already cloned the first:
-    // re-fetching it would report the clone, not the check.
     std::fs::remove_file(ws.join(".rwv-op")).unwrap();
-    let (ok, cleared) = rwv(&["clone", &cleared_source], &ws);
+    let (ok, cleared) = rwv(&["clone", &source], &ws);
     assert!(
         ok,
         "and the refusal clears with the record, so the widening is a refusal \

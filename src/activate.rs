@@ -233,12 +233,6 @@ pub fn materialize(
     undeclared: Option<RemoveUndeclaredLinksConsent>,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
     let root = ctx.active_path();
-    crate::op_state::check_no_op_in_progress(&[root]).context(
-        "materialize does not start while an operation is in flight in this \
-         workspace — it would regenerate from inputs that operation is still \
-         rewriting. Wait for the operation to finish, or take one of the exits \
-         it names",
-    )?;
 
     let Some(project) = observe_root(root)
         .as_ref()
@@ -661,16 +655,6 @@ pub fn activate_aligning(
 /// of a command run from an unrelated workweave. A workweave has no witness,
 /// so the two questions are one lookup.
 fn require_primary(ctx: &WorkspaceContext) -> anyhow::Result<&crate::workspace::PrimaryIdentity> {
-    // Named for the act, not for a verb: `init` and `fetch` activate in-process
-    // too, and a refusal naming `activate` would name a verb its reader did not
-    // run.
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()]).context(
-        "surfacing a project and running its install hooks does not start while \
-         an operation is in flight in this workspace — they would run over repos \
-         that operation is still moving. Wait for the operation to finish, or \
-         take one of the exits it names",
-    )?;
-
     match ctx.primary_identity() {
         Some(identity) => Ok(identity),
         None => crate::refuse!(

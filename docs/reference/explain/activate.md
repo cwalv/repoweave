@@ -208,10 +208,8 @@ cat .rwv-active
 
 ## Common errors
 
-- *surfacing a project and running its install hooks does not start while an
-  operation is in flight in this workspace* — another sync or land already
-  holds op-state covering this workspace. See `rwv explain op-in-progress`
-  for what unblocks it.
+- *`op-in-progress`* — an operation is recorded in this workspace or leases
+  it. See `rwv explain op-in-progress` for what unblocks it.
 - *rwv activate has no effect in a workweave* — called from inside a
   workweave. The project is fixed at creation time; switching is not
   supported in a workweave. `cd` to the primary weave and rerun. If you

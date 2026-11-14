@@ -49,3 +49,4 @@ mod update_remote_commit_order_test;
 mod update_remote_json_test;
 mod update_remote_test;
 mod update_test;
+mod verbs_during_an_operation_test;

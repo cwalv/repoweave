@@ -339,7 +339,6 @@ pub fn run_drop(
     repo: &RepoOperand,
     dropping: &Dropping,
 ) -> anyhow::Result<()> {
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let (project, _) = repos_of_project(ctx)?;
     let target = repo_named(ctx, &project, repo)?;
     let listed = target
@@ -375,7 +374,6 @@ pub fn run_drop(
 /// `rwv backup prune`: after a pruning fetch, every redundant backup of every
 /// repo.
 pub fn run_prune(ctx: &WorkspaceContext) -> anyhow::Result<()> {
-    crate::op_state::check_no_op_in_progress(&[ctx.active_path()])?;
     let (_, repos) = repos_of_project(ctx)?;
     let mut judged: Vec<(&BackupRepo, Vec<ListedBackup>)> = Vec::new();
     let mut taken = crate::diagnosis::Report::default();
