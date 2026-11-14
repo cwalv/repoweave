@@ -21,10 +21,21 @@ rwv abort
 
 ## Reading the conflict output
 
-When a project-repo replay or member-repo rebase hits a textual conflict, `rwv` prints a per-repo line naming the conflicted checkout followed by a summary with resolution instructions:
+When a member-repo rebase or merge hits a textual conflict, `rwv sync` stops with one message naming the repo, the checkout and what it was taking in, the backend's hint up to marking the files resolved, and the two ways on:
 
 ```text
-  github/chatly/server: Rebase in <weave-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
+Error: rwv sync: the rebase of github/chatly/server onto main stopped on a conflict (src/lib.rs) at <workweave-root>/github/chatly/server.
+  # edit conflicted files
+  git add <files>
+then run `rwv sync --continue`, or `rwv abort` to put everything back as it was
+
+rwv explain op-parked
+```
+
+`rwv land` stops the same way and prints a per-repo line, then a longer summary that names `rwv land --continue` and `rwv abort`:
+
+```text
+  github/chatly/server: Rebase in <workweave-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
 Error: sync hit conflicts in one or more member repos (see per-repo lines above).
 
 To resolve each conflicted repo:
@@ -32,14 +43,12 @@ cd <repo>
   # edit conflicted files
   git add <files>
 then resume (repos already composed are left as they are):
-rwv sync --continue
+rwv land --continue
 
 If you'd rather roll everything back: `rwv abort`.
 
 rwv explain op-parked
 ```
-
-`rwv sync` stops on a conflict with one message naming the repo, the checkout and the branch it was taking in, the backend's hint up to staging, and `rwv sync --continue` or `rwv abort`; the output above is `rwv land`'s.
 
 `--continue` reads all original parameters — the branch taken in or the target, `--history`, `--reset-to-target`, `--retire`, and any consent flags — from the saved op record. Do not pass the original flags again alongside `--continue`; any other flag is rejected as a usage error (exit 2), except `--project`, which must name the project the op started for, and `--json` on `rwv land`.
 
