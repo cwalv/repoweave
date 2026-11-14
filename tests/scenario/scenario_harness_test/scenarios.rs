@@ -17677,6 +17677,24 @@ pub fn a_continued_landing_reports_a_rebase_once() -> Scenario {
     scenario("a continued landing reports a rebase once", steps)
 }
 
+/// A landing killed once it has reported its target's push branch behind
+/// says so once when it is continued.
+pub fn a_continued_landing_reports_the_push_branch_once() -> Scenario {
+    scenario(
+        "a continued landing reports the push branch once",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(&ww("w"), &["land"], "landed", "landing"),
+            Step::kill("landing"),
+            Step::rwv(&ww("w"), &["land", "--continue"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputOnce("push-branch ahead")),
+        ],
+    )
+}
+
 /// `rebased-backup-lifetime`: a `linear` landing of an unpublished seat keeps
 /// its `rebased` backup while the op is stopped, `abort` restores the seat's
 /// branch, and the landing run to completion drops the backup. A `linear`
