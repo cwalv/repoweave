@@ -28062,7 +28062,8 @@ pub fn another_staged_edit_stays_staged_past_a_carried_fix(taking_in: TakingIn) 
 /// took in `a`'s added `docs`, with the working `rwv.toml` then broken by
 /// hand: the project repo is stopped in nothing, so `rwv abort` reads the
 /// members it restores at the savepoint, which does not list `docs`, not at
-/// the replayed tip, which does, and finds no member without a savepoint.
+/// the replayed tip, which does. The landing has made no checkout of `docs`,
+/// which its alignment makes only once the landing ends.
 pub fn abort_reads_the_savepoint_past_a_broken_working_rwv_toml() -> Scenario {
     let steps = vec![
         Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
@@ -28080,7 +28081,7 @@ pub fn abort_reads_the_savepoint_past_a_broken_working_rwv_toml() -> Scenario {
             .claim(Claim::OutputContains("local/remotes/app")),
         Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
             .claim(Claim::OutputContains(DOCS))
-            .claim(Claim::DirStands(
+            .claim(Claim::DirGone(
                 Machine::A,
                 ".workweaves/proj--w/local/remotes/docs",
             )),
