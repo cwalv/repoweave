@@ -115,7 +115,7 @@ git -C <conflicted-repo> add <files>
 rwv land --continue    # or: rwv abort
 ```
 
-Do not re-pass `--retire` or strategy flags with `--continue`; they are restored from the saved op record. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the step-by-step conflict resolution walkthrough.
+Do not re-pass `--retire` or `--history` with `--continue`; they are restored from the saved op record. See [Recover from a sync conflict](./recover-from-sync-conflict.md) for the step-by-step conflict resolution walkthrough.
 
 ## If `--retire` refuses to delete the workweave
 

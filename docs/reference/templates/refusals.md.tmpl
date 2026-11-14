@@ -49,7 +49,11 @@ wherever that entry lives, and `rwv explain` finds it either way.
 ## What does and does not carry a token
 
 A route line means **rwv could have acted and declined**: a precondition it will
-not cross, or an input it will not accept. Absence is informative. An error
+not cross, or an input it will not accept. Absence is informative. A verb that
+completes can print the same block for a state it reports and does not judge a
+refusal: `rwv land` reports a branch it landed into as `push-branch` `ahead`,
+`rwv fetch` and `rwv status` report `pin` states. There the exit status tells
+the two apart: a refusal exits 1, a report on a completed verb exits 0. An error
 with no route line is a passthrough (a VCS or filesystem failure), an internal
 invariant, or an argument the parser rejected before any verb ran — those
 print `error:` and exit 2, where a refusal exits 1.

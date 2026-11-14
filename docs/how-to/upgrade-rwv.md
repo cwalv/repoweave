@@ -26,7 +26,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 |---|---|---|
 | `.rwv-op` / `.rwv-op-lease` | In-flight sync state | Finish or run `rwv abort` on the **old** binary before upgrading |
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
-| `projects/<project>/.rwv-workweave-index` | Written by `rwv` itself | `rwv doctor --fix` converts it and moves it into the project clone (Step 8) |
+| `projects/<project>/.rwv-workweave-index` | Written by `rwv` itself | `rwv doctor --fix` rebuilds the index in the project clone from the workweave markers and removes the old file; the recorded basedir is not carried over (Step 8) |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
 | `rwv.lock` | Generated output | `rwv lock` writes a file that does not parse afresh, pinning nothing; `rwv member pin` gives each member its pin again |
