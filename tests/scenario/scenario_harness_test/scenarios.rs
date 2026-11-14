@@ -21927,6 +21927,13 @@ pub fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort(
             .claim(Claim::OutputContains("kept as backup")),
         kept_backup_shown(&at, "remotes/lib log ", "hand-fix"),
     ];
+    if verb == "sync" && history == "linear" {
+        steps.push(
+            Step::rwv_printed_within(&at, "git -C ", "/rebased-")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("hand-fix")),
+        );
+    }
     if verb == "sync" {
         steps.push(kept_backup_shown(
             &at,
@@ -22001,7 +22008,8 @@ pub fn a_second_abort_leaves_the_first_ones_keep_in_each_slots_history(
         kept_backup_shown(&at, "remotes/lib log ", "second-hand"),
         Step::rwv_printed_within(&at, "git -C ", "remotes/app log ")
             .expect(Exit::Succeeds)
-            .claim(Claim::OutputLacks("resolved-by-hand")),
+            .claim(Claim::OutputLacks("resolved-by-hand"))
+            .claim(Claim::OutputLacks("main-app")),
         history_of(
             Repo::App,
             "refs/rwv/backup/proj--w/aborted-working-copy",

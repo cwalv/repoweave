@@ -8302,8 +8302,8 @@ enum AbortSide {
     Replay,
     /// The workspace a `land` advanced, savepointed under
     /// [`SavepointKey::LandTarget`] so that worktree pairs sharing one refdb
-    /// don't collide on savepoint ref names. Nothing journals intent
-    /// for it; its tips land in `converged_tips` at relock.
+    /// don't collide on savepoint ref names. Its tips land in
+    /// `converged_tips` at relock.
     LandTarget,
 }
 
@@ -8904,6 +8904,14 @@ fn abort_op(
             drop_reached_rebased_backups(dir, &op_project_name);
             forget_replays_in(dir, &op_project_name);
         }
+        if let Some(record) = record {
+            let side = if owner_workspace == *workspace {
+                ""
+            } else {
+                AbortSide::Replay.label()
+            };
+            name_unreached_rebased_backups(record, owner_workspace.as_path(), side);
+        }
         op_state::clear_owner_of(owner_workspace.as_path(), &op_id);
     } else if tally.any_foreign {
         eprintln!(
@@ -8946,6 +8954,41 @@ fn drop_reached_rebased_backups(workspace: &Path, project: &ProjectName) {
         }) {
             let _ = vcs.drop_backup(dir, &listed.backup.name);
         }
+    }
+}
+
+/// Name each `rebased` backup the op made that holds a commit no branch
+/// reaches once abort has restored, with the command that shows it.
+fn name_unreached_rebased_backups(record: &op_state::OwnerRecord, owner: &Path, side: &str) {
+    let Some(take_in) = &record.take_in else {
+        return;
+    };
+    for made in &take_in.backups {
+        let (dir, vcs) = match &made.repo {
+            RepoKey::Project => (project_dir(owner, &record.project), project_vcs()),
+            RepoKey::Member(path) => (owner.join(path.as_path()), crate::vcs::probe_vcs()),
+        };
+        if !vcs.is_repo(&dir) {
+            continue;
+        }
+        let Ok(listed) = vcs.list_backups(&dir, crate::vcs::RemoteTracking::Counted) else {
+            continue;
+        };
+        let Some(unreached) = listed
+            .iter()
+            .find(|l| l.backup.name.as_str() == made.name && !l.held.is_empty())
+        else {
+            continue;
+        };
+        let Ok(head) = vcs.head_revision(&dir) else {
+            continue;
+        };
+        outln!(
+            "  {side}{}: what the operation rebased is kept as backup {}; this shows it: {}",
+            RepoOperand::of(&made.repo, &record.project),
+            made.name,
+            vcs.show_kept(&dir, head.id(), &[&unreached.backup.name])
+        );
     }
 }
 

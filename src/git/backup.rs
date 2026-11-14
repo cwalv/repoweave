@@ -253,10 +253,10 @@ impl GitVcs {
     ) -> String {
         let refs: Vec<String> = kept.iter().map(|name| backup_ref(name)).collect();
         format!(
-            "git -C {} log -p --diff-merges=first-parent ^{} {}",
+            "git -C {} log -p --diff-merges=first-parent {} --not {} --branches --remotes",
             checkout.display(),
-            base.as_str(),
-            refs.join(" ")
+            refs.join(" "),
+            base.as_str()
         )
     }
 

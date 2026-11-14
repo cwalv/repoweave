@@ -5119,8 +5119,9 @@ pub trait Vcs: Send + Sync {
     ) -> Result<bool, VcsError>;
 
     /// The command an operator runs in `checkout` to see what the backups
-    /// `kept` hold beyond `base`: each commit with its changes, a working
-    /// copy's edits among them.
+    /// `kept` hold that neither `base` nor any local or remote-tracking
+    /// branch reaches: each commit with its changes, a working copy's edits
+    /// among them.
     fn show_kept(&self, checkout: &Path, base: &CommitId, kept: &[&BackupName]) -> String;
 
     /// The commits `tip` reaches that no branch reaches, newest first.
