@@ -139,6 +139,7 @@ pub(crate) fn is_current(_file: &File, _path: &Path) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn dead_pid() -> u32 {
         let mut child = std::process::Command::new("true").spawn().unwrap();
         let pid = child.id();
