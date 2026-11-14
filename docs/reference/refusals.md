@@ -374,7 +374,7 @@ The others follow.
 | `member changes` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member add <url> --role <role>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `member changes` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | `rwv land --allow-member-change <changed>` | the workspace with that feature | only named entries change; the lineage rule still judges |
-| `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | rerun with `--allow-member-change <m>` | the workspace with that feature | only named entries change; the lineage rule still judges |
+| `member changes` | C31: land these changes too (this changes the target's entries, or its top-level setting) | `rwv land --continue --allow-member-change <m>` | the workspace with that feature | only named entries change; the lineage rule still judges |
 | `member changes` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
 | `moved mid-operation` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
 
