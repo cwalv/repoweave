@@ -574,6 +574,53 @@ mid-operation, and so is a checkout no longer at the tip its savepoint read
 unless it is already at the tip the landing lands. `--continue` then
 refuses; `rwv abort` and a fresh `rwv land` are the route.
 
+## The `rwv.toml` stops
+
+An operation that merges or replays the project repo can stop with `rwv.toml`
+unmerged. Two stops exist, told apart by `ManifestStopKind` in
+`take_in.manifest_stop` (`src/op_state.rs`), the journal the stop writes when it
+is entered and clears when a continue takes it past. The reading, the stop's
+printed lines and the continue's resolution live in `src/manifest_conflict.rs`.
+
+**A conflict stop** (`conflicted`): the VCS left regions of `rwv.toml` in
+conflict. The stop reads the three sides (`Vcs::conflict_sides`) and the file as
+the VCS left it, journals that file as `working`, and prints each entry both
+sides changed differently with each side's value. An entry is a key of a member,
+of an integration's table or of `[workweave]` that every side holds; a table
+some side lacks and every other top-level key are each one whole. What the VCS
+merged outside the regions stands. `--continue --keep yours|incoming`
+(`manifest_conflict::Side`) takes that side in each region
+(`Vcs::conflict_picks`), sets each entry only the other side changed to that
+side's value, writes the result and marks it resolved. Where no entry is in
+conflict a bare continue does the same. It first keeps the project repo's
+edits as a backup, and it refuses, writing nothing, where `rwv.toml` differs
+from the journaled `working` (an edit since the stop) and where a side's
+picks leave a file that does not parse as a manifest. A file the operator
+marked resolved by hand is taken as it stands.
+
+**A check stop** (`checked`): the VCS merged the text with no conflict, and
+the merge of both sides' values differs from it, or it does not parse, so the
+line merge may have made a wrong result (a setting moved to another member, a
+removed member back). The check applies under merge history before the merge
+commit (`manifest_conflict::check_merge_in_flight`), to the replayed tip of a
+rebase once the rebase has ended (`project_merge::replayed_tip_differs`,
+`manifest_conflict::check_tip`), and to the text merge of a cherry-pick's ported
+tables (`check_ported_text_merge`). The merge stops record `rwv.toml` as
+unmerged (`Vcs::record_conflict`), leaving the working file as the VCS merged
+it, and journal the stop with that file. rwv writes nothing to `rwv.toml` at
+this stop. The ways on are `--keep text-merge`, which marks the text merge as
+the VCS made it resolved (for a replayed tip, journals it as `tip_settled`, so
+it is not judged again), and an `rwv.toml` the operator edited and marked
+resolved. `--keep yours` and `--keep incoming` refuse at a check stop, and
+`--keep text-merge` refuses at any other. A cherry-pick's `rwv.toml` stop takes
+no `--keep`.
+
+A text that does not parse stops as `unparseable-project` `mid-operation`
+before any comparison. The journal is what lets a continue tell a stop rwv
+entered from a conflict it finds already in the checkout: a continue with no
+journaled stop reads a conflict as `conflicted`, with the working file as it
+stands.
+
 ## VCS mapping (git)
 
 This document is written VCS-neutrally. The git realization of each

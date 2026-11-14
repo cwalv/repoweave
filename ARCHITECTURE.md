@@ -217,12 +217,10 @@ All durable rwv state is files. There is no database and no cache directory.
 | `rwv.lock` | — | `projects/<name>/` | Committed intent: the revision each member is pinned to. |
 | `.rwv-active` | `ACTIVE_PROJECT_FILE`, `src/workspace.rs` | weave root | Which project the primary root currently presents. Ambient default. Read only by `observe_root`, through the private `read_active_pointer`; a file naming no project refuses where a verb would select by it (`unreadable-active-project`). |
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, parent}`. Restored from the index and the worktree relation when missing or disagreeing (`src/workspace/reconcile.rs`). |
-| `rwv-workweave-index` | `StateFile::WorkweaveIndex`, `src/state_file.rs` | the project clone's common dir (`Vcs::store_of`) | The primary's inverse view: the basedir setting and, per workweave, `{path, parent}`, the record of `parent` a marker is restored from. A file of the old name at `projects/<project>/` (`StateFile::LegacyWorkweaveIndex`) is read only by its conversion. |
+| `rwv-workweave-index` | `StateFile::WorkweaveIndex`, `src/state_file.rs` | the project clone's common dir (`Vcs::store_of`) | The primary's inverse view: the basedir setting and, per workweave, `{path, parent}`, the record of `parent` a marker is restored from. A file of the old name at `projects/<project>/` (`StateFile::OldPathWorkweaveIndex`) is read by nothing as the index: verbs refuse it as `unreadable-workweave-index` and `rwv doctor --fix` rebuilds the index from the markers and removes it. |
 | `rwv-workweave-index.lock` | `StateFile::IndexClaim`, `src/workweave_index.rs` | beside the index | The claim every edit of the index holds (`IndexClaim::hold`). |
-| `rwv-workspace-state` | `StateFile::WorkspaceState`, `src/alignment.rs` | each workspace's private dir (`Vcs::private_dir`) | The branch the workspace last aligned its members for, and the entries it aligned them by. Single-workspace state, published whole with no claim; one that does not parse reads as absent, reported. |
 | `.rwv-fetch.lock` | `StateFile::FetchClaim`, `src/fetch_claim.rs` | a member's or the project clone's store (`Vcs::store_of`) | The claim every pruning fetch into that store holds (`FetchClaim::hold`). |
 | `.rwv-fetched` | `StateFile::FetchRecord`, `src/fetch_claim.rs` | beside `.rwv-fetch.lock` | When rwv's pruning fetch of each remote into the store last completed, written under the fetch claim; `push --dry-run` reads it for the age of the refs it judged. |
-| `.rwv-health-floor` | `StateFile::HealthFloor`, `src/health_floor.rs` | weave root | The rwv version that last observed the weave clean. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
@@ -462,6 +460,14 @@ landing, whether its target moved since, toward refusing.
 `VerifiedRestoreOutcome` (`src/vcs.rs`) enumerates the answers, including
 `ForeignTip`, a repo moved between plan and write, which is reported rather
 than reset and keeps the record.
+
+A merge or replay of the project repo can stop with `rwv.toml` unmerged, as a
+conflict stop (the VCS left regions in conflict) or a check stop (the VCS merged
+the text with no conflict, and the merge of both sides' values differs from
+it). `src/manifest_conflict.rs` reads the sides and resolves a stop on
+`--continue` with `--keep`; the stop is journaled in `take_in.manifest_stop`.
+[`docs/internals/sync-phase-machine.md`](docs/internals/sync-phase-machine.md)
+describes both stops.
 
 Savepoints are git refs under `refs/rwv/pre-op/<key>`; backups, which outlive
 any operation, are refs under `refs/rwv/backup/<branch>/<id>` (see
