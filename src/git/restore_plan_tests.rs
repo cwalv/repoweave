@@ -602,6 +602,49 @@ fn ref_at_a_tip_the_op_wrote(p: &Path) -> (RefSavepoint, CommitId) {
     (saved, wrote)
 }
 
+/// Restoring a branch as a ref keeps its tip in the branch's slot before the
+/// reset where the tip holds a commit no other branch reaches, whatever the
+/// op's record says that tip is.
+#[test]
+fn a_ref_restore_keeps_a_tip_nothing_else_reaches_in_the_branchs_slot() {
+    let p = repo();
+    let (saved, wrote) = ref_at_a_tip_the_op_wrote(p.path());
+    git(p.path(), &["switch", "-q", "main"]);
+    git(p.path(), &["branch", "-qD", "work"]);
+    let plan = GitVcs.plan_ref_restore(p.path(), &saved, &[]).unwrap();
+
+    let outcome = GitVcs
+        .execute_ref_restore(p.path(), &key(), &saved, &plan)
+        .unwrap();
+
+    let crate::vcs::RefRestoreOutcome::Kept { tip, backup } = &outcome else {
+        panic!("expected the tip kept, got {outcome:?}");
+    };
+    assert_eq!(*tip, wrote);
+    assert_eq!(backup.backup().name.as_str(), "topic/aborted");
+    assert_eq!(
+        git(p.path(), &["rev-parse", "refs/rwv/backup/topic/aborted"]),
+        wrote.as_str()
+    );
+    assert_eq!(git(p.path(), &["rev-parse", "topic"]), saved.at.as_str());
+}
+
+/// A tip another branch reaches is reset with nothing kept.
+#[test]
+fn a_ref_restore_keeps_nothing_of_a_tip_another_branch_reaches() {
+    let p = repo();
+    let (saved, _) = ref_at_a_tip_the_op_wrote(p.path());
+    let plan = GitVcs.plan_ref_restore(p.path(), &saved, &[]).unwrap();
+
+    let outcome = GitVcs
+        .execute_ref_restore(p.path(), &key(), &saved, &plan)
+        .unwrap();
+
+    assert_eq!(outcome, crate::vcs::RefRestoreOutcome::Restored);
+    assert_eq!(git(p.path(), &["rev-parse", "topic"]), saved.at.as_str());
+    assert_eq!(git(p.path(), &["for-each-ref", "refs/rwv/backup/"]), "");
+}
+
 #[test]
 fn a_ref_untouched_plan_the_branch_moved_under_keeps_its_savepoint() {
     let p = repo();

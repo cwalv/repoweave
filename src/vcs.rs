@@ -1275,6 +1275,12 @@ pub enum RefRestoreOutcome {
         observed: Option<CommitId>,
         why: String,
     },
+    /// The branch held a commit nothing else reaches: its tip was kept in
+    /// the branch's backup slot and the branch put back.
+    Kept {
+        tip: CommitId,
+        backup: BackupWitness,
+    },
 }
 
 /// What restoring a checkout to its savepoint would do, judged from what
