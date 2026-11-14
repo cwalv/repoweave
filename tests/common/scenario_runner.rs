@@ -464,6 +464,9 @@ pub enum Claim {
     OutputLacks(&'static str),
     /// One line of what the step printed is exactly this text.
     OutputLine(&'static str),
+    /// `rwv doctor` printed at least one finding, and every finding it
+    /// printed is of this kind.
+    FindingsOnly(&'static str),
     /// What the step printed holds each of these texts, each after the one
     /// before it.
     OutputInOrder(&'static [&'static str]),
@@ -2119,6 +2122,31 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("no line of the output is {text:?}:\n{output}"))
+                }
+            }
+            Claim::FindingsOnly(kind) => {
+                let findings: Vec<&str> = output
+                    .lines()
+                    .filter(|line| {
+                        ["[error: ", "[warning: "]
+                            .iter()
+                            .any(|opens| line.starts_with(opens))
+                    })
+                    .collect();
+                let other: Vec<&&str> = findings
+                    .iter()
+                    .filter(|line| {
+                        let named = line.split_once(": ").map_or("", |(_, rest)| rest);
+                        !(named.starts_with(&format!("{kind}/"))
+                            || named.starts_with(&format!("{kind}]")))
+                    })
+                    .collect();
+                if findings.is_empty() {
+                    Err(format!("no {kind} finding was printed:\n{output}"))
+                } else if !other.is_empty() {
+                    Err(format!("findings other than {kind}: {other:?}\n{output}"))
+                } else {
+                    Ok(())
                 }
             }
             Claim::UpstreamOn {

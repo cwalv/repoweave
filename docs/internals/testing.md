@@ -486,10 +486,17 @@ rows, one test per shape. A cell passes when `--continue` ends in the state an
 unkilled run ends in (compared by commit subject and depth, since ids differ
 between sandboxes) and when abort, typed in the seat and, for a landing, in its
 target, puts every place back where `Step::capture` saw it. A point a verb
-passes before it has written its record has a rerun in place of a continue.
-A cell that fails on the tree is listed in `known_failing` with the defect it
-shows, and must keep failing until the entry is removed. `discover` (ignored)
-prints which shapes reach which points, for adding a row.
+passes before it has written its record has a rerun in place of a continue. A
+point it passes once its record is gone (`aligning-source`) has neither: the
+cell runs what `rwv doctor` names for what the kill left unaligned and compares
+the end state. Two ends are by decision, the single-repo parity of a kill in a
+verb's last instant: a landing with `--retire` killed at `ending` or
+`records-write` leaves savepoints that `rwv doctor` reports as
+`orphaned-savepoint` and `rwv doctor --fix` clears, keeping the seat's
+pre-rebase tips as backups; and one killed at `records-write` also leaves the
+record of the branch it deleted, which the next run of the deletion rule
+drops. Every cell passes on the tree. `discover` (ignored) prints which shapes
+reach which points, for adding a row.
 
 ### What a step declares
 

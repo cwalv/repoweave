@@ -723,6 +723,25 @@ fn ends_clean(shape: &Shape, seat_gone: bool) -> Vec<Step> {
     steps
 }
 
+fn savepoints_outlive(shape: &Shape) -> Vec<Step> {
+    let mut steps = vec![
+        Step::rwv(&a(), &["doctor", "--all"])
+            .claim(Claim::FindingsOnly("orphaned-savepoint"))
+            .claim(Claim::OutputContains("`rwv doctor --fix`")),
+        loose(Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds)),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("backup projects/proj  HEAD/"))
+            .claim(Claim::OutputContains("backup local/remotes/app  HEAD/")),
+        Step::rwv(&a(), &["backup", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(" w1-proj\n"))
+            .claim(Claim::OutputContains(" w1-app\n")),
+    ];
+    steps.extend(ends_clean(shape, true));
+    steps
+}
+
 const HOLDER: &[&str] = &["land", "--history", "linear"];
 
 fn holding(shape: &Shape) -> Vec<Step> {
@@ -954,16 +973,33 @@ fn unkilled(shape: &Shape) -> Vec<Step> {
 }
 
 /// A landing that retires its seat has, at these points, removed the seat and
-/// its record: there is nothing to continue or abort, and the state is the
-/// unkilled run's.
+/// its record: there is nothing to continue or abort. Its savepoints outlive
+/// it, which `rwv doctor` reports and `rwv doctor --fix` clears, keeping the
+/// seat's pre-rebase tips as backups and leaving the unkilled run's state
+/// otherwise: by decision, the single-repo parity of a kill in a verb's last
+/// instant.
 fn already_ended(shape: &Shape, point: &str) -> bool {
     retires_its_seat(shape) && matches!(point, "ending" | "records-write")
+}
+
+/// How the end state of a cell killed at `point` differs from an unkilled
+/// run's, as [`line_diff`] prints it. A retiring landing killed as it writes
+/// the records has deleted the seat's branch and not yet dropped its record;
+/// the next run of the deletion rule anywhere drops it
+/// (`a_stale_record_is_dropped_by_the_next_deletion_rule`).
+fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
+    if retires_its_seat(shape) && point == "records-write" {
+        "  only unkilled: refs/heads/rwv-records [records: drop proj--w1 #3]\n  \
+         only continued: refs/heads/rwv-records [records: set proj--w1 feature #2]\n"
+    } else {
+        ""
+    }
 }
 
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
     let mut steps = until_stopped(shape, phase, point);
     if already_ended(shape, point) {
-        steps.extend(ends_clean(shape, true));
+        steps.extend(savepoints_outlive(shape));
         return steps;
     }
     match ending {
@@ -1056,10 +1092,11 @@ fn run_cell(
     let mut why = failures(&report);
     if ending == Ending::Continue && why.is_empty() {
         let continued = scenario_runner::end_state(&sandbox);
-        if continued != reference {
+        let differs = line_diff(reference, &continued);
+        let left = left_by_the_kill(shape, point);
+        if differs != left {
             why = format!(
-                "the end state differs from an unkilled run's:\n{}",
-                line_diff(reference, &continued)
+                "the end state differs from an unkilled run's:\n{differs}expected only:\n{left}"
             );
         }
     }
@@ -1440,18 +1477,6 @@ fn endings(shape: &Shape, phase: Phase, point: &str) -> Vec<Ending> {
     endings
 }
 
-/// Cells that fail on this tree, each with the defect it shows. A listed cell
-/// must still fail: one that passes is a stale entry.
-fn known_failing(shape: &Shape, point: &str) -> Option<&'static str> {
-    if already_ended(shape, point) {
-        return Some(
-            "a landing with --retire killed once its seat is gone leaves orphaned savepoints \
-             that `rwv doctor --all` reports",
-        );
-    }
-    None
-}
-
 fn run_shape(id: &str) {
     let shape = shape(id);
     let reference = reference_end(shape);
@@ -1478,14 +1503,7 @@ fn run_shape(id: &str) {
                                 named(shape, phase, point, ending)
                             ))
                         });
-                match (known_failing(shape, point), failed) {
-                    (None, failed) => failed,
-                    (Some(_), Some(_)) => None,
-                    (Some(defect), None) => Some(format!(
-                        "{} now passes: remove its known-failing entry ({defect})",
-                        named(shape, phase, point, ending)
-                    )),
-                }
+                failed
             }) as Box<dyn FnOnce() -> Option<String> + Send>
         })
         .collect();
@@ -1565,6 +1583,34 @@ fn every_shape_has_a_test_and_a_cell() {
         );
         assert!(!cells_of(shape).is_empty(), "{} has no cell", shape.id);
     }
+}
+
+#[test]
+fn a_stale_record_is_dropped_by_the_next_deletion_rule() {
+    let mut steps = linear_seat();
+    steps.push(create("w2"));
+    steps.push(paused(&ww("w1"), LAND_RETIRE, "records-write", "held"));
+    steps.push(Step::kill("held"));
+    steps.extend([
+        Step::git(&a(), Repo::Proj, &["log", "--format=%s", "rwv-records"])
+            .claim(Claim::OutputLine("records: set proj--w1 feature"))
+            .claim(Claim::OutputLacks("drop proj--w1")),
+        loose(Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds)),
+        Step::rwv(&a(), &["workweave", "delete", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::RecordIs {
+                machine: Machine::A,
+                branch: "proj--w1",
+                record: None,
+            }),
+    ]);
+    let report = scenario_runner::run(Scenario {
+        name: "a stale record is dropped by the next deletion rule",
+        seed: default_seed(),
+        steps,
+    });
+    let failed = failures(&report);
+    assert!(failed.is_empty(), "{failed}");
 }
 
 macro_rules! shape_tests {
