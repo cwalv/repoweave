@@ -497,14 +497,15 @@ pub enum InTheWay {
     Unresolved,
 }
 
-/// The three sides a merge recorded for a file it left conflicted: the
-/// common ancestor's, the checked-out side's ("ours") and the incoming
-/// side's ("theirs"), each `None` where that side has no such file.
+/// The three sides a merge or replay recorded for a file it left conflicted:
+/// the common ancestor's, the side of the branch checked out ("yours") and
+/// the side it takes in ("incoming"), each `None` where that side has no
+/// such file. In a replay, yours is the branch being replayed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConflictSides {
     pub base: Option<String>,
-    pub ours: Option<String>,
-    pub theirs: Option<String>,
+    pub yours: Option<String>,
+    pub incoming: Option<String>,
 }
 
 /// In-flight VCS operation whose conflict needs human resolution.
@@ -5524,7 +5525,8 @@ pub trait Vcs: Send + Sync {
     /// The three sides a merge recorded for `path`, left conflicted in
     /// `checkout`; `None` when `path` is not conflicted there.
     ///
-    /// For git: the index's stages 1, 2 and 3.
+    /// For git: the index's stages 1, 2 and 3, stages 2 and 3 swapped in a
+    /// rebase, whose stage 2 is the commit replayed onto.
     fn conflict_sides(
         &self,
         checkout: &Path,
@@ -5535,7 +5537,8 @@ pub trait Vcs: Send + Sync {
     /// unmerged; its working file is left as it stands.
     ///
     /// For git: `hash-object -w --path=<path>` for each side, then
-    /// `update-index --index-info` at stages 1, 2 and 3.
+    /// `update-index --index-info` at stages 1, 2 and 3, stages 2 and 3
+    /// swapped in a rebase.
     fn record_conflict(
         &self,
         checkout: &Path,

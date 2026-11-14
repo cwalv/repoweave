@@ -1192,7 +1192,7 @@ pub(crate) fn replayed_tip_differs(
         return Ok(None);
     };
     let Some(sides) =
-        crate::manifest_conflict::sides_to_check(vcs, dir, &rebase.onto, &rebase.from)?
+        crate::manifest_conflict::sides_to_check(vcs, dir, &rebase.from, &rebase.onto)?
     else {
         return Ok(None);
     };

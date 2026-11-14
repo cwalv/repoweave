@@ -833,12 +833,12 @@ impl Carrier<'_> {
         let dir = self.repos.dir(&RepoKey::Project);
         let vcs = self.repos.vcs(&RepoKey::Project);
         let sides = if base == onto {
-            match crate::manifest_conflict::sides_to_check(vcs.as_ref(), &dir, onto, from)? {
+            match crate::manifest_conflict::sides_to_check(vcs.as_ref(), &dir, from, onto)? {
                 Some(sides) => sides,
                 None => return Ok(None),
             }
         } else {
-            crate::manifest_conflict::sides_at(vcs.as_ref(), &dir, Some(base), onto, from)
+            crate::manifest_conflict::sides_at(vcs.as_ref(), &dir, Some(base), from, onto)
         };
         let Ok(text) = vcs.read_file_at_revision(
             &dir,

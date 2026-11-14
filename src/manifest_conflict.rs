@@ -29,12 +29,6 @@ impl Side {
             Self::TextMerge => "text-merge",
         }
     }
-
-    /// During a replay the side the VCS records as the checkout's is the one
-    /// being taken in.
-    fn is_recorded_theirs(self, replaying: bool) -> bool {
-        (self == Self::Incoming) != replaying
-    }
 }
 
 /// Top-level tables whose keys are each one entry.
@@ -54,8 +48,8 @@ const VALUES_MARK: &str = ">>>>>>> the merge of both sides' values";
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct EntryConflict {
     pub(crate) path: Vec<String>,
-    pub(crate) ours: Option<toml::Value>,
-    pub(crate) theirs: Option<toml::Value>,
+    pub(crate) yours: Option<toml::Value>,
+    pub(crate) incoming: Option<toml::Value>,
 }
 
 #[derive(Debug)]
@@ -75,9 +69,10 @@ pub(crate) enum Reading {
 
 struct Sides {
     base: Option<Manifest>,
-    ours: Manifest,
-    theirs: Manifest,
-    ours_text: String,
+    yours: Manifest,
+    incoming: Manifest,
+    yours_text: String,
+    incoming_text: String,
 }
 
 fn read(sides: &ConflictSides) -> Result<Sides, (&'static str, String)> {
@@ -91,11 +86,12 @@ fn read(sides: &ConflictSides) -> Result<Sides, (&'static str, String)> {
         base: sides
             .base
             .is_some()
-            .then(|| parse("base", &sides.base))
+            .then(|| parse("common base", &sides.base))
             .transpose()?,
-        ours: parse("ours", &sides.ours)?,
-        theirs: parse("theirs", &sides.theirs)?,
-        ours_text: sides.ours.clone().unwrap_or_default(),
+        yours: parse("yours", &sides.yours)?,
+        incoming: parse("incoming", &sides.incoming)?,
+        yours_text: sides.yours.clone().unwrap_or_default(),
+        incoming_text: sides.incoming.clone().unwrap_or_default(),
     })
 }
 
@@ -108,30 +104,30 @@ impl Sides {
                 .map(Manifest::declared)
                 .transpose()?
                 .unwrap_or_default(),
-            self.ours.declared()?,
-            self.theirs.declared()?,
+            self.yours.declared()?,
+            self.incoming.declared()?,
         ])
     }
 
     fn conflicts(&self) -> anyhow::Result<Vec<EntryConflict>> {
-        let [base, ours, theirs] = self.tables()?;
-        Ok(entries(&[&base, &ours, &theirs])
+        let [base, yours, incoming] = self.tables()?;
+        Ok(entries(&[&base, &yours, &incoming])
             .into_iter()
             .filter_map(|path| {
-                let (b, o, t) = (at(&base, &path), at(&ours, &path), at(&theirs, &path));
+                let (b, o, t) = (at(&base, &path), at(&yours, &path), at(&incoming, &path));
                 (o != t && t != b && o != b).then(|| EntryConflict {
                     path,
-                    ours: o.cloned(),
-                    theirs: t.cloned(),
+                    yours: o.cloned(),
+                    incoming: t.cloned(),
                 })
             })
             .collect())
     }
 
-    /// Ours, with each entry only theirs changed taken from theirs, and each
-    /// entry in conflict too where `take_theirs`.
-    fn merged(&self, take_theirs: bool) -> anyhow::Result<Manifest> {
-        self.merged_with(|_, ours, theirs| if take_theirs { theirs } else { ours }.cloned())
+    /// Yours, with each entry only the incoming side changed taken from it,
+    /// and each entry in conflict too where `take_incoming`.
+    fn merged(&self, take_incoming: bool) -> anyhow::Result<Manifest> {
+        self.merged_with(|_, yours, incoming| if take_incoming { incoming } else { yours }.cloned())
     }
 
     /// The merge of the values with each entry in conflict as `text_merge`
@@ -149,10 +145,10 @@ impl Sides {
             Option<&toml::Value>,
         ) -> Option<toml::Value>,
     ) -> anyhow::Result<Manifest> {
-        let [base, ours, theirs] = self.tables()?;
-        let mut merged = ours.clone();
-        for path in entries(&[&base, &ours, &theirs]) {
-            let (b, o, t) = (at(&base, &path), at(&ours, &path), at(&theirs, &path));
+        let [base, yours, incoming] = self.tables()?;
+        let mut merged = yours.clone();
+        for path in entries(&[&base, &yours, &incoming]) {
+            let (b, o, t) = (at(&base, &path), at(&yours, &path), at(&incoming, &path));
             if o == b {
                 put(&mut merged, &path, t.cloned());
             } else if t != b && t != o {
@@ -164,8 +160,13 @@ impl Sides {
     }
 
     /// `merged` written as an edit of the recorded checkout side's text.
-    fn text(&self, merged: Manifest) -> anyhow::Result<String> {
-        Ok(Manifest::edit_text(&self.ours_text, |m| *m = merged)?.0)
+    fn text(&self, merged: Manifest, on_incoming: bool) -> anyhow::Result<String> {
+        let on = if on_incoming {
+            &self.incoming_text
+        } else {
+            &self.yours_text
+        };
+        Ok(Manifest::edit_text(on, |m| *m = merged)?.0)
     }
 }
 
@@ -344,7 +345,7 @@ fn listing(text_merge: &toml::Table, values: &toml::Table) -> Vec<String> {
 /// The sides of `sides`, read, where `text_merge` differs from the merge of
 /// their values and both sides changed `rwv.toml`.
 fn differing(sides: &ConflictSides, text_merge: &str) -> anyhow::Result<Option<Sides>> {
-    if sides.ours == sides.base || sides.theirs == sides.base {
+    if sides.yours == sides.base || sides.incoming == sides.base {
         return Ok(None);
     }
     let Ok(read) = read(sides) else {
@@ -365,7 +366,7 @@ pub(crate) struct TipDiffers {
 /// Judge `tip` against the merge of the values of `sides`; a tip that does
 /// not parse is not judged.
 pub(crate) fn check_tip(sides: &ConflictSides, tip: &str) -> anyhow::Result<Option<TipDiffers>> {
-    if sides.ours == sides.base || sides.theirs == sides.base {
+    if sides.yours == sides.base || sides.incoming == sides.base {
         return Ok(None);
     }
     let (Ok(read), Ok(at_tip)) = (read(sides), Manifest::from_toml_str(tip)) else {
@@ -395,7 +396,10 @@ pub(crate) fn check_text_merge(
     let Some(read) = differing(sides, text_merge)? else {
         return Ok(false);
     };
-    let values = read.text(read.merged_over(&Manifest::from_toml_str(text_merge)?)?)?;
+    let values = read.text(
+        read.merged_over(&Manifest::from_toml_str(text_merge)?)?,
+        false,
+    )?;
     let newline = |text: &str| if text.ends_with('\n') { "" } else { "\n" };
     let working = format!(
         "{TEXT_MERGE_MARK}\n{text_merge}{}=======\n{values}{}{VALUES_MARK}\n",
@@ -438,8 +442,8 @@ pub(crate) fn check_ported_text_merge(
         Ok(_) => {
             let held = ConflictSides {
                 base: sides.base.as_deref().map(hold).transpose()?,
-                ours: sides.ours.as_deref().map(hold).transpose()?,
-                theirs: sides.theirs.as_deref().map(hold).transpose()?,
+                yours: sides.yours.as_deref().map(hold).transpose()?,
+                incoming: sides.incoming.as_deref().map(hold).transpose()?,
             };
             let Ok(read) = read(&held) else {
                 return Ok(None);
@@ -454,14 +458,14 @@ pub(crate) fn check_ported_text_merge(
     Ok(Some(lines))
 }
 
-/// The sides of `rwv.toml` a merge of `theirs` into `ours` over `base`
-/// records.
+/// The sides of `rwv.toml` a merge or replay of `incoming` into `yours` over
+/// `base` records.
 pub(crate) fn sides_at(
     vcs: &dyn Vcs,
     dir: &Path,
     base: Option<&CommitId>,
-    ours: &CommitId,
-    theirs: &CommitId,
+    yours: &CommitId,
+    incoming: &CommitId,
 ) -> ConflictSides {
     let at = |commit: &CommitId| {
         vcs.read_file_at_revision(
@@ -473,22 +477,22 @@ pub(crate) fn sides_at(
     };
     ConflictSides {
         base: base.and_then(at),
-        ours: at(ours),
-        theirs: at(theirs),
+        yours: at(yours),
+        incoming: at(incoming),
     }
 }
 
-/// The sides of `rwv.toml` a merge of `theirs` into `ours` records, where the
+/// The sides of `rwv.toml` a merge of `incoming` into `yours` records, where the
 /// two have at most one merge base. With several, no one base is both sides'
 /// common one, and the VCS's own merge stands unchecked.
 pub(crate) fn sides_to_check(
     vcs: &dyn Vcs,
     dir: &Path,
-    ours: &CommitId,
-    theirs: &CommitId,
+    yours: &CommitId,
+    incoming: &CommitId,
 ) -> anyhow::Result<Option<ConflictSides>> {
-    let bases = vcs.merge_bases(dir, ours, theirs)?;
-    Ok((bases.len() <= 1).then(|| sides_at(vcs, dir, bases.first(), ours, theirs)))
+    let bases = vcs.merge_bases(dir, yours, incoming)?;
+    Ok((bases.len() <= 1).then(|| sides_at(vcs, dir, bases.first(), yours, incoming)))
 }
 
 /// Whether `text_merge`, the text the VCS merged `rwv.toml` into with no
@@ -501,7 +505,7 @@ pub(crate) fn text_merge_differs(sides: &ConflictSides, text_merge: &str) -> any
 /// against the merge of the values of its sides; return whether it recorded
 /// `rwv.toml` unmerged.
 pub(crate) fn check_merge_in_flight(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<bool> {
-    let Some(theirs) = vcs.merge_in_flight(dir)? else {
+    let Some(incoming) = vcs.merge_in_flight(dir)? else {
         return Ok(false);
     };
     if vcs
@@ -514,8 +518,8 @@ pub(crate) fn check_merge_in_flight(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result
     let Some(text_merge) = vcs.staged_file(dir, Manifest::FILE_NAME)? else {
         return Ok(false);
     };
-    let ours = vcs.head_revision(dir)?.id().clone();
-    let Some(sides) = sides_to_check(vcs, dir, &ours, &theirs)? else {
+    let yours = vcs.head_revision(dir)?.id().clone();
+    let Some(sides) = sides_to_check(vcs, dir, &yours, &incoming)? else {
         return Ok(false);
     };
     check_text_merge(vcs, dir, &sides, &text_merge)
@@ -575,7 +579,8 @@ pub(crate) fn continue_at_stop(
             text.push('\n');
         }
         text.push_str(&format!(
-            "then run `{resume}`, or `{}` to put everything back as it was",
+            "then run `{resume}`, or `{}` to put everything back as it was; edits to tracked files \
+             not yet committed are not kept, as the VCS's own abort does not keep them",
             crate::op_state::abort_command_at(workspace)
         ));
         crate::refusal::refusal(crate::refusal::RefusalKind::OpParked, text)
@@ -665,7 +670,7 @@ pub(crate) fn continue_at_stop(
     let checked = checked(working.as_deref());
     let merged = match &checked {
         Some((_, text_merge)) => sides.merged_over(text_merge)?,
-        None => sides.merged(keep.is_some_and(|side| side.is_recorded_theirs(replaying)))?,
+        None => sides.merged(keep == Some(Side::Incoming))?,
     };
     if let Some(working) = working
         .as_deref()
@@ -689,7 +694,7 @@ pub(crate) fn continue_at_stop(
     let (text, dropped) = match checked {
         Some((text_merge, _)) => (Manifest::edit_text(text_merge, |m| *m = merged)?.0, None),
         None => (
-            sides.text(merged)?,
+            sides.text(merged, replaying)?,
             Some(if replaying { "yours" } else { "incoming" }),
         ),
     };
@@ -860,17 +865,10 @@ pub(crate) fn reading_lines(
     resume: Option<&str>,
 ) -> Vec<String> {
     let by_hand = BY_HAND;
-    let replaying = matches!(vcs.rebase_in_flight(dir), Ok(Some(_)));
-    let label = |side: &str| match (side, replaying) {
-        ("ours", false) | ("theirs", true) => "yours",
-        ("ours", true) | ("theirs", false) => "incoming",
-        _ => "common base",
-    };
     let mut lines = Vec::new();
     match reading {
         Reading::Unreadable { side, why } => lines.push(format!(
-            "rwv.toml's {} side does not read as a manifest ({why}); {by_hand}:",
-            label(side)
+            "rwv.toml's {side} side does not read as a manifest ({why}); {by_hand}:"
         )),
         Reading::Entries {
             conflicts,
@@ -879,7 +877,7 @@ pub(crate) fn reading_lines(
             lines.extend(text_merge.iter().cloned());
             let mut heading: Option<&[String]> = None;
             for conflict in conflicts {
-                let [yours, incoming] = yours_and_incoming(conflict, replaying);
+                let [yours, incoming] = [conflict.yours.as_ref(), conflict.incoming.as_ref()];
                 let shown_pair = format!("{} in yours, {} incoming", shown(yours), shown(incoming));
                 match keyed_in(&conflict.path) {
                     Some(table) => {
@@ -961,14 +959,6 @@ pub(crate) fn reading_lines(
     lines
 }
 
-fn yours_and_incoming(conflict: &EntryConflict, replaying: bool) -> [Option<&toml::Value>; 2] {
-    if replaying {
-        [conflict.theirs.as_ref(), conflict.ours.as_ref()]
-    } else {
-        [conflict.ours.as_ref(), conflict.theirs.as_ref()]
-    }
-}
-
 fn shown(value: Option<&toml::Value>) -> String {
     match value {
         Some(toml::Value::Table(_)) => "set".to_owned(),
@@ -991,8 +981,8 @@ mod tests {
     fn sides(base: &str, ours: &str, theirs: &str) -> Sides {
         read(&ConflictSides {
             base: Some(base.to_owned()),
-            ours: Some(ours.to_owned()),
-            theirs: Some(theirs.to_owned()),
+            yours: Some(ours.to_owned()),
+            incoming: Some(theirs.to_owned()),
         })
         .unwrap()
     }
@@ -1143,12 +1133,12 @@ mod tests {
         let base = member("a", "main");
         let err = read(&ConflictSides {
             base: Some(base.clone()),
-            ours: Some("<<<<<<< nope".to_owned()),
-            theirs: Some(base),
+            yours: Some("<<<<<<< nope".to_owned()),
+            incoming: Some(base),
         })
         .err()
         .unwrap();
-        assert_eq!(err.0, "ours");
+        assert_eq!(err.0, "yours");
     }
 
     #[test]

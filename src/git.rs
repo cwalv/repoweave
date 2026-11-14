@@ -5687,10 +5687,11 @@ impl Vcs for GitVcs {
         checkout: &Path,
         path: &str,
     ) -> Result<Option<crate::vcs::ConflictSides>, VcsError> {
+        let [yours_stage, incoming_stage] = yours_and_incoming_stages(self, checkout)?;
         let mut sides = crate::vcs::ConflictSides {
             base: None,
-            ours: None,
-            theirs: None,
+            yours: None,
+            incoming: None,
         };
         let mut any = false;
         for (_, blob, stage) in Self::stage_entries(checkout, path)? {
@@ -5698,8 +5699,8 @@ impl Vcs for GitVcs {
             any = true;
             match stage.as_str() {
                 "1" => sides.base = Some(text),
-                "2" => sides.ours = Some(text),
-                "3" => sides.theirs = Some(text),
+                stage if stage == yours_stage => sides.yours = Some(text),
+                stage if stage == incoming_stage => sides.incoming = Some(text),
                 _ => {}
             }
         }
@@ -5718,7 +5719,12 @@ impl Vcs for GitVcs {
             .map_or_else(|| "100644".to_owned(), str::to_owned);
         let path_arg = format!("--path={path}");
         let mut info = format!("0 {}\t{path}\n", "0".repeat(40));
-        for (stage, text) in [("1", &sides.base), ("2", &sides.ours), ("3", &sides.theirs)] {
+        let [yours_stage, incoming_stage] = yours_and_incoming_stages(self, checkout)?;
+        for (stage, text) in [
+            ("1", &sides.base),
+            (yours_stage, &sides.yours),
+            (incoming_stage, &sides.incoming),
+        ] {
             let Some(text) = text else { continue };
             let blob = Self::run_with_stdin(
                 ["hash-object", "-w", path_arg.as_str(), "--stdin"],
@@ -12260,4 +12266,14 @@ mod drift_tests {
         let x = standings.iter().find(|s| s.path == "notes/x.txt").unwrap();
         assert_eq!((x.index, x.file), (Holds::LeftTip, Holds::Other));
     }
+}
+
+/// The index stages that hold yours and the incoming side: 2 and 3, swapped
+/// in a rebase, where stage 2 is the commit replayed onto.
+fn yours_and_incoming_stages(git: &GitVcs, checkout: &Path) -> Result<[&'static str; 2], VcsError> {
+    Ok(if git.rebase_in_flight(checkout)?.is_some() {
+        ["3", "2"]
+    } else {
+        ["2", "3"]
+    })
 }
