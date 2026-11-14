@@ -208,7 +208,7 @@ pub(crate) fn rebase_jumps(
 ) -> anyhow::Result<Vec<crate::repin::Repin>> {
     let rebases: Vec<Rebasing> = rebases
         .iter()
-        .filter(|rebase| matches!(rebase.repo, RepoKey::Member(_)) && rebase.base != rebase.from)
+        .filter(|rebase| matches!(rebase.repo, RepoKey::Member(_)))
         .cloned()
         .collect();
     if rebases.is_empty() {
