@@ -19795,6 +19795,10 @@ pub enum TextMerge {
     /// [`TextMerge::SettingMoved`] with a comment `main` added: the
     /// continue's merge of the values keeps it.
     SettingMovedKeepsAComment,
+    /// [`TextMerge::SettingMoved`] beside a list each side added an element
+    /// to: the stop lists only the moved setting, and the bare continue
+    /// keeps both elements as the text merge holds them.
+    SettingMovedBesideAListBothChanged,
     /// `--keep text-merge` typed where the VCS's own text merge of
     /// `rwv.toml` conflicted: there is no text merge to keep.
     KeepTextMergeAtAConflict,
@@ -19971,6 +19975,56 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
             ]);
             (
                 "the merge of the values written at a check stop keeps a comment the side taken in added",
+                steps,
+            )
+        }
+        T::SettingMovedBesideAListBothChanged => {
+            let mut steps = vec![
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    UNDER_INTEGRATIONS,
+                    "enabled = false\n\n[workweave]\ncopy = [\n  \"a.env\",\n  \"b.env\",\n  \
+                     \"c.env\",\n  \"d.env\",\n  \"e.env\",\n]\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "copy list"]),
+            ];
+            steps.extend(moved());
+            steps.extend([
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "  \"a.env\",\n",
+                    "  \"0-main.env\",\n  \"a.env\",\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "copy 0-main"]),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "  \"e.env\",\n",
+                    "  \"e.env\",\n  \"z-w.env\",\n",
+                ),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "copy z-w"]),
+                Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(differs))
+                    .claim(Claim::OutputContains("local/remotes/app history"))
+                    .claim(Claim::OutputLacks("copy"))
+                    .claim(Claim::OutputLacks("--keep yours")),
+                Step::rwv(&ww("w"), &["sync", "--continue"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("wrote and staged the merge")),
+                app_history(&ww("w")),
+                Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("\"0-main.env\""))
+                    .claim(Claim::OutputContains("\"z-w.env\"")),
+            ]);
+            (
+                "a check stop leaves an entry both sides changed as the text merge holds it",
                 steps,
             )
         }
