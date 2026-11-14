@@ -237,7 +237,7 @@ fn delete_refuses_while_workweave_is_mid_op() {
         "refusal must name the in-flight op with its age; got:\n{stderr}"
     );
     assert!(
-        stderr.contains("--continue") && stderr.contains("rwv abort"),
+        stderr.contains("land --continue") && stderr.contains(" abort` rolls it back"),
         "refusal must offer `--continue` and `rwv abort`; got:\n{stderr}"
     );
     assert!(
