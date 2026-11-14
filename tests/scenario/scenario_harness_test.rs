@@ -4903,10 +4903,16 @@ fn refs_and_locks(sandbox: &Sandbox) -> String {
 /// the binary serves it: the `Choice` column of the choices table, `-` for a
 /// choice the table does not number.
 fn explained_choice_ids(sandbox: &Sandbox, kind: &str, state: &str) -> Vec<String> {
+    explained_choice_ids_in_row(sandbox, kind, &format!("`{state}`"))
+}
+
+/// The choice ids `rwv explain <kind>` lists in the rows whose state cell is
+/// `cell`, as a state judged in one situation prints them.
+fn explained_choice_ids_in_row(sandbox: &Sandbox, kind: &str, cell: &str) -> Vec<String> {
     let out = sandbox.rwv(&sandbox.root, &["explain", kind]);
     assert!(out.status.success(), "rwv explain {kind}");
     let page = String::from_utf8_lossy(&out.stdout).into_owned();
-    let prefix = format!("| `{state}` | ");
+    let prefix = format!("| {cell} | ");
     let rows: Vec<String> = page
         .lines()
         .filter(|line| line.starts_with(&prefix) && line.matches(" | ").count() == 4)
@@ -4920,7 +4926,7 @@ fn explained_choice_ids(sandbox: &Sandbox, kind: &str, state: &str) -> Vec<Strin
         .collect();
     assert!(
         !rows.is_empty(),
-        "`rwv explain {kind}` lists no choice for `{state}`:\n{page}"
+        "`rwv explain {kind}` lists no choice for {cell}:\n{page}"
     );
     rows
 }
@@ -5060,11 +5066,15 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
             .iter()
             .map(|c| c["id"].as_str().unwrap_or("-").to_owned())
             .collect();
-        assert_eq!(
-            ids,
-            explained_choice_ids(&sandbox, kind, state),
-            "{kind} {state}"
-        );
+        let explained = match (kind, state) {
+            ("edits", "dirty") => explained_choice_ids_in_row(
+                &sandbox,
+                kind,
+                "`dirty`, for a removal of a clone that is the repo's only store",
+            ),
+            _ => explained_choice_ids(&sandbox, kind, state),
+        };
+        assert_eq!(ids, explained, "{kind} {state}");
     }
 }
 
