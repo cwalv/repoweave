@@ -90,9 +90,7 @@ fn planned_then_run(
         .plan_checkout_restore(p, &key(), attribution)
         .unwrap();
     assert_eq!(named(&plan), expect, "the plan: {plan:?}");
-    let outcome = GitVcs
-        .execute_checkout_restore(p, &key(), &plan, attribution.edits_here)
-        .unwrap();
+    let outcome = GitVcs.execute_checkout_restore(p, &key(), &plan).unwrap();
     assert_eq!(shape(&outcome), expect, "the outcome: {outcome:?}");
     outcome
 }
@@ -140,7 +138,7 @@ fn a_tip_the_op_did_not_write_is_kept_before_the_reset() {
         "{plan:?}"
     );
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert!(
         matches!(&outcome, VerifiedRestoreOutcome::Kept { kept, .. }
@@ -206,7 +204,6 @@ fn a_merge_the_op_never_started_on_a_tip_it_never_wrote_is_canceled_and_its_tip_
     let outcome = planned_then_run(
         p.path(),
         &Attribution {
-            edits_here: true,
             ..Attribution::default()
         },
         "Canceled(RestoredFromConverged)",
@@ -238,7 +235,7 @@ fn a_detached_checkout_is_put_back_on_its_branch() {
 }
 
 #[test]
-fn edits_here_are_kept_before_the_reset() {
+fn edits_are_kept_before_the_reset() {
     let p = repo();
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
     let wrote = commit(p.path(), "op");
@@ -247,7 +244,6 @@ fn edits_here_are_kept_before_the_reset() {
         p.path(),
         &Attribution {
             intent: Some(&wrote),
-            edits_here: true,
             ..Attribution::default()
         },
         "RestoredFromIntent",
@@ -257,27 +253,6 @@ fn edits_here_are_kept_before_the_reset() {
         "{outcome:?}"
     );
     assert_eq!(&head(p.path()), saved.id());
-}
-
-#[test]
-fn edits_elsewhere_block_and_are_left() {
-    let p = repo();
-    GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    let wrote = commit(p.path(), "op");
-    std::fs::write(p.path().join("f"), "edited").unwrap();
-    planned_then_run(
-        p.path(),
-        &Attribution {
-            intent: Some(&wrote),
-            ..Attribution::default()
-        },
-        "EditsElsewhere",
-    );
-    assert_eq!(head(p.path()), wrote);
-    assert_eq!(
-        std::fs::read_to_string(p.path().join("f")).unwrap(),
-        "edited"
-    );
 }
 
 #[test]
@@ -355,7 +330,7 @@ fn a_plan_the_checkout_moved_under_writes_nothing_and_reports_what_it_holds() {
     let moved = commit(p.path(), "meanwhile");
 
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
 
     let VerifiedRestoreOutcome::ForeignTip { observed_tip, .. } = outcome else {
@@ -517,15 +492,12 @@ fn a_switch_back_here_keeps_the_ignored_file_it_overwrites() {
     std::fs::write(p.join(".git/info/exclude"), "u\n").unwrap();
     std::fs::write(p.join("u"), "mine").unwrap();
     let attribution = Attribution {
-        edits_here: true,
         ..Attribution::default()
     };
     let plan = GitVcs
         .plan_checkout_restore(p, &key(), &attribution)
         .unwrap();
-    let outcome = GitVcs
-        .execute_checkout_restore(p, &key(), &plan, true)
-        .unwrap();
+    let outcome = GitVcs.execute_checkout_restore(p, &key(), &plan).unwrap();
     assert_eq!(git(p, &["branch", "--show-current"]), "main", "{outcome:?}");
     assert!(
         !git(p, &["log", "--all", "--format=%H", "-Smine"]).is_empty(),
@@ -560,7 +532,7 @@ fn a_leave_stopped_plan_whose_merge_was_given_up_leaves_nothing_to_report() {
     assert_eq!(named(&plan), "LeftStopped");
     git(p.path(), &["merge", "--abort"]);
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert_eq!(shape(&outcome), "NoSavepoint", "{outcome:?}");
     assert_eq!(GitVcs.mid_op(p.path()), None);
@@ -577,7 +549,7 @@ fn an_untouched_plan_the_checkout_moved_under_keeps_its_savepoint() {
     assert_eq!(named(&plan), "Untouched");
     let moved = commit(p.path(), "meanwhile");
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert_eq!(shape(&outcome), "ForeignTip", "{outcome:?}");
     assert_eq!(head(p.path()), moved);
@@ -602,7 +574,7 @@ fn a_cancel_plan_whose_merge_was_given_up_cancels_nothing_and_keeps_its_savepoin
     assert_eq!(named(&plan), "Canceled(Untouched)");
     git(p.path(), &["merge", "--abort"]);
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert_eq!(shape(&outcome), "ForeignTip", "{outcome:?}");
     assert!(savepoint_survives(p.path()));
@@ -619,7 +591,7 @@ fn a_switch_back_plan_the_checkout_moved_under_switches_nothing() {
     assert_eq!(named(&plan), "SwitchedBack(Untouched)");
     git(p.path(), &["switch", "-q", "-c", "third"]);
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert_eq!(shape(&outcome), "ForeignTip", "{outcome:?}");
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "third");
@@ -716,7 +688,7 @@ fn a_branch_held_by_a_checkout_the_plan_switches_off_does_not_block_its_restore(
 }
 
 #[test]
-fn edits_here_that_collide_with_the_switch_back_are_kept_and_it_runs() {
+fn edits_that_collide_with_the_switch_back_are_kept_and_it_runs() {
     let p = repo();
     let base = head(p.path());
     std::fs::write(p.path().join("f"), "2").unwrap();
@@ -726,14 +698,13 @@ fn edits_here_that_collide_with_the_switch_back_are_kept_and_it_runs() {
     std::fs::write(p.path().join("f"), "mine").unwrap();
     let attribution = Attribution {
         intent: Some(&base),
-        edits_here: true,
         ..Attribution::default()
     };
     let plan = GitVcs
         .plan_checkout_restore(p.path(), &key(), &attribution)
         .unwrap();
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, true)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
     assert!(
@@ -752,7 +723,7 @@ fn a_switch_back_from_a_detached_head_keeps_its_commits() {
         .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, false)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
     assert_eq!(git(p.path(), &["branch", "--show-current"]), "main");
     let reached = git(
@@ -796,7 +767,6 @@ fn an_untracked_file_in_a_cancels_way_is_kept_before_it_is_cleared() {
             p.path(),
             &key(),
             &Attribution {
-                edits_here: true,
                 ..Attribution::default()
             },
         )
@@ -807,7 +777,7 @@ fn an_untracked_file_in_a_cancels_way_is_kept_before_it_is_cleared() {
         "{plan:?}"
     );
     let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan, true)
+        .execute_checkout_restore(p.path(), &key(), &plan)
         .unwrap();
 
     assert_eq!(GitVcs.mid_op(p.path()), None, "{outcome:?}");

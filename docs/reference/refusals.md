@@ -708,9 +708,8 @@ name it there, or name the primary's clone directly. Nothing was written.
 ### `foreign-tip`
 
 **Condition.** `rwv abort` planned its restore and something blocks the plan: a
-branch gone or checked out where abort may not move it, uncommitted edits that
-returning a repo to its savepoint would discard in a workspace abort was not run
-in, a landing's target that something other than the landing moved since, a
+branch gone or checked out where abort may not move it, a landing's target that
+something other than the landing moved since, a
 commit the landing wrote in its target that another lock pins, or something
 abort could not read. The verdict is the same whichever workspace of the op
 abort runs from.
@@ -729,9 +728,7 @@ an abort has begun it says `nothing more is restored` and `--continue` is closed
 abort`. For a landing's target that something else moved, `rwv abort
 --leave-target` ends the landing with its source restored and its target left
 as it stands, and a landing stopped in its retire can instead finish with `rwv
-land --continue`. Edits in the other workspace are set aside with the printed
-command, or kept by the abort run there (`rwv -C <workspace> abort`) where the
-refusal prints that line. Where a plan could not be read, `rwv abort
+land --continue`. Where a plan could not be read, `rwv abort
 --leave-target` ends a landing without it. The refusal moves nothing and writes
 nothing.
 

@@ -1243,13 +1243,13 @@ every_scenario!(
         scenarios::LandedStop::Retire,
         scenarios::AbortFrom::Target
     ),
-    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(
+    abort_from_the_source_keeps_a_merge_in_a_target_repo_the_landing_moved(
         scenarios::LandedStop::Landed
     ),
-    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(
+    abort_from_the_source_keeps_a_merge_in_a_target_repo_the_landing_moved(
         scenarios::LandedStop::Retire
     ),
-    abort_sets_aside_an_untracked_file_in_the_way_in_the_target,
+    abort_keeps_an_untracked_file_in_the_way_in_the_target,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
     abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it(
@@ -1258,10 +1258,10 @@ every_scenario!(
     abort_puts_back_a_receiving_branch_deleted_after_the_landing_moved_it(
         scenarios::LandedStop::Retire
     ),
-    abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Landed),
+    abort_from_the_source_keeps_colliding_edits(scenarios::LandedStop::Landed),
     abort_switch_back_blocked(scenarios::SwitchBackBlocked::Gone),
     abort_switch_back_blocked(scenarios::SwitchBackBlocked::Held),
-    abort_refuses_a_switch_back_over_colliding_edits(scenarios::LandedStop::Retire),
+    abort_from_the_source_keeps_colliding_edits(scenarios::LandedStop::Retire),
     abort_restores_a_target_fast_forward_killed_after_the_move,
     a_continued_landing_racing_a_commit_on_a_repo_it_moved,
     vcs_continue_mid_rebase_then_an_own_commit,
@@ -3385,8 +3385,7 @@ holding_rwv! {
 
 holding_rwv! {
     /// A landing killed after it fast-forwarded the target's checkout: edits
-    /// made there are kept as a backup by an abort run there, and refuse an
-    /// abort run from the source until they are set aside.
+    /// made there are kept as a backup by an abort run in either workspace.
     fn abort_keeps_edits_made_in_the_target_after_the_stop() {
         for stop in scenarios::LandedStop::ALL {
             for from in [scenarios::AbortFrom::Source, scenarios::AbortFrom::Target] {
@@ -3434,11 +3433,11 @@ holding_rwv! {
         }
     }
 
-    /// Edits in the target that keep abort from switching a checkout back
-    /// are refused with the choice that sets them aside.
-    fn abort_refuses_a_switch_back_over_colliding_edits() {
+    /// Edits in the target that collide with a checkout's switch back are
+    /// kept as a backup by abort run from the source.
+    fn abort_from_the_source_keeps_colliding_edits() {
         for stop in scenarios::LandedStop::ALL {
-            runner::run(scenarios::abort_refuses_a_switch_back_over_colliding_edits(stop)).assert_fully_decided_green();
+            runner::run(scenarios::abort_from_the_source_keeps_colliding_edits(stop)).assert_fully_decided_green();
         }
     }
 
@@ -3449,17 +3448,18 @@ holding_rwv! {
         }
     }
 
-    /// The stash a refused abort prints sets aside an untracked file in the
-    /// way of the restore in the other workspace.
-    fn abort_sets_aside_an_untracked_file_in_the_way_in_the_target() {
-        runner::run(scenarios::abort_sets_aside_an_untracked_file_in_the_way_in_the_target()).assert_fully_decided_green();
+    /// An untracked file in the way of the restore in the other workspace is
+    /// kept as a backup by abort.
+    fn abort_keeps_an_untracked_file_in_the_way_in_the_target() {
+        runner::run(scenarios::abort_keeps_an_untracked_file_in_the_way_in_the_target()).assert_fully_decided_green();
     }
 
     /// A merge someone started in the target's workspace on a tip the
-    /// landing wrote is never canceled by `rwv abort`.
-    fn abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved() {
+    /// landing wrote is canceled by `rwv abort` from the source, its working
+    /// copy kept as a backup.
+    fn abort_from_the_source_keeps_a_merge_in_a_target_repo_the_landing_moved() {
         for stop in scenarios::LandedStop::ALL {
-            runner::run(scenarios::abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(stop)).assert_fully_decided_green();
+            runner::run(scenarios::abort_from_the_source_keeps_a_merge_in_a_target_repo_the_landing_moved(stop)).assert_fully_decided_green();
         }
     }
 }

@@ -393,3 +393,49 @@ fn from_the_workweave_a_staged_resolution_is_kept_as_a_backup() {
 fn from_the_target_a_staged_resolution_is_kept_as_a_backup() {
     a_staged_resolution_is_kept_as_a_backup(Invoked::Target);
 }
+
+/// An edit left uncommitted in a tracked file of a checkout the landing moved
+/// is kept as a backup by abort typed in either workspace, before the reset
+/// that would discard it.
+fn an_uncommitted_edit_is_kept_as_a_backup(from: Invoked) {
+    let parked = park(false);
+    let pre = pre_op(&parked);
+    run_sync_to_into_park(&parked);
+    std::fs::write(
+        parked.seat.project.join(".gitignore"),
+        "EDITED at the stop\n",
+    )
+    .unwrap();
+
+    let out = parked.abort(from);
+    assert!(out.status.success(), "{from:?}:\n{}", transcript(&out));
+    let seat_label = match from {
+        Invoked::Target => "[source] ",
+        Invoked::Workweave => "",
+    };
+    let line =
+        format!("  {seat_label}projects/{PROJECT}: its uncommitted edits are kept as backup");
+    assert!(
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|l| l.starts_with(&line)),
+        "{from:?}: expected {line:?}\n{}",
+        transcript(&out)
+    );
+    assert_restored(&parked, &pre, &out);
+    assert!(
+        shown_backups(&out).contains("EDITED at the stop"),
+        "{from:?}: the printed show line returns the edit\n{}",
+        transcript(&out)
+    );
+}
+
+#[test]
+fn from_the_workweave_an_uncommitted_edit_is_kept_as_a_backup() {
+    an_uncommitted_edit_is_kept_as_a_backup(Invoked::Workweave);
+}
+
+#[test]
+fn from_the_target_an_uncommitted_edit_is_kept_as_a_backup() {
+    an_uncommitted_edit_is_kept_as_a_backup(Invoked::Target);
+}

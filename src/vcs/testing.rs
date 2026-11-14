@@ -714,7 +714,6 @@ impl Vcs for FakeVcs {
         _repo: &Path,
         _key: &SavepointKey,
         _plan: &crate::vcs::CheckoutRestorePlan,
-        _edits_here: bool,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         unsupported("execute_checkout_restore")
     }

@@ -172,8 +172,8 @@ rebase or merge, from whichever workspace abort runs in. `rwv backup list`
 shows each backup and `rwv backup drop` drops it.
 
 **Planned whole.** Abort plans every write on both sides before it makes any. One
-blocked step (a branch gone or checked out elsewhere, edits in a
-workspace abort was not run in, something unreadable) refuses the whole abort:
+blocked step (a branch gone or checked out elsewhere, a landing's target that
+something else moved, something unreadable) refuses the whole abort:
 nothing of either side is restored and `--continue` stays open. After it begins,
 `--continue` is closed, and a write that finds a repo moved since the plan stops
 there; a rerun of `rwv abort` completes the rest. `--leave-target` ends a landing

@@ -1196,10 +1196,6 @@ pub struct Attribution<'a> {
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
     pub own_steps: &'a [OwnStep],
-    /// Whether the checkout is in the workspace abort was run in, where its
-    /// uncommitted edits are kept as a backup before a move discards them;
-    /// elsewhere they refuse the move.
-    pub edits_here: bool,
 }
 
 impl Attribution<'_> {
@@ -1258,12 +1254,6 @@ pub enum VerifiedRestoreOutcome {
     /// VCS refused to cancel it, saying `why`. Its edits, where any were kept
     /// first, are in the backup the restore reports.
     CancelRefused { stopped: ConflictOp, why: String },
-    /// The restore would discard uncommitted edits in a checkout of another
-    /// workspace than the one abort was run in. Nothing was touched.
-    EditsElsewhere {
-        savepoint: CommitId,
-        in_the_way: InTheWay,
-    },
     /// The checkout, at a tip abort may restore, is off the branch its
     /// savepoint names, and that branch cannot be checked out here: it is
     /// gone, or another checkout holds it. Nothing was touched.
@@ -4032,11 +4022,8 @@ pub trait Vcs: Send + Sync {
     ///   that holds commits the savepoint does not reach is kept as a backup
     ///   first ([`KeptWork::Tip`]).
     ///
-    /// Uncommitted edits in a checkout of another workspace than the one
-    /// abort runs in refuse the restore
-    /// ([`VerifiedRestoreOutcome::EditsElsewhere`]); in that one they are kept
-    /// as a backup ([`VerifiedRestoreOutcome::Kept`]) before any step that
-    /// discards them.
+    /// Uncommitted edits, in whichever workspace, are kept as a backup
+    /// ([`VerifiedRestoreOutcome::Kept`]) before any step that discards them.
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
@@ -4044,7 +4031,7 @@ pub trait Vcs: Send + Sync {
         attribution: &Attribution<'_>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         let plan = self.plan_checkout_restore(repo, key, attribution)?;
-        self.execute_checkout_restore(repo, key, &plan, attribution.edits_here)
+        self.execute_checkout_restore(repo, key, &plan)
     }
 
     /// What [`Vcs::verified_restore_savepoint`] would do, writing nothing:
@@ -4066,7 +4053,6 @@ pub trait Vcs: Send + Sync {
         repo: &Path,
         key: &SavepointKey,
         plan: &CheckoutRestorePlan,
-        edits_here: bool,
     ) -> Result<VerifiedRestoreOutcome, VcsError>;
 
     /// Where canceling the operation `repo` is stopped in would leave HEAD;

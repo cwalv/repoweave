@@ -8447,19 +8447,6 @@ fn retire_stopped(reading: &op_state::OwnerReading) -> bool {
     )
 }
 
-/// Whether `rwv abort` run in `workspace` takes up the op `op`, as
-/// [`abort_op`] finds the op it aborts.
-fn abort_accepted_in(ctx: &WorkspaceContext, workspace: &CanonicalPath, op: &OpId) -> bool {
-    match op_state::resolve_for_abort(workspace.as_path()) {
-        Ok(Some((reading, _))) => reading.header().id == *op,
-        Ok(None) => landing_released_into(ctx, workspace).is_ok_and(|released| {
-            matches!(released.as_slice(), [(reading, _)]
-                if reading.header().id == *op && retire_stopped(reading))
-        }),
-        Err(_) => false,
-    }
-}
-
 /// Which of an op's workspaces a restore is running in, decided by the
 /// workspace's identity in the owner record and never by which of the two
 /// `rwv abort` was invoked from.
@@ -8882,7 +8869,6 @@ fn abort_op(
             operates_in.as_ref(),
             &carries,
             &own_steps,
-            None,
             &mut plan,
         );
 
@@ -8917,8 +8903,6 @@ fn abort_op(
                                 operates_in.as_ref(),
                                 &carries,
                                 &own_steps,
-                                abort_accepted_in(ctx, other_dir, &op_id)
-                                    .then_some(other_dir.as_path()),
                                 &mut plan,
                             );
                             other_ws_dir = Some(dir);
@@ -9410,10 +9394,6 @@ pub(crate) enum AbortStep {
         at: RepoAt,
         key: SavepointKey,
         plan: CheckoutRestorePlan,
-        edits_here: bool,
-        /// The workspace holding the checkout, where abort run there keeps
-        /// the edits in the way of its restore as a backup.
-        aborts_there: Option<PathBuf>,
     },
     /// A target checkout this landing never moved: left, what its savepoint
     /// held kept where no branch reaches it, and the savepoint dropped.
@@ -9736,7 +9716,6 @@ fn plan_abort_workspace(
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
     carries: &[op_state::Carrying],
     own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
-    aborts_there: Option<&Path>,
     plan: &mut AbortPlan,
 ) {
     let empty_tips = std::collections::BTreeMap::new();
@@ -9832,9 +9811,8 @@ fn plan_abort_workspace(
                 AbortSide::Replay => own_steps.get(&repo_key).map_or(&[], Vec::as_slice),
                 AbortSide::LandTarget => &[],
             },
-            edits_here: label.is_empty(),
         };
-        plan_checkout(plan, at, &restore_key, &attribution, aborts_there);
+        plan_checkout(plan, at, &restore_key, &attribution);
     }
     plan.steps.push(AbortStep::Settle {
         on_target: matches!(side, AbortSide::LandTarget),
@@ -9844,43 +9822,21 @@ fn plan_abort_workspace(
     });
 }
 
-/// Plan the restore of one checkout to its savepoint under `key`, and,
-/// where edits in another workspace than abort's block it, whether abort run
-/// in `aborts_there`, the workspace holding it, would keep them and go on.
+/// Plan the restore of one checkout to its savepoint under `key`.
 fn plan_checkout(
     plan: &mut AbortPlan,
     at: RepoAt,
     key: &SavepointKey,
     attribution: &Attribution<'_>,
-    aborts_there: Option<&Path>,
 ) {
-    let planned =
-        |attribution: &Attribution<'_>| at.vcs.plan_checkout_restore(&at.dir, key, attribution);
-    let checkout = match planned(attribution) {
+    let checkout = match at.vcs.plan_checkout_restore(&at.dir, key, attribution) {
         Ok(checkout) => checkout,
         Err(e) => return plan.unread(at.on_target, at.label, format!("{e:#}")),
     };
-    let aborts_there = aborts_there
-        .filter(|_| {
-            matches!(
-                checkout.blocked(),
-                Some(VerifiedRestoreOutcome::EditsElsewhere { .. })
-            )
-        })
-        .filter(|_| {
-            planned(&Attribution {
-                edits_here: true,
-                ..*attribution
-            })
-            .is_ok_and(|p| p.blocked().is_none())
-        })
-        .map(Path::to_path_buf);
     plan.steps.push(AbortStep::Checkout {
         at,
         key: key.clone(),
         plan: checkout,
-        edits_here: attribution.edits_here,
-        aborts_there,
     });
 }
 
@@ -9959,9 +9915,8 @@ fn plan_in_place(
                 started_from: None,
                 integrates: Integrates::No,
                 own_steps: &[],
-                edits_here: false,
             };
-            plan_checkout(plan, at, &key, &attribution, None);
+            plan_checkout(plan, at, &key, &attribution);
         }
         plan.steps.push(AbortStep::EndInPlace {
             workspace,
@@ -11354,19 +11309,11 @@ fn report_blocked(plan: AbortPlan) -> (AbortTally, AbortTally) {
             &mut source
         };
         let step = match step {
-            AbortStep::Checkout {
-                at,
-                key,
-                plan,
-                edits_here,
-                aborts_there,
-            } => match plan.blocked().cloned() {
+            AbortStep::Checkout { at, key, plan } => match plan.blocked().cloned() {
                 Some(blocked) => AbortStep::Checkout {
                     at,
                     key,
                     plan: CheckoutRestorePlan::Blocked(blocked),
-                    edits_here,
-                    aborts_there,
                 },
                 None => continue,
             },
@@ -11386,21 +11333,12 @@ fn run_step(
     write: bool,
 ) {
     match step {
-        AbortStep::Checkout {
-            at,
-            key,
-            plan,
-            edits_here,
-            aborts_there,
-        } => {
+        AbortStep::Checkout { at, key, plan } => {
             let saved = at
                 .vcs
                 .resolve_savepoint(&at.dir, &key)
                 .map(|saved| saved.id().clone());
-            match at
-                .vcs
-                .execute_checkout_restore(&at.dir, &key, &plan, edits_here)
-            {
+            match at.vcs.execute_checkout_restore(&at.dir, &key, &plan) {
                 Ok(outcome) => {
                     report_abort_outcome(
                         at.vcs.as_ref(),
@@ -11408,7 +11346,6 @@ fn run_step(
                             label: &at.label,
                             named: &at.named,
                             dir: &at.dir,
-                            aborts_there: aborts_there.as_deref(),
                         },
                         &outcome,
                         saved.as_ref(),
@@ -11830,20 +11767,6 @@ struct Reported<'a> {
     label: &'a str,
     named: &'a RepoOperand,
     dir: &'a Path,
-    aborts_there: Option<&'a Path>,
-}
-
-impl Reported<'_> {
-    /// The abort that keeps what is in the way as a backup, run in the
-    /// workspace that holds it, where that one would.
-    fn giving_up(&self, what: &str) -> String {
-        self.aborts_there.map_or_else(String::new, |workspace| {
-            format!(
-                "\nor run abort in that workspace, which keeps {what} as a backup first:\n\t{}",
-                op_state::abort_command_at(workspace)
-            )
-        })
-    }
 }
 
 /// How the operator sets aside what is `in_the_way` in `dir`, `there`
@@ -11949,25 +11872,6 @@ fn report_abort_outcome(
                 "  {label}: the {stopped} in progress could not be canceled: {why}; rerun \
                  `rwv abort` once the cause is cleared"
             );
-        }
-        VerifiedRestoreOutcome::EditsElsewhere {
-            savepoint,
-            in_the_way,
-        } => {
-            tally.any_foreign = true;
-            eprintln!(
-                "  {label}: holds uncommitted edits, which restoring it to its savepoint {} \
-                 would discard, in a workspace abort was not run in; it is left as it is",
-                savepoint.short()
-            );
-            tally.blocked.push((
-                named.clone(),
-                format!(
-                    "{}{}",
-                    setting_aside(vcs, *in_the_way, repo_abs, true),
-                    at.giving_up("its edits")
-                ),
-            ));
         }
         VerifiedRestoreOutcome::Kept { kept, then } => {
             let tip_kept = kept

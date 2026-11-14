@@ -124,9 +124,8 @@ it holds. These discards make one first:
   operation did not make;
 - `rwv abort`, before a reset or a cancel that is not the operation's own
   stopped step, keeps the uncommitted edits it would discard in a checkout
-  of the workspace it is run in, an ignored file it would overwrite
-  included. In another workspace's checkout it refuses instead, naming the
-  command that sets them aside there.
+  of either workspace of the operation, an ignored file it would overwrite
+  included.
 
 The backup is written first and the delete or the reset runs only once it
 exists: a backup that cannot be written stops the verb with nothing

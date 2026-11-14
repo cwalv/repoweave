@@ -151,16 +151,9 @@ exactly where the plan does not restore the target, writes nothing until
 the source's plan is unblocked, and gives up the target (its savepoints, the
 lease and the claim) only once every source step executed as planned.
 
-A checkout blocked by edits in the other workspace of a landing is offered
-`rwv -C <workspace> abort` in the workspace whose edits are in the way,
-which keeps them as a backup, printed only where that
-workspace's abort takes up this op (it holds the op's record or lease, or
-the landing released it with its retire recorded as stopped) and its plan,
-with those edits its own, is unblocked. The fix printed for edits in the way
-sets aside exactly what the move would discard: `stash push
---include-untracked`, or `stash push --all` where an ignored file is in the
-way; in a stopped operation or an unresolved index, which no stash sets
-aside, the status that shows how to end it. A submodule's own state is never
+Uncommitted edits a move would discard are kept as a backup first in either
+workspace of the operation. A checkout whose switch back over edits git
+refuses has them kept and cleared first. A submodule's own state is never
 in the way: a hard move of its superproject leaves the submodule's checkout
 as it stands.
 

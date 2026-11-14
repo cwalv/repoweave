@@ -73,8 +73,7 @@ This can happen if:
 - A prior `rwv abort` completed cleanly and cleared op-state.
 
 `abort` also refuses, as `foreign-tip`, when its plan is blocked: a branch is
-gone or checked out elsewhere, a landing's target moved since,
-uncommitted edits would be discarded in a workspace abort was not run in, or
+gone or checked out elsewhere, a landing's target moved since, or
 something could not be read. The refusal says nothing is restored (for a landing,
 "nothing of either side is restored"), keeps op-state and leaves `--continue`
 open, and prints the choices below. After abort has begun, the refusal says
@@ -195,11 +194,6 @@ operation for each way it can end (rerun `rwv abort` once the fixes are made;
 - a checkout off the branch its savepoint names, where that branch is gone
   or checked out elsewhere: the VCS command that puts the branch back at the
   savepoint, or freeing the other checkout, then `rwv abort`.
-- uncommitted edits in a workspace abort was not run in, or an operation
-  stopped there that the VCS would refuse to cancel as it stands: set them
-  aside there with the printed command, then `rwv abort`; or run
-  `rwv -C <workspace> abort`, printed where that workspace takes the abort up,
-  which keeps them as a backup first.
 - a plan that could not be read (a broken manifest, a branch savepoint): make it
   readable and rerun; for a landing, `rwv abort --leave-target` ends it without
   reading the target.

@@ -39,7 +39,7 @@ If the operation stopped as `unparseable-project` `mid-operation`, the project r
 
 A branch the landing moved without a checkout is put back once every checkout is restored, from the tip it holds, while nothing has it checked out; one the landing created is deleted.
 
-`rwv abort` never discards a commit or an edit without keeping it first, from whichever workspace you run it in. Each backup it keeps is printed on one line with its name, followed by the command that shows what it holds. That includes a commit you made at a stop, whether or not `--continue` ran after it, and a conflict you resolved and staged; the operation's own commits it resets off without a backup. Uncommitted edits in a checkout of the other workspace of a landing refuse the abort instead: it names the command that sets them aside there, or run `rwv abort` in that workspace, which keeps them as a backup. A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a branch that is gone or checked out elsewhere, edits in the other workspace of a landing, a landing's target that something else moved, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort as `foreign-tip`, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
+`rwv abort` never discards a commit or an edit without keeping it first, from whichever workspace you run it in. Each backup it keeps is printed on one line with its name, followed by the command that shows what it holds. That includes a commit you made at a stop, whether or not `--continue` ran after it, and a conflict you resolved and staged; the operation's own commits it resets off without a backup. Uncommitted edits are kept the same way, in either workspace of a landing. A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a branch that is gone or checked out elsewhere, a landing's target that something else moved, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort as `foreign-tip`, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
 
 ### Ending an operation whose record cannot be read
 
@@ -58,8 +58,6 @@ The refusal ends with the commands that end the operation, so run a printed comm
 - `rwv abort` again, once the fixes it printed are made;
 - `rwv land --continue`, where a landing stopped in its retire and can finish;
 - `rwv abort --leave-target`, for a landing whose target something else moved, or holds a commit the landing wrote that another lock now pins: the source is restored, the target is left as it stands, and each tip the landing wrote there is kept as a backup first where no branch reaches it.
-
-Edits in the other workspace of a landing are set aside there with the command the refusal prints (for git, `git -C <checkout> stash push --include-untracked`, or `--all` where an ignored file is in the way), or the abort is run in that workspace (`rwv -C <workspace> abort`) where the refusal prints that line.
 
 Once `rwv abort` has begun, the operation can only be aborted: `--continue` refuses it. A write that finds a repository moved since abort judged it stops there, saying `abort stopped there`; what was restored stays, nothing after it is done, and `rwv abort` run again completes the rest.
 

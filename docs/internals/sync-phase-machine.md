@@ -507,8 +507,7 @@ executor re-reads each checkout before its write:
 | On another branch than its savepoint names, or detached where it was attached | `SwitchedBack`: put back on the saved branch, the branch it was on left where it stands (a detached HEAD's commits kept first), then planned again by this table |
 | Stopped in a rebase, merge or copy, other than the next row | `Canceled`: the working copy kept as a backup first (`GitVcs::keep_working_copy_before_cancel`), and, where the op did not start the operation (`Integrates` and `OwnerRecord::own_steps` say which it did), the commits HEAD holds that no branch reaches; then canceled as the VCS's own abort would, and planned again by this table. Untracked paths in the cancel's way, or an edit that makes the VCS refuse the cancel, are named in the plan (`clear_first`) and removed only after the working copy is kept |
 | Stopped in an operation begun at the savepoint in a repo the op never integrates (`Integrates::No`), or with no savepoint | `LeftStopped`, its savepoint dropped |
-| Uncommitted edits a reset or switch would discard, in the workspace abort runs in | kept as a backup first (`KeptWork::Edits`) |
-| The same in the other workspace of a landing | `EditsElsewhere`: the whole abort refused before anything moves, with the command that sets them aside and `rwv -C <workspace> abort` where that workspace takes the abort up |
+| Uncommitted edits a reset or switch would discard, in either workspace | kept as a backup first (`KeptWork::Edits`) |
 | Moved between the plan and its write | `ForeignTip`: left as it is, the abort stops there, refuses `foreign-tip`, and the rerun plans it again |
 
 **`advanced_tips`** is written during replay: the planned tip of each

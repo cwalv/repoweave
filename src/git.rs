@@ -3949,10 +3949,9 @@ impl Vcs for GitVcs {
         repo: &Path,
         key: &SavepointKey,
         plan: &CheckoutRestorePlan,
-        edits_here: bool,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         let mut kept = Vec::new();
-        let outcome = self.execute_plan(repo, key, plan, edits_here, &mut kept)?;
+        let outcome = self.execute_plan(repo, key, plan, &mut kept)?;
         Ok(if kept.is_empty() {
             outcome
         } else {
@@ -5778,15 +5777,9 @@ impl GitVcs {
         key: &SavepointKey,
         savepoint: &ResolvedRevisionId,
         outcome: VerifiedRestoreOutcome,
-        edits_here: bool,
         kept: &mut Vec<KeptWork>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        if !self.keep_before_discarding(repo, savepoint, edits_here, kept)? {
-            return Ok(VerifiedRestoreOutcome::EditsElsewhere {
-                savepoint: savepoint.id().clone(),
-                in_the_way: InTheWay::Edits,
-            });
-        }
+        self.keep_before_discarding(repo, savepoint, kept)?;
         Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
         self.drop_checkout_savepoint(repo, key)?;
         Ok(outcome)
@@ -5796,21 +5789,15 @@ impl GitVcs {
     /// edits as a backup where the move would discard any (a tracked change,
     /// or an untracked or ignored file or directory where `to` has a path),
     /// the ignored ones it would discard included, once per restore, and the
-    /// commits a detached HEAD holds that no branch reaches. `false`, with
-    /// nothing kept, where the move would discard edits and they are not
-    /// `edits_here`, in the workspace abort was run in.
+    /// commits a detached HEAD holds that no branch reaches.
     fn keep_before_discarding(
         &self,
         repo: &Path,
         to: &ResolvedRevisionId,
-        edits_here: bool,
         kept: &mut Vec<KeptWork>,
-    ) -> Result<bool, VcsError> {
+    ) -> Result<(), VcsError> {
         if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
             if let Some(ignored) = Self::hard_move_discards(repo, to)? {
-                if !edits_here {
-                    return Ok(false);
-                }
                 if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
                     let source = self.head_backup_source(repo)?;
                     kept.push(KeptWork::Edits(
@@ -5822,7 +5809,7 @@ impl GitVcs {
         if let Some(commits) = self.backup_unpreserved_head(repo)? {
             kept.push(KeptWork::Commits(commits));
         }
-        Ok(true)
+        Ok(())
     }
 
     /// Before canceling a stopped operation: keep the checkout's working copy
@@ -6072,13 +6059,6 @@ impl GitVcs {
         let keeps = |tip: &CommitId| -> Result<bool, VcsError> {
             Ok(!attributable(tip) && !self.reached_from(repo, tip, savepoint)?)
         };
-        let edits_elsewhere = |in_the_way| {
-            CheckoutRestorePlan::Blocked(VerifiedRestoreOutcome::EditsElsewhere {
-                savepoint: savepoint.clone(),
-                in_the_way,
-            })
-        };
-
         if let Some(stopped) = held.stopped {
             let returns_to = self.cancel_returns_to(repo)?.map(|r| r.id().clone());
             let own = attribution.integrates == Integrates::Yes
@@ -6092,17 +6072,6 @@ impl GitVcs {
             let in_the_way = Self::untracked_in_the_way(repo, &lands_at)?;
             let clear_first =
                 !in_the_way.is_empty() || Self::cancel_refuses(repo, stopped)?.is_some();
-            if !attribution.edits_here
-                && (clear_first
-                    || !own
-                        && Self::hard_move_discards(
-                            repo,
-                            &ResolvedRevisionId::from(lands_at.clone()),
-                        )?
-                        .is_some())
-            {
-                return Ok(edits_elsewhere(InTheWay::Unresolved));
-            }
             let on_after = match stopped {
                 ConflictOp::Rebase => Self::rebasing(repo)?.or(held.on),
                 _ => held.on,
@@ -6175,9 +6144,6 @@ impl GitVcs {
                 Self::edits_block_switch(repo, &lands_at)?
             };
             let blocks = in_the_way.is_some();
-            if let (Some(in_the_way), false) = (in_the_way, attribution.edits_here) {
-                return Ok(edits_elsewhere(in_the_way));
-            }
             let then = self.plan_from(
                 repo,
                 on,
@@ -6213,17 +6179,6 @@ impl GitVcs {
         } else {
             RestoredFrom::Reached
         };
-        if !held.edits_cleared && !attribution.edits_here {
-            if let Some(ignored) =
-                Self::hard_move_discards(repo, &ResolvedRevisionId::from(savepoint.clone()))?
-            {
-                return Ok(edits_elsewhere(if ignored.is_empty() {
-                    InTheWay::Edits
-                } else {
-                    InTheWay::Ignored
-                }));
-            }
-        }
         Ok(CheckoutRestorePlan::Reset {
             from: held.head,
             savepoint: savepoint.clone(),
@@ -6422,7 +6377,6 @@ impl GitVcs {
         repo: &Path,
         key: &SavepointKey,
         plan: &CheckoutRestorePlan,
-        edits_here: bool,
         kept: &mut Vec<KeptWork>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         match plan {
@@ -6471,7 +6425,6 @@ impl GitVcs {
                     key,
                     &ResolvedRevisionId::from(savepoint.clone()),
                     outcome,
-                    edits_here,
                     kept,
                 )
             }
@@ -6502,7 +6455,7 @@ impl GitVcs {
                         });
                     }
                 }
-                let then = self.execute_plan(repo, key, then, edits_here, kept)?;
+                let then = self.execute_plan(repo, key, then, kept)?;
                 Ok(VerifiedRestoreOutcome::Canceled {
                     stopped: *stopped,
                     then: Box::new(then),
@@ -6534,7 +6487,7 @@ impl GitVcs {
                         vcs.set_detached_head(repo, &ResolvedRevisionId::from(savepoint.clone()))
                     }
                 };
-                if edits_here {
+                {
                     let lands_on = match onto {
                         Some(branch) => self.resolve_local_branch_tip(repo, branch)?,
                         None => Some(ResolvedRevisionId::from(savepoint.clone())),
@@ -6557,16 +6510,10 @@ impl GitVcs {
                     if self.snapshot_edits(repo)?.is_none() {
                         return Err(refused);
                     }
-                    if !edits_here {
-                        return Ok(VerifiedRestoreOutcome::EditsElsewhere {
-                            savepoint: savepoint.clone(),
-                            in_the_way: InTheWay::Edits,
-                        });
-                    }
                     self.discard_edits_kept(repo, kept)?;
                     switch_back(self)?;
                 }
-                let then = self.execute_plan(repo, key, then, edits_here, kept)?;
+                let then = self.execute_plan(repo, key, then, kept)?;
                 Ok(VerifiedRestoreOutcome::SwitchedBack {
                     off: off.clone(),
                     then: Box::new(then),
