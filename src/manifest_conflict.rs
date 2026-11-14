@@ -313,7 +313,7 @@ pub(crate) fn reading(
         Err(e) => {
             return Ok(Some(Reading::Unreadable {
                 what: format!(
-                    "rwv.toml's sides do not read as text ({e}), so no side of it can be taken"
+                    "rwv.toml's sides do not read as text ({e:#}), so no side of it can be taken"
                 ),
             }))
         }
