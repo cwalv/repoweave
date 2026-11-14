@@ -63,18 +63,18 @@ a repo the commit does not move, and `untracked-collision` a file the commit
 writes into the project repo that stands there untracked.
 
 A conflict stops the port with its op record kept (`op-parked`): resolve and
-stage it in the checkout named, then `rwv cherry-pick --continue`, or
+mark it resolved in the checkout named, then `rwv cherry-pick --continue`, or
 `rwv abort` to put every repo back. At a stop in the project repo `rwv.toml`
 holds this branch's entries and the ported tables; where git conflicted on a
 ported table both sides changed, it holds this branch's tables and the stop
-shows the commit's, to set as wanted and stage. Where the VCS merged such a
+shows the commit's, to set as wanted and mark resolved. Where the VCS merged such a
 table's text with no conflict, the text is compared with the merge of both
 sides' values (the commit's parent, this branch's tip and the commit) in each
 key at most one side changed, a key both changed keeping the VCS's text; where
-it does not parse or differs, the port stops with `rwv.toml` unmerged and the
+it does not parse or differs, the port stops with `rwv.toml` in conflict and the
 VCS's text merge in place, untouched, listing what differs. A table only one side changed is
 taken by value, and entries and `history` are never ported, so neither is
-compared. There is no `--keep` at this stop: edit `rwv.toml`, stage it, then
+compared. There is no `--keep` at this stop: edit `rwv.toml`, mark it resolved, then
 `rwv cherry-pick --continue`, or `rwv abort`. A step the VCS refuses once the port has started (an untracked file in
 a member's way, a hook) also holds the op (`op-parked`), naming what failed.
 

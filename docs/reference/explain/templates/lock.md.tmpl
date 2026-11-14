@@ -111,8 +111,8 @@ rwv lock [--dirty] [--repo <selector>]... [--commit [-m <MSG>]] [--project <name
 ```
 
 - `--dirty` — skip the uncommitted-changes check. By default, `lock` refuses
-  to record any repo with uncommitted changes to tracked files (staged,
-  unstaged), because that content has no SHA and cannot be reproducibly
+  to record any repo with uncommitted changes to tracked files (recorded
+  for the next commit or not), because that content has no SHA and cannot be reproducibly
   recovered. Untracked files never refuse: they cannot change HEAD. `--dirty`
   bypasses the check; use only when you deliberately want to record an
   in-flight state (e.g., a workweave that hasn't been cleaned up yet).
@@ -120,14 +120,14 @@ rwv lock [--dirty] [--repo <selector>]... [--commit [-m <MSG>]] [--project <name
   path, `glob:<pat>` or `re:<pat>`; repeat for union). It only narrows: it
   moves no pin backward. A selector matching no member refuses with
   `repo-not-in-manifest`.
-- `--commit` — after writing `rwv.lock`, stage and commit it from the project
+- `--commit` — after writing `rwv.lock`, commit it from the project
   directory, with an auto-generated message listing which repos advanced or were dropped. A
   `rwv.toml` with uncommitted changes, or one never committed, goes into the
   same commit: the lock is derived from the manifest, so a membership edit and
   the relock it calls for are one change. The message then also names
   `rwv.toml` (`lock: refresh 2 repos, record rwv.toml`, `lock: drop <repo>` for a removal, or `lock: record
   rwv.toml` when no pin moved). Uncommitted changes to other tracked files
-  of the project repo, staged or not, stay out of the commit and as they are,
+  of the project repo, recorded for the next commit or not, stay out of the commit and as they are,
   named in one line.
 - `-m, --message <MSG>` — the commit message for `--commit`, in place of the
   generated one. Without `--commit` it is a usage error (exit 2).
@@ -188,7 +188,7 @@ rwv lock --dirty
 ## Common errors
 
 - *repo has uncommitted changes to tracked files; commit or use --dirty to override* — one or
-  more repos have staged or unstaged edits to tracked files. Commit the changes, or pass
+  more repos have edits to tracked files. Commit the changes, or pass
   `--dirty` to record the committed portion of HEAD anyway.
 - *workspace could not be resolved* — CWD is not inside a weave or workweave;
   run from within the workspace.

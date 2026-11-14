@@ -525,7 +525,8 @@ pub enum ConflictOp {
     ///
     /// The operator-facing resume path is `rwv sync --continue` /
     /// `rwv land --continue` — not bare `git rebase --continue`. The VCS
-    /// hint for this variant stops at staging (`git add <files>`); rwv core
+    /// hint for this variant stops at marking the files resolved (`git add
+    /// <files>`); rwv core
     /// appends the `rwv <verb> --continue` line. Bare `git rebase --continue`
     /// resumes without rwv's hold on the lock merge driver, so the clone's
     /// own definition merges the lock of each remaining pick.

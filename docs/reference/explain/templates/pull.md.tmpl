@@ -22,8 +22,7 @@ holds. A path a repo declares derived (`<path> merge=rwv-ours` in its
 attributes) that both sides changed takes the upstream's version, in the
 project repo and in each member, as a rebase onto the upstream would; any other
 path both sides changed conflicts. A conflict stops with the backend's hint up
-to staging and, for each
-conflicted `rwv.toml` entry, its setter spelled with ours and with theirs;
+to marking it resolved;
 `rwv pull --continue` resumes and `rwv abort` restores everything the operation
 moved. `--reset-to-upstream` keeps the tip it leaves in a backup (`rwv backup
 list`) and refuses where the upstream is gone, a record lands into the branch, or
@@ -128,7 +127,7 @@ rwv pull --repo github/acme/server
   commits the other lacks. `--merge-upstream` or `--reset-to-upstream
   projects/<name>` takes it in.
 - *edits dirty* — the project repo has uncommitted changes to files the
-  fast-forward would overwrite, listed; commit or stash them, then rerun.
+  fast-forward would overwrite, listed; commit or set them aside, then rerun.
 - *pull could not complete the fetch* — a remote was unreachable or refused;
   `rwv update` aligns the members to the lock as it stands.
 - *target unrecorded* — the checked-out branch of the project repo has no record

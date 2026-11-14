@@ -209,7 +209,7 @@ branch, or the checkout has edits. For a feature's `owned` or `fork` member,
 `--merge-upstream` first applies the lineage rule: an upstream that lacks the
 base the member's work is built on refuses as `pin` `off lineage` before
 anything moves. Both run under an operation record: a conflict
-stops with the conflict hint up to staging, `rwv update --remote --continue`
+stops with the conflict hint up to marking it resolved, `rwv update --remote --continue`
 resumes, and `rwv abort` puts every repo and ref the operation moved back.
 
 A repo whose HEAD is already detached stays detached at the new tip; no consent
@@ -219,7 +219,7 @@ those it is, and only one of them is rwv's to move.
 
 With `--commit`, uncommitted changes to tracked files of the project repo
 outside `rwv.toml`, `rwv.lock` and the integration files the run regenerates
-stay out of the commit and as they are, staged or not, named in one line.
+stay out of the commit and as they are, recorded for the next commit or not, named in one line.
 
 ## Invocation
 

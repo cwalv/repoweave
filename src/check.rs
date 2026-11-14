@@ -1436,17 +1436,18 @@ pub enum RegistrationDirectoryKind {
     DirectoryStands,
 }
 
-/// How a stale index should be treated.
+/// How stale recorded content should be treated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum RecordDriftKind {
     /// The checkout's branch moved forward under it, and a path the move
-    /// changed still has the moved-from tip's index entry. `--fix` gives it
-    /// HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.
+    /// changed still has the moved-from tip's content recorded. `--fix` gives
+    /// it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.
     SafeToFix,
-    /// An index entry differs from HEAD for a reason no move under the
-    /// checkout shows: a staged change, a path both the move and the user
-    /// changed, or an old tip's entry nothing records was left behind.
+    /// What the VCS records for a path differs from HEAD for a reason no move
+    /// under the checkout shows: a change recorded for the next commit, a path
+    /// both the move and the user changed, or an old tip's record nothing
+    /// says was left behind.
     /// `--fix` must not touch it.
     LiveRecorded,
 }
@@ -1456,7 +1457,7 @@ pub enum RecordDriftKind {
 #[serde(rename_all = "kebab-case")]
 pub enum WorkingTreeDriftKind {
     /// The checkout's branch moved forward under it, and a file the move
-    /// changed, with its index entry, still holds the moved-from tip's
+    /// changed, with its record, still holds the moved-from tip's
     /// content. `--fix` gives it HEAD's; no work is lost.
     SafeToFix,
     /// A file differs from HEAD for a reason no move under the checkout

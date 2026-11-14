@@ -66,7 +66,7 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   something standing where the move puts a path (`edits` `moved and
   edited`). Without it `--fix` writes nothing to such a checkout and
   refuses, naming it, as plain `rwv doctor` does and as every verb judging
-  the checkout's edits does. With it, the checkout's working copy and index
+  the checkout's edits does. With it, the checkout's working copy and its record
   are kept as a backup (`rwv backup list`), its HEAD is pointed at the tip
   its files hold, and the VCS merges every edit onto the branch (for git,
   `git checkout -m <branch>`), refreshing the move's other files. A file the
@@ -76,8 +76,8 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   command that shows the edit in the backup. Each flag acts only on
   checkouts of the workspace it runs in; another workspace's is refused with
   its `rwv -C <workspace>` line. Neither acts on a checkout holding a file
-  the VCS does not compare with what it records (ignored, or marked
-  assume-unchanged or skip-worktree), or something in the way of the move:
+  the VCS does not compare with what it records (ignored; for git,
+  also marked assume-unchanged or skip-worktree), or something in the way of the move:
   the first refusal prints the command that has the VCS compare the file,
   or the move-aside. Where the VCS refuses the merge or the set-aside, its
   own words are printed and the checkout is left `edits` `set back`, whose
@@ -100,7 +100,7 @@ determines what gets repaired.
 
 **Weave-scoped arms — the invoking weave sets the scope.** Integration
 content regeneration, surfacing symlinks, the lock merge driver's attribute
-line and config, and the index / working-tree / state-hygiene
+line and config, and the record / working-tree / state-hygiene
 drift arms all repair state that
 exists once *per weave*. Run inside a workweave, they repair that workweave
 and nothing else: primary's copy of the same file is left alone, including
@@ -1177,17 +1177,17 @@ Schema:
       ]
     },
     "RecordDriftKind": {
-      "description": "How a stale index should be treated.",
+      "description": "How stale recorded content should be treated.",
       "oneOf": [
         {
-          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
+          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's content recorded. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
           "type": "string",
           "enum": [
             "safe-to-fix"
           ]
         },
         {
-          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
+          "description": "What the VCS records for a path differs from HEAD for a reason no move under the checkout shows: a change recorded for the next commit, a path both the move and the user changed, or an old tip's record nothing says was left behind. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-recorded"
@@ -2882,7 +2882,7 @@ Schema:
       "description": "How stale working-tree files should be treated.",
       "oneOf": [
         {
-          "description": "The checkout's branch moved forward under it, and a file the move changed, with its index entry, still holds the moved-from tip's content. `--fix` gives it HEAD's; no work is lost.",
+          "description": "The checkout's branch moved forward under it, and a file the move changed, with its record, still holds the moved-from tip's content. `--fix` gives it HEAD's; no work is lost.",
           "type": "string",
           "enum": [
             "safe-to-fix"
@@ -3194,7 +3194,7 @@ involved (weave-wide):
 rwv doctor --all --json | jq '.violations[] | select(.kind == "pin")'
 ```
 
-Repair every finding marked Auto-fixable, safe drift (index trees that match
+Repair every finding marked Auto-fixable, safe drift (records that match
 a known ancestor) included:
 
 ```
@@ -3224,10 +3224,10 @@ rwv doctor --fix
   the project loads. `--fix` has no arm: the manifest is hand-authored, and
   the comments and key order in it do not survive a mechanical cross-format
   rewrite. Rewrite it as `rwv.toml` by hand and delete the `rwv.yaml`.
-- *index-drift* with `sub_kind: live-staged` — an index entry differs from
-  HEAD for a reason no move under the checkout shows. `--fix` leaves it:
-  commit it if it is your change, or stash it if it is not, which commits
-  nothing and loses nothing.
+- *record-drift* with `sub_kind: live-recorded` — what the VCS records for a
+  path differs from HEAD for a reason no move under the checkout shows.
+  `--fix` leaves it: commit it if it is your change, or set it aside (for git,
+  `git stash push`) if it is not, which commits nothing and loses nothing.
 - *orphaned-clone* — a directory under a registry path that isn't listed in
   any `rwv.toml`. Only surfaced under `--all`. Either move it to the path its
   remote's URL places it at under the primary weave root and run

@@ -942,17 +942,17 @@
       ]
     },
     "RecordDriftKind": {
-      "description": "How a stale index should be treated.",
+      "description": "How stale recorded content should be treated.",
       "oneOf": [
         {
-          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's index entry. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
+          "description": "The checkout's branch moved forward under it, and a path the move changed still has the moved-from tip's content recorded. `--fix` gives it HEAD's; the moved-from tip, an ancestor of HEAD, keeps what it held.",
           "type": "string",
           "enum": [
             "safe-to-fix"
           ]
         },
         {
-          "description": "An index entry differs from HEAD for a reason no move under the checkout shows: a staged change, a path both the move and the user changed, or an old tip's entry nothing records was left behind. `--fix` must not touch it.",
+          "description": "What the VCS records for a path differs from HEAD for a reason no move under the checkout shows: a change recorded for the next commit, a path both the move and the user changed, or an old tip's record nothing says was left behind. `--fix` must not touch it.",
           "type": "string",
           "enum": [
             "live-recorded"
@@ -2647,7 +2647,7 @@
       "description": "How stale working-tree files should be treated.",
       "oneOf": [
         {
-          "description": "The checkout's branch moved forward under it, and a file the move changed, with its index entry, still holds the moved-from tip's content. `--fix` gives it HEAD's; no work is lost.",
+          "description": "The checkout's branch moved forward under it, and a file the move changed, with its record, still holds the moved-from tip's content. `--fix` gives it HEAD's; no work is lost.",
           "type": "string",
           "enum": [
             "safe-to-fix"

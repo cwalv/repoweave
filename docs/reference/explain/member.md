@@ -535,7 +535,7 @@ command that performs it; nothing is said when it skipped none:
 
 - `0` — the role changed (or already was the one asked for).
 - non-zero — the path is not in the manifest; the change is to `reference`
-  while the repo has uncommitted changes to tracked files (commit, stash or
+  while the repo has uncommitted changes to tracked files (commit, set aside or
   discard them first); or the regeneration failed.
 
 The manifest edit and the regeneration land together or not at all: when

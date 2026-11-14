@@ -3887,6 +3887,85 @@ fn check_vocabulary_and_spelling(root: &Path, help_pages: &[(String, String)]) -
     findings
 }
 
+/// Git's working-copy words in text an operator reads outside the how-to
+/// pages: the explain pages and templates, the prime pages and templates, the
+/// generated schemas and `--help`. A word is allowed where the sentence says it
+/// is git's: after "for git" or "(git:", or inside a code span that opens with
+/// `git `. Elsewhere the text names what the operator sees in words any VCS
+/// shares and leaves the backend's spelling to `Vcs::hint`.
+///
+/// **Not covered**: a git word the regex does not list (`HEAD`, `detached`,
+/// `rebase`, `ours`, `theirs`), "the index" alone, which the workweave index
+/// also is, and prose pages under `docs/how-to/`, where git
+/// commands are the subject.
+fn check_published_text_has_no_git_words(
+    root: &Path,
+    help_pages: &[(String, String)],
+) -> Vec<String> {
+    let words = Regex::new(
+        r"(?i)\b(stag(e|ed|es|ing)|unstag\w*|stash\w*|reflog|assume-unchanged|skip-worktree|unmerged[ -](path|file)s?|index (entry|entries|lock))\b",
+    )
+    .unwrap();
+    let in_dir = |dir: PathBuf, ext: &'static str| {
+        collect_files_in_dir(&dir, move |p| {
+            p.extension().and_then(OsStr::to_str) == Some(ext)
+        })
+    };
+    let explain_dir = root.join("docs/reference/explain");
+    let prime_dir = root.join("docs/reference/prime");
+    let mut texts: Vec<ProseText> = Vec::new();
+    let mut read = 0;
+    for paths in [
+        in_dir(explain_dir.clone(), "md"),
+        in_dir(explain_dir.join("templates"), "tmpl"),
+        in_dir(prime_dir.clone(), "md"),
+        in_dir(prime_dir.join("templates"), "tmpl"),
+        in_dir(root.join("docs/reference/schemas"), "json"),
+    ] {
+        read += push_prose_files(root, paths, ProseRules::Vocabulary, &mut texts);
+    }
+    for (name, text) in help_pages {
+        texts.push(ProseText {
+            name: name.clone(),
+            text: text.clone(),
+            rules: ProseRules::Vocabulary,
+        });
+    }
+    let mut findings = Vec::new();
+    if read == 0 || help_pages.is_empty() {
+        findings.push(
+            "published-text: the scan read no explain, prime or schema file, or no --help page"
+                .to_owned(),
+        );
+    }
+    for text in &texts {
+        for m in words.find_iter(&text.text) {
+            let head = &text.text[..m.start()];
+            let window_start = head.char_indices().rev().nth(160).map_or(0, |(i, _)| i);
+            let window = head[window_start..]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase();
+            let span_start = head.rfind('`');
+            let in_git_span = head.matches('`').count() % 2 == 1
+                && span_start.is_some_and(|i| text.text[i + 1..].starts_with("git "));
+            if in_git_span || window.contains("for git") || window.contains("(git:") {
+                continue;
+            }
+            let line = head.matches('\n').count() + 1;
+            findings.push(format!(
+                "published-text: {}:{line} says `{}`; say what an operator of any VCS can \
+                 follow (\"mark it resolved\", \"set aside\", \"what the VCS records\"), \
+                 and spell git's word after \"for git\"",
+                text.name,
+                m.as_str()
+            ));
+        }
+    }
+    findings
+}
+
 /// Kebab-cased words an operator page writes in backticks that name nothing
 /// rwv defines, and are not meant to, with what each one is.
 const NON_TOKEN_WORDS: &[(&str, &str)] = &[
@@ -5351,6 +5430,16 @@ fn main() -> anyhow::Result<()> {
              Fix: write the term the finding names. The vocabulary and spelling \
              rules are in CLAUDE.md, under \"Canonical vocabulary\" and \
              \"American spelling\"."
+        );
+    }
+
+    // --- published git-words gate ------------------------------------------
+    let git_word_errors =
+        check_published_text_has_no_git_words(&root, &rendered_help_pages(&Cli::command()));
+    if !git_word_errors.is_empty() {
+        anyhow::bail!(
+            "published git-words check failed:\n{}",
+            git_word_errors.join("\n")
         );
     }
 
@@ -8713,6 +8802,52 @@ mod tests {
             combined.contains("docs/reference/schemas/sync.json:1: `workspace root`")
                 && combined.contains("rwv resolve --help:5: `Normalises`"),
             "got:\n{combined}"
+        );
+    }
+
+    /// An explain template, a schema description and a `--help` page are held
+    /// to the words rule; a word after "for git" and a `git ...` span pass.
+    #[test]
+    fn git_words_in_published_text_are_reported() {
+        let tmp = crate::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let mut help = write_minimal_prose_tree(root);
+        write_at(
+            root,
+            "docs/reference/explain/templates/x.md.tmpl",
+            &format!(
+                "Commit it or stash it.\nSet it aside (for git,\n`git stash push`) instead.\n{}\nRun `git stash\napply`.\n",
+                "x".repeat(200)
+            ),
+        );
+        write_at(
+            root,
+            "docs/reference/schemas/x.json",
+            "{\"description\": \"An index entry differs.\"}\n",
+        );
+        help.push((
+            "rwv x --help".to_owned(),
+            "Usage: rwv x\n\nResolve and stage it.\n".to_owned(),
+        ));
+        let errors = check_published_text_has_no_git_words(root, &help);
+        let combined = slashed(&errors.join("\n"));
+        assert!(
+            combined.contains("x.md.tmpl:1 says `stash`")
+                && combined.contains("schemas/x.json:1 says `index entry`")
+                && combined.contains("rwv x --help:3 says `stage`")
+                && errors.len() == 3,
+            "got:\n{combined}"
+        );
+    }
+
+    #[test]
+    fn the_published_git_words_scan_is_not_vacuous() {
+        let tmp = crate::tempdir().expect("tempdir");
+        let errors = check_published_text_has_no_git_words(tmp.path(), &[]);
+        assert!(
+            errors.iter().any(|e| e.contains("read no explain")),
+            "got:\n{}",
+            errors.join("\n")
         );
     }
 
