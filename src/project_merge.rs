@@ -793,6 +793,10 @@ impl ProjectMerge<'_> {
                 Ok(Joined::Merged(tip)) => {
                     merged.insert(path.clone(), tip);
                 }
+                Ok(Joined::Nothing) if self.began_merging(path, theirs)? => {
+                    let vcs = vcs_for(entry.vcs_type);
+                    merged.insert(path.clone(), vcs.head_revision(&member_dir)?.id().clone());
+                }
                 Ok(Joined::Moved(_) | Joined::Nothing) => {}
                 Err(MemberStop::Conflict(conflicted)) => {
                     return Err(conflict_stop(
@@ -813,6 +817,19 @@ impl ProjectMerge<'_> {
             }
         }
         Ok(merged)
+    }
+
+    /// Whether this operation began merging `source` into `path`: a member
+    /// that now holds `source` concluded that merge, by `--continue` or by
+    /// hand, and its tip is the merge.
+    fn began_merging(&self, path: &RepoPath, source: &CommitId) -> anyhow::Result<bool> {
+        let merging = op_state::Merging {
+            repo: crate::manifest::RepoKey::Member(path.clone()),
+            source: source.clone(),
+        };
+        Ok(op_state::read_owner(self.ctx.active_path())?
+            .and_then(|owner| owner.take_in)
+            .is_some_and(|take_in| take_in.merges.contains(&merging)))
     }
 
     fn report(&self, findings: &[PinFinding]) {

@@ -24221,6 +24221,32 @@ fn abort_keeps_another_seats_commit(
     steps
 }
 
+/// `pull --merge-upstream` stopped on `app`'s merge, which the operator
+/// resolves and commits by hand: `--continue` takes that commit in, and the
+/// project's merge pins `app` at it rather than at one side's tip.
+pub fn pull_continue_pins_a_member_merge_committed_by_hand() -> Scenario {
+    let mut steps = both_sides_move_app_conflictingly();
+    steps.extend([
+        Step::git(&b(), Repo::App, &["checkout", "--ours", "README"]),
+        Step::git(&b(), Repo::App, &["add", "README"]),
+        Step::git(&b(), Repo::App, &["commit", "-q", "-m", "hand-merge"]),
+        Step::rwv(&b(), &["pull", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("neither contains the other"))
+            .claim(Claim::PinsReplayed {
+                at: b(),
+                rev: "HEAD",
+                member: Repo::App,
+                subject: "hand-merge",
+                reached_from: "main",
+            }),
+    ]);
+    scenario(
+        "pull --continue pins a member merge committed by hand",
+        steps,
+    )
+}
+
 /// Which stopped operation [`continue_after_another_seat_moves`] resumes,
 /// and which of its repos another seat moves during the stop.
 #[derive(Debug, Clone, Copy)]
