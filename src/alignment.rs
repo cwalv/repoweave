@@ -1310,10 +1310,23 @@ impl Aligner {
         plan: &Plan,
         repo: &dyn std::fmt::Display,
     ) -> anyhow::Result<Option<Judged>> {
+        self.refusal_in(m, plan, repo, None)
+    }
+
+    /// [`Aligner::refusal`] for a checkout judged in `workspace`, not the one
+    /// the verb runs in: its choices run there.
+    pub fn refusal_in(
+        &self,
+        m: &Member<'_>,
+        plan: &Plan,
+        repo: &dyn std::fmt::Display,
+        workspace: Option<&Path>,
+    ) -> anyhow::Result<Option<Judged>> {
         if matches!(plan.target, Target::AsFound) || self.is_aligned(m, plan)? {
             return Ok(None);
         }
-        if let Some(busy) = crate::diagnosis::judge_edits(m.vcs, repo, m.dir, Vec::new(), None) {
+        if let Some(busy) = crate::diagnosis::judge_edits(m.vcs, repo, m.dir, Vec::new(), workspace)
+        {
             return Ok(Some(busy));
         }
         let facts: Vec<Fact> = match &plan.target {
@@ -1321,7 +1334,11 @@ impl Aligner {
             _ => Vec::new(),
         };
         let off = self.standing_of(m, plan)?;
-        Ok(Some(self.judge_off(m, &off, repo, &facts)))
+        let mut judging = self.judging_off(m, &off, repo, &facts);
+        if let Some(workspace) = workspace {
+            judging = judging.elsewhere(workspace);
+        }
+        Ok(Some(judging.judge(m.vcs)))
     }
 
     pub fn pin_note(m: &Member<'_>, plan: &Plan, repo: &dyn std::fmt::Display) -> Option<Judged> {

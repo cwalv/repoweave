@@ -1710,6 +1710,7 @@ every_scenario!(
     sync_writes_no_record,
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
+    a_target_judged_alignment_choice_runs_in_the_target,
     squashed_pin_off_remote_offers_the_reset,
     landed_pin_diverged_offers_the_reset,
 );
@@ -4251,9 +4252,8 @@ holding_rwv! {
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::App]),
             Step::rwv(&ww("held"), &["land"])
-                .expect(Exit::refuses(Repo::App, State::AlignmentOnBranch))
-                .claim(Claim::OutputContains("rwv update")),
-            Step::rwv(&a(), &["update"])
+                .expect(Exit::refuses(Repo::App, State::AlignmentOnBranch)),
+            Step::rwv_printed(&ww("held"), "rwv -C")
                 .expect(Exit::Succeeds)
                 .claim(Claim::OnBranch {
                     at: a(),
@@ -5454,6 +5454,12 @@ fn sync_reads_the_record_and_never_writes_it() {
 #[test]
 fn a_reset_to_target_in_syncs_own_lock_commit_waives_the_merge_it_abandons() {
     runner::run(scenarios::waiver_own_lock()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_target_judged_choice_carries_the_targets_workspace() {
+    runner::run(scenarios::a_target_judged_alignment_choice_runs_in_the_target())
+        .assert_fully_decided_green();
 }
 
 #[test]

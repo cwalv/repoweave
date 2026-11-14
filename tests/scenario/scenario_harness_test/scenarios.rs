@@ -5604,6 +5604,24 @@ pub fn waiver_own_lock() -> Scenario {
     )
 }
 
+/// The primary's `lib` sits on a branch of its own while a seat lands: the
+/// refusal is judged in the target, and its printed choice, run as printed
+/// from the seat, aligns the target's `lib` so the landing proceeds.
+pub fn a_target_judged_alignment_choice_runs_in_the_target() -> Scenario {
+    scenario(
+        "a target judged alignment choice runs in the target",
+        vec![
+            create("w"),
+            Step::git(&a(), Repo::Lib, &["switch", "-c", "other"]),
+            Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses(Repo::Lib, State::AlignmentOnBranch)),
+            Step::rwv_printed(&ww("w"), "rwv -C").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the
@@ -12174,9 +12192,8 @@ pub fn land_refuses_a_target_member_off_its_receiving_branch() -> Scenario {
             Step::git(&a(), Repo::Lib, &["switch", "--detach"]),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::Lib, State::AlignmentDetachedElsewhere))
-                .claim(Claim::OutputContains("rwv update"))
                 .claim(Claim::LocalStateUnchanged(a())),
-            Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
+            Step::rwv_printed(&ww("w"), "rwv -C").expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {

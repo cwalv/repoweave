@@ -3850,7 +3850,9 @@ impl Judging {
             return self.dependents_workspace.as_deref();
         }
         match form.row().at {
-            Where::CheckoutsWorkspace | Where::WithBranch => self.workspace.as_deref(),
+            Where::Here | Where::CheckoutsWorkspace | Where::WithBranch => {
+                self.workspace.as_deref()
+            }
             Where::OnTarget => self
                 .target_workspace
                 .as_deref()
@@ -4064,12 +4066,6 @@ impl Judged {
 
     pub fn repo(&self) -> &str {
         &self.repo
-    }
-
-    /// The line judged in `workspace`, not the one the verb runs in.
-    pub fn elsewhere(mut self, workspace: &Path) -> Self {
-        self.workspace = Some(workspace.to_path_buf());
-        self
     }
 
     /// Each `rwv` choice spelled for `project`, so it runs as printed in a

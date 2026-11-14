@@ -2263,8 +2263,8 @@ fn judge_receiving_checkout(
         .ok()
         .and_then(|text| LockFile::from_json_str(&text).ok());
     let planned = target_aligner.plan(&checked, lock.as_ref())?;
-    match target_aligner.refusal(&checked, &planned, path)? {
-        Some(off) => report.add(off.elsewhere(target_workspace)),
+    match target_aligner.refusal_in(&checked, &planned, path, Some(target_workspace))? {
+        Some(off) => report.add(off),
         None if sits_on.is_some()
             && Manifest::from_path(&target_project.join(Manifest::FILE_NAME))
                 .ok()
