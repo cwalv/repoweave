@@ -180,7 +180,8 @@ fn replay_reports(output: OutputMode, reported: &mut Reported, take_in: &TakeInR
                 crate::set_history::merged_line(repo, merge)
             }
             crate::op_state::LandingReport::Rebased { repo, was, backup } => format!(
-                "{repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
+                "{repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup} \
+                 while the operation runs",
                 was.short()
             ),
             crate::op_state::LandingReport::HistoryPinAbsent {
@@ -1644,12 +1645,15 @@ fn act(
         say(
             output,
             &format!(
-                "{}: carried '{}' along: {} -> {}, the tip it left kept in the rebased backup {}",
+                "{}: {}",
                 carried.label,
-                carried.branch,
-                carried.was.short(),
-                carried.now.short(),
-                carried.backup
+                crate::stack::carried_line(
+                    &carried.branch,
+                    &carried.was,
+                    &carried.now,
+                    &carried.backup,
+                    carried.outlives_op
+                )
             ),
         );
         for moved in &carried.remapped {
@@ -1704,7 +1708,7 @@ fn act(
         sync.ctx.primary_path(),
         sync.ctx.active_path(),
         &sync.project,
-        kept.iter().filter(|k| !k.published),
+        kept.iter().filter(|k| !k.outlives_op),
     );
     say(output, &format!("took in {}", sync.source_name()));
     Ok(())

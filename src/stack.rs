@@ -460,7 +460,30 @@ pub(crate) struct Carried {
     pub(crate) was: CommitId,
     pub(crate) now: CommitId,
     pub(crate) backup: String,
+    /// The backup stays once the operation ends, as its journal entry says.
+    pub(crate) outlives_op: bool,
     pub(crate) remapped: Vec<CarryRemap>,
+}
+
+/// The line saying `branch` was carried from `was` to `now`, and where the
+/// tip it left is kept, and for how long.
+pub(crate) fn carried_line(
+    branch: &str,
+    was: &CommitId,
+    now: &CommitId,
+    backup: &str,
+    outlives_op: bool,
+) -> String {
+    let kept = match outlives_op {
+        true => "",
+        false => " while the operation runs",
+    };
+    format!(
+        "carried '{branch}' along: {} -> {}, the tip it left kept in the rebased backup \
+         {backup}{kept}",
+        was.short(),
+        now.short()
+    )
 }
 
 /// What a carry moved, and the dependents it found landed already.
@@ -980,19 +1003,18 @@ impl Carrier<'_> {
                 && &m.to == to
         })?;
         let kept = format!("{}/rebased-{}", carrying.branch, carrying.from.short());
-        let backup = record
+        let journaled = record
             .backups
             .iter()
-            .find(|b| b.repo == carrying.repo && b.name.starts_with(&kept))?
-            .name
-            .clone();
+            .find(|b| b.repo == carrying.repo && b.name.starts_with(&kept))?;
         Some(Carried {
             repo: carrying.repo.clone(),
             label: self.repos.label(&carrying.repo),
             branch: carrying.branch.clone(),
             was: carrying.from.clone(),
             now: to.clone(),
-            backup,
+            backup: journaled.name.clone(),
+            outlives_op: journaled.outlives_op,
             remapped: carrying.remapped.clone(),
         })
     }
@@ -1097,12 +1119,20 @@ impl Carrier<'_> {
                 Some(BackupMark::Rebased),
             )?;
             let backup = kept.backup().name.as_str().to_owned();
+            let dropped_a_commit = vcs
+                .commits_beyond(&dir, &rev(to), &rev(&carrying.onto))?
+                .len()
+                < vcs
+                    .commits_beyond(&dir, &rev(&carrying.from), &rev(&carrying.base))?
+                    .len();
+            let outlives_op =
+                dropped_a_commit || crate::backup::published(vcs.as_ref(), &dir, &branch);
             crate::op_state::journal_backup(
                 self.workspace,
                 crate::op_state::KeptBackup {
                     repo: carrying.repo.clone(),
                     name: backup.clone(),
-                    published: crate::backup::published(vcs.as_ref(), &dir, &branch),
+                    outlives_op,
                 },
             )?;
             crate::op_state::journal_ref_move(
@@ -1122,6 +1152,7 @@ impl Carrier<'_> {
                 was: carrying.from.clone(),
                 now: to.clone(),
                 backup,
+                outlives_op,
                 remapped: carrying.remapped.clone(),
             });
         }

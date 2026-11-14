@@ -705,10 +705,11 @@ pub(crate) fn continue_at_stop(
         }
         return Ok(());
     };
+    let carried = carried_branch(workspace);
     let still = |reading: &Reading| {
         refused(
             "rwv.toml is still in conflict",
-            reading_lines(vcs, &dir, reading, Some(&resume)),
+            reading_lines(vcs, &dir, reading, Some(&resume), carried.as_deref()),
         )
     };
     if record.verb != typed {
@@ -743,14 +744,14 @@ pub(crate) fn continue_at_stop(
                     "the VCS merged rwv.toml with no conflict, so `--keep {}` has no side to take",
                     side.word()
                 ),
-                reading_lines(vcs, &dir, &reading, Some(&resume)),
+                reading_lines(vcs, &dir, &reading, Some(&resume), carried.as_deref()),
             ))
         }
         (Reading::Conflicted { .. }, Some(Side::TextMerge)) => {
             return Err(refused(
                 "rwv.toml is in conflict in the VCS's own text merge, so there is no text merge \
                  to keep",
-                reading_lines(vcs, &dir, &reading, Some(&resume)),
+                reading_lines(vcs, &dir, &reading, Some(&resume), carried.as_deref()),
             ))
         }
         (Reading::Checked { .. } | Reading::Unreadable { .. }, _) => return Err(still(&reading)),
@@ -807,7 +808,18 @@ pub(crate) fn continue_at_stop(
             ],
         ));
     }
-    let kept = vcs.backup_edits(&dir)?;
+    let kept = match &carried {
+        Some(branch) => match vcs.snapshot_edits(&dir)? {
+            Some(snapshot) => Some(vcs.create_backup(
+                &dir,
+                &crate::vcs::BackupSource::Branch(crate::vcs::RawRefName::new(branch.clone())),
+                &snapshot,
+                None,
+            )?),
+            None => None,
+        },
+        None => vcs.backup_edits(&dir)?,
+    };
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
     resolved()?;
     let took = match keep {
@@ -981,9 +993,28 @@ fn keyed_in(path: &[String]) -> Option<&[String]> {
 /// operation stopped there, spelled to run against its workspace.
 pub(crate) fn enter_stop(vcs: &dyn Vcs, dir: &Path, workspace: &Path, resume: &str) -> Vec<String> {
     match entered(vcs, dir, workspace) {
-        Ok(Some(reading)) => reading_lines(vcs, dir, &reading, Some(resume)),
+        Ok(Some(reading)) => reading_lines(
+            vcs,
+            dir,
+            &reading,
+            Some(resume),
+            carried_branch(workspace).as_deref(),
+        ),
         _ => Vec::new(),
     }
+}
+
+/// The project branch a carry of the op at `workspace` is replaying, while
+/// one is: the last carry journaled whose replay has not ended.
+fn carried_branch(workspace: &Path) -> Option<String> {
+    crate::op_state::read_owner(workspace)
+        .ok()??
+        .take_in?
+        .carries
+        .into_iter()
+        .rev()
+        .find(|c| c.repo == crate::manifest::RepoKey::Project && c.composed.is_none())
+        .map(|c| c.branch)
 }
 
 fn unmerged(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<bool> {
@@ -1018,11 +1049,14 @@ fn journaled_stop(workspace: &Path) -> anyhow::Result<Option<ManifestStop>> {
 }
 
 /// `resume`: `None` where no operation of rwv's is stopped in `dir`.
+/// `carried`: the branch a carry is replaying in `dir`, whose side is
+/// yours; `None` where yours is the branch checked out there.
 pub(crate) fn reading_lines(
     vcs: &dyn Vcs,
     dir: &Path,
     reading: &Reading,
     resume: Option<&str>,
+    carried: Option<&str>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
     match reading {
@@ -1081,11 +1115,11 @@ pub(crate) fn reading_lines(
                 }
             }
             if !conflicts.is_empty() {
-                lines.push(format!(
-                    "(yours: the side of the branch checked out in {}; incoming: the side it \
-                     takes in)",
-                    dir.display()
-                ));
+                let yours = match carried {
+                    Some(branch) => format!("'{branch}', the branch being carried"),
+                    None => format!("the side of the branch checked out in {}", dir.display()),
+                };
+                lines.push(format!("(yours: {yours}; incoming: the side it takes in)"));
             }
             match resume {
                 Some(resume) if conflicts.is_empty() && taking[0].is_ok() => lines.extend([
@@ -1433,6 +1467,7 @@ mod tests {
             tmp.path(),
             reading.as_ref().unwrap(),
             Some("rwv sync --continue"),
+            None,
         );
         let what = unreadable(reading);
         assert!(

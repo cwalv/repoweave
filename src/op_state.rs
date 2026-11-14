@@ -92,7 +92,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 /// The schema every record this release writes carries.
-pub(crate) const OP_RECORD_SCHEMA: u32 = 7;
+pub(crate) const OP_RECORD_SCHEMA: u32 = 8;
 
 /// Name of the owner op-state file at the initiating workspace.
 pub(crate) const OP_STATE_FILE: &str = ".rwv-op";
@@ -589,13 +589,15 @@ pub enum LandingReport {
         backup: String,
     },
     /// A dependent's branch carried along the rebase, from `was` to `now`,
-    /// the tip it left kept in the `rebased` backup `backup`.
+    /// the tip it left kept in the `rebased` backup `backup`, which stays once
+    /// the op ends where `outlives_op`.
     Carried {
         repo: RepoKey,
         branch: String,
         was: CommitId,
         now: CommitId,
         backup: String,
+        outlives_op: bool,
     },
     /// A pin a replayed project commit held on a commit the rebase dropped,
     /// moved to `now`, what the member's rebase made of the commits before it.
@@ -821,10 +823,11 @@ impl MemberPick {
 pub struct KeptBackup {
     pub repo: RepoKey,
     pub name: String,
-    /// The branch was published when it was kept: the backup outlives the
-    /// op's completion, until the republish replaces the push branch, and
-    /// goes only with an abort, which puts the branch back at its tip.
-    pub published: bool,
+    /// The backup outlives the op's completion, and goes only with an abort,
+    /// which puts the branch back at its tip: the branch was published when
+    /// it was kept (until the republish replaces the push branch), or the
+    /// replay dropped a commit of it, which no rebased commit holds.
+    pub outlives_op: bool,
 }
 
 /// A receiving branch of a landing: `branch` in `T`'s workspace, its tip as
@@ -2651,7 +2654,7 @@ mod tests {
             let tmp = crate::tempdir().unwrap();
             a_record_in(
                 tmp.path(),
-                &format!("\"schema\": 7, \"release\": \"0.25.0\", {retired}"),
+                &format!("\"schema\": {OP_RECORD_SCHEMA}, \"release\": \"0.25.0\", {retired}"),
             );
             let refused = read_owner(tmp.path()).unwrap_err();
             assert_eq!(
@@ -2700,7 +2703,7 @@ mod tests {
     /// `WireOwnerRecord`, attributes and fields, comments and blank lines
     /// left out; a type declared in another module that a field names is
     /// read by its name alone, so a change inside one is not seen here.
-    const PINNED_SHAPE: (u32, &str) = (7, "1a2aec635f53d03e");
+    const PINNED_SHAPE: (u32, &str) = (8, "eb008ccaea487882");
 
     fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
         let start = source.iter().position(|line| {
@@ -2860,7 +2863,7 @@ mod tests {
         let (source, target) = (place("src"), place("tgt"));
         let record = format!(
             r#"{{
-  "schema": 7,
+  "schema": 8,
   "release": "{release}",
   "id": "1779769917405921588",
   "verb": "land",
@@ -3059,7 +3062,7 @@ mod tests {
   "retire": false,
   "phase": "replay",
   "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 8, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3088,7 +3091,7 @@ mod tests {
   "retire": false,
   "phase": "replay",
   "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 8, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3111,7 +3114,7 @@ mod tests {
   "retire": false,
   "phase": "replay",
   "converged_tips": {{}},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 8, "release": "0.0.0", "take_in": null
 }}
 "#
         )
@@ -3164,7 +3167,7 @@ mod tests {
   "target": "/cwd/ws",
   "retire": false,
   "phase": "replay",
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
+  "started_at": "2026-06-01T00:00:00Z", "schema": 8, "release": "0.0.0", "take_in": null
 }
 "#;
         std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
@@ -3220,7 +3223,7 @@ mod tests {
                 r#"{{"id": "1", "verb": "sync", "history": null, "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "converged_tips": {converged},
-                "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null}}"#
+                "started_at": "2026-06-01T00:00:00Z", "schema": 8, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");

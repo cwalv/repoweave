@@ -488,7 +488,7 @@ pub(crate) fn keep_rebased(
         crate::op_state::KeptBackup {
             repo,
             name: name.clone(),
-            published,
+            outlives_op: published,
         },
     )?;
     Ok(name)
@@ -782,7 +782,7 @@ mod tests {
         let kept = crate::op_state::KeptBackup {
             repo: crate::manifest::RepoKey::Member(RepoPath::new("app").unwrap()),
             name: name.clone(),
-            published: false,
+            outlives_op: false,
         };
         let app_pins = |root: &std::path::Path| {
             live_pins(root)

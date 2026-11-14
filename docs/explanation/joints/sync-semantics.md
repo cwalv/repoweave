@@ -260,7 +260,10 @@ block it.
 `rebased` backup. A branch is published when its push target holds a copy of
 its name, whether or not it takes in from it. The backup of a branch that was
 not published goes when the operation completes: the rebased commits hold its
-work. The backup of a published branch stays until it is republished: that
+work, and the line that names the backup says it is kept while the operation
+runs. Where carrying a dependent along drops one of its commits (a conflict
+resolved to the incoming side can leave a commit with no change), the backup
+stays: no rebased commit holds that commit's work. The backup of a published branch stays until it is republished: that
 branch's push then shows it diverged, and `rwv sync` and `rwv push` print
 `rwv push --overwrite <repo>`, leased to the tip the backup holds, as the way
 to republish it; once that push lands, the backup goes, and so does one that a

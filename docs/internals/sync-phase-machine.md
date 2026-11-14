@@ -527,7 +527,9 @@ member) refuses the whole abort as `foreign-tip`, offering
 `--leave-target`. A wrong record there can only refuse, never discard.
 
 **Rebased backups.** `take_in.backups` journals the `rebased` backups the op
-made; the op drops them when it completes. A clean abort drops, in each repo
+made; the op drops them when it completes, except one journaled as
+outliving it (`outlives_op`: a published branch's, or a carried branch's whose
+replay dropped a commit). A clean abort drops, in each repo
 of both workspaces, every `rebased` backup a branch reaches
 (`drop_reached_rebased_backups`): the restore put the branch back where the
 rebase found it. Each journaled one it leaves holding a commit no branch

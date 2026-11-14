@@ -851,6 +851,7 @@ impl LandingReportOutput {
                 was,
                 now,
                 backup,
+                ..
             } => Self::Carried {
                 path: repo.to_string(),
                 branch: branch.clone(),
@@ -992,7 +993,8 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
             }
             op_state::LandingReport::Rebased { repo, was, backup } => {
                 outln!(
-                    "  {repo}: rebased; the tip it left, {}, is kept in the rebased backup {backup}",
+                    "  {repo}: rebased; the tip it left, {}, is kept in the rebased backup \
+                     {backup} while the operation runs",
                     was.short()
                 );
             }
@@ -1002,12 +1004,11 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                 was,
                 now,
                 backup,
+                outlives_op,
             } => {
                 eprintln!(
-                    "  {repo}: carried '{branch}' along: {} -> {}, the tip it left kept in the \
-                     rebased backup {backup}",
-                    was.short(),
-                    now.short()
+                    "  {repo}: {}",
+                    crate::stack::carried_line(branch, was, now, backup, *outlives_op)
                 );
             }
             op_state::LandingReport::Remapped { repo, was, now } => {
@@ -6451,6 +6452,7 @@ fn run_relock(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 was: carried.was,
                 now: carried.now,
                 backup: carried.backup,
+                outlives_op: carried.outlives_op,
             },
         )?;
         for moved in carried.remapped {
@@ -8045,7 +8047,7 @@ fn drop_rebased_backups(ctx: &OpContext<'_>) {
         primary,
         primary,
         &ctx.cwd_project_name,
-        kept.iter().filter(|k| !k.published),
+        kept.iter().filter(|k| !k.outlives_op),
     );
 }
 

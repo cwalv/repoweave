@@ -711,6 +711,12 @@ fn a_landing_prune_refuses_a_store_holding_a_commit_only_a_tag_reaches() {
 }
 
 #[test]
+fn a_carry_that_drops_a_commit_names_its_sides_and_keeps_its_rebased_backup() {
+    runner::run(scenarios::a_carry_that_drops_a_commit_keeps_its_rebased_backup())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_tombstone_becomes_a_backup_and_backup_drop_releases_it() {
     runner::run(scenarios::tombstone_to_backup()).assert_green();
 }
@@ -950,6 +956,7 @@ every_scenario!(
     siblings_at_one_commit_are_carried_to_one_commit,
     a_landing_resumed_after_its_carry_judges_an_entry_changed_since,
     a_carry_stopped_in_the_project_continues,
+    a_carry_that_drops_a_commit_keeps_its_rebased_backup,
     a_carry_stopped_on_rwv_toml_keeps_the_dependents_side,
     sync_continue_judges_dependents_before_a_rejudged_rebase,
     a_sync_continued_after_its_relock_keeps_it,

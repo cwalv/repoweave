@@ -23363,6 +23363,65 @@ pub fn a_carry_stopped_on_rwv_toml_keeps_the_dependents_side() -> Scenario {
     )
 }
 
+/// [`a_carry_stopped_on_rwv_toml_keeps_the_dependents_side`] taking the
+/// incoming side: the stop's legend names the carried branch as yours, the
+/// edits kept at the continue are filed under it, and the replay that drops
+/// `w2`'s one commit leaves its old tip in the rebased backup the line names.
+pub fn a_carry_that_drops_a_commit_keeps_its_rebased_backup() -> Scenario {
+    let table = |at: &Place, mark: &str, file: &str| {
+        Step::hand_edit(
+            at,
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]\nenabled = false\n",
+            &format!(
+                "[integrations.vscode-workspace]\nenabled = false\n\n# {mark}\n[workweave]\n\
+                 copy = [\"{file}\"]\n"
+            ),
+        )
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        table(&ww("w1"), "W2-SIDE", "w2.txt"),
+        Step::git(&ww("w1"), Repo::Proj, &["commit", "-qam", "w2-proj"]),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        table(&a(), "MAIN-SIDE", "main.txt"),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "main-proj"]),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "(yours: 'w2', the branch being carried; incoming: the side it takes in)",
+            )),
+        Step::rwv_printed_holding(&ww("w1"), "rwv sync --continue", "--keep incoming")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .claim(Claim::OutputLacks("backup HEAD/"))
+            .claim(Claim::OutputContains("kept in backup w2/"))
+            .claim(Claim::OutputContains(
+                "the tip it left kept in the rebased backup w2/rebased-",
+            )),
+        Step::git(
+            &ww("w1"),
+            Repo::Proj,
+            &["for-each-ref", "refs/rwv/backup/w2/"],
+        )
+        .claim(Claim::OutputContains("refs/rwv/backup/w2/rebased-")),
+        Step::git(&ww("w1"), Repo::Proj, &["log", "--format=%s", "w2"])
+            .claim(Claim::OutputLacks("w2-proj")),
+    ]);
+    scenario(
+        "stack: a carry that drops a commit keeps its rebased backup",
+        steps,
+    )
+}
+
 /// A landing of `w1` whose carry of `w2` stops in the project repo, `w2`'s
 /// project commit also changing `app`'s entry: `rwv land --continue` judges
 /// the landing's own entries, not the `rwv.toml` the stopped carry left in
