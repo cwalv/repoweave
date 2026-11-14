@@ -23389,18 +23389,20 @@ pub fn a_dependent_carried_onto_a_merged_project_pins_what_it_inherits() -> Scen
     )
 }
 
-/// How a refused abort of a carried stack someone built on is cleared.
+/// How a carried stack someone built on is ended.
 #[derive(Debug, Clone, Copy)]
 pub enum BuiltOnChoice {
-    /// Everything put back, the commit built on `w2` kept as a backup.
-    Abandon,
-    /// The landing finished, `w2` keeping the commit.
+    /// `rwv abort`: everything put back, the commit built on `w2` kept as a
+    /// backup.
+    Abort,
+    /// `rwv land --continue`: the landing finished, `w2` keeping the commit.
     Continue,
 }
 
 /// `stack-carried-by-a-landing` killed after its carry moved `w2`, then a
-/// commit on `w2`: `rwv abort` puts nothing back and prints the two
-/// choices, and the one run as printed clears it.
+/// commit on `w2`: `rwv abort` puts `w2` back, keeping that commit as a
+/// backup the printed show line returns, or `rwv land --continue` finishes
+/// with `w2` keeping it.
 pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
     let mut steps = stack_on_a_seat();
     steps.extend(main_moves_app("main-app"));
@@ -23408,46 +23410,29 @@ pub fn abort_a_carried_stack_built_on(choice: BuiltOnChoice) -> Scenario {
         Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
         Step::kill("landing"),
         Step::hand_commit(&ww("w1"), Repo::App, "w2", &[("more.txt", "more\n")]),
-        Step::rwv(&ww("w1"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::OutputContains(
-                "rwv abort --abandon-foreign-tip local/remotes/app",
-            ))
-            .claim(Claim::OutputContains("rwv land --continue"))
-            .claim(Claim::OutputContains("'w2' keeps its commits"))
-            .claim(Claim::LocalStateUnchanged(ww("w1"))),
     ]);
     match choice {
-        BuiltOnChoice::Abandon => steps.extend([
-            Step::rwv_printed_exactly(
-                &ww("w1"),
-                "rwv abort --abandon-foreign-tip local/remotes/app",
-            )
-            .expect(Exit::Succeeds)
-            .may_rewind(&[Repo::App])
-            .may_restore(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputContains("abandoned"))
-            .claim(Claim::OnBranch {
-                at: ww("w1"),
-                repo: Repo::App,
-                branch: "proj--w1",
-            }),
+        BuiltOnChoice::Abort => steps.extend([
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains("kept as backup"))
+                .claim(Claim::OnBranch {
+                    at: ww("w1"),
+                    repo: Repo::App,
+                    branch: "proj--w1",
+                }),
+            kept_backup_shown(&ww("w1"), "remotes/app log ", "hand commit"),
             Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLine("w2-app")),
             Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "proj--w1"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("main-app")),
-            Step::rwv(&ww("w1"), &["backup", "list"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("abandoned")),
-            Step::git(&ww("w1"), Repo::App, &["log", "--all", "--format=%s"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("hand commit")),
         ]),
         BuiltOnChoice::Continue => steps.extend([
-            Step::rwv_printed_exactly(&ww("w1"), "rwv land --continue")
+            Step::rwv(&ww("w1"), &["land", "--continue"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Contains {
                     at: ww("w1"),

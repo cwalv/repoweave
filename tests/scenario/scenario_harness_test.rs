@@ -889,7 +889,7 @@ every_scenario!(
     stack_carry_conflict(scenarios::AfterHandContinue::Abort),
     abort_after_a_carry_stop(scenarios::BeforeTheCarry::SyncRelocked),
     a_dependent_carried_onto_a_merged_project_pins_what_it_inherits,
-    abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Abandon),
+    abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Abort),
     abort_a_carried_stack_built_on(scenarios::BuiltOnChoice::Continue),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::CheckedOut),
     abort_a_carried_stack_blocked(scenarios::CarriedBlocked::Gone),
@@ -3507,7 +3507,7 @@ holding_rwv! {
 }
 
 /// An abort that judged its plan and then took the target's claim judges
-/// again before it begins: a commit made in between refuses it whole.
+/// again before it begins: a commit made in between is kept as a backup.
 #[test]
 fn an_abort_judges_again_once_it_holds_the_target() {
     runner::run(scenarios::abort_judges_again_once_it_holds_the_target())
@@ -6301,15 +6301,15 @@ fn a_dependent_carried_onto_a_merged_project_pins_what_it_inherits() {
 }
 
 #[test]
-fn an_abort_of_a_carried_stack_built_on_abandons_as_printed() {
+fn an_abort_of_a_carried_stack_built_on_keeps_the_commit_as_a_backup() {
     runner::run(scenarios::abort_a_carried_stack_built_on(
-        scenarios::BuiltOnChoice::Abandon,
+        scenarios::BuiltOnChoice::Abort,
     ))
     .assert_fully_decided_green();
 }
 
 #[test]
-fn an_abort_of_a_carried_stack_built_on_continues_as_printed() {
+fn a_carried_stack_built_on_continues_keeping_the_commit() {
     runner::run(scenarios::abort_a_carried_stack_built_on(
         scenarios::BuiltOnChoice::Continue,
     ))
