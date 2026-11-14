@@ -2306,3 +2306,39 @@ fn a_utf8_replayed_commit_copied_under_a_non_utf8_commit_encoding_stays_utf8() {
     assert!(!raw.contains("encoding "), "{raw}");
     assert!(raw.ends_with("caf\u{e9}"), "{raw}");
 }
+
+#[test]
+fn edits_dirty_for_an_untracked_file_prints_choices_that_clear_it() {
+    let repo = init_repo();
+    let dir = repo.path();
+    fs::write(dir.join("notes.txt"), "mine\n").unwrap();
+    let vcs = git_vcs();
+
+    let judged =
+        repoweave::diagnosis::dirty(vcs.as_ref(), "lib", dir, vec!["notes.txt".to_owned()])
+            .judge(vcs.as_ref());
+    let lines: Vec<String> = judged
+        .output()
+        .choices
+        .iter()
+        .flat_map(|choice| choice.run.clone())
+        .collect();
+    assert!(
+        lines.iter().any(|line| line.contains("add --all")),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().all(|line| !line.ends_with("stash push")),
+        "{lines:?}"
+    );
+
+    let set_aside = lines
+        .iter()
+        .find(|line| line.contains("stash push --include-untracked"))
+        .expect("the set-aside line is printed");
+    let words: Vec<&str> = set_aside.split_whitespace().skip(1).collect();
+    common::git_in(dir, &words[2..]);
+    assert!(common::git_in(dir, &["status", "--porcelain"])
+        .trim()
+        .is_empty());
+}

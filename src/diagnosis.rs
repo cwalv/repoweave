@@ -1565,7 +1565,7 @@ impl State {
                 refused_by: "`rwv push`; `rwv cherry-pick`, for a member it would copy onto; \
                              `rwv land`, in the target's workspace, or for a branch the target \
                              declares and nothing has checked out; `rwv status` reports it",
-                offers: &[Form::C5Lock, Form::C3UpdateRemote],
+                offers: &[Form::C5Lock, Form::C25, Form::C3UpdateRemote],
                 verb_offers: &[("land", Form::OpenWorkweave)],
             },
             Self::PinDiverged => &StateRow {

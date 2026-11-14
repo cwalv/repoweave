@@ -288,7 +288,7 @@ fn relation_ahead_sync_to_target_refuses_at_op_start_leaving_both_untouched() {
     assert!(
         stderr.contains(MANIFEST_REPO_PATH)
             && stderr.contains("2 commits beyond the pin")
-            && stderr.contains("rwv lock --commit"),
+            && stderr.contains(" lock --commit"),
         "commits on the target's receiving branch nothing records must refuse up front, \
          naming the repo, the commits and the remedy; got stderr:\n{stderr}"
     );
@@ -355,7 +355,7 @@ fn relation_ahead_sync_to_workweave_target_refuses_then_remedy_delivers() {
     let out = common::cli::run(&["land"], &child.root);
     let stderr = common::cli::refused(&out, State::PinUnpinned);
     assert!(
-        stderr.contains("1 commit beyond the pin") && stderr.contains("rwv lock --commit"),
+        stderr.contains("1 commit beyond the pin") && stderr.contains(" lock --commit"),
         "a workweave target's unrecorded commits must refuse the same way; got:\n{stderr}"
     );
     assert_eq!(

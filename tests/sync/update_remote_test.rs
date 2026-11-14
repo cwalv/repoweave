@@ -545,10 +545,9 @@ fn update_prune_detects_deleted_branch_with_actionable_message() {
             || combined.contains("renamed or deleted upstream"),
         "error must state the upstream-deletion/rename condition; got:\n{combined}"
     );
-    // Must name the one supported exit.
     assert!(
-        combined.contains("version:") || combined.contains("current branch name"),
-        "error must name the rwv.toml version update exit; got:\n{combined}"
+        combined.contains("rwv member set-branch"),
+        "error must name the verb that declares the branch; got:\n{combined}"
     );
     // Must not steer the operator toward pinning `version:` to a SHA/tag —
     // that pin is unsupported and can never resolve.

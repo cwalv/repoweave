@@ -2058,6 +2058,7 @@ pub fn dc13_push_no_lock() -> Scenario {
                 .expect(Exit::refuses(Repo::App, State::PinUnpinned))
                 .claim(Claim::OutputContains("rwv lock --commit"))
                 .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed_holding(&a(), "rwv member pin", "--commit").expect(Exit::Succeeds),
         ],
     )
 }
@@ -4157,7 +4158,7 @@ pub fn sync_takes_in_the_target() -> Scenario {
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync"])
                 .expect(Exit::refuses(Repo::App, State::HistoryUnset))
-                .claim(Claim::OutputContains("rwv branch set-history <h> --repo"))
+                .claim(Claim::OutputContains(" branch set-history <h> --repo"))
                 .claim(Claim::OutputContains("rerun with --history <h>"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
             Step::rwv(&ww("w"), &["sync", "--history", "linear"])
@@ -17295,7 +17296,8 @@ pub fn history_unset_moved() -> Scenario {
         Step::rwv(&ww("w"), &["land"])
             .expect(Exit::refuses(Repo::App, State::HistoryUnset))
             .claim(Claim::Judged(Repo::Proj, State::HistoryUnset))
-            .claim(Claim::OutputContains("rwv branch set-history <h> --repo"))
+            .claim(Claim::OutputContains("rwv -C "))
+            .claim(Claim::OutputContains(" branch set-history <h> --repo"))
             .claim(Claim::OutputContains("rerun with --history <h>"))
             .claim(Claim::LocalStateUnchanged(ww("w")))
             .claim(Claim::LocalStateUnchanged(a())),
@@ -17324,7 +17326,7 @@ pub fn history_contradicted() -> Scenario {
     steps.push(
         Step::rwv(&ww("w"), &["land", "--history", "merge"])
             .expect(Exit::refuses(Repo::App, State::HistoryContradicted))
-            .claim(Claim::OutputContains("rwv branch set-history <h> --repo"))
+            .claim(Claim::OutputContains(" branch set-history <h> --repo"))
             .claim(Claim::OutputContains("rerun without --history"))
             .claim(Claim::LocalStateUnchanged(ww("w")))
             .claim(Claim::LocalStateUnchanged(a())),

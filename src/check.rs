@@ -10267,6 +10267,18 @@ struct ReportLine {
 ///
 /// Findings an integration raised are outside this vector; they are `Issue`s,
 /// and [`collect_doctor_issues`] is the pass both renderers take them from.
+/// Whether `dir` is stopped in a VCS operation of a workspace that records
+/// an operation of its own: its HEAD and edits are that operation's until it
+/// ends.
+fn stopped_in_recorded_operation(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> bool {
+    vcs.mid_operation(dir).is_some()
+        && crate::workspace::WorkspaceContext::resolve_unbound(dir)
+            .ok()
+            .is_some_and(|ctx| {
+                matches!(crate::op_state::read_owner(ctx.active_path()), Ok(Some(_)))
+            })
+}
+
 fn collect_doctor_violations(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
@@ -10536,7 +10548,7 @@ fn collect_doctor_violations(
         }
 
         if crate::git::repo_is_dirty(repo_abs) == Some(false)
-            || vcs.mid_operation(repo_abs).is_some()
+            || stopped_in_recorded_operation(vcs, repo_abs)
         {
             continue;
         }

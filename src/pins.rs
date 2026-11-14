@@ -353,10 +353,11 @@ fn judging(
             for fact in facts(beyond) {
                 judging = judging.fact(fact);
             }
+            judging = judging.bind("<rev>", head.id().as_str());
             if push_branch.as_ref() == Some(pin) {
                 judging
             } else {
-                judging.only(&[ChoiceId::C5])
+                judging.only(&[ChoiceId::C5, ChoiceId::C25])
             }
         }
     };
