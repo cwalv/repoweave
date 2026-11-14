@@ -25201,6 +25201,35 @@ pub fn abort_of_a_carried_landing_killed_once_landed() -> Scenario {
     )
 }
 
+/// `lib`'s `main` moved from a workweave under the primary's checkout,
+/// whose record of where it stood is then gone: `rwv status` reports the
+/// hold the verbs refuse on, with no choice that refuses, and its printed
+/// set-aside, run as printed, clears it.
+pub fn status_reports_a_checkout_whose_drift_cannot_be_read() -> Scenario {
+    scenario(
+        "status reports a checkout whose drift cannot be read",
+        vec![
+            create("o"),
+            another_seat_commits(&ww("o"), Repo::Lib, "main"),
+            Step::git(
+                &a(),
+                Repo::Lib,
+                &["reflog", "expire", "--expire=now", "--all"],
+            ),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Judged(Repo::Lib, State::EditsDriftLeftInPlace))
+                .claim(Claim::OutputLacks("rwv lock --commit")),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::refuses(Repo::Lib, State::EditsDriftLeftInPlace)),
+            Step::rwv_printed_holding(&a(), "git -C ", "stash push").expect(Exit::Succeeds),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("drift left in place")),
+        ],
+    )
+}
+
 /// How a dependent that moved as its carry was moving it is taken up.
 #[derive(Debug, Clone, Copy)]
 pub enum MovedAsCarried {

@@ -516,7 +516,13 @@ pub fn run_status(
             }
             let set_back = matches!(vcs.set_back_from(&repo_abs), Ok(Some(_)));
             let mid_operation = vcs.mid_operation(&repo_abs).is_some();
-            if mid_operation {
+            let held = (!mid_operation && !set_back)
+                .then(|| crate::diagnosis::drift_held(vcs.as_ref(), repo_path, &repo_abs))
+                .flatten();
+            let drift_holds = held.is_some();
+            if let Some(held) = held {
+                judged.add(held.member().checkout(&repo_abs).judge(vcs.as_ref()));
+            } else if mid_operation {
                 judged.extend(crate::diagnosis::judge_edits(
                     vcs.as_ref(),
                     repo_path,
@@ -563,7 +569,10 @@ pub fn run_status(
                 .map(|e| e.version.clone());
 
             let relation = compute_relation(vcs.as_ref(), &repo_abs, &tip, &lock_sha);
-            if let Some(head) = tip.as_ref().filter(|_| !set_back && !mid_operation) {
+            if let Some(head) = tip
+                .as_ref()
+                .filter(|_| !set_back && !mid_operation && !drift_holds)
+            {
                 let judging = match &lock_sha {
                     None => Some(
                         crate::diagnosis::State::PinNone
