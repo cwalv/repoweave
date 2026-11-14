@@ -1142,6 +1142,41 @@ fn a_ref_below_the_rwv_root_in_no_namespace_is_reported_and_a_backup_is_not() {
     );
 }
 
+/// A clean weave-wide doctor run records nothing at the weave root: no
+/// attestation of cleanliness is kept for any release to read.
+#[test]
+fn a_clean_weave_wide_doctor_run_records_nothing_at_the_weave_root() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_rel = "github/acme/server";
+    init_git_repo(&root.join(repo_rel));
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+    let before: Vec<String> = dotfiles(&root);
+
+    let out = rwv_cmd()
+        .args(["doctor", "--all"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(dotfiles(&root), before, "doctor wrote a file at the root");
+}
+
+fn dotfiles(root: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(root)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+}
+
 /// The words of a command printed with POSIX single-quoting.
 fn shell_words(command: &str) -> Vec<String> {
     let mut words = Vec::new();
