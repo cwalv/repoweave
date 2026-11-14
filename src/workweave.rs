@@ -3950,18 +3950,6 @@ enum Deleter {
     },
 }
 
-/// Delete a workweave whose on-disk path is already known.
-///
-/// The path is validated by the caller (retire has already round-tripped
-/// the marker via workspace resolution). This bypasses the
-/// registry lookup so an unrecorded workweave (crash-matrix scaffolding,
-/// bootstrap workspace) is still delete-able by callers that already hold
-/// the resolved path. Callers arriving through a name route through
-/// [`delete_workweave`], which enforces the registry lookup first.
-///
-/// The registry entry is still removed at the end (best effort), so a
-/// mid-crash resume that finds a pre-crash entry keeps the index in sync.
-#[allow(clippy::too_many_arguments)]
 /// Say, before the workweave's root goes whole, which of its entries rwv did
 /// not create: none of the project, a member's first path component, a file
 /// an integration owns, or rwv's own state.
@@ -4012,6 +4000,18 @@ fn name_foreign_root_entries(workweave_dir: &Path, project: &ProjectName, primar
     );
 }
 
+/// Delete a workweave whose on-disk path is already known.
+///
+/// The path is validated by the caller (retire has already round-tripped
+/// the marker via workspace resolution). This bypasses the
+/// registry lookup so an unrecorded workweave (crash-matrix scaffolding,
+/// bootstrap workspace) is still delete-able by callers that already hold
+/// the resolved path. Callers arriving through a name route through
+/// [`delete_workweave`], which enforces the registry lookup first.
+///
+/// The registry entry is still removed at the end (best effort), so a
+/// mid-crash resume that finds a pre-crash entry keeps the index in sync.
+#[allow(clippy::too_many_arguments)]
 fn delete_workweave_inner_at(
     ws_root: &Path,
     project: &ProjectName,
