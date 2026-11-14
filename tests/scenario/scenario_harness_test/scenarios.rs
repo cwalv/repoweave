@@ -17696,6 +17696,17 @@ pub fn a_lock_commit_names_what_the_committed_lock_lacks() -> Scenario {
     )
 }
 
+/// A lock that records what the file already holds says so and writes nothing.
+pub fn a_lock_that_changes_nothing_says_unchanged() -> Scenario {
+    scenario(
+        "a lock that changes nothing says unchanged",
+        vec![Step::rwv(&a(), &["lock"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("is unchanged"))
+            .claim(Claim::OutputLacks("Wrote"))],
+    )
+}
+
 /// A landing killed once it has reported its target's push branch behind
 /// says so once when it is continued.
 pub fn a_continued_landing_reports_the_push_branch_once() -> Scenario {

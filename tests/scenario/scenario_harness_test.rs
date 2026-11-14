@@ -221,6 +221,12 @@ fn a_lock_commit_after_a_bare_lock_names_the_pins_it_changes() {
 }
 
 #[test]
+fn a_lock_that_records_nothing_new_says_it_is_unchanged() {
+    runner::run(scenarios::a_lock_that_changes_nothing_says_unchanged())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_continued_landing_reports_the_push_branch_once() {
     runner::run(scenarios::a_continued_landing_reports_the_push_branch_once())
         .assert_fully_decided_green();
@@ -1332,6 +1338,7 @@ every_scenario!(
     continue_rejudges_the_resolved_manifest,
     a_continued_landing_reports_the_push_branch_once,
     a_landing_says_done_once,
+    a_lock_that_changes_nothing_says_unchanged,
     a_lock_commit_names_what_the_committed_lock_lacks,
     continue_keeps_the_consent_it_was_given,
     continue_refused_on_its_resolution_aborts,

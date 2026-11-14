@@ -865,9 +865,13 @@ pub(crate) fn relock(
         old.as_ref(),
         recorded.iter().map(|one| (&one.path, &one.to)),
     );
-    write_lock_in(&new, &project_dir)?;
-
-    eprintln!("Wrote {lock_path}");
+    let held = lock_path.read_to_string().ok();
+    if held.as_deref() == Some(render(&new)?.as_str()) {
+        eprintln!("{lock_path} is unchanged");
+    } else {
+        write_lock_in(&new, &project_dir)?;
+        eprintln!("Wrote {lock_path}");
+    }
     report_recorded(relocking, ctx, &project_name, &recorded);
     crate::entry_report::report(
         relocking.verb,
