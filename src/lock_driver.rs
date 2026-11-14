@@ -9,7 +9,7 @@ use std::path::Path;
 use anyhow::Context;
 
 use crate::check::MissingLockMergeDriverKind;
-use crate::diagnosis::{Report, State};
+use crate::diagnosis::{ChoiceId, Report, State};
 use crate::lock_merge::{merge_pins, Held, PinFinding, PinMerge, Reach};
 use crate::manifest::{LockEntry, LockFile, Manifest, RepoPath};
 use crate::vcs::{vcs_for, CommitId, LockDriverPart, ResolvedRevisionId, Vcs};
@@ -49,6 +49,7 @@ pub(crate) fn refuse_unresolved(
     vcs: &dyn Vcs,
     repo: impl fmt::Display,
     dir: &Path,
+    workspace: Option<&Path>,
 ) -> anyhow::Result<()> {
     if !vcs.is_repo(dir) {
         return Ok(());
@@ -57,13 +58,19 @@ pub(crate) fn refuse_unresolved(
     if !unmerged.iter().any(|path| path == LockFile::FILE_NAME) {
         return Ok(());
     }
-    Err(State::EditsLockUnresolved
+    let judging = State::EditsLockUnresolved
         .of(repo)
         .project_repo()
         .listing([LockFile::FILE_NAME])
-        .checkout(dir)
-        .judge(vcs)
-        .refused())
+        .bind_list("<paths>", [LockFile::FILE_NAME])
+        .checkout(dir);
+    let (judging, recorded) = crate::commit_guard::with_recorded_operation(judging, workspace);
+    let without: &[ChoiceId] = if recorded {
+        &[ChoiceId::C32]
+    } else {
+        &[ChoiceId::ResumeOperation, ChoiceId::AbortOperation]
+    };
+    Err(judging.without(without).judge(vcs).refused())
 }
 
 /// What setting up the lock merge driver did.

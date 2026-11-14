@@ -57,12 +57,6 @@ fn judge(
             return Ok(());
         }
     }
-    let recorded = workspace.and_then(|workspace| {
-        crate::op_state::read_owner_header(workspace)
-            .ok()
-            .flatten()
-            .map(|header| (header.verb, workspace))
-    });
     let subject = match op {
         Some(op) => format!("a {op} in progress"),
         None => "conflicted paths".to_owned(),
@@ -71,35 +65,57 @@ fn judge(
     if unmerged.is_empty() {
         without.push(ChoiceId::MarkResolved);
     }
-    let mut judging = State::EditsCommitMidOperation
+    let judging = State::EditsCommitMidOperation
         .of(repo)
         .project_repo()
         .subject(subject)
         .listing(&unmerged)
         .bind_list("<paths>", &unmerged)
         .checkout(dir);
-    match recorded {
-        Some((verb, workspace)) => {
-            without.push(ChoiceId::C32);
-            if !unmerged
-                .iter()
-                .any(|path| path == crate::manifest::Manifest::FILE_NAME)
-            {
-                without.push(ChoiceId::KeepSide);
-            }
-            let resume = crate::op_state::resume_command_at(verb, workspace);
-            let abort = crate::op_state::abort_command_at(workspace);
-            judging = judging
-                .bind_list("<resume>", resume.split_whitespace())
-                .bind_list("<abort>", abort.split_whitespace());
+    let (judging, recorded) = with_recorded_operation(judging, workspace);
+    if recorded {
+        without.push(ChoiceId::C32);
+        if !unmerged
+            .iter()
+            .any(|path| path == crate::manifest::Manifest::FILE_NAME)
+        {
+            without.push(ChoiceId::KeepSide);
         }
-        None => without.extend([
+    } else {
+        without.extend([
             ChoiceId::KeepSide,
             ChoiceId::ResumeOperation,
             ChoiceId::AbortOperation,
-        ]),
+        ]);
     }
     Err(judging.without(&without).judge(vcs).refused())
+}
+
+/// `judging` with the continue and abort of the operation `workspace` records
+/// bound, and whether it records one.
+pub(crate) fn with_recorded_operation(
+    judging: crate::diagnosis::Judging,
+    workspace: Option<&Path>,
+) -> (crate::diagnosis::Judging, bool) {
+    let recorded = workspace.and_then(|workspace| {
+        crate::op_state::read_owner_header(workspace)
+            .ok()
+            .flatten()
+            .map(|header| (header.verb, workspace))
+    });
+    match recorded {
+        Some((verb, workspace)) => {
+            let resume = crate::op_state::resume_command_at(verb, workspace);
+            let abort = crate::op_state::abort_command_at(workspace);
+            (
+                judging
+                    .bind_list("<resume>", resume.split_whitespace())
+                    .bind_list("<abort>", abort.split_whitespace()),
+                true,
+            )
+        }
+        None => (judging, false),
+    }
 }
 
 #[cfg(test)]

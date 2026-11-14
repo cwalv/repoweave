@@ -806,7 +806,12 @@ impl State {
                         to the pins you mean and mark it resolved",
                 refused_by: "every verb resolved for a project, until it is resolved; `rwv \
                              doctor` and `rwv abort` run",
-                offers: &[Form::C32],
+                offers: &[
+                    Form::MarkResolved,
+                    Form::ResumeOperation,
+                    Form::AbortOperation,
+                    Form::C32,
+                ],
                 verb_offers: &[],
             },
             Self::EditsCommitMidOperation => &StateRow {

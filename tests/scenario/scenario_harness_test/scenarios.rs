@@ -5684,6 +5684,44 @@ pub fn a_branchs_dependent_is_no_rebind_candidate() -> Scenario {
     )
 }
 
+/// A linear sync stops at `rwv.toml`; the operator resolves it and lets git
+/// go on by hand, and the next pick leaves `rwv.lock` conflicted. The refusal
+/// at that stop prints how to settle the lock and go on, and each printed
+/// line runs as printed.
+pub fn a_stopped_sync_with_an_unresolved_lock_prints_the_way_on() -> Scenario {
+    scenario(
+        "a stopped sync with an unresolved lock prints the way on",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-role", LIB, "reference"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-app"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.toml"]),
+            Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["-c", "core.editor=true", "rebase", "--continue"],
+            )
+            .expect(Exit::Code(1)),
+            Step::rwv(&ww("w"), &["sync", "--continue"])
+                .expect(Exit::refuses(Repo::Proj, State::EditsLockUnresolved))
+                .claim(Claim::OutputContains("rwv abort"))
+                .claim(Claim::OutputLacks("finish or abandon")),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.lock"]),
+            Step::rwv_printed_holding(&ww("w"), "git -C", "add -- rwv.lock").expect(Exit::Succeeds),
+            Step::rwv_printed_exactly(&ww("w"), "rwv sync --continue")
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::Proj]),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

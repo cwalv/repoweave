@@ -486,7 +486,7 @@ fn refuse_unsettled_lock(ctx: &WorkspaceContext, binding: Binding) -> anyhow::Re
     }
     let vcs = crate::vcs::project_vcs();
     let repo = crate::workspace::project_rel_path(project);
-    crate::lock_driver::refuse_unresolved(vcs.as_ref(), &repo, &dir)?;
+    crate::lock_driver::refuse_unresolved(vcs.as_ref(), &repo, &dir, Some(ctx.active_path()))?;
     if binding.commits_project {
         crate::commit_guard::refuse_commit_mid_operation(
             vcs.as_ref(),
