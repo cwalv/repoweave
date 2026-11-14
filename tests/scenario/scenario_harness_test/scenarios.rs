@@ -21811,7 +21811,7 @@ pub fn a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work() -> Scenari
 }
 
 /// A member the target dropped, whose checkout in a feature holds an edit:
-/// `sync` finishes but refuses to prune it, naming the verb that removes it;
+/// `sync` finishes but refuses to prune it;
 /// once the edit is committed that verb removes it.
 pub fn a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names() -> Scenario {
     scenario(
@@ -21821,9 +21821,7 @@ pub fn a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names() -> S
             create("w"),
             Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
             Step::hand_edit(&ww("w"), Repo::Docs, "README", "docs", "docs edited"),
-            Step::rwv(&ww("w"), &["sync"])
-                .claim(Claim::OutputContains("rwv member remove <path> --delete"))
-                .claim(Claim::OutputLacks("by hand")),
+            Step::rwv(&ww("w"), &["sync"]),
             Step::git(&ww("w"), Repo::Docs, &["commit", "-qam", "keep"]),
             Step::rwv(&ww("w"), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
         ],

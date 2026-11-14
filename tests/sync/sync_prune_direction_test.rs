@@ -611,7 +611,8 @@ fn a_refused_prune_fails_sync_to_once_it_completes() {
     assert!(
         stderr.contains(&format!(
             "{EXTRA}: prune skipped: {EXTRA}: edits dirty\n    scratch.txt\n{EXTRA}: dropped \
-             from lock; once nothing above refuses it, remove the checkout by hand\n"
+             from lock; once nothing above refuses it, remove the checkout with `rwv member \
+             remove --delete`\n"
         )) && !stderr.contains("re-run sync"),
         "a re-run cannot prune what the relock no longer names, so the remedy must not \
          offer one:\n{stderr}"
@@ -791,7 +792,7 @@ fn json_records_a_refused_prune_with_its_judged_state() {
     assert!(
         members[0]["message"]
             .as_str()
-            .is_some_and(|m| m.contains("edits dirty") && m.contains("remove the checkout by hand")),
+            .is_some_and(|m| m.contains("edits dirty") && m.contains("rwv member remove --delete")),
         "{members:#?}"
     );
     assert!(

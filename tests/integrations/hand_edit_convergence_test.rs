@@ -522,6 +522,10 @@ fn remove_delete_refuses_a_clone_with_unpushed_commits_in_the_primary() {
 fn remove_delete_refuses_a_worktree_with_unique_commits_in_a_workweave() {
     let weave = Weave::new();
     let workweave = weave.workweave("feat");
+    common::git_in(
+        workweave.join(placed("alpha")),
+        &["checkout", "-q", "--detach"],
+    );
     commit_in(&workweave.join(placed("alpha")));
     let stderr = assert_delete_refused(&workweave, "dropped-repo-has-unique-commits");
     assert!(
