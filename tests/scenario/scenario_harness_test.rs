@@ -1347,6 +1347,14 @@ every_scenario!(
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::LandMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::PullMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::CherryPickMember),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::UpdateRemoteMember),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncLinear),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncMerge),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandLinear),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandMerge),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::Pull),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::CherryPick),
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::UpdateRemote),
     continue_after_another_seat_moves(scenarios::StoppedMoved::PullMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::CherryPickProject),
     continue_after_another_seat_moves(scenarios::StoppedMoved::CherryPickMember),
@@ -4167,6 +4175,55 @@ fn cherry_pick_continue_refuses_a_member_moved_mid_copy() {
         scenarios::StoppedMidMerge::CherryPickMember,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn update_remote_continue_refuses_a_member_moved_mid_merge() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::UpdateRemoteMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+/// Every verb that stops on a conflict prints marking the file resolved and
+/// then its `--continue`; done as printed, that continue finishes.
+fn a_stop_marked_resolved_continues(which: scenarios::StoppedOnApp) {
+    runner::run(scenarios::a_stop_marked_resolved_continues(which)).assert_fully_decided_green();
+}
+
+#[test]
+fn a_linear_sync_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncLinear);
+}
+
+#[test]
+fn a_merge_sync_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncMerge);
+}
+
+#[test]
+fn a_linear_landing_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandLinear);
+}
+
+#[test]
+fn a_merge_landing_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandMerge);
+}
+
+#[test]
+fn a_pull_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::Pull);
+}
+
+#[test]
+fn a_cherry_pick_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::CherryPick);
+}
+
+#[test]
+fn an_update_remote_stop_marked_resolved_continues() {
+    a_stop_marked_resolved_continues(scenarios::StoppedOnApp::UpdateRemote);
 }
 
 #[test]

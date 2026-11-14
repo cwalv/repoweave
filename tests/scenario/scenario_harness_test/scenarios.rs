@@ -24448,6 +24448,111 @@ pub fn pull_continue_pins_a_member_merge_committed_by_hand() -> Scenario {
     )
 }
 
+/// Which operation [`a_stop_marked_resolved_continues`] stops on `app`.
+#[derive(Debug, Clone, Copy)]
+pub enum StoppedOnApp {
+    SyncLinear,
+    SyncMerge,
+    LandLinear,
+    LandMerge,
+    Pull,
+    CherryPick,
+    UpdateRemote,
+}
+
+/// An operation stopped on a conflict in `app`, whose stop prints marking
+/// the file resolved and then its `--continue`. Done as printed, the
+/// continue finishes the operation and leaves nothing to abort.
+pub fn a_stop_marked_resolved_continues(which: StoppedOnApp) -> Scenario {
+    use StoppedOnApp as S;
+    let (mut steps, at, resume, printed, side): (Vec<Step>, Place, &[&str], &'static str, &str) =
+        match which {
+            S::SyncLinear | S::SyncMerge => {
+                let mut stopped = sync_stopped_on_app_resolved(match which {
+                    S::SyncLinear => "linear",
+                    _ => "merge",
+                });
+                stopped.truncate(stopped.len() - 2);
+                (
+                    stopped,
+                    ww("w"),
+                    &["sync", "--continue"],
+                    "rwv sync --continue",
+                    "--ours",
+                )
+            }
+            S::LandLinear => (
+                land_linear_stopped_on_app(),
+                ww("w"),
+                &["land", "--continue"],
+                "rwv land --continue",
+                "--ours",
+            ),
+            S::LandMerge => (
+                landing_merge_stopped(),
+                ww("w"),
+                &["land", "--continue"],
+                "rwv land --continue",
+                "--ours",
+            ),
+            S::Pull => (
+                both_sides_move_app_conflictingly(),
+                b(),
+                &["pull", "--continue"],
+                "then run `rwv pull --continue`",
+                "--ours",
+            ),
+            S::CherryPick => (
+                app_conflicting_port(),
+                ww("p"),
+                &["cherry-pick", "--continue"],
+                "rwv cherry-pick --continue",
+                "--theirs",
+            ),
+            S::UpdateRemote => (
+                update_remote_stopped_on_a_conflict(),
+                a(),
+                &["update", "--remote", "--continue"],
+                "then run `rwv update --remote --continue`",
+                "--ours",
+            ),
+        };
+    let stop = steps
+        .iter()
+        .rposition(|step| {
+            matches!(
+                step.expect.exit,
+                Exit::Refuses(super::runner::Refusal::Kind(RefusalKind::OpParked))
+            )
+        })
+        .expect("the stop");
+    steps[stop].expect.claims.extend([
+        Claim::OutputContains("git add <files>"),
+        Claim::OutputContains(printed),
+    ]);
+    steps.extend([
+        Step::git(&at, Repo::App, &["checkout", side, "README"]),
+        Step::git(&at, Repo::App, &["add", "README"]),
+        Step::rwv(&at, resume)
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App]),
+        Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    scenario(
+        match which {
+            S::SyncLinear => "a linear sync stop marked resolved continues",
+            S::SyncMerge => "a merge sync stop marked resolved continues",
+            S::LandLinear => "a linear landing stop marked resolved continues",
+            S::LandMerge => "a merge landing stop marked resolved continues",
+            S::Pull => "a pull stop marked resolved continues",
+            S::CherryPick => "a cherry-pick stop marked resolved continues",
+            S::UpdateRemote => "an update --remote stop marked resolved continues",
+        },
+        steps,
+    )
+}
+
 /// Which stopped operation [`continue_after_another_seat_moves`] resumes,
 /// and which of its repos another seat moves during the stop.
 #[derive(Debug, Clone, Copy)]
@@ -24577,6 +24682,8 @@ pub enum StoppedMidMerge {
     PullMember,
     /// A port's copy into a member, resolved.
     CherryPickMember,
+    /// `update --remote --merge-upstream`'s member merge, resolved.
+    UpdateRemoteMember,
 }
 
 /// An operation stopped in a merge or copy; during the stop another seat
@@ -24663,6 +24770,22 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
                 &["cherry-pick", "--continue"],
             )
         }
+        S::UpdateRemoteMember => {
+            let mut stopped = update_remote_stopped_on_a_conflict();
+            stopped.insert(1, create("o"));
+            stopped.extend([
+                Step::git(&a(), Repo::App, &["checkout", "--ours", "README"]),
+                Step::git(&a(), Repo::App, &["add", "README"]),
+            ]);
+            (
+                stopped,
+                ww("o"),
+                a(),
+                Repo::App,
+                "main",
+                &["update", "--remote", "--continue"],
+            )
+        }
     };
     let slot = format!("refs/rwv/backup/{branch}/aborted");
     steps.extend([
@@ -24692,6 +24815,7 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
             S::LandMember => "land --continue refuses a member moved mid-merge",
             S::PullMember => "pull --continue refuses a member moved mid-merge",
             S::CherryPickMember => "cherry-pick --continue refuses a member moved mid-copy",
+            S::UpdateRemoteMember => "update --remote --continue refuses a member moved mid-merge",
         },
         steps,
     )
@@ -24885,7 +25009,7 @@ pub fn update_remote_aborted_after_a_hand_commit_and_a_continue() -> Scenario {
             update_remote_stopped_on_a_conflict(),
             a(),
             &["update", "--remote", "--continue"],
-            Exit::refuses(Repo::App, State::EditsMidOperation),
+            Exit::refuses_kind(RefusalKind::OpParked),
         ),
     )
 }

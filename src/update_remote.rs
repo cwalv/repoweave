@@ -367,6 +367,14 @@ fn update_for_project(
     let project = Project::from_dir(&project_dir, project_name.clone())
         .with_context(|| format!("failed to load project '{}'", project_name))?;
     crate::branch::require_recorded(ctx)?;
+    if let Some((op, _)) = &state.resumed {
+        crate::sync::hold_on_member_drift(
+            active_root,
+            project_name,
+            &crate::op_state::SavepointKey::Op(op.id.clone()),
+            OpVerb::UpdateRemote,
+        )?;
+    }
     if matches!(ctx.checkout, Checkout::Primary { .. }) {
         crate::shared_members::refuse_moving(primary_root, project_name, &|path, role| {
             filter.matches(path, role)
@@ -1540,7 +1548,10 @@ fn settle_diverged(
                     )?);
                 }
             }
+            let merging_its_tip = state.resumed.is_some()
+                && vcs.merge_in_flight(dir).ok().flatten().as_ref() == Some(tip.id());
             match &d.site {
+                Site::Checkout(_) if merging_its_tip => {}
                 Site::Checkout(_) => {
                     let tracked = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
                     report.extend(crate::diagnosis::judge_edits(
