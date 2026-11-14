@@ -20202,6 +20202,13 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),
                 still(&ww("w"), &["sync", "--continue"]),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "yours"])
+                    .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                    .claim(Claim::OutputContains(
+                        "the VCS merged rwv.toml with no conflict, so `--keep yours` has no side \
+                         to take",
+                    ))
+                    .claim(Claim::OutputLacks("wrote")),
             ]);
             steps.extend(fixed(&ww("w")));
             steps.extend([
@@ -20528,6 +20535,10 @@ pub enum TipSettle {
     Untouched,
     /// The printed `--keep text-merge`.
     KeepTextMerge,
+    /// A hand edit not marked resolved, then `--keep text-merge`: the tip is
+    /// kept as the VCS merged it, and the edit stays in the checkout,
+    /// uncommitted.
+    KeepTextMergeEdited,
     /// A hand edit, staged with the printed line, then the printed continue.
     ByHand,
     /// The tip's own text staged unchanged: nothing staged, so the stop
@@ -20580,6 +20591,13 @@ fn recurse_moved_back(at: &Place) -> [Step; 3] {
         ),
         Step::rwv_printed_holding(at, "git -C ", "add -- rwv.toml").expect(Exit::Succeeds),
     ]
+}
+
+fn resume_keep_text_merge(verb: TipVerb) -> &'static [&'static str] {
+    match verb {
+        TipVerb::Sync => &["sync", "--continue", "--keep", "text-merge"],
+        TipVerb::Land => &["land", "--continue", "--keep", "text-merge"],
+    }
 }
 
 /// `main` sets `app`'s role and adds `docs` in two commits; the workweave
@@ -20707,6 +20725,26 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
             ]);
             "the replayed tip whose rwv.toml differs stands at the bare continue until the \
              operator settles it"
+        }
+        TipSettle::KeepTextMergeEdited => {
+            let [edit, ..] = fixed();
+            steps.extend([
+                edit,
+                Step::rwv(&ww("w"), resume_keep_text_merge(verb))
+                    .expect(Exit::Succeeds)
+                    .may_strand(&[Repo::Proj])
+                    .claim(Claim::OutputContains("kept the replayed tip's rwv.toml")),
+                Step::git(&ww("w"), Repo::Proj, &["diff", "--name-only"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputLine("rwv.toml")),
+                Step::git(&at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains(
+                        "role = \"owned\"\nrecurse-submodules = false",
+                    )),
+            ]);
+            "--keep text-merge at the replayed tip keeps the tip and leaves an edit not marked \
+             resolved in the checkout"
         }
         TipSettle::KeepTextMerge => {
             steps.extend([

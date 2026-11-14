@@ -7600,6 +7600,15 @@ fn text_merge_setting_moved_by_hand() {
 }
 
 #[test]
+fn replayed_tip_keep_text_merge_edited() {
+    runner::run(scenarios::check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KeepTextMergeEdited,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn replayed_tip_untouched() {
     for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
         runner::run(scenarios::check_a_replayed_tip(

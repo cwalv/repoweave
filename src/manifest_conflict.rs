@@ -716,15 +716,7 @@ pub(crate) fn continue_at_stop(
         }
         (Reading::Checked { text_merge, .. }, Some(Side::TextMerge)) => {
             if std::fs::read_to_string(&path).ok().as_ref() != Some(text_merge) {
-                return Err(refused(
-                    "rwv.toml was edited since the stop, so it no longer holds the text merge \
-                     as the VCS made it",
-                    vec![
-                        "to take it as it stands, mark it resolved, then run the continue again:"
-                            .to_owned(),
-                        format!("  {}", mark_resolved(vcs, &dir)),
-                    ],
-                ));
+                return Err(edited_text_merge(vcs, &dir, &refused));
             }
             resolved()?;
             eprintln!(
@@ -875,6 +867,21 @@ fn settle_tip(
     }
     eprintln!("{done}: kept the replayed tip's rwv.toml as the VCS merged it");
     crate::op_state::journal_tip_settled(workspace, rebase)
+}
+
+fn edited_text_merge(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    refused: &dyn Fn(&str, Vec<String>) -> anyhow::Error,
+) -> anyhow::Error {
+    refused(
+        "rwv.toml was edited since the stop, so it no longer holds the text merge as the VCS \
+         made it",
+        vec![
+            "to take it as it stands, mark it resolved, then run the continue again:".to_owned(),
+            format!("  {}", mark_resolved(vcs, dir)),
+        ],
+    )
 }
 
 /// Whether the merge or replay in flight in `dir` takes in a commit the
