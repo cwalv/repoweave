@@ -267,7 +267,15 @@ impl<'a> Rule<'a> {
         let store = Store::open(project_vcs.as_ref(), &project_path)?;
         let view = store.view()?;
 
-        let dependents = view.dependents(&request.branch);
+        let dependents = crate::branch::live_dependents(
+            &view,
+            &request.branch,
+            &crate::branch::ExistingBranches::read(
+                project_vcs.as_ref(),
+                request.project,
+                request.primary,
+            )?,
+        );
         if !dependents.is_empty() {
             let mut report = Report::default();
             for dependent in dependents {

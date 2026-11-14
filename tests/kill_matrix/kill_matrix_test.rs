@@ -1628,6 +1628,19 @@ fn a_stale_record_is_dropped_by_the_next_deletion_rule() {
         Step::git(&a(), Repo::Proj, &["log", "--format=%s", "rwv-records"])
             .claim(Claim::OutputLine("records: set proj--w1 feature"))
             .claim(Claim::OutputLacks("drop proj--w1")),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("landed into by proj--w2"))
+            .claim(Claim::OutputLacks("proj--w1")),
+        loose(
+            Step::rwv(
+                &a(),
+                &["update", "--remote", "--reset-to-upstream", APP, "--commit"],
+            )
+            .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
+            .claim(Claim::OutputContains("proj--w2 lands into this branch"))
+            .claim(Claim::OutputLacks("proj--w1")),
+        ),
         loose(Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds)),
         Step::rwv(&a(), &["workweave", "delete", "w2"])
             .expect(Exit::Succeeds)

@@ -167,7 +167,8 @@ impl Op {
     }
 }
 
-/// The branches `branch` has as dependents, as the records read: a branch
+/// The branches `branch` has as dependents, as the records read, each
+/// existing somewhere: a branch
 /// moved to its upstream while another record lands into it would leave that
 /// record on commits it never named.
 pub(crate) fn dependents_of(
@@ -180,8 +181,8 @@ pub(crate) fn dependents_of(
     };
     let store = crate::records::Store::open(project_vcs, project_dir)?;
     let view = store.view()?;
-    Ok(view
-        .dependents(&name)
+    let existing = crate::branch::ExistingBranches::of_checkout(project_vcs, project_dir)?;
+    Ok(crate::branch::live_dependents(&view, &name, &existing)
         .into_iter()
         .map(|dependent| dependent.to_string())
         .collect())

@@ -533,7 +533,12 @@ pub fn run_set_mode(ctx: &WorkspaceContext, request: SetMode) -> anyhow::Result<
             outln!("{line}");
         }
     }
-    report_dependents(&before, &written.view, &branch);
+    report_dependents(
+        &before,
+        &written.view,
+        &branch,
+        &ExistingBranches::of_checkout(vcs.as_ref(), &dir)?,
+    );
     if checked_out(vcs.as_ref(), &dir)?.as_deref() == Some(branch.as_str()) {
         crate::update::align_after_switch(ctx, "branch set-mode")?;
     }
@@ -915,11 +920,14 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
             ),
         }
     }
-    let dependents: Vec<BranchName> = view
-        .dependents(&old)
-        .into_iter()
-        .filter(|dependent| *dependent != new)
-        .collect();
+    let dependents: Vec<BranchName> = live_dependents(
+        &view,
+        &old,
+        &ExistingBranches::of_checkout(vcs.as_ref(), &dir)?,
+    )
+    .into_iter()
+    .filter(|dependent| *dependent != new)
+    .collect();
     for dependent in &dependents {
         match view.lookup(dependent) {
             Lookup::Value(_) => {}
@@ -1102,7 +1110,12 @@ pub(crate) fn target_recorded_lines(
     Ok(lines)
 }
 
-fn report_dependents(before: &View, after: &View, branch: &BranchName) {
+fn report_dependents(
+    before: &View,
+    after: &View,
+    branch: &BranchName,
+    existing: &ExistingBranches,
+) {
     let mode_before = match before.lookup(branch) {
         Lookup::Value(record) => Some(record.mode()),
         _ => None,
@@ -1113,7 +1126,7 @@ fn report_dependents(before: &View, after: &View, branch: &BranchName) {
     if mode_before == Some(record.mode()) {
         return;
     }
-    for dependent in after.dependents(branch) {
+    for dependent in live_dependents(after, branch, existing) {
         if let Some(Entry::Value(Record::Feature { as_mode, .. })) = after.entry(&dependent) {
             if as_mode != record.mode() {
                 outln!(
@@ -1209,26 +1222,20 @@ pub fn run_delete(
     Ok(())
 }
 
-/// Drop the records whose branches exist nowhere: no local branch, no
-/// remote-tracking branch, and no workspace of this machine aligned for it.
-/// Nothing drops while a fetch of the project repo went unconfirmed. What
-/// exists is read once per attempt, as the write that drops reads the
-/// records; a writer that creates a branch creates it before it writes the
-/// record, and that write always commits, so a drop judged before the branch
-/// existed loses its compare-and-swap and judges again. What cannot be read
-/// fails the drop.
-pub fn drop_records(
-    project: &ProjectName,
-    primary: &Path,
-    unconfirmed: bool,
-) -> anyhow::Result<Vec<String>> {
-    if unconfirmed {
-        return Ok(Vec::new());
-    }
-    let vcs = project_vcs();
-    let dir = crate::workspace::project_dir(primary, project);
-    let gone = |names: &[String]| -> anyhow::Result<std::collections::BTreeSet<String>> {
-        let mut kept: std::collections::BTreeSet<String> = vcs
+/// The weave branches of a project that exist somewhere: a local or
+/// remote-tracking branch of its project repo, or the branch a workspace of
+/// this machine is aligned for. A record of a branch outside them is stale:
+/// no reader counts it, and the deletion rule's sweep drops it.
+pub(crate) struct ExistingBranches(std::collections::BTreeSet<String>);
+
+impl ExistingBranches {
+    pub(crate) fn read(
+        vcs: &dyn Vcs,
+        project: &ProjectName,
+        primary: &Path,
+    ) -> anyhow::Result<Self> {
+        let dir = crate::workspace::project_dir(primary, project);
+        let mut existing: std::collections::BTreeSet<String> = vcs
             .named_branches(&dir)?
             .into_iter()
             .map(|b| b.name)
@@ -1247,14 +1254,74 @@ pub fn drop_records(
                         ..
                     },
                 ..
-            } = crate::alignment::read_state(vcs.as_ref(), &workspace)?
+            } = crate::alignment::read_state(vcs, &workspace)?
             {
-                kept.insert(aligned);
+                existing.insert(aligned);
             }
         }
+        Ok(Self(existing))
+    }
+
+    /// [`ExistingBranches::read`] for the project whose checkout is `dir`,
+    /// in the primary or a workweave: its project repo shares the primary's
+    /// store.
+    pub(crate) fn of_checkout(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Self> {
+        let store = crate::workweave::store_behind(vcs, dir);
+        let project = store
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(ProjectName::new)
+            .transpose()?;
+        match (project, store.parent().and_then(Path::parent)) {
+            (Some(project), Some(primary)) => Self::read(vcs, &project, primary),
+            _ => Err(crate::untokened!(
+                InternalInvariant,
+                "{} is no project checkout: its store {} is not a weave's project repo",
+                dir.display(),
+                store.display()
+            )),
+        }
+    }
+
+    pub(crate) fn holds(&self, branch: &str) -> bool {
+        self.0.contains(branch)
+    }
+}
+
+/// The branches whose records land into `branch` and that exist somewhere.
+pub(crate) fn live_dependents(
+    view: &View,
+    branch: &BranchName,
+    existing: &ExistingBranches,
+) -> Vec<BranchName> {
+    view.dependents(branch)
+        .into_iter()
+        .filter(|dependent| existing.holds(dependent.as_str()))
+        .collect()
+}
+
+/// Drop the records whose branches exist nowhere ([`ExistingBranches`]).
+/// Nothing drops while a fetch of the project repo went unconfirmed. What
+/// exists is read once per attempt, as the write that drops reads the
+/// records; a writer that creates a branch creates it before it writes the
+/// record, and that write always commits, so a drop judged before the branch
+/// existed loses its compare-and-swap and judges again. What cannot be read
+/// fails the drop.
+pub fn drop_records(
+    project: &ProjectName,
+    primary: &Path,
+    unconfirmed: bool,
+) -> anyhow::Result<Vec<String>> {
+    if unconfirmed {
+        return Ok(Vec::new());
+    }
+    let vcs = project_vcs();
+    let dir = crate::workspace::project_dir(primary, project);
+    let gone = |names: &[String]| -> anyhow::Result<std::collections::BTreeSet<String>> {
+        let existing = ExistingBranches::read(vcs.as_ref(), project, primary)?;
         Ok(names
             .iter()
-            .filter(|name| !kept.contains(*name))
+            .filter(|name| !existing.holds(name))
             .cloned()
             .collect())
     };
@@ -1425,11 +1492,14 @@ pub fn project_record(
     Ok(Some(BranchRecordStatus {
         project: project.clone(),
         record: record_output(&view.lookup(&branch)),
-        dependents: view
-            .dependents(&branch)
-            .iter()
-            .map(ToString::to_string)
-            .collect(),
+        dependents: live_dependents(
+            &view,
+            &branch,
+            &ExistingBranches::of_checkout(vcs.as_ref(), dir)?,
+        )
+        .iter()
+        .map(ToString::to_string)
+        .collect(),
         branch: text,
     }))
 }
