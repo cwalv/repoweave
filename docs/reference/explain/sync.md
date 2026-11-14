@@ -38,7 +38,9 @@ together. Then, under an op record:
 3. **The lock** is recorded and committed: each member's pin merged three ways
    against the merge base's lock, with every member the sync moved at its new
    tip.
-4. **Alignment.** Members the new entries drop are pruned, missing ones are
+4. **Alignment.** Members the new entries drop are pruned (a checkout goes
+   with its ignored files, as when the VCS removes a working tree; one holding
+   uncommitted changes or work no other clone reaches is left, reported), missing ones are
    cloned, and every member — `dependency` and `reference` members included —
    is aligned as `rwv update` aligns it, to the lock just committed.
 

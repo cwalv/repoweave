@@ -491,3 +491,54 @@ fn retire_refuses_over_untracked_work_in_a_checkout_no_member_covers() {
         "{stderr}"
     );
 }
+
+/// The seat's root is removed whole: entries rwv did not create there are
+/// named in one line before they go, and nothing is refused for them.
+fn seat_root_holds_notes(weave: &Weave) -> PathBuf {
+    let s1 = weave.seat("s1");
+    std::fs::write(s1.join("NOTES.md"), "mine\n").unwrap();
+    std::fs::create_dir_all(s1.join("scratch")).unwrap();
+    std::fs::write(s1.join("scratch").join("results.csv"), "1\n").unwrap();
+    s1
+}
+
+const NAMED: &str = "with 2 entries rwv did not create: NOTES.md, scratch";
+
+#[test]
+fn delete_names_the_root_entries_rwv_did_not_create_before_it_removes_them() {
+    let weave = weave();
+    let s1 = seat_root_holds_notes(&weave);
+
+    let out = delete(&weave, &[]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains(NAMED), "{stderr}");
+    assert!(!s1.exists());
+}
+
+#[test]
+fn retire_names_the_root_entries_rwv_did_not_create_before_it_removes_them() {
+    let weave = weave();
+    let s1 = seat_root_holds_notes(&weave);
+
+    let out = run(&s1, &["land", "--retire"]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains(NAMED), "{stderr}");
+    assert!(!s1.exists());
+}
+
+#[test]
+fn delete_of_a_root_holding_only_what_rwv_made_names_nothing() {
+    let weave = weave();
+    let s1 = weave.seat("s1");
+
+    let out = delete(&weave, &[]);
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(!stderr.contains("rwv did not create"), "{stderr}");
+    assert!(!s1.exists());
+}

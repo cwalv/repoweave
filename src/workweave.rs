@@ -3474,6 +3474,10 @@ pub(crate) struct WorkweaveCheckout {
 }
 
 impl WorkweaveCheckout {
+    pub(crate) fn store(&self) -> &Path {
+        &self.store
+    }
+
     /// `baselines` are the workspaces whose checkout of `rel` counts as
     /// landed work ([`merge_baselines`]); only those sharing `store` vouch.
     fn new(
@@ -3958,6 +3962,56 @@ enum Deleter {
 /// The registry entry is still removed at the end (best effort), so a
 /// mid-crash resume that finds a pre-crash entry keeps the index in sync.
 #[allow(clippy::too_many_arguments)]
+/// Say, before the workweave's root goes whole, which of its entries rwv did
+/// not create: none of the project, a member's first path component, a file
+/// an integration owns, or rwv's own state.
+fn name_foreign_root_entries(workweave_dir: &Path, project: &ProjectName, primary: &Manifest) {
+    let own = load_manifest(workweave_dir, project).ok();
+    let mut made: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::from(["projects".to_owned()]);
+    for manifest in [Some(primary), own.as_ref()].into_iter().flatten() {
+        made.extend(manifest.iter_entries().filter_map(|(path, _)| {
+            path.as_path()
+                .components()
+                .next()
+                .map(|first| first.as_os_str().to_string_lossy().into_owned())
+        }));
+        made.extend(
+            crate::activate::owned_paths(workweave_dir, project, manifest)
+                .into_iter()
+                .filter_map(|path| path.split('/').next().map(str::to_owned)),
+        );
+    }
+    let Ok(entries) = std::fs::read_dir(workweave_dir) else {
+        return;
+    };
+    let mut foreign: Vec<String> = entries
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| !made.contains(name) && !name.starts_with(".rwv"))
+        .collect();
+    if foreign.is_empty() {
+        return;
+    }
+    foreign.sort();
+    const SHOWN: usize = 5;
+    let more = match foreign.len().saturating_sub(SHOWN) {
+        0 => String::new(),
+        more => format!(" and {more} more"),
+    };
+    eprintln!(
+        "rwv: removing {} whole, with {} entries rwv did not create: {}{more}",
+        workweave_dir.display(),
+        foreign.len(),
+        foreign
+            .iter()
+            .take(SHOWN)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+}
+
 fn delete_workweave_inner_at(
     ws_root: &Path,
     project: &ProjectName,
@@ -4159,6 +4213,7 @@ fn delete_workweave_inner_at(
     // cannot be proven outside, and stepping out of it is harmless. The live cwd — not the resolved origin — is the subject on
     // purpose: `-C` points the origin elsewhere while the handle stays put.
     if workweave_dir.exists() {
+        name_foreign_root_entries(&workweave_dir, project, &manifest);
         let cwd_inside = match (
             std::env::current_dir().and_then(|d| CanonicalPath::existing(&d)),
             CanonicalPath::existing(&workweave_dir),

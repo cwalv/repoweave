@@ -2123,8 +2123,18 @@ pub(crate) fn prune_dropped_repo(
     ctx: &WorkspaceContext,
     repo_path: &RepoPath,
 ) -> anyhow::Result<()> {
-    plan_checkout_removal(vcs, ctx, repo_path, RemovalCause::DroppedFromLock)?
-        .perform(vcs, repo_path)
+    let removal = plan_checkout_removal(vcs, ctx, repo_path, RemovalCause::DroppedFromLock)?;
+    let store = removal.linked_into();
+    removal.perform(vcs, repo_path)?;
+    if let Some(store) = store {
+        let op = crate::op_state::read_owner(ctx.active_path())
+            .ok()
+            .flatten();
+        for key in op.map(|op| op.savepoint_keys()).unwrap_or_default() {
+            let _ = vcs.drop_checkout_savepoint(&store, &key);
+        }
+    }
+    Ok(())
 }
 
 /// What is removing a checkout, as a refusal of that removal tells it.
@@ -2183,7 +2193,10 @@ enum Removal {
         releaser: crate::workweave::Releaser,
     },
     /// A workspace linked into a store elsewhere; only its working tree goes.
-    LinkedWorkspace(PathBuf),
+    LinkedWorkspace {
+        dest: PathBuf,
+        store: PathBuf,
+    },
     /// The canonical store itself.
     Store(PathBuf),
 }
@@ -2193,6 +2206,15 @@ impl CheckoutRemoval {
         !matches!(self.0, Removal::Absent)
     }
 
+    /// The store a removed checkout is linked into, which outlives it.
+    fn linked_into(&self) -> Option<PathBuf> {
+        match &self.0 {
+            Removal::RegisteredWorktree { checkout, .. } => Some(checkout.store().to_path_buf()),
+            Removal::LinkedWorkspace { store, .. } => Some(store.clone()),
+            Removal::Absent | Removal::Store(_) => None,
+        }
+    }
+
     pub(crate) fn perform(self, vcs: &dyn Vcs, repo_path: &RepoPath) -> anyhow::Result<()> {
         match self.0 {
             Removal::Absent => {}
@@ -2200,7 +2222,7 @@ impl CheckoutRemoval {
                 crate::workweave::release_checkout(vcs, &checkout, repo_path.as_str(), releaser)
                     .with_context(|| format!("worktree remove for {repo_path} failed"))?;
             }
-            Removal::LinkedWorkspace(dest) | Removal::Store(dest) => {
+            Removal::LinkedWorkspace { dest, .. } | Removal::Store(dest) => {
                 std::fs::remove_dir_all(&dest)
                     .with_context(|| format!("failed to remove {}", dest.display()))?;
             }
@@ -2325,7 +2347,10 @@ pub(crate) fn plan_checkout_removal(
                 // `dest` is a linked workspace: its refdb and objects live in
                 // `store`, which this delete does not touch. Removing the
                 // directory removes a working tree only.
-                Ok(CheckoutRemoval(Removal::LinkedWorkspace(dest)))
+                Ok(CheckoutRemoval(Removal::LinkedWorkspace {
+                    dest,
+                    store: store.into_path_buf(),
+                }))
             }
         }
         Checkout::Primary { .. } => {

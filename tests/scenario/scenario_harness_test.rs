@@ -717,6 +717,12 @@ fn a_carry_that_drops_a_commit_names_its_sides_and_keeps_its_rebased_backup() {
 }
 
 #[test]
+fn a_sync_prune_leaves_no_savepoint_in_the_store() {
+    runner::run(scenarios::a_sync_prune_leaves_no_savepoint_in_the_store())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_tombstone_becomes_a_backup_and_backup_drop_releases_it() {
     runner::run(scenarios::tombstone_to_backup()).assert_green();
 }
@@ -1592,6 +1598,7 @@ every_scenario!(
     workweave_without_b_given_up_before_publishing,
     dc10_store_destroy,
     store_removal_refuses_edits_set_aside,
+    a_sync_prune_leaves_no_savepoint_in_the_store,
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     tombstone_to_backup,

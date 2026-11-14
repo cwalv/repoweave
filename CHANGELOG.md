@@ -175,6 +175,15 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   branch, and refuses one that does not parse (`unparseable-project at`), as
   `rwv sync` does, for a fast-forward, `--reset-to-upstream` and
   `--merge-upstream` alike.
+- `rwv workweave delete` and `rwv land --retire` remove the workweave's
+  directory whole, and first name in one line the entries of its root rwv did
+  not create. A checkout a prune or a delete removes goes with its ignored
+  files.
+- At a stop while a dependent branch is carried along, the conflict legend
+  names the carried branch as yours, and edits a `--keep` writes over are kept
+  in a backup filed under that branch. A carry whose replay drops a commit
+  keeps the branch's `rebased` backup past the operation; the line naming any
+  other `rebased` backup says it is kept while the operation runs.
 
 ### Git 2.36 or newer is required
 

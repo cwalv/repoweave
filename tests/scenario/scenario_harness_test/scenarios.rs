@@ -43,6 +43,7 @@ pub fn solo_workweave() -> Scenario {
             Step::commit(&ww("solo"), Repo::App, "solo-app"),
             Step::rwv(&ww("solo"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("rwv did not create"))
                 .claim(Claim::WorkweaveGone(ww("solo")))
                 .claim(Claim::Contains {
                     at: a(),
@@ -510,6 +511,28 @@ pub fn landing_prune_refuses_a_store_holding(held: StoreHolds) -> Scenario {
     scenario(
         "a landing's prune refuses a store holding what no remote has",
         steps,
+    )
+}
+
+/// A sync that prunes a dropped member's checkout from a workweave takes the
+/// checkout's savepoint with it: nothing of the operation is left in the
+/// store the checkout was linked into.
+pub fn a_sync_prune_leaves_no_savepoint_in_the_store() -> Scenario {
+    scenario(
+        "a sync's prune leaves no savepoint behind",
+        vec![
+            create("w"),
+            Step::rwv(&a(), &["member", "remove", LIB]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirGone(
+                    Machine::A,
+                    ".workweaves/proj--w/local/remotes/lib",
+                )),
+            Step::git(&a(), Repo::Lib, &["for-each-ref", "refs/rwv/pre-op/"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("pre-op")),
+        ],
     )
 }
 

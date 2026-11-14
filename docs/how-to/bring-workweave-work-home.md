@@ -23,7 +23,10 @@ moves. Then:
    composed. That workspace then aligns, and the workweave's members follow
    the target's new pins.
 4. **Retire on `--retire`.** The workweave's worktrees, the branches that
-   belong to it by the deletion rule, and its directory are removed.
+   belong to it by the deletion rule, and its directory are removed. The
+   directory goes whole, with anything you kept at its root outside the repos
+   and the ignored files in its checkouts; a line names the root's entries rwv
+   did not create before they go, so move what you want to keep first.
 
 To land into another branch for one run, name it: `rwv land --target stable`.
 The record is unchanged.

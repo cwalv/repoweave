@@ -176,7 +176,11 @@ Refuses, before it changes anything, if:
   (`target` `dependents`), or is checked out in another workspace (`checkout`).
 
 It then removes the worktrees, prunes their registrations and removes the
-workweave directory. The workweave's own branches are the rule's: the branch
+workweave directory whole: what its root holds outside the repos is scratch
+that goes with the workweave, and ignored files in a checkout go with it, as
+they do when the VCS removes a working tree. Before it removes the directory
+it names, in one line, the entries of its root rwv did not create (how many,
+and the first few); nothing there refuses the delete. The workweave's own branches are the rule's: the branch
 the workweave is aligned for, when its record is a feature, and the branch of
 that name in each member that lists it.
 
