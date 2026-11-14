@@ -67,7 +67,13 @@ moved it, from either workspace. What it discards is kept first: a branch tip
 it resets, and the working copy it discards, in one backup slot per branch and
 per checkout (`<branch>/aborted`, `<branch>/aborted-working-copy`), listed by
 `rwv backup list`; an earlier value stays in the VCS's own history of the slot.
-A commit made by hand at a stop is kept by `abort`.
+A commit made by hand at a stop is kept by `abort`, and so is one another
+workspace put on a branch while the operation was stopped, whether that branch's
+checkout was mid-merge or mid-rebase.
+`--continue` reads such a move before it goes on, as the start of an operation
+does: it refreshes the checkout, or refuses with the choice that clears it. A
+merge or copy stopped in a checkout whose branch moved is refused, since
+concluding it would record the move's reverse; `rwv abort` is the way out.
 A landing's target that something else moved since is refused;
 `rwv abort --leave-target` ends the landing and leaves the target as it
 stands.
