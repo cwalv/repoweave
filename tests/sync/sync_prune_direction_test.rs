@@ -583,6 +583,7 @@ fn assert_completed_with_the_checkout_left(out: &Output, verb: &str, s1: &Path) 
         format!("{verb} {COMPLETED}"),
         format!(":\n  {EXTRA}\n"),
         format!("Re-running {verb} will not prune it."),
+        format!("\n  rwv member remove {EXTRA} --delete"),
     ] {
         assert!(
             stderr.contains(&expected),

@@ -40,7 +40,8 @@ struct BackupRepo {
 }
 
 /// The manifest naming the members on disk: while a merge or replay has
-/// left `rwv.toml` unmerged, the one the checked-out commit holds.
+/// left `rwv.toml` unmerged, or the working file is not a manifest, the one
+/// the checked-out commit holds.
 fn members_manifest(project_dir: &std::path::Path) -> anyhow::Result<Manifest> {
     let vcs = project_vcs();
     let unmerged = vcs.is_repo(project_dir)
@@ -48,8 +49,9 @@ fn members_manifest(project_dir: &std::path::Path) -> anyhow::Result<Manifest> {
             .unmerged_paths(project_dir)?
             .iter()
             .any(|path| path == Manifest::FILE_NAME);
-    if !unmerged {
-        return Manifest::from_path(&project_dir.join(Manifest::FILE_NAME));
+    let working = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME));
+    if !unmerged && (working.is_ok() || !vcs.is_repo(project_dir)) {
+        return working;
     }
     let head = vcs.head_revision(project_dir)?;
     Manifest::from_toml_str(&vcs.read_file_at_revision(

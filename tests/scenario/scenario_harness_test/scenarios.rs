@@ -5844,6 +5844,20 @@ pub fn a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does() -> Scenario {
     )
 }
 
+/// The working `rwv.toml` does not parse: the backups a stop made are still
+/// listed, the members read from the checked-out commit.
+pub fn backup_list_reads_the_members_of_the_commit_when_the_working_manifest_does_not_parse(
+) -> Scenario {
+    let declared = declared_branch_text(Repo::App, "main");
+    scenario(
+        "backup list reads the commit's members when the working manifest does not parse",
+        vec![
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &declared, "[[[ not toml"),
+            Step::rwv(&a(), &["backup", "list"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

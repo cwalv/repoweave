@@ -1711,6 +1711,7 @@ every_scenario!(
     waiver_own_lock,
     uncommitted_manifest_beside_an_unaligned_member,
     a_target_judged_alignment_choice_runs_in_the_target,
+    backup_list_reads_the_members_of_the_commit_when_the_working_manifest_does_not_parse,
     a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does,
     a_withheld_publish_prints_a_push_that_runs,
     update_remote_at_a_diverged_pin_prints_every_way_on,
@@ -5516,6 +5517,14 @@ fn a_withheld_publishs_printed_push_runs() {
 fn a_landing_onto_an_emptied_manifest_names_the_commit_and_its_fix() {
     runner::run(scenarios::a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn backup_list_survives_an_unparseable_working_manifest() {
+    runner::run(
+        scenarios::backup_list_reads_the_members_of_the_commit_when_the_working_manifest_does_not_parse(),
+    )
+    .assert_fully_decided_green();
 }
 
 #[test]
