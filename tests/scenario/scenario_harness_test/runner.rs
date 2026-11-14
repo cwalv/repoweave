@@ -230,6 +230,10 @@ pub enum Action {
     Kill(&'static str),
     Unreachable(Remote),
     Reachable(Remote),
+    /// Every live place's heads, branch tips, working-tree state and
+    /// `rwv.toml` and `rwv.lock`, kept under this name for
+    /// [`Claim::TipsAsCaptured`].
+    Capture(&'static str),
     Pending(MissingVerb),
 }
 
@@ -491,6 +495,11 @@ pub enum Claim {
         at: Place,
         repo: Repo,
     },
+    /// Every place live when [`Step::capture`] took `name` is as it was then:
+    /// each repo's HEAD, working-tree state, `rwv.toml` and `rwv.lock`, and
+    /// every branch it had, at the tip it had. A branch made since is not
+    /// read.
+    TipsAsCaptured(&'static str),
     /// The checkout of `repo` at `at` is on `branch`.
     OnBranch {
         at: Place,
@@ -976,6 +985,15 @@ impl Step {
         )
     }
 
+    /// Keep every live place's tips for [`Claim::TipsAsCaptured`].
+    pub fn capture(name: &'static str) -> Step {
+        Step::new(
+            format!("capture {name}"),
+            Action::Capture(name),
+            Expect::succeeds(),
+        )
+    }
+
     pub fn kill(handle: &'static str) -> Step {
         Step::new(
             format!("kill {handle}"),
@@ -1190,6 +1208,14 @@ struct Run<'a> {
     marks: BTreeMap<&'static str, String>,
     held: BTreeMap<&'static str, Paused>,
     offline: BTreeMap<Remote, Unreachable<'a>>,
+    captured: BTreeMap<&'static str, BTreeMap<Place, Tips>>,
+}
+
+/// What [`Claim::TipsAsCaptured`] compares for one place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Tips {
+    exact: String,
+    branches: BTreeMap<String, String>,
 }
 
 pub fn run(scenario: Scenario) -> Report {
@@ -1210,6 +1236,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         marks: BTreeMap::new(),
         held: BTreeMap::new(),
         offline: BTreeMap::new(),
+        captured: BTreeMap::new(),
     };
     let steps = std::iter::once(Step::new_machine(Machine::A)).chain(scenario.steps);
     let mut before = invariants::snapshot(sandbox);
@@ -1666,6 +1693,18 @@ impl Run<'_> {
                 }
                 None => (false, format!("nothing is held as {handle}")),
             },
+            Action::Capture(name) => {
+                let kept = sb
+                    .live_places()
+                    .into_iter()
+                    .map(|place| {
+                        let tips = self.tips(&place);
+                        (place, tips)
+                    })
+                    .collect();
+                self.captured.insert(name, kept);
+                (true, String::new())
+            }
             Action::Unreachable(remote) => {
                 assert!(
                     !self.offline.contains_key(remote),
@@ -1950,6 +1989,41 @@ impl Run<'_> {
                 std::fs::remove_file(&new).map_err(|e| io(&new, e))
             }
         }
+    }
+
+    fn tips(&self, at: &Place) -> Tips {
+        let sb = self.sandbox;
+        let mut exact = String::new();
+        let mut branches = BTreeMap::new();
+        for repo in [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs] {
+            let dir = sb.checkout(at, repo);
+            if !dir.is_dir() {
+                continue;
+            }
+            exact.push_str(&format!("== {}\n", repo.name()));
+            for args in [
+                &["rev-parse", "HEAD"][..],
+                &["symbolic-ref", "-q", "HEAD"][..],
+                &["status", "--porcelain"][..],
+            ] {
+                exact.push_str(&rendered(&sb.git(&dir, args)));
+            }
+            for file in ["rwv.lock", "rwv.toml"] {
+                if let Ok(text) = std::fs::read_to_string(dir.join(file)) {
+                    exact.push_str(&text);
+                }
+            }
+            let listed = sb.git_ok(
+                &dir,
+                &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"],
+            );
+            for line in listed.lines() {
+                if let Some((name, sha)) = line.split_once(' ') {
+                    branches.insert(format!("{}/{name}", repo.name()), sha.to_owned());
+                }
+            }
+        }
+        Tips { exact, branches }
     }
 
     fn local_state(&self, at: &Place) -> String {
@@ -2329,6 +2403,35 @@ impl Run<'_> {
                     ))
                 }
             }
+            Claim::TipsAsCaptured(name) => {
+                let kept = self
+                    .captured
+                    .get(name)
+                    .unwrap_or_else(|| panic!("nothing was captured as {name}"));
+                let mut off = Vec::new();
+                for (place, before) in kept {
+                    let now = self.tips(place);
+                    if before.exact != now.exact {
+                        off.push(format!(
+                            "{place:?}:\n--- captured\n{}--- now\n{}",
+                            before.exact, now.exact
+                        ));
+                    }
+                    for (branch, sha) in &before.branches {
+                        if now.branches.get(branch) != Some(sha) {
+                            off.push(format!(
+                                "{place:?}: {branch} was {sha}, now {:?}",
+                                now.branches.get(branch)
+                            ));
+                        }
+                    }
+                }
+                if off.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!("not as captured as {name}:\n{}", off.join("\n")))
+                }
+            }
             Claim::LocalStateUnchanged(at) => {
                 let before = &unmoved
                     .iter()
@@ -2498,4 +2601,73 @@ impl Run<'_> {
             }
         }
     }
+}
+
+/// What a finished operation left in every live place, with each commit
+/// named by its subject and tree rather than its id, so two sandboxes that
+/// ran the same steps at different times read alike when they ended alike.
+pub fn end_state(sb: &Sandbox) -> String {
+    let mut text = String::new();
+    for place in sb.live_places() {
+        let dirs: Vec<PathBuf> = [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs]
+            .into_iter()
+            .map(|repo| sb.checkout(&place, repo))
+            .filter(|dir| dir.is_dir())
+            .collect();
+        let named = |sha: &str| -> String {
+            dirs.iter()
+                .find_map(|dir| {
+                    let out = sb.git(dir, &["log", "-1", "--format=%s %T", sha]);
+                    out.status
+                        .success()
+                        .then(|| rendered(&out).trim_end().to_owned())
+                })
+                .unwrap_or_else(|| sha.to_owned())
+        };
+        let renamed = |raw: &str| -> String {
+            let mut out = String::new();
+            let bytes = raw.as_bytes();
+            let mut at = 0;
+            while at < bytes.len() {
+                let run = bytes[at..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_hexdigit())
+                    .count();
+                if run == 40 {
+                    out.push_str(&format!("[{}]", named(&raw[at..at + 40])));
+                    at += 40;
+                } else if run > 0 {
+                    out.push_str(&raw[at..at + run]);
+                    at += run;
+                } else {
+                    let width = raw[at..].chars().next().map_or(1, char::len_utf8);
+                    out.push_str(&raw[at..at + width]);
+                    at += width;
+                }
+            }
+            out
+        };
+        text.push_str(&format!("#### {place:?}\n"));
+        for repo in [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs] {
+            let dir = sb.checkout(&place, repo);
+            if !dir.is_dir() {
+                continue;
+            }
+            text.push_str(&format!("== {}\n", repo.name()));
+            for args in [
+                &["rev-parse", "HEAD"][..],
+                &["symbolic-ref", "-q", "HEAD"][..],
+                &["for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"][..],
+                &["status", "--porcelain"][..],
+            ] {
+                text.push_str(&renamed(&rendered(&sb.git(&dir, args))));
+            }
+            for file in ["rwv.lock", "rwv.toml"] {
+                if let Ok(content) = std::fs::read_to_string(dir.join(file)) {
+                    text.push_str(&renamed(&content));
+                }
+            }
+        }
+    }
+    text
 }

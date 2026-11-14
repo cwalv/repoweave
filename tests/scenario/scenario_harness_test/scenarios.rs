@@ -9,6 +9,9 @@ use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
 use repoweave::refusal::RefusalKind;
 
+#[path = "kill_matrix.rs"]
+mod kill_matrix;
+
 fn a() -> Place {
     Place::Primary(Machine::A)
 }
