@@ -22,6 +22,10 @@ const NOT_A_PROGRAM: &[(&str, &str)] = &[
         "a directory named like a plugin, so the spawn fails",
     ),
     (
+        "tests/sync/land_drift_test.rs",
+        "sets the mode of tracked data files to test what the VCS reads of it",
+    ),
+    (
         "tests/weave/workweave_test.rs",
         "restores a directory's mode so the temp directory can be removed",
     ),
