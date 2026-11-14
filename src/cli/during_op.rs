@@ -246,6 +246,10 @@ mod tests {
             "member set-role"
         );
         assert_eq!(spelled(&["rwv", "doctor", "--fix"]), "doctor --fix");
+        assert_eq!(
+            spelled(&["rwv", "doctor", "--fix", "--release-unreachable-claims"]),
+            "doctor --fix"
+        );
         assert_eq!(spelled(&["rwv", "rwv-graph-xyz", "--x"]), PLUGIN);
         assert_eq!(spelled(&["rwv"]), "");
     }

@@ -2944,7 +2944,14 @@ const SWEPT: &[(&str, &[&[&str]])] = &[
         "workweave set-default-create-basedir",
         &[&["workweave", "set-default-create-basedir", "elsewhere"]],
     ),
-    ("doctor", &[&["doctor"], &["doctor", "--fix"]]),
+    (
+        "doctor",
+        &[
+            &["doctor"],
+            &["doctor", "--fix"],
+            &["doctor", "--fix", "--release-unreachable-claims"],
+        ],
+    ),
     (
         "lock",
         &[&["lock"], &["lock", "--commit"], &["lock", "--dirty"]],

@@ -2764,6 +2764,27 @@ mod tests {
         std::fs::write(dir.join(OP_STATE_FILE), record).unwrap();
     }
 
+    /// The field a retired consent list left in records of this schema number
+    /// is one this release does not read, so such a record is unreadable and
+    /// refused with the exit every unreadable record gets.
+    #[test]
+    fn a_record_still_carrying_the_retired_overrides_field_is_unreadable() {
+        let tmp = crate::tempdir().unwrap();
+        a_record_in(
+            tmp.path(),
+            "\"schema\": 7, \"release\": \"0.25.0\", \"overrides\": [], ",
+        );
+        let refused = read_owner(tmp.path()).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::UnreadableOpRecord)
+        );
+        assert!(
+            format!("{refused:#}").contains(&discard_unreadable_record_at(tmp.path())),
+            "{refused:#}"
+        );
+    }
+
     #[test]
     fn a_record_of_an_older_schema_is_refused_by_every_reader_naming_its_release() {
         let tmp = crate::tempdir().unwrap();
@@ -2798,7 +2819,7 @@ mod tests {
     /// `WireOwnerRecord`, attributes and fields, comments and blank lines
     /// left out; a type declared in another module that a field names is
     /// read by its name alone, so a change inside one is not seen here.
-    const PINNED_SHAPE: (u32, &str) = (7, "511bbf37bb27e623");
+    const PINNED_SHAPE: (u32, &str) = (7, "f0ce7cd8705c3bf8");
 
     fn declaration_of<'a>(source: &'a [&'a str], name: &str) -> Option<Vec<&'a str>> {
         let start = source.iter().position(|line| {
