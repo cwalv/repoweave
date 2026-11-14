@@ -7890,6 +7890,14 @@ fn manifest_stop_region_across_members_linear() {
 }
 
 #[test]
+fn manifest_stop_cherry_pick_at_a_raw_git_merge() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::CherryPickAtARawGitMerge,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn manifest_stop_inline_table() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::InlineTable,

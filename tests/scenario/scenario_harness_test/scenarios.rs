@@ -19118,6 +19118,10 @@ pub enum ManifestSettle {
     /// A setter at the stop refuses, naming the `--keep` continues, and the
     /// one it prints, run as printed, settles the stop.
     SetterRefused,
+    /// A `git merge` the operator ran left `rwv.toml` between markers: a
+    /// cherry-pick reads this branch's manifest from its commit and refuses
+    /// the merge in progress, not the markers.
+    CherryPickAtARawGitMerge,
     /// A comment and hand layout in the workweave's `rwv.toml` come through
     /// the continue's write of the merge.
     KeepsLayout,
@@ -19463,6 +19467,18 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputLacks("rwv abort")),
             ]);
             "at a git merge the operator ran, rwv's continue and setters leave it to git"
+        }
+        S::CherryPickAtARawGitMerge => {
+            steps.extend([
+                set_history(&a(), "merge", LIB),
+                set_history(&ww("w"), "linear", LIB),
+                Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "main"])
+                    .expect(Exit::Code(1)),
+                Step::rwv(&ww("w"), &["cherry-pick", "main"])
+                    .expect(Exit::refuses(Repo::Proj, State::EditsCommitMidOperation))
+                    .claim(Claim::OutputLacks("does not parse")),
+            ]);
+            "a cherry-pick at a git merge the operator ran refuses the merge, not rwv.toml's markers"
         }
         S::SetterRefused => {
             steps.extend([
