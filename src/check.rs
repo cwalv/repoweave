@@ -5996,11 +5996,7 @@ pub fn scan_state_hygiene(
                     .map(|checkout| checkout.stands.clone());
                 let recorded_in = gone
                     .iter()
-                    .find(|workweave| {
-                        registered
-                            .as_path()
-                            .starts_with(CanonicalPath::of(&workweave.recorded).as_path())
-                    })
+                    .find(|workweave| CanonicalPath::of(&workweave.recorded).contains(&registered))
                     .map(|workweave| workweave.id.clone());
                 let sub_kind = if worktree_path.symlink_metadata().is_ok() {
                     RegistrationDirectoryKind::DirectoryStands
@@ -6112,7 +6108,7 @@ fn registers_under(primary: &CanonicalPath, project: &ProjectName, dir: &Path) -
         .is_ok_and(|registered| {
             registered
                 .iter()
-                .any(|path| CanonicalPath::of(path).as_path().starts_with(dir.as_path()))
+                .any(|path| dir.contains(&CanonicalPath::of(path)))
         })
 }
 

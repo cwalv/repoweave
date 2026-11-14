@@ -3624,10 +3624,7 @@ pub(crate) fn prune_registrations_under(
 ) -> Result<(), VcsError> {
     let dir = CanonicalPath::of(dir);
     for registered in vcs.list_stale_worktree_registrations(repo)? {
-        if CanonicalPath::of(&registered)
-            .as_path()
-            .starts_with(dir.as_path())
-        {
+        if dir.contains(&CanonicalPath::of(&registered)) {
             vcs.prune_stale_worktree_registration(repo, &registered)?;
         }
     }
