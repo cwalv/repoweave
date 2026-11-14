@@ -3339,11 +3339,12 @@ fn declared_src_types(root: &Path) -> HashSet<String> {
         r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:struct|enum|trait|type)\s+([A-Z][A-Za-z0-9_]*)",
     )
     .unwrap();
-    let src = root.join("src");
-    let bin = src.join("bin");
+    let src = CanonicalPath::of(&root.join("src"));
+    let bin = CanonicalPath::of(&root.join("src/bin"));
     let mut types = HashSet::new();
     for path in src_rs_files(root) {
-        if !path.starts_with(&src) || path.starts_with(&bin) {
+        let path_here = CanonicalPath::of(&path);
+        if !src.contains(&path_here) || bin.contains(&path_here) {
             continue;
         }
         let Ok(content) = fs::read_to_string(&path) else {
