@@ -1293,6 +1293,7 @@ every_scenario!(
     a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort("sync", "linear"),
     a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort("land", "merge"),
     abort_of_an_undisturbed_carried_stack_leaves_only_its_slots,
+    a_second_abort_leaves_the_first_ones_keep_in_each_slots_history("linear"),
     pull_aborted_after_a_hand_commit_and_a_continue,
     update_remote_aborted_after_a_hand_commit_and_a_continue,
     cherry_pick_aborted_after_a_hand_commit_and_a_continue,
@@ -3946,6 +3947,18 @@ fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort() {
             )
             .assert_fully_decided_green();
         }
+    }
+}
+
+/// What a second abort overwrites in a slot is in that slot's history,
+/// under either history.
+#[test]
+fn a_second_abort_leaves_the_first_ones_keep_in_each_slots_history() {
+    for history in ["linear", "merge"] {
+        runner::run(
+            scenarios::a_second_abort_leaves_the_first_ones_keep_in_each_slots_history(history),
+        )
+        .assert_fully_decided_green();
     }
 }
 

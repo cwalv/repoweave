@@ -21950,6 +21950,71 @@ pub fn a_commit_at_a_stop_the_continue_runs_past_is_kept_by_abort(
     )
 }
 
+/// A sync under `history` stops on `app`'s conflict; the operator resolves
+/// it by hand and commits in `lib`, and aborts. The same sync stops again,
+/// the operator commits again in `lib`, and aborts again. Each slot then
+/// holds what the second abort kept, and what the first kept is in the
+/// slot's history, read by the command the how-to names.
+pub fn a_second_abort_leaves_the_first_ones_keep_in_each_slots_history(
+    history: &'static str,
+) -> Scenario {
+    let at = ww("w");
+    let stopped = || {
+        Step::rwv(&at, &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib])
+    };
+    let aborted = || {
+        Step::rwv(&at, &["abort"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App, Repo::Lib])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/app: what abort discarded is kept as backup",
+            ))
+    };
+    let history_of = |repo: Repo, slot: &'static str, shows: &'static str| {
+        Step::git(&at, repo, &["log", "-g", "-p", slot])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(shows))
+    };
+    let steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
+        create("w"),
+        Step::hand_edit(&at, Repo::App, "README", "app", "beta"),
+        Step::git(&at, Repo::App, &["commit", "-qam", "w-app"]),
+        Step::commit(&at, Repo::Lib, "w-lib"),
+        Step::rwv(&at, &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        stopped(),
+        Step::hand_edit(&at, Repo::App, "README", "beta", "resolved-by-hand"),
+        Step::git(&at, Repo::App, &["add", "README"]),
+        Step::commit(&at, Repo::Lib, "first-hand"),
+        aborted(),
+        stopped(),
+        Step::commit(&at, Repo::Lib, "second-hand"),
+        aborted(),
+        kept_backup_shown(&at, "remotes/lib log ", "second-hand"),
+        Step::rwv_printed_within(&at, "git -C ", "remotes/app log ")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("resolved-by-hand")),
+        history_of(
+            Repo::App,
+            "refs/rwv/backup/proj--w/aborted-working-copy",
+            "+resolved-by-hand",
+        ),
+        history_of(Repo::Lib, "refs/rwv/backup/proj--w/aborted", "first-hand"),
+    ];
+    scenario(
+        "a second abort leaves the first one's keep in each slot's history",
+        steps,
+    )
+}
+
 /// How the `--continue` of a landing killed after it converged is cut short.
 #[derive(Debug, Clone, Copy)]
 pub enum ContinueCut {

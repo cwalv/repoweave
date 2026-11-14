@@ -110,7 +110,17 @@ impl GitVcs {
                 source_component(source),
                 id_text(mark, full)
             ));
-            Self::run(["update-ref", &backup_ref(&name), full], &repo)?;
+            Self::run(
+                [
+                    "update-ref",
+                    "--create-reflog",
+                    "-m",
+                    "rwv abort",
+                    &backup_ref(&name),
+                    full,
+                ],
+                &repo,
+            )?;
             return Ok(Backup {
                 name,
                 tip: tip.clone(),
