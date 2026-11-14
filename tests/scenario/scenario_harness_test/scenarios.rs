@@ -16698,7 +16698,7 @@ pub fn landing_as_refs_unpinned() -> Scenario {
 /// stops with `target` moved mid-operation and the lost-race recovery;
 /// `--continue` refuses; `rwv abort` puts `app`'s `main` back from its
 /// savepoint and leaves `lib`'s where the race put it; the landing run again
-/// lands on the new tips.
+/// as printed, with the flags it was started with, judges the new tips.
 pub fn lost_race_abort() -> Scenario {
     let mut steps = vec![create("w")];
     steps.extend(main_checked_out_nowhere());
@@ -16715,7 +16715,9 @@ pub fn lost_race_abort() -> Scenario {
         Step::hand_commit(&a(), Repo::Lib, "main", &[("raced.txt", "raced\n")]),
         Step::release("landing")
             .expect(Exit::refuses(Repo::Lib, State::TargetMovedMidOperation))
-            .claim(Claim::OutputContains("rwv abort"))
+            .claim(Claim::OutputContains(
+                "\n    rwv abort\n    rwv land --history linear\n",
+            ))
             .claim(Claim::Contains {
                 at: a(),
                 repo: Repo::App,
@@ -16733,6 +16735,9 @@ pub fn lost_race_abort() -> Scenario {
             .claim(Claim::OutputLacks("w-app")),
         Step::git(&a(), Repo::Lib, &["log", "--format=%s", "-1", "main"])
             .claim(Claim::OutputLine("hand commit")),
+        Step::rwv(&ww("w"), &["land", "--history", "linear"])
+            .expect(Exit::refuses(Repo::Lib, State::PinUnpinned))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
         Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
             .expect(Exit::refuses(Repo::Lib, State::PinUnpinned))
             .claim(Claim::OutputContains("hand commit"))

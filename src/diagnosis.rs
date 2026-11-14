@@ -1803,7 +1803,7 @@ impl State {
                         stands",
                 refused_by: "`rwv land`, at the fast-forward, and its `--continue`, since \
                              the plan no longer describes the landing",
-                offers: &[Form::LostRace, Form::LeaveTarget],
+                offers: &[Form::LostRaceLanding, Form::LeaveTarget],
                 verb_offers: &[],
             },
             Self::PublishTargetUnpublished => &StateRow {
@@ -2581,6 +2581,7 @@ pub enum Form {
     MigrateLockDriver,
     LostRace,
     LostRaceSync,
+    LostRaceLanding,
     LeaveTarget,
     CarryAgain,
     CarryAgainLand,
@@ -2638,7 +2639,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 121] = [
+    pub const ALL: [Form; 122] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2730,6 +2731,7 @@ impl Form {
         Self::MigrateLockDriver,
         Self::LostRace,
         Self::LostRaceSync,
+        Self::LostRaceLanding,
         Self::LeaveTarget,
         Self::CarryAgain,
         Self::CarryAgainLand,
@@ -3503,6 +3505,12 @@ impl Form {
             Self::LostRaceSync => &FormRow {
                 choice: C::LostRace,
                 steps: &[Rwv("rwv abort"), Rwv("rwv sync")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::LostRaceLanding => &FormRow {
+                choice: C::LostRace,
+                steps: &[Rwv("rwv abort"), Step::Recorded("<landing>")],
                 at: W::Here,
                 shipped: true,
             },
@@ -5316,6 +5324,9 @@ fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
                 flush(&mut actions, &mut parts);
                 parts.push(match line.strip_prefix("<resume>") {
                     Some(flags) => format!("the stopped operation's `--continue{flags}`"),
+                    None if *line == "<landing>" => {
+                        "`rwv land` with the flags the stopped landing was started with".to_owned()
+                    }
                     None => format!(
                         "`{}`, against the stopped operation's workspace",
                         line.replace("<abort>", "rwv abort")

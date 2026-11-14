@@ -4228,6 +4228,7 @@ fn guard_and_mark<'a>(
             .collect(),
         ..op_state::TakeInRecord::default()
     });
+    remember_landing(&cwd_workspace_dir, &initial_record);
     crate::landing_claim::refuse_without_exclusive_publish(
         project_vcs().as_ref(),
         &cwd_project_dir,
@@ -4710,6 +4711,7 @@ fn load_continuing_context<'a>(
         owner_workspace,
     } = op;
     let op_id = record.id.clone();
+    remember_landing(owner_workspace.as_path(), &record);
 
     if record.verb != op_state::OpVerb::Land {
         crate::refuse!(
@@ -5281,6 +5283,57 @@ fn off_its_branch(vcs: &dyn Vcs, dir: &Path, branch: &str) -> anyhow::Result<Opt
     })
 }
 
+static LANDING_AS_STARTED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+
+/// Remember the landing `record` holds as the line that starts it again: its
+/// `--history`, its target where the feature's record names another, the
+/// members it was let change, and `--retire`.
+fn remember_landing(source_workspace: &Path, record: &OwnerRecord) {
+    let take_in = record.take_in.as_ref();
+    let target = take_in.and_then(|take_in| match &take_in.sync_from {
+        Some(op_state::SyncFrom::Target(target)) => Some(target.clone()),
+        _ => None,
+    });
+    let dir = project_dir(source_workspace, &record.project);
+    let vcs = project_vcs();
+    let recorded_target = crate::branch::checked_out(vcs.as_ref(), &dir)
+        .ok()
+        .flatten()
+        .and_then(|branch| crate::branch::named(vcs.as_ref(), &record.project, &dir, &branch).ok())
+        .and_then(|feature| {
+            crate::branch::recorded_value(vcs.as_ref(), &record.project, &dir, &feature).ok()
+        })
+        .and_then(|recorded| match recorded {
+            crate::records::Record::Feature { target, .. } => Some(target.to_string()),
+            _ => None,
+        });
+    let mut words = vec!["rwv".to_owned(), "land".to_owned()];
+    if let Some(history) = record.history {
+        words.extend(["--history".to_owned(), history.to_string()]);
+    }
+    if let Some(target) = target.filter(|target| recorded_target.as_ref() != Some(target)) {
+        words.extend(["--target".to_owned(), target]);
+    }
+    for member in take_in
+        .iter()
+        .flat_map(|take_in| &take_in.allow_member_change)
+    {
+        words.extend(["--allow-member-change".to_owned(), member.clone()]);
+    }
+    if record.retire {
+        words.push("--retire".to_owned());
+    }
+    let _ = LANDING_AS_STARTED.set(words);
+}
+
+/// The line [`remember_landing`] remembered, `rwv land` where none was.
+fn landing_as_started() -> Vec<String> {
+    LANDING_AS_STARTED
+        .get()
+        .cloned()
+        .unwrap_or_else(|| vec!["rwv".to_owned(), "land".to_owned()])
+}
+
 fn target_moved_line(
     project: &ProjectName,
     target_workspace: Option<&Path>,
@@ -5300,10 +5353,11 @@ fn target_moved_line(
         .subject(subject)
         .listing(moved)
         .by_verb("land")
+        .bind_list("<landing>", landing_as_started())
         .only_forms(&[if wrote_target {
             crate::diagnosis::Form::LeaveTarget
         } else {
-            crate::diagnosis::Form::LostRace
+            crate::diagnosis::Form::LostRaceLanding
         }])
         .judge(project_vcs().as_ref())
 }
@@ -12078,6 +12132,7 @@ fn target_moved_line_for(
             repo.display()
         ))
         .listing([how])
+        .bind_list("<landing>", landing_as_started())
         .by_verb("land")
         .judge(project_vcs().as_ref())
 }
