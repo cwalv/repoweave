@@ -627,7 +627,10 @@ fn a_dir_workweave_named_otherwise_than_its_directory_survives_a_lost_entry() {
         let path = read_index(&ws, "web-app")["workweaves"]["far"]["path"]
             .as_str()
             .map(PathBuf::from);
-        path.is_some_and(|path| path.canonicalize().unwrap() == far.canonicalize().unwrap())
+        path.is_some_and(|path| {
+            repoweave::path_spelling::resolve(&path).unwrap()
+                == repoweave::path_spelling::resolve(&far).unwrap()
+        })
     };
     let run_printed = |text: &str, needle: &str| {
         let line = text

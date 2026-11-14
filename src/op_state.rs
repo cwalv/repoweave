@@ -2732,19 +2732,17 @@ mod tests {
         json["release"] = "9.9.9".into();
         json["take_in"]["moved_somewhere_new"] = serde_json::json!(["x"]);
         path.publish(json.to_string().as_bytes()).unwrap();
-        for refused in [read_owner(tmp.path()).map(|_| ())] {
-            let refused = refused.unwrap_err();
-            assert_eq!(
-                crate::refusal::kind_of(&refused),
-                Some(RefusalKind::UnreadableOpRecord)
-            );
-            let message = format!("{refused:#}");
-            assert!(
-                message.contains("rwv 9.9.9 wrote it in a shape")
-                    && message.contains("moved_somewhere_new"),
-                "{message}"
-            );
-        }
+        let refused = read_owner(tmp.path()).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&refused),
+            Some(RefusalKind::UnreadableOpRecord)
+        );
+        let message = format!("{refused:#}");
+        assert!(
+            message.contains("rwv 9.9.9 wrote it in a shape")
+                && message.contains("moved_somewhere_new"),
+            "{message}"
+        );
     }
 
     #[test]
