@@ -12570,24 +12570,27 @@ enum PortedText {
     TwoTables,
     TableMovedOnOneSide,
     TablesChangedAtDifferentKeys,
+    /// `main` adds `enabled` to `cargo-workspace` below a blank line, the
+    /// feature adds a `go-work` table under it: git's text merge puts the key
+    /// in `go-work`.
+    KeyMovedUnderANewTable,
 }
+
+const CARGO_EXCLUDES: &str = "exclude = [\"e\"]\n";
 
 fn text_merged_port(shape: PortedText) -> Vec<Step> {
     let mut steps = Vec::new();
     let base_table = "[workweave]\nlink = [\"a\"]\n# gap\ncopy = [\"b\"]\n\n";
     if !matches!(shape, PortedText::TwoTables) {
-        let table = match shape {
-            PortedText::TablesChangedAtDifferentKeys => base_table,
-            _ => "[workweave]\nlink = [\"a\"]\n\n",
+        let edited = match shape {
+            PortedText::TablesChangedAtDifferentKeys => format!("{base_table}{VSCODE_TABLE}"),
+            PortedText::KeyMovedUnderANewTable => {
+                format!("{VSCODE_TABLE}\n[integrations.cargo-workspace]\n{CARGO_EXCLUDES}")
+            }
+            _ => format!("[workweave]\nlink = [\"a\"]\n\n{VSCODE_TABLE}"),
         };
         steps.extend([
-            Step::hand_edit(
-                &a(),
-                Repo::Proj,
-                "rwv.toml",
-                VSCODE_TABLE,
-                &format!("{table}{VSCODE_TABLE}"),
-            ),
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", VSCODE_TABLE, &edited),
             Step::git(&a(), Repo::Proj, &["commit", "-qam", "base-table"]),
         ]);
     }
@@ -12623,6 +12626,13 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
             "copy = [\"b\"]",
             "copy = [\"b2\"]",
         )),
+        PortedText::KeyMovedUnderANewTable => steps.push(Step::hand_edit(
+            &a(),
+            Repo::Proj,
+            "rwv.toml",
+            &format!("{CARGO_EXCLUDES}\n"),
+            &format!("{CARGO_EXCLUDES}\nenabled = false\n"),
+        )),
     }
     steps.extend([
         Step::git(&a(), Repo::Proj, &["add", "rwv.toml"]),
@@ -12650,6 +12660,13 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
             "rwv.toml",
             "link = [\"a\"]",
             "link = [\"a2\"]",
+        )),
+        PortedText::KeyMovedUnderANewTable => steps.push(Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            CARGO_EXCLUDES,
+            &format!("{CARGO_EXCLUDES}[integrations.go-work]\n"),
         )),
     }
     steps.push(Step::git(
@@ -12739,6 +12756,66 @@ pub fn cherry_pick_a_table_both_sides_changed_takes_the_text_merge() -> Scenario
         )),
     ]);
     scenario("cherry-pick a table both sides changed", steps)
+}
+
+/// [`PortedText::KeyMovedUnderANewTable`]: a key only the picked commit
+/// changed lands in another table in git's text merge, which parses. The
+/// port stops listing it, and a staged resolution and the continue commit it.
+pub fn cherry_pick_a_key_the_text_merge_moved_stops() -> Scenario {
+    let mut steps = text_merged_port(PortedText::KeyMovedUnderANewTable);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains(
+                "the VCS merged its text with no conflict, into a manifest that differs from the \
+                 merge of both sides' values",
+            ))
+            .claim(Claim::OutputContains(
+                "[integrations.cargo-workspace] enabled: absent in the text merge, false in the \
+                 merge of the values",
+            ))
+            .claim(Claim::OutputContains("rwv cherry-pick --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(
+            &ww("p"),
+            Repo::Proj,
+            &["diff", "--name-only", "--diff-filter=U"],
+        )
+        .claim(Claim::OutputLine("rwv.toml")),
+        Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            &format!("{CARGO_EXCLUDES}[integrations.go-work]\n"),
+            &format!("{CARGO_EXCLUDES}enabled = false\n[integrations.go-work]\n"),
+        ),
+        Step::rwv_printed_holding(&ww("p"), "git -C", "add").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputContains(
+            "exclude = [\"e\"]\nenabled = false\n[integrations.go-work]",
+        )),
+    ]);
+    scenario("cherry-pick a key the text merge moved", steps)
+}
+
+/// [`cherry_pick_a_key_the_text_merge_moved_stops`], abandoned.
+pub fn cherry_pick_a_key_the_text_merge_moved_aborts() -> Scenario {
+    let mut steps = text_merged_port(PortedText::KeyMovedUnderANewTable);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::rwv_printed_exactly(&ww("p"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&ww("p"), Repo::Proj, &["status", "--porcelain"])
+            .claim(Claim::OutputLacks("rwv.toml")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputLacks(
+            "enabled = false\n[integrations.go-work]",
+        )),
+    ]);
+    scenario("cherry-pick a key the text merge moved aborted", steps)
 }
 
 /// Both sides change keys of one `[workweave]` table, apart: git's text
