@@ -20105,6 +20105,9 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .claim(Claim::OutputContains(differs))
                     .claim(Claim::OutputContains("local/remotes/app history"))
+                    .claim(Claim::OutputContains(
+                        "committed are not kept, as the VCS's own abort does not keep them",
+                    ))
                     .claim(Claim::OutputLacks("copy"))
                     .claim(Claim::OutputLacks("--keep yours")),
                 Step::rwv(&ww("w"), &["sync", "--continue"])

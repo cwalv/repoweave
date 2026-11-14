@@ -398,7 +398,8 @@ pub(crate) fn conflict_stop(
         text.push('\n');
     }
     text.push_str(&format!(
-        "then run `{resume}`, or `{}` to put everything back as it was",
+        "then run `{resume}`, or `{}` to put everything back as it was; edits to tracked files \
+         not yet committed are not kept, as the VCS's own abort does not keep them",
         crate::op_state::abort_command_at(workspace)
     ));
     crate::refusal::refusal(RefusalKind::OpParked, text)
