@@ -2340,6 +2340,57 @@ Schema:
         {
           "type": "object",
           "required": [
+            "head",
+            "kind",
+            "repo",
+            "stood_at"
+          ],
+          "properties": {
+            "head": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "branch-rewritten"
+              ]
+            },
+            "repo": {
+              "$ref": "#/definitions/WirePath"
+            },
+            "stood_at": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "paths",
+            "repo"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "move-taken-in-part"
+              ]
+            },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "repo": {
+              "$ref": "#/definitions/WirePath"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "ctx",
             "kind",
             "message"

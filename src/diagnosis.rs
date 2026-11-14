@@ -752,8 +752,8 @@ impl State {
                         Where its drift cannot be read at all (no record of where the checkout \
                         stood, its branch moved to a commit that does not contain where it \
                         stood, or part of the move taken in a way its history does not show), \
-                        nothing it holds is judged an edit and the one choice is a stash that \
-                        keeps every difference",
+                        nothing it holds is judged an edit and the one choice sets aside every \
+                        difference",
                 refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
                              workspace, and every other verb that judges a checkout's edits",
                 offers: &[
