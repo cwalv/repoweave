@@ -1020,6 +1020,9 @@ every_scenario!(
     settle_a_manifest_stop(scenarios::ManifestSettle::SetterRefused),
     settle_a_manifest_stop(scenarios::ManifestSettle::KeepsLayout),
     settle_a_manifest_stop(scenarios::ManifestSettle::CleanBeside),
+    settle_a_manifest_stop(scenarios::ManifestSettle::BothChangedOutsideTheRegions),
+    settle_a_manifest_stop(scenarios::ManifestSettle::TableSplitByARegion),
+    settle_a_manifest_stop(scenarios::ManifestSettle::InlineTable),
     settle_a_manifest_stop(scenarios::ManifestSettle::ForeignMerge),
     an_entry_both_sides_changed(
         scenarios::BothChanged::ListAdds,
@@ -7835,5 +7838,29 @@ fn a_land_stop_merge_resolution_only_aborts_as_the_operation_s_own_or_foreign() 
             scenarios::LandStopCommit::ResolutionOnly,
         ),
     )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_both_changed_outside_the_regions() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::BothChangedOutsideTheRegions,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_table_split_by_a_region() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::TableSplitByARegion,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_inline_table() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::InlineTable,
+    ))
     .assert_fully_decided_green();
 }

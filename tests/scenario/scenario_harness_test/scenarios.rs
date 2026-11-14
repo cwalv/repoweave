@@ -19116,6 +19116,18 @@ pub enum ManifestSettle {
     /// The operator aborts the sync's merge with git and starts another of an
     /// older `main` commit: the continue refuses to write into it.
     ForeignMerge,
+    /// Each side adds a member at the same place, so git conflicts there, and
+    /// an element to a `[workweave] copy` list far above, which git merges:
+    /// the list is not listed, and `--keep yours` keeps both elements.
+    BothChangedOutsideTheRegions,
+    /// `main` changes `lib`'s `url` and `role`, the workweave its `role`: the
+    /// region in conflict holds the role, the url merges outside it, and
+    /// `--keep yours` keeps the workweave's role and `main`'s url.
+    TableSplitByARegion,
+    /// `lib` declared as one inline table, its line changed by both sides:
+    /// the role both changed is listed, and `--keep yours` keeps the
+    /// workweave's role and the `recurse-submodules` only `main` set.
+    InlineTable,
 }
 
 pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
@@ -19278,7 +19290,8 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         "rwv.toml entry history is in conflict: \"merge\" in yours, \"linear\" incoming"
                     }
                 })),
-                keeps("--keep incoming", history),
+                keeps("--keep incoming", history)
+                    .claim(Claim::OutputContains("kept in backup proj--w/")),
                 head_manifest().claim(Claim::OutputContains(match history {
                     H::Merge => "history = \"merge\"",
                     H::Linear => "history = \"linear\"",
@@ -19862,6 +19875,103 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains("enabled   =   false")),
             ]);
             "the continue's write of rwv.toml keeps its comments and layout"
+        }
+        S::BothChangedOutsideTheRegions => {
+            steps = vec![
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    UNDER_INTEGRATIONS,
+                    "enabled = false\n\n[workweave]\ncopy = [\n  \"a.env\",\n  \"b.env\",\n  \
+                     \"c.env\",\n  \"d.env\",\n  \"e.env\",\n]\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "copy list"]),
+            ];
+            steps.extend(lines_only());
+            steps.extend([
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "  \"a.env\",\n",
+                    "  \"0-main.env\",\n  \"a.env\",\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "copy 0-main"]),
+                Step::hand_edit(
+                    &ww("w"),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "  \"e.env\",\n",
+                    "  \"e.env\",\n  \"z-w.env\",\n",
+                ),
+                Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "copy z-w"]),
+                stop(H::Merge)
+                    .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
+                    .claim(Claim::OutputLacks("copy")),
+                Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "yours"])
+                    .expect(Exit::Succeeds),
+                both_members()
+                    .claim(Claim::OutputContains("\"0-main.env\""))
+                    .claim(Claim::OutputContains("\"z-w.env\"")),
+            ]);
+            "a change both sides made that git merged outside the regions in conflict survives \
+             --keep yours"
+        }
+        S::TableSplitByARegion => {
+            steps.extend([
+                Step::rwv(&a(), &["member", "set-url", LIB, "url:fork:lib"]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "set-role", LIB, "dependency"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+                stop(H::Merge)
+                    .claim(Claim::OutputContains(
+                        "role: \"fork\" in yours, \"dependency\" incoming",
+                    ))
+                    .claim(Claim::OutputLacks("url:")),
+                keeps("--keep yours", H::Merge),
+                head_manifest()
+                    .claim(Claim::OutputContains("role = \"fork\""))
+                    .claim(Claim::OutputContains("fork/lib.git"))
+                    .claim(Claim::OutputLacks("dependency")),
+            ]);
+            "a member table a region in conflict splits keeps the field merged outside it"
+        }
+        S::InlineTable => {
+            steps = hand_ordered_manifest();
+            steps.extend([
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "[repositories.\"local/remotes/lib\"]\ntype = \"git\"\nurl = ",
+                    "[repositories]\n\"local/remotes/lib\" = { type = \"git\", url = ",
+                ),
+                Step::hand_edit(
+                    &a(),
+                    Repo::Proj,
+                    "rwv.toml",
+                    "lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n",
+                    "lib.git\", branch = \"main\", role = \"owned\" }\n",
+                ),
+                Step::git(&a(), Repo::Proj, &["commit", "-qam", "hand: lib inline"]),
+                create("w"),
+                Step::rwv(&a(), &["member", "set-recurse-submodules", LIB, "false"])
+                    .expect(Exit::Succeeds),
+                Step::rwv(&a(), &["member", "set-role", LIB, "dependency"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+                stop(H::Merge)
+                    .claim(Claim::OutputContains(
+                        "role: \"fork\" in yours, \"dependency\" incoming",
+                    ))
+                    .claim(Claim::OutputLacks("recurse-submodules")),
+                keeps("--keep yours", H::Merge),
+                head_manifest()
+                    .claim(Claim::OutputContains("role = \"fork\""))
+                    .claim(Claim::OutputContains("recurse-submodules = false"))
+                    .claim(Claim::OutputLacks("dependency")),
+            ]);
+            "an inline member table both sides changed takes the kept side's role and the field \
+             only the other side changed"
         }
         S::ForeignMerge => {
             steps = lines_only();
@@ -20975,6 +21085,10 @@ pub fn a_sync_onto_an_emptied_manifest_refuses() -> Scenario {
             Step::rwv(&ww("w"), &["sync"])
                 .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
                 .claim(Claim::OutputContains("holds no `repositories` table"))
+                .claim(Claim::OutputContains(
+                    "a commit on main that makes its rwv.toml parse fixes it",
+                ))
+                .claim(Claim::OutputLacks("rwv doctor --fix"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
         ],
     )
@@ -25091,7 +25205,8 @@ pub fn removals_from_both_sides_that_leave_no_member_sync_into_an_empty_manifest
                 Repo::Proj,
                 State::UnparseableProjectMidOperation,
             ))
-            .claim(Claim::OutputContains("holds no `repositories` table")),
+            .claim(Claim::OutputContains("holds no `repositories` table"))
+            .claim(Claim::OutputContains("add the line `[repositories]`")),
         Step::hand_edit(
             &ww("w"),
             Repo::Proj,
