@@ -125,7 +125,7 @@ fn a_tip_only_a_remote_tracking_branch_reaches_is_reset_keeping_nothing() {
     commit(p.path(), "pushed");
     git(
         p.path(),
-        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+        &["fetch", "-q", ".", "HEAD:refs/remotes/mirror/main"],
     );
     let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
     assert_eq!(outcome, VerifiedRestoreOutcome::Restored);
