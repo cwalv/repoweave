@@ -25004,6 +25004,51 @@ pub fn pull_continue_pins_a_member_merge_committed_by_hand() -> Scenario {
     )
 }
 
+/// `update --remote --merge-upstream` stopped on a conflict in `app` while
+/// `lib` moves upstream cleanly; the merge is concluded in `app` either by
+/// hand or by the continue. Either way the continue reports both repos taken
+/// in.
+pub fn update_remote_continue_counts_each_repo_it_took_in(by_hand: bool) -> Scenario {
+    let mut steps = vec![
+        Step::new_machine(Machine::B),
+        Step::commit(&b(), Repo::Lib, "beta-lib"),
+        Step::git(&b(), Repo::Lib, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Lib), "main"),
+        Step::hand_edit(&b(), Repo::App, "README", "app", "beta"),
+        Step::git(&b(), Repo::App, &["commit", "-qam", "beta"]),
+        Step::git(&b(), Repo::App, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+        Step::rwv(&a(), &["update", "--remote", "--merge-upstream"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked)),
+        Step::git(&a(), Repo::App, &["checkout", "--ours", "README"]),
+        Step::git(&a(), Repo::App, &["add", "README"]),
+    ];
+    if by_hand {
+        steps.push(Step::git(
+            &a(),
+            Repo::App,
+            &["commit", "-q", "--no-edit"],
+        ));
+    }
+    steps.push(
+        Step::rwv(&a(), &["update", "--remote", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .claim(Claim::OutputContains("advanced 2 repo(s)")),
+    );
+    scenario(
+        if by_hand {
+            "update --remote --continue counts each repo after a merge concluded by hand"
+        } else {
+            "update --remote --continue counts each repo after a merge it concludes"
+        },
+        steps,
+    )
+}
+
 /// Which operation [`a_stop_marked_resolved_continues`] stops on `app`.
 #[derive(Debug, Clone, Copy)]
 pub enum StoppedOnApp {
@@ -25736,7 +25781,9 @@ pub fn sync_continue_names_abort_for_a_branch_deleted_under_its_rebase() -> Scen
         Step::git(&a(), Repo::App, &["update-ref", "-d", "refs/heads/proj--w"]),
         Step::rwv(&ww("w"), &["sync", "--continue"])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .claim(Claim::OutputContains("is gone"))
+            .claim(Claim::OutputContains(
+                "the branch it moves, 'proj--w', is gone. Abort puts everything back as it was, 'proj--w' included:\nrwv",
+            ))
             .claim(Claim::OutputLacks("rwv sync --continue")),
         Step::rwv_printed_exactly(&ww("w"), "rwv abort")
             .expect(Exit::Succeeds)

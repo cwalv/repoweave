@@ -1779,7 +1779,7 @@ fn rebase_refusal(
         return crate::refusal::refusal(
             RefusalKind::OpParked,
             format!(
-                "rwv sync: the rebase of {repo} onto {} cannot finish at {}: the branch it moves,                  '{branch}', is gone. Abort puts everything back as it was, '{branch}' included:\n                   {}",
+                "rwv sync: the rebase of {repo} onto {} cannot finish at {}: the branch it moves, '{branch}', is gone. Abort puts everything back as it was, '{branch}' included:\n{}",
                 sync.source_name(),
                 dir.display(),
                 crate::op_state::abort_command_at(sync.ctx.active_path()),

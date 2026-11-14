@@ -403,7 +403,16 @@ fn update_for_project(
         .map(|(rp, entry)| {
             let checkout = member_checkout_dir(rp, primary_root, workweave_dir);
             let vcs = vcs_for(entry.vcs_type);
-            let old = vcs.head_revision(checkout.path()).ok();
+            let old = state
+                .resumed
+                .as_ref()
+                .and_then(|(op, _)| {
+                    vcs.resolve_savepoint(
+                        checkout.path(),
+                        &crate::op_state::SavepointKey::Op(op.id.clone()),
+                    )
+                })
+                .or_else(|| vcs.head_revision(checkout.path()).ok());
             let (expected, declared) = aligner.wanted(entry.role, entry);
             WorkItem {
                 repo_path: rp.clone(),
