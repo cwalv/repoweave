@@ -18,19 +18,7 @@ The argument is a URL or a registry shorthand (`github/example/some-lib`), and `
 
 A member with no pin is reported as `pin` `none`, and the report names the verbs that give one: `rwv member pin <path> <rev> --commit`, or `rwv update --remote --repo <path> --commit` for its upstream's tip. `rwv lock` gives none, since it only moves a pin forward.
 
-A role change or a removal is recorded with `rwv lock --commit`, which commits `rwv.lock` with `rwv.toml`:
-
-```bash
-rwv lock --commit
-```
-
-It refuses while another tracked file in `projects/<project>/` has uncommitted changes, such as a `package.json` the change regenerated. Then write the lock and commit the project repo with git:
-
-```bash
-rwv lock
-git -C projects/<project> add -A
-git -C projects/<project> commit -m "Change some-lib"
-```
+A role change and a removal commit themselves too, as `rwv member set-role` and `rwv member remove` below say; no `rwv lock --commit` follows them.
 
 ## Set the repository role
 
@@ -60,20 +48,18 @@ rwv member set-role github/example/some-lib reference
 rwv member set-role github/example/some-lib owned
 ```
 
-It edits `rwv.toml`, regenerates the ecosystem workspace files (a `reference` repository is left out of every build graph), and sets the checkout's file permissions for the new role. A change to `reference` refuses while the repository has uncommitted changes to tracked files; commit, stash or discard them first. Record the change with `rwv lock --commit` (see [The commit an add makes](#the-commit-an-add-makes)). See `rwv explain member` for the full behavior.
+It edits `rwv.toml`, regenerates the ecosystem workspace files (a `reference` repository is left out of every build graph), and sets the checkout's file permissions for the new role. The change is committed alone, with the files it regenerates. A change to `reference` refuses while the repository has uncommitted changes to tracked files; commit, stash or discard them first. See `rwv explain member` for the full behavior.
 
 ## Track a non-default branch
 
-`rwv member add` records the remote's default branch. To track another branch, set `branch = "<branch>"` on the entry in `projects/<project>/rwv.toml`, switch the clone to that branch, and record the new tip:
+`rwv member add` records the remote's default branch. To track another branch, declare it with `rwv member set-branch`, which commits the entry and the member's new pin together:
 
 ```bash
-$EDITOR projects/<project>/rwv.toml        # branch = "dev" on github/example/some-lib
-git -C github/example/some-lib fetch origin
-git -C github/example/some-lib switch dev
-rwv update --remote --commit
+rwv fetch
+rwv member set-branch github/example/some-lib dev
 ```
 
-`rwv update --remote --commit` advances the clone to the branch's remote tip and commits `rwv.lock` together with the edited `rwv.toml` and the integration files it regenerates. Editing `branch` alone does not move the clone: `rwv update` refuses to align a clone that sits on another branch, and leaves a clone the lock has no entry for where it is.
+The branch must exist locally or on a remote as last fetched; `rwv fetch` brings in a remote's. To create a branch that exists nowhere, add `--new`. The member switches onto the branch and is pinned at its tip, in either direction, by name.
 
 ## Create a new repository (`--new`)
 
@@ -127,7 +113,7 @@ rwv member remove github/example/some-lib --delete
 
 `--delete` refuses if the checkout has uncommitted changes, commits unreachable from any other clone, or (in the primary weave) live workweave worktrees or references from another project's `rwv.toml` (pass `--delete-shared-clone` to override the shared-project check). If you already removed the entry from `rwv.toml` by hand, running `rwv member remove <path> [--delete]` finishes regenerating integration files and deleting the leftover checkout.
 
-Record a removal with `rwv lock --commit` (see [The commit an add makes](#the-commit-an-add-makes)). When the project repo tracks its `.code-workspace` file, a removal changes that file, so `rwv lock --commit` refuses and the `rwv lock` plus `git commit` route applies.
+The removal is committed with the member's pin dropped and the files it regenerated, leaving every other uncommitted edit where it is.
 
 ## Related
 

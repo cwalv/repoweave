@@ -132,7 +132,6 @@ src/feature_sync.rs	pin not on declared branch	-	1
 src/feature_sync.rs	pin off lineage	-	2
 src/feature_sync.rs	pin unreachable	tests/doctor/benign_staleness_test.rs	1
 src/feature_sync.rs	pin would be unreachable	tests/sync/push_test.rs	1
-src/feature_sync.rs	protected declared	tests/sync/protection_test.rs	2
 src/feature_sync.rs	push-branch behind	-	1
 src/feature_sync.rs	push-branch diverged	tests/sync/push_test.rs	5
 src/feature_sync.rs	target dependents	-	1

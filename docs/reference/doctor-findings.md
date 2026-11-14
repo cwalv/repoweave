@@ -288,7 +288,7 @@ A project directory exists but does not load: its `rwv.toml` or its `rwv.lock` f
 
 #### `pre-schema`
 
-**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys an earlier release wrote: `version` where `branch` is now expected, or `submodules` where `recurse-submodules` is. Every verb that reads the manifest at the checked-out tip refuses with this kind, and `rwv explain unparseable-project` is its route line.
+**Error. Auto-fixable.** The project's `rwv.toml` names member-entry keys of the retired schema: `version` where `branch` is expected, or `submodules` where `recurse-submodules` is. Every verb that reads the manifest at the checked-out tip refuses with this kind, and `rwv explain unparseable-project` is its route line.
 
 **What to do:** `rwv doctor --fix`, run in the project's checkout. It renames the keys in place — `version` to `branch`, `submodules = "skip"` to `recurse-submodules = false`, and drops `submodules = "local"`, which is what an absent `recurse-submodules` means — keeping the file's comments and key order. It writes the rename into the working file and into the project's HEAD commit and commits only that, in one commit: any other edit to `rwv.toml`, and any edit to another file, stays uncommitted where it was. It declines, changing nothing, while another file is marked for the next commit or a rebase, merge or cherry-pick is in progress in the project repo, and says so; run it again once that is dealt with. A value of `submodules` other than `"local"` or `"skip"`, or an entry that names both a key and its replacement, is not guessed at: the repair names it and leaves the file.
 
@@ -1553,15 +1553,15 @@ text output prints that command filled in.
 
 **Warning. Report-only.** A `.rwv-op` file is present at a weave root.
 The finding reports the file's age, its path, and the `verb` that started the
-op (`sync` or `land`). A file whose op id, verb, project, workspaces and
+op (`sync`, `land`, `pull`, `update-remote` or `cherry-pick`). A file whose op id, verb, project, workspaces and
 start time parse is reported, and its savepoints held live, even when the
 rest of it does not parse, since `rwv abort` can still restore from them. A
 file whose op id does not parse, or that another release's record schema
 wrote, is [`unreadable-op-record`](#unreadable-op-record) instead.
 
-`--fix` has no arm here and will not grow one: another terminal may be
+`--fix` leaves it: another terminal may be
 mid-conflict-resolution, and rwv has no daemon that could know which workspace
-the op state legitimately belongs to.
+the op record legitimately belongs to.
 
 **What to do:** inspect it, then either resume with the `--continue` the
 finding names — an op is only resumable under the verb that started it — or
@@ -1606,7 +1606,7 @@ classical crash between acquire and mark) and `owner-op-id-mismatch` (the
 owner has an `.rwv-op`, but for a different operation, so this lease points at
 one that has already finished).
 
-Verbs that read op-state (`rwv sync`, `rwv land`, `rwv abort`, `rwv
+Verbs that read the op record (`rwv sync`, `rwv land`, `rwv abort`, `rwv
 status`) refuse with this kind when they meet such a lease, naming the
 workspace that holds it: with no owner record, nothing can resume or abort the
 operation the lease names.

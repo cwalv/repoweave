@@ -18,7 +18,7 @@ Before pushing any remote, `rwv push` refuses unless all of these hold:
 
 By default, `rwv push` pushes member repositories with `role = "owned"` and `role = "fork"` (`fork` URLs must point to your writable fork; see [Roles reference](../reference/roles.md#fork)), then the branch's record and the drops this machine has made, then the project repository. It pushes a `dependency` or `reference` repository only when `--role` or `--repo` names it. A feature's member branch is pushed only when it holds commits no remote-tracking branch reaches. The project repository is pushed last, only after every in-scope member push succeeded and every pin its lock holds is reached by what the remotes now hold, so collaborators never fetch a `rwv.lock` that references unpushed member commits. When a pin is not reached (a `dependency` member's commit no remote holds, say), the project branch is withheld (`publish` `withheld`) and the refusal lists the branches that do reach the pin; `rwv push --repo <member>` publishes the member, and the next `rwv push` publishes the project. A feature's member branch that holds nothing beyond the target's pin is not pushed, so where its pin is work the target holds and has not published (a landing without `--retire`, say), the refusal offers `rwv push --branch <target>` instead, which runs from any workspace; the next `rwv push` then publishes the feature.
 
-Preview the plan without contacting remotes:
+Preview the plan. The preview runs the push's pruning fetch, so its verdict is the push's, and it writes nothing but what a fetch writes:
 
 ```bash
 rwv push --dry-run
@@ -58,6 +58,8 @@ rwv push: github/chatly/server: pin unpinned (HEAD abc1234def56 is 1 commit beyo
 choices:
   record it: the lock, and `rwv.toml` as it stands
     rwv lock --commit
+  take theirs; yours is kept in a backup
+    rwv update --remote --reset-to-upstream github/chatly/server
 
 rwv explain pin
 ```
@@ -67,6 +69,7 @@ rwv explain pin
   rwv lock --commit
   rwv push
   ```
+- **To take the remote's work instead:** `rwv update --remote --reset-to-upstream github/chatly/server` moves the member's branch to its upstream and keeps the unlocked commits in a backup; then `rwv push`.
 - **To publish the existing lock:** Move the member's branch back to the locked revision, keeping the unlocked commits on a branch of their own, then push:
   ```bash
   git -C github/chatly/server branch keep-local

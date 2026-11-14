@@ -137,7 +137,7 @@ $ rwv doctor
   |
 5 | role = "primary"
   |        ^^^^^^^^^
-the `primary` role spelling is no longer accepted; the role is spelled `owned`
+the `primary` role spelling is not accepted; the role is spelled `owned`
 ```
 
 Change the value to `owned`. Editing the manifest is yours because the manifest is yours — see [formats](./formats.md).

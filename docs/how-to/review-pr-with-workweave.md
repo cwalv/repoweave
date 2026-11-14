@@ -12,7 +12,7 @@ rwv materialize
 
 The PR is checked out on a detached `HEAD`, so the member's `web-app--pr-42` feature branch stays at the parent workspace's locked revision. For a multi-repo PR, fetch and check out `FETCH_HEAD` detached in each affected member worktree; untouched repositories stay at the parent's locked revisions. `rwv workweave create` ran the install hooks against the parent's committed state; `rwv materialize` runs them again against the PR's.
 
-A review workweave is never landed: do not run `rwv land` from it. With the PR checked out detached, `land` refuses (`head-not-on-branch`) before it changes anything; attaching a branch to the PR commits would let it record them in the workweave's `rwv.lock` and fast-forward the parent's branch onto them, landing the unreviewed PR.
+A review workweave is never landed: do not run `rwv land` from it. With the PR checked out detached, `land` refuses (`alignment` `detached`) before it changes anything; attaching a branch to the PR commits would let it record them in the workweave's `rwv.lock` and fast-forward the parent's branch onto them, landing the unreviewed PR.
 
 ## What `rwv doctor` reports while you review
 
@@ -51,13 +51,16 @@ git -C github/chatly/server push origin HEAD:<pr-branch>
 
 ## Keep a fix of your own
 
-A review workweave made without a branch is on the minted name `web-app--pr-42`, which `rwv push` never publishes. A member the review left alone is still on that branch, so a fix you want to keep that is unrelated to the PR goes there, never on the detached `HEAD` the PR sits on. Commit it, name the workweave's branch for the fix, then publish the member that carries it:
+A review workweave made without a branch is on the minted name `web-app--pr-42`, which `rwv push` never publishes. A member the review left alone is still on that branch, so a fix you want to keep that is unrelated to the PR goes there, never on the detached `HEAD` the PR sits on. Commit it, name the workweave's branch for the fix, pin the member's new commit by name, then publish the member that carries it:
 
 ```bash
 git -C github/chatly/lib commit -am "fix the lib typo"
 rwv branch rename lib-fix
+rwv member pin github/chatly/lib HEAD --commit
 rwv push --repo github/chatly/lib
 ```
+
+`rwv member pin` records only that member's commit in `rwv.lock`; `rwv lock` and `rwv update` would also act on the PR's detached checkout, which this workweave leaves alone. `rwv push` refuses a member whose commits are beyond its pin (`pin` `unpinned`), so the pin comes first.
 
 `rwv branch rename` renames the project branch and each `owned` and `fork` member's branch of the same name, moves the branch's record, and stops each from taking in from a remote branch of the old name. A member branch some live weave branch declares is never renamed: it stays, and the member's branch of the new name starts at its tip. A `<new>` that already exists is refused (`name` `exists`); `--adopt` takes up a remote's.
 

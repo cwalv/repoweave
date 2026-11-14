@@ -71,7 +71,7 @@ rwv workweave delete payments   # when ready to clean up
 
 ## Land multiple workweaves serially
 
-When two workweaves both have commits to land, land them one at a time:
+When two workweaves both have commits to land, land them one at a time. The second landing needs more than a fast-forward, so the target must say how it accepts landings: [record that first](#saying-how-the-target-accepts-landings), or pass `--history <setting>` to the `rwv sync` and `rwv land` below.
 
 ```bash
 # 1. Land and retire ww1

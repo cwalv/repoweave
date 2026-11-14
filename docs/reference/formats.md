@@ -47,7 +47,7 @@ A verb that changes `rwv.toml` (`rwv member add`, `rwv member remove`, the `rwv 
 
 ### Moving from `rwv.yaml`
 
-Earlier versions read a YAML manifest at `projects/<name>/rwv.yaml`. A project directory still holding one is reported by `rwv doctor` as `legacy-manifest-format` and does not load; rewrite the file as `rwv.toml` in the shape above, then delete the old one.
+A YAML manifest at `projects/<name>/rwv.yaml` is not read. A project directory holding one is reported by `rwv doctor` as `legacy-manifest-format` and does not load; rewrite the file as `rwv.toml` in the shape above, then delete the old one.
 
 There is no `--fix` arm. The manifest is yours — the comments and the key order in it are things you wrote, and neither has a mechanical translation between the two formats. A conversion that guessed at them would hand back a file you would have to audit line by line anyway.
 
@@ -66,7 +66,7 @@ Keyed by canonical local path (`<registry>/<owner>/<repo>`). Each entry:
 | `recurse-submodules` | no | `true` (the default, and not written when rwv writes the file) or `false`. See [Submodules](#submodules). |
 | `history` | no | `linear`, `merge` or `ff-only`: how this branch accepts landings of this member, overriding the top-level `history`. See [`history`](#history). |
 
-Any other key in an entry is rejected, naming it. `version` and `submodules`, the keys an earlier release wrote for what `branch` and `recurse-submodules` now say, are rejected too: a project whose entries name one does not load, and `rwv doctor` reports it as [`unparseable-project`](./doctor-findings.md#unparseable-project) / `pre-schema`. `rwv doctor --fix` renames the keys in place and commits only that rename; see [Upgrade rwv](../how-to/upgrade-rwv.md).
+Any other key in an entry is rejected, naming it. `version` and `submodules`, the retired spellings of `branch` and `recurse-submodules`, are rejected too: a project whose entries name one does not load, and `rwv doctor` reports it as [`unparseable-project`](./doctor-findings.md#unparseable-project) / `pre-schema`. `rwv doctor --fix` renames the keys in place and commits only that rename; see [Upgrade rwv](../how-to/upgrade-rwv.md).
 
 `branch` is branch-only by design: the manifest declares which branch to *track*, while `rwv.lock` records the exact commit SHA you *are* on. Specifically:
 
@@ -262,7 +262,7 @@ Written by `rwv workweave create <name>`, which, run inside a workweave, also du
 | `project` | Project name this workweave is forked for |
 | `parent` | Absolute path to the workspace the workweave was forked from. `primary` value when forked from primary; the parent-workweave path when forked from inside another workweave |
 
-All three fields are required. A YAML-format marker (written before markers were JSON) or one missing `parent:` (written before parent tracking was introduced) is a legacy marker and must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` from the primary weave to migrate it to JSON, backfilling `parent:` where it is absent — `--fix` cannot run from inside the workweave it would repair, because the marker is resolved before any verb dispatches. See [upgrade-rwv — Step 1](../how-to/upgrade-rwv.md#step-1--a-legacy-workweave-marker).
+All three fields are required. A marker in YAML format, or one missing `parent:`, is a legacy marker and must be migrated before the workweave can be used — any `rwv` invocation from inside a workweave with a legacy marker will fail with a clear error message naming the file. Run `rwv doctor --fix` from the primary weave to migrate it to JSON, backfilling `parent:` where it is absent — `--fix` cannot run from inside the workweave it would repair, because the marker is resolved before any verb dispatches. See [upgrade-rwv — Step 1](../how-to/upgrade-rwv.md#step-1--a-legacy-workweave-marker).
 
 Consumed by:
 
@@ -277,7 +277,7 @@ Lives in the directory the project clone's worktrees share (git: `.git/` of `<pr
 
 It records the project's default workweave basedir once `set-default-create-basedir` has written one (`<parent-of-primary>/.workweaves` until then), and, for every workweave created for the project, its absolute path and the workspace it was forked from. `-w <project>--<name>` and `rwv workweave list` resolve through the paths; the parents are what restore a workweave's marker whole. Its field-level schema is an implementation detail; read it through `rwv workweave list` and `rwv doctor`. One that does not parse refuses every verb that reads it as `unreadable-workweave-index`, and `rwv doctor --fix` rebuilds it from the workweave markers on disk, all but the basedir.
 
-An index that earlier releases kept at `<primary>/projects/<project>/.rwv-workweave-index`, in any shape, is not read: every verb that reads the index refuses it as `legacy-workweave-index`, and `rwv doctor --fix` converts it and moves it into the clone. See [upgrade-rwv — Step 8](../how-to/upgrade-rwv.md#step-8--a-workweave-index-at-the-old-path).
+An index at `<primary>/projects/<project>/.rwv-workweave-index`, in any shape, is not read: every verb that reads the index refuses it as `legacy-workweave-index`, and `rwv doctor --fix` converts it and moves it into the clone. See [upgrade-rwv — Step 8](../how-to/upgrade-rwv.md#step-8--a-workweave-index-at-the-old-path).
 
 ## `rwv-workspace-state` — what the workspace last aligned for
 
