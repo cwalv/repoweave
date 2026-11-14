@@ -12708,7 +12708,8 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
 /// into a file with two `[workweave]` tables. The port stops with `rwv.toml`
 /// unmerged and this branch's text in place; the printed staging of a
 /// resolution and the printed continue commit it, and the printed abort puts
-/// the checkout back.
+/// the checkout back. A member's field the resolution changes is not ported:
+/// the continue keeps this branch's.
 pub fn cherry_pick_two_tables_stop() -> Scenario {
     let mut steps = text_merged_port(PortedText::TwoTables);
     steps.extend([
@@ -12740,13 +12741,23 @@ pub fn cherry_pick_two_tables_stop() -> Scenario {
             "[workweave]\ncopy = [\"b\"]",
             "[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]",
         ),
+        Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "branch = \"stable-app\"",
+            "branch = \"hand-app\"",
+        ),
         Step::rwv_printed_holding(&ww("p"), "git -C", "add").expect(Exit::Succeeds),
         Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("ported")),
-        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"]).claim(Claim::OutputContains(
-            "[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]",
-        )),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains(
+                "[workweave]\nlink = [\"a\"]\ncopy = [\"b\"]",
+            ))
+            .claim(Claim::OutputContains("branch = \"stable-app\""))
+            .claim(Claim::OutputLacks("hand-app")),
         Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:port-table.txt"])
             .claim(Claim::OutputLine("port-table")),
     ]);
