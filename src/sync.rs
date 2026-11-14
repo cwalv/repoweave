@@ -2403,7 +2403,8 @@ fn publish_or_drop(repo_path: &RepoPath, held: &[crate::vcs::HeldAlone]) -> Stri
     }
     if !backups.is_empty() {
         ways.push(format!(
-            "drop the backups you do not keep (`rwv backup drop {repo_path} {}`)",
+            "drop the backups you do not keep (`rwv backup list` shows them; \
+             `rwv backup drop {repo_path} {}`)",
             backups.join(" ")
         ));
     }
