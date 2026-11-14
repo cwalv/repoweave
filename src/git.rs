@@ -5663,6 +5663,49 @@ impl Vcs for GitVcs {
         Ok(())
     }
 
+    fn merge_taking(
+        &self,
+        checkout: &Path,
+        sides: &crate::vcs::ConflictSides,
+        taking: crate::vcs::TakingSide,
+    ) -> Result<String, VcsError> {
+        let stem = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                &format!("rwv-merge-taking-{}", std::process::id()),
+            ],
+            checkout,
+        )?;
+        let files = ["yours", "base", "incoming"].map(|name| format!("{stem}-{name}"));
+        let written = files
+            .iter()
+            .zip([&sides.yours, &sides.base, &sides.incoming])
+            .try_for_each(|(file, text)| {
+                std::fs::write(file, text.as_deref().unwrap_or_default()).map_err(|e| {
+                    VcsError::Io {
+                        ctx: format!("failed to write {file}"),
+                        source: e,
+                    }
+                })
+            });
+        let merged = written.and_then(|()| {
+            let side = match taking {
+                crate::vcs::TakingSide::Yours => "--ours",
+                crate::vcs::TakingSide::Incoming => "--theirs",
+            };
+            Self::run(
+                ["merge-file", "-p", side, &files[0], &files[1], &files[2]],
+                checkout,
+            )
+        });
+        for file in &files {
+            let _ = std::fs::remove_file(file);
+        }
+        merged
+    }
+
     fn staged_file(&self, checkout: &Path, path: &str) -> Result<Option<String>, VcsError> {
         Self::staged(checkout, path)
     }

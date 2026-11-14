@@ -962,7 +962,7 @@ fn unparseable_result_saying(
     let parse_error = format!("{error:#}");
     let settled_by = match produced {
         Produced::ReplayDiffers => [C::StageParsingManifest, C::ResumeWithManifest],
-        _ => [C::WriteValueMerge, C::KeepTextMerge],
+        _ => [C::KeepTextMerge, C::StageOwnManifest],
     };
     let judging = crate::diagnosis::State::UnparseableProjectMidOperation
         .of(repo)
@@ -978,12 +978,7 @@ fn unparseable_result_saying(
         .bind_list("<abort>", ["rwv", "abort"])
         .checkout(dir)
         .without(&settled_by);
-    match produced {
-        Produced::ReplayDiffers => judging,
-        _ => judging.without(&[C::StageOwnManifest]),
-    }
-    .judge(vcs)
-    .refused()
+    judging.judge(vcs).refused()
 }
 
 /// Refuse to start, in the checkout at `dir`, the merge of `incoming`
@@ -1093,7 +1088,7 @@ pub(crate) fn settle_replayed_manifest(
             .rev()
             .find_map(|(_, image)| image.clone())
     });
-    let mut lines = differs.map(|differs| differs.lines).unwrap_or_default();
+    let mut lines = differs.unwrap_or_default();
     let earlier = replayed.as_ref().map_or(0, |replayed| {
         replayed
             .written
@@ -1172,6 +1167,7 @@ pub(crate) fn settle_replayed_manifest(
         lines.insert(0, line);
         return Err(stop(&cause, &lines));
     }
+    op_state::journal_tip_settled(workspace, rebase)?;
     Ok(Some(fix))
 }
 
@@ -1182,7 +1178,7 @@ pub(crate) fn replayed_tip_differs(
     vcs: &dyn Vcs,
     dir: &Path,
     workspace: &Path,
-) -> anyhow::Result<Option<(op_state::Rebasing, crate::manifest_conflict::TipDiffers)>> {
+) -> anyhow::Result<Option<(op_state::Rebasing, Vec<String>)>> {
     let Some((rebase, false)) = project_rebase(workspace)? else {
         return Ok(None);
     };
@@ -1197,41 +1193,7 @@ pub(crate) fn replayed_tip_differs(
     else {
         return Ok(None);
     };
-    Ok(crate::manifest_conflict::check_tip(&sides, &tip)?.map(|differs| (rebase, differs)))
-}
-
-/// Where the project replay journaled in `workspace` stopped in `dir` with
-/// `rwv.toml` unmerged, journal so: the continue then reads whether the
-/// operator's own resolution settled it.
-pub(crate) fn stopped_unmerged(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<()> {
-    let unmerged = vcs.rebase_in_flight(dir)?.is_some()
-        && vcs
-            .unmerged_paths(dir)?
-            .iter()
-            .any(|path| path == Manifest::FILE_NAME);
-    match project_rebase(workspace)? {
-        Some((rebase, _)) if unmerged => {
-            op_state::journal_manifest_unmerged(workspace, Some(rebase))
-        }
-        _ => Ok(()),
-    }
-}
-
-/// At a continue where `rwv.toml` is no longer unmerged in the project
-/// replay that stopped with it unmerged: the operator resolved it, and what
-/// they made of it settles the replayed tip.
-pub(crate) fn take_hand_resolution(workspace: &Path) -> anyhow::Result<()> {
-    let Some(take_in) = op_state::read_owner(workspace)?.and_then(|owner| owner.take_in) else {
-        return Ok(());
-    };
-    let Some(stopped) = take_in.manifest_unmerged else {
-        return Ok(());
-    };
-    op_state::journal_manifest_unmerged(workspace, None)?;
-    match project_rebase(workspace)? {
-        Some((rebase, _)) if rebase == stopped => op_state::journal_tip_settled(workspace, rebase),
-        _ => Ok(()),
-    }
+    Ok(crate::manifest_conflict::check_tip(&sides, &tip)?.map(|lines| (rebase, lines)))
 }
 
 /// The project rebase the operation journaled in `workspace`, and whether
@@ -1250,7 +1212,7 @@ fn project_rebase(workspace: &Path) -> anyhow::Result<Option<(op_state::Rebasing
         }))
 }
 
-fn manifest_text_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<String> {
+pub(crate) fn manifest_text_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<String> {
     vcs.read_file_at_revision(
         dir,
         &ResolvedRevisionId::from(commit.clone()),

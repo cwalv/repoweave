@@ -8272,9 +8272,6 @@ fn apply_project_strategy(
     owner: &Path,
 ) -> anyhow::Result<()> {
     let conflict = |repo: &Path, op: ConflictOp| -> anyhow::Error {
-        if let Err(error) = crate::project_merge::stopped_unmerged(vcs, repo, owner) {
-            return error;
-        }
         let detail = match op {
             ConflictOp::Rebase => vcs.rebase_stopped_commit_detail(repo),
             _ => format!("merging {}", source_tip.id().short()),

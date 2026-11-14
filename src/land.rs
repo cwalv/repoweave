@@ -1292,7 +1292,14 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         .merge_bases(&dir, &head, resumed.target_tip)?
         .into_iter()
         .next();
-    let ours = match vcs.staged_file(&dir, Manifest::FILE_NAME)? {
+    let staged = vcs.staged_file(&dir, Manifest::FILE_NAME)?;
+    if staged.is_some()
+        && staged == crate::project_merge::manifest_text_at(vcs, &dir, &head)
+        && crate::project_merge::replayed_tip_differs(vcs, &dir, source_root)?.is_some()
+    {
+        return Ok(Rejudged::Deferred);
+    }
+    let ours = match staged {
         Some(staged) => match Manifest::from_toml_str(&staged) {
             Ok(ours) => ours,
             Err(error) if vcs.merge_in_flight(&dir)?.is_some() => {

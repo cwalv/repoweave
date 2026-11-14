@@ -271,7 +271,6 @@ fn pick(
     let project = ctx.require_bound_project()?.clone();
     let dir = project_dir(ctx.active_path(), &project);
     let vcs = project_vcs();
-    crate::workweave::refuse_symlinked_members(ctx.active_path(), &project)?;
     let here = Here {
         ctx,
         project,
@@ -279,7 +278,10 @@ fn pick(
         vcs,
     };
     match run {
-        Run::Fresh(args) => fresh(&here, args, output, reported),
+        Run::Fresh(args) => {
+            crate::workweave::refuse_symlinked_members(ctx.active_path(), &here.project)?;
+            fresh(&here, args, output, reported)
+        }
         Run::Continue => {
             let (op, recorded, take_in) = Op::resume(ctx, OpVerb::CherryPick)?;
             if recorded != here.project {
@@ -294,6 +296,15 @@ fn pick(
                 .clone()
                 .context("the op record holds no port to resume")?;
             reported.rev = Some(record.rev.to_string());
+            if let Some(ours) =
+                manifest_at(here.vcs.as_ref(), &here.label(), &here.dir, &record.head)?
+            {
+                crate::workweave::refuse_symlinked_members_named(
+                    ctx.active_path(),
+                    &here.project,
+                    &ours,
+                )?;
+            }
             act(&here, &op, record, true, output, reported)
         }
     }
@@ -647,7 +658,13 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
     let p1s = pins_of(lock_at(vcs, dir, &commit).as_ref());
 
     let head = vcs.head_revision(dir)?.id().clone();
-    let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
+    let ours = match vcs.mid_operation(dir) {
+        Some(_) => vcs
+            .read_file_at_revision(dir, &rev(&head), Path::new(Manifest::FILE_NAME))
+            .map_err(anyhow::Error::from)
+            .and_then(|text| Manifest::from_toml_str(&text))?,
+        None => Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
+    };
     let our_lock = lock_at(vcs, dir, &head);
     let our_pins = pins_of(our_lock.as_ref());
 
@@ -1876,7 +1893,7 @@ fn commit_project(
         let settled = with_tables(ours, &theirs, &ported.taken);
         let (settled_text, _) = Manifest::edit_text(&ours_text, |m| *m = settled)?;
         crate::durable_file::replace(&manifest_path, settled_text.as_bytes())?;
-    } else if conflicted.iter().any(|p| p == Manifest::FILE_NAME) {
+    } else if applied && differs.is_empty() && conflicted.iter().any(|p| p == Manifest::FILE_NAME) {
         crate::durable_file::replace(&manifest_path, ours_text.as_bytes())?;
     }
 
@@ -1918,9 +1935,16 @@ fn commit_project(
                 })
                 .collect();
             let listed: String = differs.iter().map(|line| format!("{line}\n")).collect();
+            let holds = if !differs.is_empty() {
+                "rwv.toml holds the VCS's text merge"
+            } else if applied {
+                "rwv.toml holds this branch's tables"
+            } else {
+                "rwv.toml is unmerged"
+            };
             format!(
-                "{listed}rwv.toml holds this branch's tables, and {} changed on both sides; set \
-                 them as wanted there ({}), then mark it resolved:\n  {}\n",
+                "{listed}{holds}, and {} changed on both sides; set them as wanted there ({}), \
+                 then mark it resolved:\n  {}\n",
                 ported.conflicted.join(", "),
                 shown.join("; "),
                 crate::manifest_conflict::mark_resolved(vcs, dir),

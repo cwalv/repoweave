@@ -1065,9 +1065,10 @@ every_scenario!(
     check_a_text_merge(scenarios::TextMerge::SettingMovedKeptAsText),
     check_a_text_merge(scenarios::TextMerge::SettingMovedKeepsAComment),
     check_a_text_merge(scenarios::TextMerge::SettingMovedBesideAListBothChanged),
+    check_a_text_merge(scenarios::TextMerge::SettingMovedBothSidesSetIt),
     check_a_text_merge(scenarios::TextMerge::KeepTextMergeAtAConflict),
     check_a_text_merge(scenarios::TextMerge::KeepTextMergeNothingChecked),
-    check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::Values),
+    check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::Untouched),
     check_a_replayed_tip(
         scenarios::TipVerb::Sync,
         scenarios::TipSettle::StagedUnparseable
@@ -1095,7 +1096,11 @@ every_scenario!(
         scenarios::TipSettle::KilledThenAborted
     ),
     check_a_replayed_tip(scenarios::TipVerb::Sync, scenarios::TipSettle::KeepYours),
-    check_a_replayed_tip(scenarios::TipVerb::Land, scenarios::TipSettle::Values),
+    check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KeepTextMergeOverAResolution
+    ),
+    check_a_replayed_tip(scenarios::TipVerb::Land, scenarios::TipSettle::Untouched),
     check_a_replayed_tip(scenarios::TipVerb::Land, scenarios::TipSettle::ByHand),
     check_a_replayed_tip(
         scenarios::TipVerb::Land,
@@ -7592,11 +7597,11 @@ fn text_merge_setting_moved_by_hand() {
 }
 
 #[test]
-fn replayed_tip_values() {
+fn replayed_tip_untouched() {
     for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
         runner::run(scenarios::check_a_replayed_tip(
             verb,
-            scenarios::TipSettle::Values,
+            scenarios::TipSettle::Untouched,
         ))
         .assert_fully_decided_green();
     }
@@ -7699,6 +7704,14 @@ fn text_merge_keep_text_merge_nothing_checked() {
 }
 
 #[test]
+fn text_merge_setting_moved_both_sides_set_it() {
+    runner::run(scenarios::check_a_text_merge(
+        scenarios::TextMerge::SettingMovedBothSidesSetIt,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn text_merge_setting_moved_keeps_a_comment() {
     runner::run(scenarios::check_a_text_merge(
         scenarios::TextMerge::SettingMovedKeepsAComment,
@@ -7739,6 +7752,15 @@ fn replayed_tip_staged_unparseable() {
     ] {
         runner::run(scenarios::check_a_replayed_tip(verb, settle)).assert_fully_decided_green();
     }
+}
+
+#[test]
+fn replayed_tip_keep_text_merge_over_a_resolution() {
+    runner::run(scenarios::check_a_replayed_tip(
+        scenarios::TipVerb::Sync,
+        scenarios::TipSettle::KeepTextMergeOverAResolution,
+    ))
+    .assert_fully_decided_green();
 }
 
 #[test]

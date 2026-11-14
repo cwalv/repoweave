@@ -1213,7 +1213,6 @@ impl State {
                              `--continue` while the resolved `rwv.toml` does not parse; `rwv \
                              abort` runs",
                 offers: &[
-                    Form::WriteValueMerge,
                     Form::KeepTextMerge,
                     Form::StageOwnManifest,
                     Form::StageParsingManifest,
@@ -1960,7 +1959,6 @@ pub enum ChoiceId {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
-    WriteValueMerge,
     KeepTextMerge,
     StageOwnManifest,
     RefreshAgain,
@@ -2242,12 +2240,6 @@ impl ChoiceId {
                 phrase: "let the operation go on with the resolved rwv.toml",
                 keeps_work: "a merge commits it in the merge; a replay makes it part of the \
                              replayed tip; it stops again while the resolved file does not parse",
-            },
-            Self::WriteValueMerge => &ChoiceRow {
-                id: None,
-                phrase: crate::manifest_conflict::WRITE_VALUES,
-                keeps_work: "written as an edit of the text merge, whose comments and layout \
-                             stay; the file as it stood is kept in a backup first",
             },
             Self::KeepTextMerge => &ChoiceRow {
                 id: None,
@@ -2573,7 +2565,6 @@ pub enum Form {
     AbortOperation,
     StageParsingManifest,
     ResumeWithManifest,
-    WriteValueMerge,
     KeepTextMerge,
     StageOwnManifest,
     DriftRefreshAgain,
@@ -2618,7 +2609,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 119] = [
+    pub const ALL: [Form; 118] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2720,7 +2711,6 @@ impl Form {
         Self::AbortOperation,
         Self::StageParsingManifest,
         Self::ResumeWithManifest,
-        Self::WriteValueMerge,
         Self::KeepTextMerge,
         Self::StageOwnManifest,
         Self::DriftRefreshAgain,
@@ -3420,12 +3410,6 @@ impl Form {
             },
             Self::ResumeWithManifest => &FormRow {
                 choice: C::ResumeWithManifest,
-                steps: &[Step::Recorded("<resume>")],
-                at: W::Here,
-                shipped: true,
-            },
-            Self::WriteValueMerge => &FormRow {
-                choice: C::WriteValueMerge,
                 steps: &[Step::Recorded("<resume>")],
                 at: W::Here,
                 shipped: true,

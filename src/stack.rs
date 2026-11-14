@@ -848,7 +848,7 @@ impl Carrier<'_> {
             return Ok(None);
         };
         Ok(crate::manifest_conflict::check_tip(&sides, &text)?
-            .and_then(|differs| differs.lines.get(1).map(|line| line.trim().to_owned())))
+            .and_then(|lines| lines.get(1).map(|line| line.trim().to_owned())))
     }
 
     /// Leave `carry`'s dependent where it is: none of its branches moves.

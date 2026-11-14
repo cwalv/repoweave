@@ -977,6 +977,15 @@ impl Vcs for FakeVcs {
         unsupported("record_conflict")
     }
 
+    fn merge_taking(
+        &self,
+        _checkout: &Path,
+        _sides: &crate::vcs::ConflictSides,
+        _taking: crate::vcs::TakingSide,
+    ) -> Result<String, VcsError> {
+        unsupported("merge_taking")
+    }
+
     fn staged_file(&self, _checkout: &Path, _path: &str) -> Result<Option<String>, VcsError> {
         unsupported("staged_file")
     }

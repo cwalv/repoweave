@@ -1715,9 +1715,6 @@ fn conflict_refusal(
     let workspace = sync.ctx.active_path();
     let resume = crate::op_state::resume_command_at(OpVerb::Sync, workspace);
     let entries = if dir == sync.dir {
-        if let Err(error) = crate::project_merge::stopped_unmerged(vcs, dir, workspace) {
-            return error;
-        }
         crate::manifest_conflict::stop_lines(vcs, dir, &resume)
     } else {
         Vec::new()

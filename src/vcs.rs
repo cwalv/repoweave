@@ -508,6 +508,13 @@ pub struct ConflictSides {
     pub incoming: Option<String>,
 }
 
+/// The side a merge takes in each region the two sides changed differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TakingSide {
+    Yours,
+    Incoming,
+}
+
 /// In-flight VCS operation whose conflict needs human resolution.
 ///
 /// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
@@ -5548,6 +5555,18 @@ pub trait Vcs: Send + Sync {
         path: &str,
         sides: &ConflictSides,
     ) -> Result<(), VcsError>;
+
+    /// The three-way merge of the texts of `sides`, each region the two
+    /// sides changed differently taken whole from `taking`; a side with no
+    /// file merges as empty text.
+    ///
+    /// For git: `merge-file -p --ours` or `--theirs` over the three texts.
+    fn merge_taking(
+        &self,
+        checkout: &Path,
+        sides: &ConflictSides,
+        taking: TakingSide,
+    ) -> Result<String, VcsError>;
 
     /// The staged content of `path` in `checkout`, `None` where nothing is
     /// staged there.
