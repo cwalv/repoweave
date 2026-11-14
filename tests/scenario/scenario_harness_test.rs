@@ -8,14 +8,16 @@
 //! recorded as pending and ends the scenario there, announced on stderr.
 //!
 //! The invariants and what they cannot see are stated in
-//! `tests/common/scenario_harness/invariants.rs`; the sandbox's fixed shape in
-//! `tests/common/scenario_harness/sandbox.rs`. A test that holds rwv at a pause
+//! `tests/common/scenario_invariants.rs`; the sandbox's fixed shape in
+//! `tests/common/scenario_sandbox.rs`. A test that holds rwv at a pause
 //! point runs only in a build with the `test-pause` feature, and announces
 //! its skip in any other.
 
 use crate::common;
 
-use crate::common::scenario_harness::{invariants, runner, sandbox};
+use crate::common::scenario_invariants as invariants;
+use crate::common::scenario_runner as runner;
+use crate::common::scenario_sandbox as sandbox;
 #[path = "scenario_harness_test/scenarios.rs"]
 mod scenarios;
 

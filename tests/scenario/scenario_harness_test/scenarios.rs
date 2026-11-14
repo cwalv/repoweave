@@ -5,7 +5,8 @@ use super::runner::{
 use super::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, Store, RECORDS_BRANCH,
 };
-use crate::common::scenario_harness::steps::{
+use crate::common;
+use common::scenario_steps::{
     a, b, create, dependent_of, feature_onto_stable, main_checked_out_nowhere, main_moves_app,
     port_me_on_main, publish_app_and_project, recurse_moved_back, stable_lines,
     stack_on_a_seat_under, ww, APP, DOCS, LIB,

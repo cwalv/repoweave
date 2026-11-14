@@ -5,8 +5,12 @@ use std::path::PathBuf;
 use repoweave::diagnosis::State;
 use repoweave::refusal::RefusalKind;
 
-use super::invariants::{self, Allowance, LockSite, Record, RemoteWrite, Snapshot, Violation};
-use super::sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Unreachable};
+use super::scenario_invariants::{
+    self, Allowance, LockSite, Record, RemoteWrite, Snapshot, Violation,
+};
+use super::scenario_sandbox::{
+    Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Unreachable,
+};
 use crate::common::pause::Paused;
 
 /// A verb a scenario needs that rwv does not have. A step that needs one is
@@ -1239,7 +1243,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         captured: BTreeMap::new(),
     };
     let steps = std::iter::once(Step::new_machine(Machine::A)).chain(scenario.steps);
-    let mut before = invariants::snapshot(sandbox);
+    let mut before = scenario_invariants::snapshot(sandbox);
     for step in steps {
         if let Action::Pending(verb) = step.action {
             report.pending = Some((step.label, verb));
@@ -1265,8 +1269,8 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         if step.action.runs_rwv() && !run.ran_printed_vcs_action {
             run.last_rwv_output = output.clone();
         }
-        let after = invariants::snapshot(sandbox);
-        for violation in invariants::check(sandbox, &before, &after, &step.allow) {
+        let after = scenario_invariants::snapshot(sandbox);
+        for violation in scenario_invariants::check(sandbox, &before, &after, &step.allow) {
             report.violations.push((step.label.clone(), violation));
         }
         let outcome = Outcome {
@@ -2154,7 +2158,7 @@ impl Run<'_> {
                 record,
             } => {
                 let canonical = sb.canonical(*machine, Repo::Proj);
-                let held = super::invariants::read_records(sb, &canonical)
+                let held = super::scenario_invariants::read_records(sb, &canonical)
                     .and_then(|records| records.get(*branch).cloned());
                 if held == *record {
                     Ok(())
@@ -2166,7 +2170,7 @@ impl Run<'_> {
             }
             Claim::RemoteRecordIs { branch, record } => {
                 let origin = sb.remote_store(Remote::origin(Repo::Proj));
-                let held = super::invariants::read_records(sb, &origin)
+                let held = super::scenario_invariants::read_records(sb, &origin)
                     .and_then(|records| records.get(*branch).cloned());
                 if held == *record {
                     Ok(())
@@ -2496,7 +2500,7 @@ impl Run<'_> {
                     .get(site)
                     .and_then(|pins| pins.get(member))
                     .ok_or_else(|| format!("{site:?} has no pin for {}", member.name()))?;
-                let store = invariants::store_for(sb, after, site, *member)
+                let store = scenario_invariants::store_for(sb, after, site, *member)
                     .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
                 self.contains(&store, pin, mark)
             }

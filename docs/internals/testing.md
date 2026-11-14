@@ -436,12 +436,12 @@ alone runs no faster; the script's header gives the measurement.
 
 `tests/scenario/scenario_harness_test.rs` runs branching scenarios step by step in a
 hermetic sandbox and holds every step to a set of invariants. A scenario is
-data: a [`Seed`](../../tests/common/scenario_harness/sandbox.rs) saying what the
+data: a [`Seed`](../../tests/common/scenario_sandbox.rs) saying what the
 sandbox holds beyond its fixed shape, and a list of steps, each carrying its
 expected outcome and what it may do that an invariant would otherwise report.
 Three modules carry it, and each has one job:
 
-- **`tests/common/scenario_harness/sandbox.rs`** builds the world: bare remotes,
+- **`tests/common/scenario_sandbox.rs`** builds the world: bare remotes,
   the machines that clone them, and the forge's own clone of each origin. Every
   git and rwv it runs sees a `HOME` inside the sandbox. A seed can add, per
   member, a fork remote and two mirrors of the origin (one keeping branches the
@@ -456,20 +456,20 @@ Three modules carry it, and each has one job:
   outage still leaves the remote where its URL points. The key a member entry
   declares its branch under and the `.gitattributes` line for the lock are one
   constant each, which the seed and every hand edit of an entry spell from.
-- **`tests/common/scenario_harness/runner.rs`** performs steps and checks their
+- **`tests/common/scenario_runner.rs`** performs steps and checks their
   outcomes. A forge event that a push can express (a force-push, a branch
   rename, a rebase-merge) is a sequence of plain `Action::Git` steps in the
   forge's clone; one no push can express (moving a remote's default branch,
   syncing a mirror) runs in the bare remote itself. A step may also commit by
   hand with git's plumbing, which is how a fixture lands a records entry or a
   lock on a branch nothing has checked out.
-- **`tests/common/scenario_harness/invariants.rs`** snapshots the sandbox before
+- **`tests/common/scenario_invariants.rs`** snapshots the sandbox before
   and after each step and compares the two. Its module comment is the one
   statement of what each check holds, what it reads, and what it cannot see;
   keep it that way rather than restating checks elsewhere.
 
 The three modules, with the step builders both binaries share
-(`tests/common/scenario_harness/steps.rs`), live under `tests/common/` because
+(`tests/common/scenario_steps.rs`), live under `tests/common/` because
 the `scenario` and `kill_matrix` binaries both run them.
 
 ### The kill matrix

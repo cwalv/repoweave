@@ -23,9 +23,14 @@ use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
 use repoweave::refusal::RefusalKind;
 
-use crate::common::scenario_harness::runner::{self, Claim, Exit, Scenario, Step};
-use crate::common::scenario_harness::sandbox::{Machine, Place, Remote, Repo, Sandbox, Seed};
-use crate::common::scenario_harness::steps::*;
+use crate::common;
+use crate::common::scenario_runner::{self, Claim, Exit, Scenario, Step};
+use crate::common::scenario_sandbox::{Machine, Place, Remote, Repo, Sandbox, Seed};
+use common::scenario_steps::{
+    a, b, create, feature_onto_stable, main_checked_out_nowhere, main_moves_app, port_me_on_main,
+    publish_app_and_project, recurse_moved_back, stable_lines, stack_on_a_seat_under, ww, APP,
+    DOCS, LIB,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Phase {
@@ -956,7 +961,7 @@ fn leaked(text: String) -> &'static str {
     Box::leak(text.into_boxed_str())
 }
 
-fn failures(report: &runner::Report) -> String {
+fn failures(report: &scenario_runner::Report) -> String {
     let mut out = String::new();
     for (label, why) in &report.unmet {
         out.push_str(&format!("  unmet at `{label}`: {why}\n"));
@@ -988,14 +993,14 @@ fn line_diff(unkilled: &str, continued: &str) -> String {
 /// What an unkilled run of the shape ends in.
 fn reference_end(shape: &Shape) -> String {
     let clean = Sandbox::new((shape.seed)());
-    let report = runner::run_in(&clean, scenario_of(shape, "unkilled", unkilled(shape)));
+    let report = scenario_runner::run_in(&clean, scenario_of(shape, "unkilled", unkilled(shape)));
     let failed = failures(&report);
     assert!(
         failed.is_empty(),
         "the unkilled run of {} failed:\n{failed}",
         shape.id
     );
-    runner::end_state(&clean)
+    scenario_runner::end_state(&clean)
 }
 
 fn run_cell(
@@ -1008,10 +1013,10 @@ fn run_cell(
     let name = named(shape, phase, point, ending);
     let steps = steps_of(shape, phase, point, ending);
     let sandbox = Sandbox::new((shape.seed)());
-    let report = runner::run_in(&sandbox, scenario_of(shape, leaked(name.clone()), steps));
+    let report = scenario_runner::run_in(&sandbox, scenario_of(shape, leaked(name.clone()), steps));
     let mut why = failures(&report);
     if ending == Ending::Continue && why.is_empty() {
-        let continued = runner::end_state(&sandbox);
+        let continued = scenario_runner::end_state(&sandbox);
         if continued != reference {
             why = format!(
                 "the end state differs from an unkilled run's:\n{}",
@@ -1043,7 +1048,7 @@ fn reached(shape: &Shape, phase: Phase, point: &'static str) -> bool {
                 "aborting",
             ));
             steps.push(Step::kill("aborting"));
-            let report = runner::run(scenario_of(shape, "reach", steps));
+            let report = scenario_runner::run(scenario_of(shape, "reach", steps));
             return report.unmet.is_empty();
         }
         Phase::Resumed => {
@@ -1056,7 +1061,7 @@ fn reached(shape: &Shape, phase: Phase, point: &'static str) -> bool {
         }
     }
     steps.push(Step::kill("held"));
-    let report = runner::run(scenario_of(shape, "reach", steps));
+    let report = scenario_runner::run(scenario_of(shape, "reach", steps));
     report.unmet.is_empty()
 }
 

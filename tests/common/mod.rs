@@ -10,7 +10,10 @@ pub mod pause;
 pub mod records;
 pub mod refusal_census;
 pub mod savepoint;
-pub mod scenario_harness;
+pub mod scenario_invariants;
+pub mod scenario_runner;
+pub mod scenario_sandbox;
+pub mod scenario_steps;
 pub mod src_scan;
 
 use std::path::PathBuf;

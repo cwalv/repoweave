@@ -72,7 +72,7 @@ use std::path::{Path, PathBuf};
 
 use repoweave::manifest::Role;
 
-use super::sandbox::{Place, Remote, RemoteKind, Repo, Sandbox, Store, RECORDS_BRANCH};
+use super::scenario_sandbox::{Place, Remote, RemoteKind, Repo, Sandbox, Store, RECORDS_BRANCH};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LockSite {

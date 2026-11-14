@@ -64,7 +64,7 @@ Below that, the suite run against git built from the release tarballs:
 A capability is a `Vcs` method returning an `Option`, answered from the one
 `git version` reading. Its fallback is tested on a new git through the scenario
 harness's release shim (`Seed::old_git` in
-`tests/common/scenario_harness/sandbox.rs`): a `git` earlier on `PATH` that
+`tests/common/scenario_sandbox.rs`): a `git` earlier on `PATH` that
 answers as the release before the capability and refuses the command, then
 runs the real git. A new capability extends that shim.
 

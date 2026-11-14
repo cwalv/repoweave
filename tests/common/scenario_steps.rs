@@ -1,7 +1,7 @@
 //! Step builders the scenarios and the kill matrix share.
 
-use super::runner::{Exit, Step};
-use super::sandbox::{declared_branch_text, Machine, Place, Remote, Repo};
+use super::scenario_runner::{Exit, Step};
+use super::scenario_sandbox::{self, Machine, Place, Remote, Repo};
 
 pub const LIB: &str = "local/remotes/lib";
 pub const APP: &str = "local/remotes/app";
@@ -95,7 +95,7 @@ pub fn stable_lines() -> Vec<Step> {
 /// one, the `dependency` `docs` re-pinned one forward, `lib`'s entry and the
 /// top-level `history` changed, and a project file added.
 pub fn port_me_on_main() -> Vec<Step> {
-    let lib_main = declared_branch_text(Repo::Lib, "main");
+    let lib_main = scenario_sandbox::declared_branch_text(Repo::Lib, "main");
     vec![
         Step::commit(&a(), Repo::App, "fix-app-1"),
         Step::commit(&a(), Repo::App, "fix-app-2"),
