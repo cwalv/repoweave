@@ -2,8 +2,10 @@
 //! the verb killed there for real, then `--continue` in one run and
 //! `rwv abort` in another.
 //!
-//! [`POINTS`] is the input. Each row names a point and the cells that reach
-//! it; a source test holds the rows equal to the points the source declares.
+//! [`POINTS`] is the input. Each row names a point, the cells that reach it
+//! and the shapes that pass it covered by those cells; a source test holds the
+//! rows equal to the points the source declares, and another holds them equal
+//! to the points each shape passes.
 //! A shape is a verb in one setup, and its cells are generated from the rows,
 //! so a point added to a row gains its cells and a point added to the source
 //! without a row fails.
@@ -11,8 +13,8 @@
 //! A cell passes when `--continue` ends the operation in the state an unkilled
 //! run of the same setup ends in, and when `rwv abort`, typed in the seat and,
 //! for a landing, in its target, leaves every place as it was before the
-//! verb. Both leave no operation recorded and nothing `rwv doctor --all`
-//! reports.
+//! verb, its backups included but for the slots the abort keeps. Both leave no
+//! operation recorded and nothing `rwv doctor --all` reports.
 //!
 //! What a cell does not see: a verb killed twice (the two-kill scenarios of
 //! `scenario_harness_test.rs` do that), a conflict resolved any other way than
@@ -142,7 +144,9 @@ fn seat_ahead_of_a_moved_main(history: &'static str) -> Vec<Step> {
         Step::commit(&ww("w1"), Repo::App, "w1-app"),
         Step::commit(&ww("w1"), Repo::Proj, "w1-proj"),
         Step::commit(&a(), Repo::App, "main-app"),
-        loose(Step::rwv(&a(), &["member", "pin", APP, "HEAD", "--commit"]).expect(Exit::Succeeds)),
+        hand_moves_app(
+            Step::rwv(&a(), &["member", "pin", APP, "HEAD", "--commit"]).expect(Exit::Succeeds),
+        ),
     ]
 }
 
@@ -156,13 +160,15 @@ fn following_seat() -> Vec<Step> {
         Step::commit(&ww("w1"), Repo::App, "w1-app"),
         Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&ww("w1"), LAND).expect(Exit::Succeeds),
-        loose(Step::git(
+        hand_moves_app(Step::git(
             &a(),
             Repo::App,
             &["reset", "-q", "--hard", "HEAD~1"],
         )),
         Step::commit(&a(), Repo::App, "main-app"),
-        loose(Step::rwv(&a(), &["member", "pin", APP, "HEAD", "--commit"]).expect(Exit::Succeeds)),
+        hand_moves_app(
+            Step::rwv(&a(), &["member", "pin", APP, "HEAD", "--commit"]).expect(Exit::Succeeds),
+        ),
     ]
 }
 
@@ -224,17 +230,22 @@ fn conflicting_merge_seat() -> Vec<Step> {
     conflicting_seat("merge")
 }
 
-fn resolve_readme() -> Vec<Step> {
+/// The conflict's markers carry the id of the commit replayed, which differs
+/// between sandboxes, so the resolution starts from one side's clean file.
+fn resolve_readme(ours: &str) -> Vec<Step> {
     vec![
-        Step::hand_edit(
-            &ww("w1"),
-            Repo::App,
-            "README",
-            "app in w1\n",
-            "resolved by hand\n",
-        ),
+        Step::git(&ww("w1"), Repo::App, &["checkout", "--ours", "README"]).expect(Exit::Succeeds),
+        Step::hand_edit(&ww("w1"), Repo::App, "README", ours, "resolved by hand\n"),
         Step::git(&ww("w1"), Repo::App, &["add", "README"]).expect(Exit::Succeeds),
     ]
+}
+
+fn resolve_readme_replayed() -> Vec<Step> {
+    resolve_readme("app on main\n")
+}
+
+fn resolve_readme_merged() -> Vec<Step> {
+    resolve_readme("app in w1\n")
 }
 
 fn manifest_stop_seat() -> Vec<Step> {
@@ -398,7 +409,7 @@ pub(super) const SHAPES: &[Shape] = &[
         target: None,
         stop: Some(Stop {
             exit: parks,
-            fix: resolve_readme,
+            fix: resolve_readme_replayed,
         }),
         abort_after: "op-savepoint-taken",
         contender: None,
@@ -508,7 +519,7 @@ pub(super) const SHAPES: &[Shape] = &[
         target: None,
         stop: Some(Stop {
             exit: parks,
-            fix: resolve_readme,
+            fix: resolve_readme_replayed,
         }),
         abort_after: "claimed",
         contender: None,
@@ -553,7 +564,7 @@ pub(super) const SHAPES: &[Shape] = &[
         target: None,
         stop: Some(Stop {
             exit: parks,
-            fix: resolve_readme,
+            fix: resolve_readme_merged,
         }),
         abort_after: "op-savepoint-taken",
         contender: None,
@@ -582,7 +593,7 @@ pub(super) const SHAPES: &[Shape] = &[
         target: None,
         stop: Some(Stop {
             exit: parks,
-            fix: resolve_readme,
+            fix: resolve_readme_merged,
         }),
         abort_after: "claimed",
         contender: None,
@@ -701,23 +712,86 @@ fn shape(id: &str) -> &'static Shape {
         .unwrap_or_else(|| panic!("no shape is named {id}"))
 }
 
-fn everywhere() -> [Repo; 4] {
-    [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs]
+/// What the abort of a shape keeps beyond the backups it started with: the
+/// commits and edits it discards go to `aborted` and `aborted-working-copy`,
+/// and a verb that resets or follows a branch keeps the tip it superseded,
+/// named by its abbreviated id.
+fn abort_keeps(shape: &Shape) -> &'static [&'static str] {
+    match shape.id {
+        "cherry_pick"
+        | "land_linear"
+        | "land_merge"
+        | "land_linear_manifest_stop"
+        | "sync_linear"
+        | "sync_linear_manifest_stop" => &["aborted", "aborted-working-copy"],
+        "pull_reset_to_upstream"
+        | "update_remote_reset_to_upstream"
+        | "update_remote_merge_and_reset_to_upstream"
+        | "sync_linear_following" => &["<tip>"],
+        _ => &["aborted"],
+    }
 }
 
-fn loose(step: Step) -> Step {
-    step.may_strand(&everywhere())
-        .may_rewind(&everywhere())
-        .may_restore(&everywhere())
-        .may_rewrite(&everywhere())
+/// What a shape's verb, its continue and its abort move backwards, as
+/// `(pins rewound, declared branches restored, declared branches rewritten)`:
+/// an abort puts back what the verb moved, and a reset moves a declared
+/// branch off the commits it held.
+fn moved_back(shape: &Shape) -> (&'static [Repo], &'static [Repo], &'static [Repo]) {
+    const APP: &[Repo] = &[Repo::App];
+    const NONE: &[Repo] = &[];
+    match shape.id {
+        "cherry_pick" => (&[Repo::App, Repo::Lib, Repo::Docs], NONE, NONE),
+        "land_linear"
+        | "land_linear_as_refs"
+        | "land_linear_carrying"
+        | "land_linear_in_place"
+        | "land_linear_in_place_drifted"
+        | "land_linear_own_stop"
+        | "land_linear_retiring"
+        | "land_merge"
+        | "land_merge_carrying"
+        | "land_merge_own_stop" => (APP, &[Repo::Proj, Repo::App], NONE),
+        "land_linear_manifest_stop" => (NONE, &[Repo::Proj], NONE),
+        "pull_reset_to_upstream" => (APP, &[Repo::Proj], &[Repo::Proj]),
+        "sync_linear"
+        | "sync_linear_carrying"
+        | "sync_linear_following"
+        | "sync_linear_own_stop"
+        | "sync_merge"
+        | "sync_merge_carrying"
+        | "sync_merge_own_stop" => (APP, NONE, NONE),
+        "update_remote_reset_to_upstream" | "update_remote_merge_and_reset_to_upstream" => {
+            (&[Repo::Lib], &[Repo::Lib], &[Repo::Lib])
+        }
+        _ => (NONE, NONE, NONE),
+    }
 }
 
-fn paused(at: &Place, args: &[&str], point: &'static str, handle: &'static str) -> Step {
-    loose(Step::rwv_paused(at, args, point, handle))
+/// The repo a hand resolution replaces a commit of: the file the shape's
+/// conflict is in, or the manifest.
+fn strands_on_resolving(shape: &Shape) -> &'static [Repo] {
+    match shape.id {
+        "land_linear_manifest_stop" | "sync_linear_manifest_stop" => &[Repo::Proj],
+        _ => &[Repo::App],
+    }
+}
+
+fn settled(shape: &Shape, step: Step) -> Step {
+    let (rewound, restored, rewritten) = moved_back(shape);
+    step.may_rewind(rewound)
+        .may_restore(restored)
+        .may_rewrite(rewritten)
+}
+
+fn hand_moves_app(step: Step) -> Step {
+    step.may_strand(&[Repo::App])
+        .may_rewind(&[Repo::App])
+        .may_restore(&[Repo::App])
+        .may_rewrite(&[Repo::App])
 }
 
 fn run_of(shape: &Shape, expect: Exit, args: &'static [&'static str]) -> Step {
-    loose(Step::rwv(&(shape.at)(), args).expect(expect))
+    settled(shape, Step::rwv(&(shape.at)(), args).expect(expect))
 }
 
 fn retires_its_seat(shape: &Shape) -> bool {
@@ -761,7 +835,7 @@ fn savepoints_outlive(shape: &Shape) -> Vec<Step> {
         Step::rwv(&a(), &["doctor", "--all"])
             .claim(Claim::FindingsOnly("orphaned-savepoint"))
             .claim(Claim::OutputContains("`rwv doctor --fix`")),
-        loose(Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds)),
+        Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["status"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("backup projects/proj  HEAD/"))
@@ -798,11 +872,20 @@ fn until_stopped(shape: &Shape, phase: Phase, point: &'static str) -> Vec<Step> 
     steps.extend(holding(shape));
     steps.push(Step::capture("before"));
     match phase {
-        Phase::Start => steps.push(paused(&at, shape.start, point, "held")),
+        Phase::Start => steps.push(settled(
+            shape,
+            Step::rwv_paused(&at, shape.start, point, "held"),
+        )),
         Phase::DuringAbort => {
-            steps.push(paused(&at, shape.start, shape.abort_after, "held"));
+            steps.push(settled(
+                shape,
+                Step::rwv_paused(&at, shape.start, shape.abort_after, "held"),
+            ));
             steps.push(Step::kill("held"));
-            steps.push(paused(&at, &["abort"], point, "aborting"));
+            steps.push(settled(
+                shape,
+                Step::rwv_paused(&at, &["abort"], point, "aborting"),
+            ));
             steps.push(Step::kill("aborting"));
             return steps;
         }
@@ -813,7 +896,8 @@ fn until_stopped(shape: &Shape, phase: Phase, point: &'static str) -> Vec<Step> 
                 .expect("a resumed cell has a shape that stops");
             steps.push(run_of(shape, (stop.exit)(), shape.start));
             steps.extend((stop.fix)());
-            steps.push(paused(&at, shape.resume, point, "held"));
+            let resumed = settled(shape, Step::rwv_paused(&at, shape.resume, point, "held"));
+            steps.push(resumed.resolved_by_hand(strands_on_resolving(shape)));
         }
     }
     steps.push(Step::kill("held"));
@@ -834,9 +918,9 @@ fn recorded(point: &str) -> bool {
 }
 
 /// Points a verb passes once its operation record is gone: a kill there
-/// leaves nothing to continue or abort, `rwv status` names what the verb
-/// left unaligned with the verb that aligns it, and that verb ends as an
-/// unkilled run does.
+/// leaves nothing to continue or abort, `rwv status` shows a member the verb
+/// left without a checkout as missing, `rwv doctor --all` names `rwv doctor
+/// --fix` as what makes it, and a verb run again ends as an unkilled run does.
 const AFTER_THE_RECORD: &[&str] = &["aligning-source"];
 
 /// Shapes whose verb, at [`AFTER_THE_RECORD`], has yet to make the checkout
@@ -850,7 +934,10 @@ fn converged(shape: &Shape) -> Vec<Step> {
         Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
         Step::rwv(&at, shape.resume).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
     ];
-    let status = Step::rwv(&at, &["status"]).claim(Claim::OutputLacks("in progress"));
+    let mut status = Step::rwv(&at, &["status"]).claim(Claim::OutputLacks("in progress"));
+    if ALIGNS_A_MEMBER_IT_ADDS.contains(&shape.id) {
+        status = status.claim(Claim::OutputContains("[missing]"));
+    }
     steps.push(status.expect(Exit::Succeeds));
     if ALIGNS_A_MEMBER_IT_ADDS.contains(&shape.id) {
         steps.push(
@@ -861,9 +948,7 @@ fn converged(shape: &Shape) -> Vec<Step> {
                 ))
                 .claim(Claim::OutputContains("`rwv doctor --fix`")),
         );
-        steps.push(loose(
-            Step::rwv(&at, &["doctor", "--fix"]).expect(Exit::Succeeds),
-        ));
+        steps.push(Step::rwv(&at, &["doctor", "--fix"]).expect(Exit::Succeeds));
     }
     steps.extend(ends_clean(shape, false));
     steps
@@ -910,7 +995,7 @@ fn continued(shape: &Shape, phase: Phase, point: &str) -> Vec<Step> {
 fn finishing(shape: &Shape) -> Step {
     let step = run_of(shape, Exit::Succeeds, shape.resume);
     if shape.stop.is_some() {
-        step.resolved_by_hand(&everywhere())
+        step.resolved_by_hand(strands_on_resolving(shape))
     } else {
         step
     }
@@ -966,9 +1051,13 @@ fn aborted(shape: &Shape, typed_at: Place, point: &str, in_target: bool) -> Vec<
             }
         }
     }
-    let ender = loose(ender.expect(ends));
+    let ender = settled(shape, ender.expect(ends));
+    let ender = ender.claim(Claim::BackupsAsCaptured {
+        name: "before",
+        kept: abort_keeps(shape),
+    });
     steps.push(if shape.refreshes_drift {
-        ender
+        ender.claim(Claim::BranchesAsCaptured("before"))
     } else {
         ender.claim(Claim::TipsAsCaptured("before"))
     });
@@ -986,12 +1075,7 @@ fn aborted(shape: &Shape, typed_at: Place, point: &str, in_target: bool) -> Vec<
         steps.push(Step::rwv(&a(), &["status"]).claim(Claim::TipsAsCaptured("before")));
     }
     if shape.stop.is_none() {
-        steps.push(
-            run_of(shape, Exit::Succeeds, shape.start)
-                .may_strand(&everywhere())
-                .may_rewind(&everywhere())
-                .may_rewrite(&everywhere()),
-        );
+        steps.push(run_of(shape, Exit::Succeeds, shape.start));
     }
     steps
 }
@@ -1019,11 +1103,18 @@ fn already_ended(shape: &Shape, point: &str) -> bool {
 /// run's, as [`line_diff`] prints it. A retiring landing killed as it writes
 /// the records has deleted the seat's branch and not yet dropped its record;
 /// the next run of the deletion rule anywhere drops it
-/// (`a_stale_record_is_dropped_by_the_next_deletion_rule`).
+/// (`a_stale_record_is_dropped_by_the_next_deletion_rule`). Killed there or
+/// at its end, the next `rwv doctor --fix` keeps the seat's two pre-rebase
+/// tips as backups.
 fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
     if retires_its_seat(shape) && point == "records-write" {
         "  only unkilled: refs/heads/rwv-records [records: drop proj--w1 #3]\n  \
-         only continued: refs/heads/rwv-records [records: set proj--w1 feature #2]\n"
+         only continued: refs/heads/rwv-records [records: set proj--w1 feature #2]\n  \
+         only continued: refs/rwv/backup/HEAD/<tip> [w1-proj #3]\n  \
+         only continued: refs/rwv/backup/HEAD/<tip> [w1-app #2]\n"
+    } else if retires_its_seat(shape) && point == "ending" {
+        "  only continued: refs/rwv/backup/HEAD/<tip> [w1-proj #3]\n  \
+         only continued: refs/rwv/backup/HEAD/<tip> [w1-app #2]\n"
     } else {
         ""
     }
@@ -1136,42 +1227,51 @@ fn run_cell(
     (!why.is_empty()).then(|| format!("{name}:\n{why}"))
 }
 
-/// Whether the shape's verb, killed at `point`, is held there.
-fn reached(shape: &Shape, phase: Phase, point: &'static str) -> bool {
+/// The declared points the shape's verb passes in `phase`, read from the
+/// trace of one run of it.
+fn traced(shape: &Shape, phase: Phase) -> std::collections::BTreeSet<String> {
+    let at = (shape.at)();
     let mut steps = (shape.setup)();
     steps.extend(holding(shape));
+    let run = |args: &'static [&'static str]| Step::rwv(&at, args).expect(Exit::Undecided);
     match phase {
-        Phase::Start => steps.push(paused(&(shape.at)(), shape.start, point, "held")),
+        Phase::Start => {
+            steps.push(Step::trace_points(true));
+            steps.push(run(shape.start));
+        }
         Phase::DuringAbort => {
             steps.push(Step::rwv_paused(
-                &(shape.at)(),
+                &at,
                 shape.start,
                 shape.abort_after,
                 "held",
             ));
             steps.push(Step::kill("held"));
-            steps.push(Step::rwv_paused(
-                &(shape.at)(),
-                &["abort"],
-                point,
-                "aborting",
-            ));
-            steps.push(Step::kill("aborting"));
-            let report = scenario_runner::run(scenario_of(shape, "reach", steps));
-            return report.unmet.is_empty();
+            steps.push(Step::trace_points(true));
+            steps.push(run(&["abort"]));
         }
         Phase::Resumed => {
             let Some(stop) = &shape.stop else {
-                return false;
+                return Default::default();
             };
-            steps.push(run_of(shape, (stop.exit)(), shape.start));
+            steps.push(run(shape.start));
             steps.extend((stop.fix)());
-            steps.push(paused(&(shape.at)(), shape.resume, point, "held"));
+            steps.push(Step::trace_points(true));
+            steps.push(run(shape.resume));
         }
     }
-    steps.push(Step::kill("held"));
-    let report = scenario_runner::run(scenario_of(shape, "reach", steps));
-    report.unmet.is_empty()
+    steps.push(Step::trace_points(false));
+    steps.extend(contender_ends(shape));
+    let sandbox = Sandbox::new((shape.seed)());
+    scenario_runner::run_in(&sandbox, scenario_of(shape, "trace", steps));
+    let passed = std::fs::read_to_string(sandbox.point_trace()).unwrap_or_default();
+    let declared = declared_points();
+    passed
+        .lines()
+        .filter(|point| declared.contains(*point))
+        .filter(|point| point.starts_with("abort-") == (phase == DuringAbort))
+        .map(str::to_owned)
+        .collect()
 }
 
 fn in_parallel<T: Send>(jobs: Vec<Box<dyn FnOnce() -> T + Send + '_>>) -> Vec<T> {
@@ -1201,6 +1301,12 @@ pub(super) struct Row {
     pub cells: &'static [(&'static str, Phase)],
     /// Why every shape not in `cells` does not pass this point.
     pub elsewhere: &'static str,
+    /// Shapes outside `cells` that also pass the point, where what sets the
+    /// shape apart is not yet live: the row's cells cover them. A point passed
+    /// before the shape's own state exists (a record being written, a scratch
+    /// taken, a claim not yet waited on) is the case; a point after the
+    /// shape's drift, stop or abort plan has taken effect gets a cell.
+    pub same_as: &'static [&'static str],
 }
 
 use Phase::{DuringAbort, Resumed, Start};
@@ -1208,277 +1314,332 @@ use Phase::{DuringAbort, Resumed, Start};
 pub(super) const POINTS: &[Row] = &[
     Row {
         point: "abort-begun",
-        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_merge", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
-        elsewhere: "every verb that records an operation reaches it through `rwv abort`; the shapes listed are the ones whose abort plans differ (checked-out target, in place, as refs, carried dependents, take-ins, a port).",
+        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_linear_in_place_drifted", DuringAbort), ("land_linear_manifest_stop", DuringAbort), ("land_linear_own_stop", DuringAbort), ("land_linear_retiring", DuringAbort), ("land_merge", DuringAbort), ("land_merge_carrying", DuringAbort), ("land_merge_own_stop", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("sync_linear_manifest_stop", DuringAbort), ("sync_linear_own_stop", DuringAbort), ("sync_merge", DuringAbort), ("sync_merge_carrying", DuringAbort), ("sync_merge_own_stop", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        same_as: &[],
+        elsewhere: "every verb that records an operation reaches it through `rwv abort`, and every shape that records one has a cell.",
     },
     Row {
         point: "abort-carried",
-        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_merge", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_linear_in_place_drifted", DuringAbort), ("land_linear_manifest_stop", DuringAbort), ("land_linear_own_stop", DuringAbort), ("land_linear_retiring", DuringAbort), ("land_merge", DuringAbort), ("land_merge_carrying", DuringAbort), ("land_merge_own_stop", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("sync_linear_manifest_stop", DuringAbort), ("sync_linear_own_stop", DuringAbort), ("sync_merge", DuringAbort), ("sync_merge_carrying", DuringAbort), ("sync_merge_own_stop", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        same_as: &[],
         elsewhere: "same as abort-begun; the carried step runs in every abort plan.",
     },
     Row {
         point: "abort-executed",
-        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_merge", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_linear_in_place_drifted", DuringAbort), ("land_linear_manifest_stop", DuringAbort), ("land_linear_own_stop", DuringAbort), ("land_linear_retiring", DuringAbort), ("land_merge", DuringAbort), ("land_merge_carrying", DuringAbort), ("land_merge_own_stop", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("sync_linear_manifest_stop", DuringAbort), ("sync_linear_own_stop", DuringAbort), ("sync_merge", DuringAbort), ("sync_merge_carrying", DuringAbort), ("sync_merge_own_stop", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        same_as: &[],
         elsewhere: "same as abort-begun.",
     },
     Row {
         point: "abort-retaken",
-        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_merge", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        cells: &[("cherry_pick", DuringAbort), ("land_linear", DuringAbort), ("land_linear_as_refs", DuringAbort), ("land_linear_carrying", DuringAbort), ("land_linear_in_place", DuringAbort), ("land_linear_in_place_drifted", DuringAbort), ("land_linear_manifest_stop", DuringAbort), ("land_linear_own_stop", DuringAbort), ("land_linear_retiring", DuringAbort), ("land_merge", DuringAbort), ("land_merge_carrying", DuringAbort), ("land_merge_own_stop", DuringAbort), ("pull_merge_upstream", DuringAbort), ("pull_reset_to_upstream", DuringAbort), ("sync_linear", DuringAbort), ("sync_linear_carrying", DuringAbort), ("sync_linear_following", DuringAbort), ("sync_linear_manifest_stop", DuringAbort), ("sync_linear_own_stop", DuringAbort), ("sync_merge", DuringAbort), ("sync_merge_carrying", DuringAbort), ("sync_merge_own_stop", DuringAbort), ("update_remote_merge_and_reset_to_upstream", DuringAbort), ("update_remote_merge_upstream", DuringAbort), ("update_remote_reset_to_upstream", DuringAbort)],
+        same_as: &[],
         elsewhere: "same as abort-begun; a landing's target is retaken there and other verbs pass it as a no-op.",
     },
     Row {
         point: "advance-target",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing advances a target; sync, pull, update --remote and cherry-pick have none.",
     },
     Row {
         point: "advance-target-move",
-        cells: &[("land_linear", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing moves its target's checkout; a landing as refs moves refs instead and does not pass it.",
     },
     Row {
         point: "aligning-target",
         cells: &[("land_linear", Start), ("land_linear_carrying", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing into a checked-out target aligns it; a landing as refs leaves checkouts alone.",
     },
     Row {
         point: "carry-composed",
         cells: &[("land_linear_carrying", Start), ("sync_linear_carrying", Start)],
+        same_as: &[],
         elsewhere: "only a verb carrying a dependent branch composes a carry, and only on the linear history setting; the merge-history carry composes elsewhere.",
     },
     Row {
         point: "carry-journaled",
         cells: &[("land_linear_carrying", Start), ("sync_linear_carrying", Start)],
+        same_as: &[],
         elsewhere: "as carry-composed.",
     },
     Row {
         point: "aligning-source",
         cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_following", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "a landing that retires its seat does not align it, and a landing waiting on its claim is killed while the contender holds it; every other verb aligns nothing once its record is gone.",
     },
     Row {
         point: "carry-move",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_following", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_following", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "every sync and landing moves a branch through a carry journal entry; pull, update --remote and cherry-pick journal their moves another way.",
     },
     Row {
         point: "carry-moved",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_following", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_following", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "as carry-move.",
     },
     Row {
         point: "carry-recorded",
         cells: &[("land_linear_carrying", Start), ("sync_linear_carrying", Start)],
+        same_as: &[],
         elsewhere: "only a verb carrying a dependent branch records a carry, and only on the linear history setting.",
     },
     Row {
         point: "cherry-pick-member-copied",
         cells: &[("cherry_pick", Start)],
+        same_as: &[],
         elsewhere: "only cherry-pick copies member ranges.",
     },
     Row {
         point: "cherry-pick-project-committed",
         cells: &[("cherry_pick", Start)],
+        same_as: &[],
         elsewhere: "only cherry-pick commits a ported project commit.",
     },
     Row {
         point: "cherry-pick-project-copy",
         cells: &[("cherry_pick", Start)],
+        same_as: &[],
         elsewhere: "only cherry-pick copies the project's files.",
     },
     Row {
         point: "claim-held",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only by a process waiting on a state-file, workweave-index, owned-digest or fetch claim another process holds, before any operation is recorded; nothing is left to continue or abort.",
     },
     Row {
         point: "claimed",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start)],
+        same_as: &["land_linear_manifest_stop", "land_linear_own_stop", "land_merge_own_stop"],
         elsewhere: "only a landing claims its target.",
     },
     Row {
         point: "composed",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing composes its source before advancing the target.",
     },
     Row {
         point: "drift-merge-carry",
         cells: &[],
+        same_as: &[],
         elsewhere: "as drift-merge-read.",
     },
     Row {
         point: "drift-merge-read",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only by `rwv doctor --fix --merge-edited-drift` and `--set-aside-edited-drift`, which record no operation: there is nothing to continue or abort.",
     },
     Row {
         point: "drift-merge-set-back",
         cells: &[],
+        same_as: &[],
         elsewhere: "as drift-merge-read.",
     },
     Row {
         point: "drift-read",
         cells: &[("land_linear_in_place_drifted", Start)],
+        same_as: &[],
         elsewhere: "only a landing in place that finds the primary's checkout drifted refreshes it there.",
     },
     Row {
         point: "drift-write",
         cells: &[("land_linear_in_place_drifted", Start)],
+        same_as: &[],
         elsewhere: "as drift-read.",
     },
     Row {
         point: "drift-write-records",
         cells: &[("land_linear_in_place_drifted", Start)],
+        same_as: &[],
         elsewhere: "as drift-read.",
     },
     Row {
         point: "drift-write-spawn",
         cells: &[("land_linear_in_place_drifted", Start)],
+        same_as: &[],
         elsewhere: "as drift-read.",
     },
     Row {
         point: "durable-file-created",
         cells: &[("cherry_pick", Start), ("land_linear", Start), ("land_merge", Start), ("pull_merge_upstream", Start), ("pull_reset_to_upstream", Start), ("sync_linear", Start), ("sync_merge", Start), ("update_remote_merge_and_reset_to_upstream", Start), ("update_remote_merge_upstream", Start), ("update_remote_reset_to_upstream", Start)],
+        same_as: &["land_linear_as_refs", "land_linear_carrying", "land_linear_in_place", "land_linear_in_place_drifted", "land_linear_manifest_stop", "land_linear_own_stop", "land_linear_retiring", "land_linear_waiting", "land_merge_carrying", "land_merge_own_stop", "sync_linear_carrying", "sync_linear_following", "sync_linear_manifest_stop", "sync_linear_own_stop", "sync_merge_carrying", "sync_merge_own_stop"],
         elsewhere: "every verb that records an operation writes it through the durable file; one shape of each verb and history stands for the rest, which differ only in what they go on to do.",
     },
     Row {
         point: "durable-file-restage",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only when a sweep removes a durable file's staged temp while the publish is still writing it, which no verb run does, and no operation is involved.",
     },
     Row {
         point: "durable-file-staged",
         cells: &[("cherry_pick", Start), ("land_linear", Start), ("land_merge", Start), ("pull_merge_upstream", Start), ("pull_reset_to_upstream", Start), ("sync_linear", Start), ("sync_merge", Start), ("update_remote_merge_and_reset_to_upstream", Start), ("update_remote_merge_upstream", Start), ("update_remote_reset_to_upstream", Start)],
+        same_as: &["land_linear_as_refs", "land_linear_carrying", "land_linear_in_place", "land_linear_in_place_drifted", "land_linear_manifest_stop", "land_linear_own_stop", "land_linear_retiring", "land_linear_waiting", "land_merge_carrying", "land_merge_own_stop", "sync_linear_carrying", "sync_linear_following", "sync_linear_manifest_stop", "sync_linear_own_stop", "sync_merge_carrying", "sync_merge_own_stop"],
         elsewhere: "as durable-file-created.",
     },
     Row {
         point: "ending",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing has an ending that releases its target.",
     },
     Row {
         point: "fetch-under-claim",
         cells: &[("pull_merge_upstream", Start), ("pull_reset_to_upstream", Start), ("sync_linear", Start), ("sync_merge", Start), ("update_remote_merge_and_reset_to_upstream", Start), ("update_remote_merge_upstream", Start), ("update_remote_reset_to_upstream", Start)],
+        same_as: &["sync_linear_carrying", "sync_linear_following", "sync_linear_manifest_stop", "sync_linear_own_stop", "sync_merge_carrying", "sync_merge_own_stop"],
         elsewhere: "every verb that fetches passes it; one shape of each verb and history stands for the rest.",
     },
     Row {
         point: "landed",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing records that its target moved.",
     },
     Row {
         point: "landing-claim-dead-seen",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only by a landing that finds the claim's holder dead and removes it, which needs a claim whose recorded operation is gone; tests/process/landing_claim_contention_test.rs kills there.",
     },
     Row {
         point: "landing-claim-held",
         cells: &[("land_linear_waiting", Start)],
+        same_as: &[],
         elsewhere: "only a landing waiting on another landing's claim passes it.",
     },
     Row {
         point: "landing-claim-takeover",
         cells: &[],
+        same_as: &[],
         elsewhere: "as landing-claim-dead-seen.",
     },
     Row {
         point: "leased-in-place",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start)],
+        same_as: &["land_linear_manifest_stop", "land_linear_own_stop", "land_merge_own_stop"],
         elsewhere: "only a landing takes the lease on a primary whose checkouts it fast-forwards in place.",
     },
     Row {
         point: "op-savepoint-taken",
         cells: &[("cherry_pick", Start), ("pull_merge_upstream", Start), ("pull_reset_to_upstream", Start), ("sync_linear", Start), ("sync_linear_carrying", Start), ("sync_linear_following", Start), ("sync_linear_manifest_stop", Start), ("sync_linear_own_stop", Start), ("sync_merge", Start), ("sync_merge_carrying", Start), ("sync_merge_own_stop", Start), ("update_remote_merge_and_reset_to_upstream", Start), ("update_remote_merge_upstream", Start), ("update_remote_reset_to_upstream", Start)],
+        same_as: &[],
         elsewhere: "every verb that records an operation passes it once; a landing records its plan at recorded instead.",
     },
     Row {
         point: "push-members",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only by `rwv push`, which records no operation: there is nothing to continue or abort.",
     },
     Row {
         point: "recorded",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Start), ("land_linear_own_stop", Start), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Start)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Start), ("land_linear_own_stop", Start), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Start)],
+        same_as: &["land_linear_waiting"],
         elsewhere: "only a landing records its plan before claiming.",
     },
     Row {
         point: "records-publish",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only by `rwv push` publishing the records branch, which records no operation: there is nothing to continue or abort.",
     },
     Row {
         point: "records-publish-settled",
         cells: &[],
+        same_as: &[],
         elsewhere: "as records-publish.",
     },
     Row {
         point: "records-write",
         cells: &[("land_linear_retiring", Start)],
+        same_as: &[],
         elsewhere: "only a landing that retires its workweave deletes the workweave's record.",
     },
     Row {
         point: "relock-committed",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_in_place", Start), ("land_linear_retiring", Start)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_retiring", Start)],
+        same_as: &[],
         elsewhere: "only a landing, on the linear history setting, commits its relock under its own name; a sync's is sync-relock-committed and a merge landing's is relock-merge-committed.",
     },
     Row {
         point: "relock-merge-committed",
         cells: &[("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing on the merge history setting commits a merge relock; pull and update --remote do not pass it in any shape tried.",
     },
     Row {
         point: "relocking",
-        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_as_refs", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing relocks at that step; sync's relock is sync-relock-committed.",
     },
     Row {
         point: "remap-moved",
         cells: &[("land_linear_carrying", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("sync_linear_carrying", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a replay that stops and is continued remaps the branches it moved; a replay that finishes in one run remaps nothing.",
     },
     Row {
         point: "remap-recorded",
         cells: &[("land_linear_carrying", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("sync_linear_carrying", Start), ("sync_linear_manifest_stop", Resumed), ("sync_linear_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "as remap-moved.",
     },
     Row {
         point: "reparent",
         cells: &[],
+        same_as: &[],
         elsewhere: "reached only by `rwv workweave remove` re-parenting its children and by doctor's repair of a workweave marker, neither of which records an operation.",
     },
     Row {
         point: "reset-to-upstream",
         cells: &[("pull_reset_to_upstream", Start), ("update_remote_merge_and_reset_to_upstream", Start), ("update_remote_reset_to_upstream", Start)],
+        same_as: &[],
         elsewhere: "only the --reset-to-upstream forms of pull and update --remote move a branch to its upstream.",
     },
     Row {
         point: "retire",
         cells: &[("land_linear_retiring", Start)],
+        same_as: &[],
         elsewhere: "only a landing run with --retire retires its workweave.",
     },
     Row {
         point: "retiring",
         cells: &[("land_linear_retiring", Start)],
+        same_as: &[],
         elsewhere: "as retire.",
     },
     Row {
         point: "scratch-taken",
         cells: &[("cherry_pick", Start), ("land_linear", Start), ("sync_linear", Start)],
+        same_as: &["land_linear_as_refs", "land_linear_carrying", "land_linear_in_place", "land_linear_in_place_drifted", "land_linear_manifest_stop", "land_linear_own_stop", "land_linear_retiring", "sync_linear_carrying", "sync_linear_following", "sync_linear_manifest_stop", "sync_linear_own_stop"],
         elsewhere: "every verb that rebases or merges takes a scratch checkout; one shape of each verb and history stands for the rest.",
     },
     Row {
         point: "sync-member-followed",
         cells: &[("sync_linear_following", Start)],
+        same_as: &[],
         elsewhere: "a sync passes it only for a member whose commits all sit under pins of the target's lock history while the target's branch no longer contains them, which only a rewrite of the target outside rwv builds: rwv refuses one under a live feature.",
     },
     Row {
         point: "sync-relock-committed",
         cells: &[("sync_linear", Start)],
+        same_as: &[],
         elsewhere: "only a sync that relocks over a commit the lock did not pin commits it; a landing's is relock-committed.",
     },
     Row {
         point: "target-fast-forwarded",
-        cells: &[("land_linear", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        cells: &[("land_linear", Start), ("land_linear_carrying", Start), ("land_linear_in_place", Start), ("land_linear_in_place_drifted", Start), ("land_linear_manifest_stop", Resumed), ("land_linear_own_stop", Resumed), ("land_linear_retiring", Start), ("land_merge", Start), ("land_merge_carrying", Start), ("land_merge_own_stop", Resumed)],
+        same_as: &[],
         elsewhere: "only a landing that fast-forwards a checked-out target; a landing as refs moves refs and does not pass it.",
     },
 ];
@@ -1622,7 +1783,12 @@ fn every_shape_has_a_test_and_a_cell() {
 fn a_stale_record_is_dropped_by_the_next_deletion_rule() {
     let mut steps = linear_seat();
     steps.push(create("w2"));
-    steps.push(paused(&ww("w1"), LAND_RETIRE, "records-write", "held"));
+    steps.push(Step::rwv_paused(
+        &ww("w1"),
+        LAND_RETIRE,
+        "records-write",
+        "held",
+    ));
     steps.push(Step::kill("held"));
     steps.extend([
         Step::git(&a(), Repo::Proj, &["log", "--format=%s", "rwv-records"])
@@ -1632,16 +1798,14 @@ fn a_stale_record_is_dropped_by_the_next_deletion_rule() {
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("landed into by proj--w2"))
             .claim(Claim::OutputLacks("proj--w1")),
-        loose(
-            Step::rwv(
-                &a(),
-                &["update", "--remote", "--reset-to-upstream", APP, "--commit"],
-            )
-            .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
-            .claim(Claim::OutputContains("proj--w2 lands into this branch"))
-            .claim(Claim::OutputLacks("proj--w1")),
-        ),
-        loose(Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds)),
+        Step::rwv(
+            &a(),
+            &["update", "--remote", "--reset-to-upstream", APP, "--commit"],
+        )
+        .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
+        .claim(Claim::OutputContains("proj--w2 lands into this branch"))
+        .claim(Claim::OutputLacks("proj--w1")),
+        Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["workweave", "delete", "w2"])
             .expect(Exit::Succeeds)
             .claim(Claim::RecordIs {
@@ -1699,40 +1863,56 @@ shape_tests!(
     cherry_pick,
 );
 
-#[test]
-#[ignore = "prints which shapes reach which points"]
-fn discover() {
-    let points: Vec<String> = declared_points().into_iter().collect();
-    let jobs: Vec<Box<dyn FnOnce() -> Option<String> + Send>> = SHAPES
+/// Every shape, phase and point the shape's verb passes.
+fn discovered() -> std::collections::BTreeSet<(String, String, String)> {
+    let jobs: Vec<Box<dyn FnOnce() -> Vec<(String, String, String)> + Send>> = SHAPES
         .iter()
         .filter(|shape| {
             std::env::var("DISCOVER_SHAPE").map_or(true, |only| shape.id.starts_with(&only))
         })
         .flat_map(|shape| {
-            let points = &points;
-            [Start, Resumed, DuringAbort]
-                .into_iter()
-                .flat_map(move |phase| {
-                    points
-                        .iter()
-                        .filter(move |point| {
-                            point.starts_with("abort-") == (phase == DuringAbort)
-                                && std::env::var("DISCOVER")
-                                    .map_or(true, |only| point.starts_with(&only))
-                        })
-                        .map(move |point| {
-                            let point: &'static str = leaked(point.clone());
-                            Box::new(move || {
-                                (!(phase == Resumed && shape.stop.is_none())
-                                    && reached(shape, phase, point))
-                                .then(|| format!("REACH {} {point} {phase:?}", shape.id))
-                            })
-                                as Box<dyn FnOnce() -> Option<String> + Send>
-                        })
-                })
+            [Start, Resumed, DuringAbort].into_iter().map(move |phase| {
+                Box::new(move || {
+                    traced(shape, phase)
+                        .into_iter()
+                        .map(|point| (shape.id.to_owned(), point, format!("{phase:?}")))
+                        .collect()
+                }) as Box<dyn FnOnce() -> Vec<(String, String, String)> + Send>
+            })
         })
         .collect();
-    for line in in_parallel(jobs).into_iter().flatten() {
-        eprintln!("{line}");
-    }
+    in_parallel(jobs).into_iter().flatten().collect()
+}
+
+/// A shape that starts reaching a point gains no cell on its own: this fails
+/// until the row lists it, and until a row stops listing a shape that no
+/// longer reaches the point.
+#[test]
+fn the_cells_are_exactly_where_the_shapes_reach_the_points() {
+    let found = discovered();
+    let listed: std::collections::BTreeSet<(String, String, String)> = POINTS
+        .iter()
+        .flat_map(|row| {
+            row.cells.iter().map(move |(id, phase)| {
+                ((*id).to_owned(), row.point.to_owned(), format!("{phase:?}"))
+            })
+        })
+        .filter(|(id, point, _)| {
+            std::env::var("DISCOVER_SHAPE").map_or(true, |only| id.starts_with(&only))
+                && std::env::var("DISCOVER").map_or(true, |only| point.starts_with(&only))
+        })
+        .collect();
+    let same_as: std::collections::BTreeSet<(&str, &str)> = POINTS
+        .iter()
+        .flat_map(|row| row.same_as.iter().map(move |id| (*id, row.point)))
+        .collect();
+    let without_a_cell: Vec<_> = found
+        .difference(&listed)
+        .filter(|(id, point, _)| !same_as.contains(&(id.as_str(), point.as_str())))
+        .collect();
+    let never_reached: Vec<_> = listed.difference(&found).collect();
+    assert!(
+        without_a_cell.is_empty() && never_reached.is_empty(),
+        "reached and not in POINTS: {without_a_cell:#?}\nin POINTS and not reached: {never_reached:#?}"
+    );
 }

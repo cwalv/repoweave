@@ -232,6 +232,9 @@ pub enum Action {
     /// The held process is killed where it stands, as an interrupted run is:
     /// whatever it left behind is what the next step meets.
     Kill(&'static str),
+    /// From here, every rwv spawned writes the points it passes to the
+    /// sandbox's point trace, until the step that turns it off.
+    TracePoints(bool),
     Unreachable(Remote),
     Reachable(Remote),
     /// Every live place's heads, branch tips, working-tree state and
@@ -505,8 +508,18 @@ pub enum Claim {
     /// Every place live when [`Step::capture`] took `name` is as it was then:
     /// each repo's HEAD, working-tree state, `rwv.toml` and `rwv.lock`, and
     /// every branch it had, at the tip it had. A branch made since is not
-    /// read.
+    /// read. Each repo's tree is as it was too.
     TipsAsCaptured(&'static str),
+    /// Every repo's `refs/rwv/backup` is as it was when [`Step::capture`]
+    /// took `name`, but for backups whose last path component is one of
+    /// `kept` (`<tip>` standing for a twelve-digit abbreviated commit id).
+    BackupsAsCaptured {
+        name: &'static str,
+        kept: &'static [&'static str],
+    },
+    /// [`Claim::TipsAsCaptured`] without each repo's HEAD, working-tree
+    /// state, files and tree: the branches only.
+    BranchesAsCaptured(&'static str),
     /// The checkout of `repo` at `at` is on `branch`.
     OnBranch {
         at: Place,
@@ -1009,6 +1022,14 @@ impl Step {
         )
     }
 
+    pub fn trace_points(on: bool) -> Step {
+        Step::new(
+            format!("trace points {on}"),
+            Action::TracePoints(on),
+            Expect::succeeds(),
+        )
+    }
+
     pub fn unreachable(remote: Remote) -> Step {
         Step::new(
             format!("{remote:?} unreachable"),
@@ -1222,6 +1243,7 @@ struct Run<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Tips {
     exact: String,
+    backups: String,
     branches: BTreeMap<String, String>,
 }
 
@@ -1700,6 +1722,10 @@ impl Run<'_> {
                 }
                 None => (false, format!("nothing is held as {handle}")),
             },
+            Action::TracePoints(on) => {
+                sb.trace_points(*on);
+                (true, String::new())
+            }
             Action::Capture(name) => {
                 let kept = sb
                     .live_places()
@@ -2001,6 +2027,7 @@ impl Run<'_> {
     fn tips(&self, at: &Place) -> Tips {
         let sb = self.sandbox;
         let mut exact = String::new();
+        let mut backups = String::new();
         let mut branches = BTreeMap::new();
         for repo in [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs] {
             let dir = sb.checkout(at, repo);
@@ -2012,9 +2039,19 @@ impl Run<'_> {
                 &["rev-parse", "HEAD"][..],
                 &["symbolic-ref", "-q", "HEAD"][..],
                 &["status", "--porcelain"][..],
+                &["rev-parse", "HEAD^{tree}"][..],
             ] {
                 exact.push_str(&rendered(&sb.git(&dir, args)));
             }
+            backups.push_str(&format!("== {}\n", repo.name()));
+            backups.push_str(&rendered(&sb.git(
+                &dir,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/rwv/backup",
+                ],
+            )));
             for file in ["rwv.lock", "rwv.toml"] {
                 if let Ok(text) = std::fs::read_to_string(dir.join(file)) {
                     exact.push_str(&text);
@@ -2034,7 +2071,11 @@ impl Run<'_> {
                 }
             }
         }
-        Tips { exact, branches }
+        Tips {
+            exact,
+            backups,
+            branches,
+        }
     }
 
     fn local_state(&self, at: &Place) -> String {
@@ -2439,15 +2480,16 @@ impl Run<'_> {
                     ))
                 }
             }
-            Claim::TipsAsCaptured(name) => {
+            Claim::TipsAsCaptured(name) | Claim::BranchesAsCaptured(name) => {
                 let kept = self
                     .captured
                     .get(name)
                     .unwrap_or_else(|| panic!("nothing was captured as {name}"));
+                let whole = matches!(claim, Claim::TipsAsCaptured(_));
                 let mut off = Vec::new();
                 for (place, before) in kept {
                     let now = self.tips(place);
-                    if before.exact != now.exact {
+                    if whole && before.exact != now.exact {
                         off.push(format!(
                             "{place:?}:\n--- captured\n{}--- now\n{}",
                             before.exact, now.exact
@@ -2466,6 +2508,42 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("not as captured as {name}:\n{}", off.join("\n")))
+                }
+            }
+            Claim::BackupsAsCaptured { name, kept } => {
+                let before = self
+                    .captured
+                    .get(name)
+                    .unwrap_or_else(|| panic!("nothing was captured as {name}"));
+                let mut off = Vec::new();
+                for (place, before) in before {
+                    let now = self.tips(place).backups;
+                    let unkept = |text: &str| -> Vec<String> {
+                        text.lines()
+                            .filter(|line| {
+                                let name = line.split(' ').next().unwrap_or(line);
+                                let last = name.rsplit('/').next().unwrap_or(name);
+                                let tip =
+                                    last.len() == 12 && last.bytes().all(|b| b.is_ascii_hexdigit());
+                                !kept.contains(&last) && !(tip && kept.contains(&"<tip>"))
+                            })
+                            .map(str::to_owned)
+                            .collect()
+                    };
+                    if unkept(&before.backups) != unkept(&now) {
+                        off.push(format!(
+                            "{place:?} backups, but for {kept:?}:\n--- captured\n{}--- now\n{}",
+                            before.backups, now
+                        ));
+                    }
+                }
+                if off.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "backups not as captured as {name}:\n{}",
+                        off.join("\n")
+                    ))
                 }
             }
             Claim::LocalStateUnchanged(at) => {
@@ -2665,6 +2743,21 @@ pub fn end_state(sb: &Sandbox) -> String {
                 })
                 .unwrap_or_else(|| sha.to_owned())
         };
+        let tip_named = |raw: &str| -> String {
+            raw.lines()
+                .map(|line| match line.split_once(' ') {
+                    Some((name, rest))
+                        if name.rsplit('/').next().is_some_and(|last| {
+                            last.len() == 12 && last.bytes().all(|b| b.is_ascii_hexdigit())
+                        }) =>
+                    {
+                        let cut = name.rfind('/').unwrap_or(0);
+                        format!("{}/<tip> {rest}\n", &name[..cut])
+                    }
+                    _ => format!("{line}\n"),
+                })
+                .collect()
+        };
         let renamed = |raw: &str| -> String {
             let mut out = String::new();
             let bytes = raw.as_bytes();
@@ -2706,6 +2799,33 @@ pub fn end_state(sb: &Sandbox) -> String {
                 &["status", "--porcelain"][..],
             ] {
                 text.push_str(&renamed(&rendered(&sb.git(&dir, args))));
+            }
+            let mut backups: Vec<String> = tip_named(&sb.git_ok(
+                &dir,
+                &[
+                    "for-each-ref",
+                    "--format=%(refname) %(objectname)",
+                    "refs/rwv/backup",
+                ],
+            ))
+            .lines()
+            .map(|line| renamed(&format!("{line}\n")))
+            .collect();
+            backups.sort();
+            text.extend(backups);
+            let branches = sb.git_ok(
+                &dir,
+                &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+            );
+            for rev in
+                std::iter::once("HEAD").chain(branches.lines().filter(|b| *b != "rwv-records"))
+            {
+                text.push_str(&format!("tree of {rev}:\n"));
+                for line in sb.git_ok(&dir, &["ls-tree", "-r", rev]).lines() {
+                    if !line.ends_with("\trwv.lock") && !line.ends_with("\trwv.toml") {
+                        text.push_str(&format!("{line}\n"));
+                    }
+                }
             }
             for file in ["rwv.lock", "rwv.toml"] {
                 if let Ok(content) = std::fs::read_to_string(dir.join(file)) {

@@ -478,25 +478,37 @@ the `scenario` and `kill_matrix` binaries both run them.
 operation at every pause point the source declares that it passes, then runs
 the verb's `--continue` in one sandbox and `rwv abort` in another. `POINTS` is
 the one enumeration of pause points: a row per point, naming the cells that
-reach it and why every other shape does not. A source test fails when the
-source declares a point no row holds and when a row names a point the source no
-longer declares. A shape is a verb in one setup (history, a stop, a carried
-dependent, an in-place or as-refs landing); the cells are generated from the
-rows, one test per shape. A cell passes when `--continue` ends in the state an
-unkilled run ends in (compared by commit subject and depth, since ids differ
-between sandboxes) and when abort, typed in the seat and, for a landing, in its
-target, puts every place back where `Step::capture` saw it. A point a verb
-passes before it has written its record has a rerun in place of a continue. A
-point it passes once its record is gone (`aligning-source`) has neither: the
-cell runs what `rwv doctor` names for what the kill left unaligned and compares
-the end state. Two ends are by decision, the single-repo parity of a kill in a
-verb's last instant: a landing with `--retire` killed at `ending` or
-`records-write` leaves savepoints that `rwv doctor` reports as
-`orphaned-savepoint` and `rwv doctor --fix` clears, keeping the seat's
-pre-rebase tips as backups; and one killed at `records-write` also leaves the
-record of the branch it deleted, which the next run of the deletion rule
-drops. Every cell passes on the tree. `discover` (ignored) prints which shapes
-reach which points, for adding a row.
+reach it and, in `same_as`, the shapes that also pass it before what sets them
+apart is live (a record being written, a scratch taken); a shape that stops,
+drifts, retires or aborts differently gets a cell at every point after that.
+A source test fails when the source declares a point no row holds and when a
+row names a point the source no longer declares; another runs every shape once
+per phase with the points each rwv passes traced to a file
+(`RWV_TEST_PAUSE_TRACE`) and fails when a shape passes a point with neither a
+cell nor a `same_as` entry, or a cell is named for a point the shape does not
+pass. A shape is a verb in one setup (history, a stop, a carried dependent, an
+in-place or as-refs landing); the cells are generated from the rows, one test
+per shape. A cell passes when `--continue` ends in the state an unkilled run
+ends in and when abort, typed in the seat and, for a landing, in its target,
+puts every place back where `Step::capture` saw it. The end state compares
+each place's branch tips (by commit subject and depth, since ids differ
+between sandboxes), each branch's tree listing (without `rwv.lock` and
+`rwv.toml`, whose text carries the sandbox path), the backups under
+`refs/rwv/backup` (a tip-named backup as `<tip>`), status, and the manifest and
+lock text. Abort leaves the backups as captured but for the slots it keeps,
+named per shape. Steps run with no standing allowance: the killed verb, its
+continue and its abort are given only the pins they rewind and the declared
+branches they restore or rewrite, per shape. A point a verb passes before it
+has written its record has a rerun in place of a continue. A point it passes
+once its record is gone (`aligning-source`) has neither: the cell checks that
+`rwv status` shows a member the verb left without a checkout as missing and
+that `rwv doctor --all` names `rwv doctor --fix`, then compares the end state.
+Two ends are by decision, the single-repo parity of a kill in a verb's last
+instant: a landing with `--retire` killed at `ending` or `records-write` leaves
+savepoints that `rwv doctor` reports as `orphaned-savepoint` and `rwv doctor
+--fix` clears, keeping the seat's pre-rebase tips as backups; and one killed at
+`records-write` also leaves the record of the branch it deleted, which the next
+run of the deletion rule drops. Every cell passes on the tree.
 
 ### What a step declares
 
@@ -568,7 +580,9 @@ waits only when `RWV_TEST_PAUSE` is `<point>@<dir>` naming that point. The
 first pass writes `<dir>/paused` and waits until `<dir>/release` exists; a
 value of any other shape stops the process. A point sits immediately before a
 compare-and-swap, so what the test changes while the process waits is what
-the compare then reads.
+the compare then reads. `RWV_TEST_PAUSE_TRACE=<file>` appends the name of every
+point a process passes to `<file>`, which is how a test learns what a verb
+reaches without holding it.
 
 The driving side is `tests/common/pause.rs`, and in the harness it is a pair
 of steps: one spawns rwv armed at a point and ends once it is held, and one

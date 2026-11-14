@@ -25026,11 +25026,7 @@ pub fn update_remote_continue_counts_each_repo_it_took_in(by_hand: bool) -> Scen
         Step::git(&a(), Repo::App, &["add", "README"]),
     ];
     if by_hand {
-        steps.push(Step::git(
-            &a(),
-            Repo::App,
-            &["commit", "-q", "--no-edit"],
-        ));
+        steps.push(Step::git(&a(), Repo::App, &["commit", "-q", "--no-edit"]));
     }
     steps.push(
         Step::rwv(&a(), &["update", "--remote", "--continue"])
