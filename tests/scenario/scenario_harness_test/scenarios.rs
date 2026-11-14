@@ -20682,7 +20682,10 @@ fn a_later_commit_moves_a_setting(verb: TipVerb) -> Vec<Step> {
         .expect(Exit::Succeeds),
         Step::rwv(&ww("w"), &start)
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
-            .claim(Claim::OutputContains("rwv.toml: no entry is in conflict")),
+            .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
+            .claim(Claim::OutputContains(
+                "committed are not kept, as the VCS's own abort does not keep them",
+            )),
     ]
 }
 
