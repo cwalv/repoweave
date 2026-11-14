@@ -168,7 +168,7 @@ fn candidate_projects(root: &Path, presence: &MarkerPresence) -> anyhow::Result<
     match presence {
         MarkerPresence::Usable(marker) => Ok(vec![marker.project().clone()]),
         MarkerPresence::Defective {
-            defect: MarkerDefect::Legacy,
+            defect: MarkerDefect::Legacy { .. },
             project_hint,
             ..
         } => Ok(project_hint.iter().cloned().collect()),

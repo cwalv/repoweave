@@ -231,7 +231,10 @@ fn doctor_fix_commits_only_the_rewrite_and_leaves_the_other_edits_in_place() {
     std::fs::write(weave.project.join("rwv.toml"), &hand_edited).unwrap();
     std::fs::write(weave.project.join("notes.txt"), "kept, and edited\n").unwrap();
 
-    rwv(&weave).args(["doctor", "--fix"]).assert().success();
+    rwv(&weave)
+        .args(["doctor", "--fix"])
+        .assert()
+        .stdout(predicates::str::contains("rewrote the member-entry keys"));
 
     assert_eq!(
         commits(&weave),
@@ -460,7 +463,9 @@ fn a_landing_into_a_target_whose_tip_names_the_old_keys_refuses_naming_doctor_fi
 
     let mut doctor = common::rwv();
     doctor.current_dir(&ww.root).args(["doctor", "--fix"]);
-    doctor.assert().success();
+    doctor
+        .assert()
+        .stdout(predicates::str::contains("rewrote the member-entry keys"));
     assert!(
         Manifest::from_path(&ww.project.join("rwv.toml")).is_ok(),
         "the workweave was repaired"
@@ -524,4 +529,36 @@ fn the_rewrite_declines_what_it_would_have_to_guess() {
     let odd = "[repositories.\"github/acme/server\"]\ntype = \"git\"\nurl = \"https://github.com/acme/server.git\"\nbranch = \"main\"\nrole = \"owned\"\nsubmodules = \"sometimes\"\n";
     let err = rewrite_pre_schema_keys(odd).unwrap_err().to_string();
     assert!(err.contains("neither \"local\" nor \"skip\""), "{err}");
+}
+
+/// A checkout an earlier release left, with old member keys and the lock
+/// merge driver that release set up, is migrated by one `rwv doctor --fix`:
+/// the keys are rewritten before the repairs that read the project run.
+#[test]
+fn one_doctor_fix_migrates_the_keys_and_the_lock_merge_driver_together() {
+    let tmp = common::tempdir().unwrap();
+    let weave = weave_committing(tmp.path(), OLD_MANIFEST);
+    std::fs::write(
+        weave.project.join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    project_git(&weave, &["add", ".gitattributes"]);
+    project_git(&weave, &["commit", "-m", "the earlier release's driver"]);
+    project_git(&weave, &["config", "--unset", "merge.rwv-lock.driver"]);
+
+    let out = rwv(&weave).args(["doctor", "--fix"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("rewrote the member-entry keys")
+            && stdout.contains("lock merge driver's attribute line"),
+        "{}",
+        common::cli::describe(&out)
+    );
+    let again = rwv(&weave).args(["doctor", "--fix"]).output().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&again.stdout).contains("[fixed]"),
+        "{}",
+        common::cli::describe(&again)
+    );
 }

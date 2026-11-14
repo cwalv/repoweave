@@ -10,18 +10,30 @@ claim that nothing changed in them.
 
 An operation a release before this one left in progress cannot be resumed or
 rolled back by this one: its `.rwv-op` carries no record schema (this release
-writes and reads schema 8 alone), so every verb that reads it refuses with
-`unreadable-op-record`, and `rwv status` reports it. Finish it with
-`--continue`, or end it with `rwv abort`, on the release that started it before
-upgrading. A record this release cannot read whole, whatever failed in it, is
-refused the same way, plain `rwv abort` included, and is ended with
-`rwv abort --discard-unreadable-record`, which moves nothing back.
+writes and reads schema 8 alone). Finish it with `--continue`, or end it with
+`rwv abort`, on the release that started it before upgrading. Left in
+progress, it is refused as `unreadable-op-record` by every verb that reads it
+in a workspace whose marker this release reads, and `rwv status` there reports
+it; inside a workweave whose marker an earlier release wrote, every verb
+refuses on the marker first, naming `rwv -C <primary> doctor --fix`. The
+record's refusal prints the lines that end the operation, in the order they
+run: `rwv -C <primary> doctor --fix` while the marker of the workspace holding
+the record is unmigrated, `rwv -C <that workspace> doctor --fix` while its
+`rwv.toml` names keys an earlier release wrote, then `rwv -C <that workspace>
+abort --discard-unreadable-record`, which moves nothing back and lists what it
+leaves, each member stopped in a rebase included. A record this release cannot
+read whole, whatever failed in it, is refused the same way, plain `rwv abort`
+included.
 
-A workweave's `.rwv-workweave` marker now records the workweave's name. One an
-earlier release wrote is written again from the project's workweave index by
-the first command run inside the workweave, or for every workweave at once by
-`rwv doctor --fix` in the primary. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other state an
-earlier release wrote and the command that migrates each part.
+A workweave's `.rwv-workweave` marker now records the workweave's name. One
+`rwv doctor --fix` in the primary writes the name into every marker an earlier
+release wrote, the markers of workweaves made with `--dir` outside the
+workweave container included, reading it from the workweave index that release
+kept at `projects/<project>/.rwv-workweave-index`; it then rebuilds the index
+into the project clone and removes that file. A workweave no record names is
+reported with `rwv workweave create <name> --project <project> --dir <dir>`,
+which names it. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other
+state an earlier release wrote and the command that migrates each part.
 
 ### Verbs renamed, split or removed
 

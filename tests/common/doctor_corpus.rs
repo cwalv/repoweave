@@ -503,7 +503,9 @@ pub fn corpus() -> Vec<CheckViolation> {
             pointer_project: Some(project()),
             sub_kind: WeaveRootIdentityConflictKind::MarkerUnverifiable {
                 marker_path: path("/ws/.rwv-workweave"),
-                defect: MarkerDefect::Legacy,
+                defect: MarkerDefect::Legacy {
+                    primary: path("/ws"),
+                },
             },
         },
         CheckViolation::WeaveRootIdentityConflict {

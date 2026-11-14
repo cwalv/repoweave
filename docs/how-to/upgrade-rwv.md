@@ -1,6 +1,6 @@
 # Upgrade to a new rwv on an existing weave
 
-Before replacing the binaries, finish or abort any in-flight sync using the **old** binary; after upgrading, migrate workweave markers, manifests, and locks from the primary weave root:
+Before replacing the binaries, finish or abort any in-flight sync using the **old** binary; after upgrading, migrate workweave markers, manifests, and locks from the primary weave root, then each workweave's own manifest and records from inside it:
 
 ```bash
 # 1. Before upgrading (with the old rwv binary): clear any in-flight sync,
@@ -11,20 +11,25 @@ rwv doctor --fix --all
 rwv doctor --all
 
 # 2. After installing the new binaries (from the primary weave root):
-rwv doctor --fix                    # migrate .rwv-workweave markers, the workweave index, reference worktrees and rwv.toml member keys
+rwv doctor --fix                    # migrate every .rwv-workweave marker, the workweave index, reference worktrees, and this checkout's rwv.toml member keys and lock merge driver
 rwv lock                            # only if rwv.lock is in an old format: it is written afresh, pinning nothing (Step 4)
-rwv branch set-mode main declared   # record the trunk; each workweave's branch is recorded from inside it (Step 6)
-rwv update                          # record what this workspace aligns its members for; run it once in every workweave too (Step 7)
+rwv branch set-mode main declared   # record the trunk (Step 6)
+rwv update                          # record what this workspace aligns its members for (Step 7)
 rwv materialize --remove-undeclared-links   # optional: unlink retired go.sum root symlink
+
+# 3. Then from inside each workweave:
+rwv doctor --fix                    # its own rwv.toml member keys and lock merge driver line (Steps 3 and 9)
+rwv branch set-mode feature --target main   # record its branch (Step 6)
+rwv update                          # (Step 7)
 ```
 
-An in-flight `.rwv-op` or `.rwv-op-lease` file from an older release has no cross-version migration path — resolve it with `--continue` or `rwv abort` on the old binary before upgrading.
+An in-flight `.rwv-op` or `.rwv-op-lease` file from an older release has no cross-version migration path — resolve it with `--continue` or `rwv abort` on the old binary before upgrading. One left in progress is refused as `unreadable-op-record`, and the refusal prints the lines that end it, in the order they run (see [Ending an operation an earlier release left](#ending-an-operation-an-earlier-release-left)).
 
 For resting state on disk, installing a newer `rwv` does not touch existing files until a command reads them. Each file is migrated according to who owns it:
 
 | File | Where it comes from | Remedy |
 |---|---|---|
-| `.rwv-op` / `.rwv-op-lease` | In-flight sync state | Finish or run `rwv abort` on the **old** binary before upgrading |
+| `.rwv-op` / `.rwv-op-lease` | In-flight sync state | Finish or run `rwv abort` on the **old** binary before upgrading; left in progress, the lines the refusal prints end it |
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
 | `projects/<project>/.rwv-workweave-index` | Written by `rwv` itself | `rwv doctor --fix` rebuilds the index in the project clone from the workweave markers and removes the old file; the recorded basedir is not carried over (Step 8) |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
@@ -62,20 +67,26 @@ From inside a workweave, the marker is checked first, then the manifest, then th
 
 ## Step 1 — a legacy workweave marker
 
-A `.rwv-workweave` written by an older `rwv` lacks the workweave's `name` (and, older still, `parent`, or is YAML). Where the project's workweave index lists the workweave, the first command run inside it writes the marker again from the index and says so (`rwv: restored <workweave>/.rwv-workweave from the project clone's index and the worktree relation`), and `rwv doctor --fix` in the primary does the same for every workweave at once. Otherwise every command run from inside that workweave refuses immediately, including `rwv doctor` itself:
+A `.rwv-workweave` written by an older `rwv` lacks the workweave's `name` (and, older still, `parent`, or is YAML). Every command run from inside that workweave refuses immediately, including `rwv doctor` itself, and names the command that migrates it:
 
 ```text
-Error: <workweave>/.rwv-workweave is a legacy workweave marker (YAML format, or missing the required `parent` or `name` field). Run `rwv doctor --fix` from the primary weave, not from inside this workweave: resolving the marker precedes the repair, so a self-invoked `--fix` hits this same refusal and changes nothing. The file is still readable YAML, so its own `primary:` names the weave to run from — `rwv doctor --fix -C <that path>` needs no `cd`.
+Error: <workweave>/.rwv-workweave is a legacy workweave marker, written by an earlier release (YAML, or missing the required `parent` or `name` field). Run `rwv doctor --fix` from the primary weave, not from inside this workweave: resolving the marker precedes the repair, so a self-invoked `--fix` hits this same refusal and changes nothing:
+  rwv -C <primary> doctor --fix
 ```
 
-Resolving which workspace the command is running in happens before `doctor`'s repair logic runs, so a self-invoked `--fix` inside the workweave cannot rewrite its own marker. Because the legacy marker is plain YAML, its `primary:` field is still readable:
+Resolving which workspace the command is running in happens before `doctor`'s repair logic runs, so a self-invoked `--fix` inside the workweave cannot rewrite its own marker. Run it from the primary weave:
 
 ```bash
-cat .rwv-workweave        # primary: <path> — still readable, unmigrated
-rwv doctor --fix -C <path from primary:>
+rwv -C <primary> doctor --fix
 ```
 
-`rwv doctor --fix` scans every workweave from the primary weave in one pass, migrating legacy `.rwv-workweave` markers to JSON with the name the index records (or, for a workweave it does not list, the one its directory name `<project>--<name>` spells), replacing any legacy symlinked `reference` member slots with read-only git worktrees, and settling file permissions.
+One run migrates every marker a checkout of the project clone sits in, wherever its directory is, `--dir` workweaves included, and every marker in a workweave container. Each takes the name the project's workweave index records for its directory, read from the file an earlier release kept at `projects/<project>/.rwv-workweave-index` while it stands; the same run then rebuilds the index (Step 8) and removes that file. A workweave the index does not list takes the name its directory name `<project>--<name>` spells. One whose name nothing records is reported with the command that names it, run as printed:
+
+```bash
+rwv -C <parent> workweave create <name> --project <project> --dir <workweave>
+```
+
+It writes the name into the marker and records the workweave, changing nothing else there. The same pass replaces any legacy symlinked `reference` member slots with read-only git worktrees and settles file permissions.
 
 ## Step 2 — a legacy project manifest
 
@@ -107,7 +118,7 @@ choices:
 rwv explain unparseable-project
 ```
 
-Run the repair from the project's checkout:
+Run the repair from the project's checkout: in the primary weave root, then inside each workweave, whose checkout carries its own `rwv.toml`:
 
 ```bash
 rwv doctor --fix
@@ -192,7 +203,7 @@ An earlier release kept each project's workweave index at `projects/<project>/.r
 rwv -C <primary> doctor --fix
 ```
 
-The rebuild lists the workweave each checkout of the project clone sits in, by the name its `.rwv-workweave` marker records, writes the index into the project clone, and removes the old file. The basedir the old index recorded is not carried over: `rwv workweave set-default-create-basedir` records it again. If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
+The rebuild runs after the markers are migrated (Step 1), so it lists the workweave each checkout of the project clone sits in, by the name its `.rwv-workweave` marker records, writes the index into the project clone, and removes the old file. The basedir the old index recorded is not carried over: `rwv workweave set-default-create-basedir` records it again. If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
 
 ## Step 9 — the lock merge driver an earlier release set up
 
@@ -204,7 +215,19 @@ Run the repair in each checkout of the project repo whose branch carries the old
 rwv doctor --fix
 ```
 
-It rewrites the line in the checked-out commit's `.gitattributes`, committing only that, and in the working file with its other edits in place, and replaces the clone's config. Every workweave shares its clone's config; another branch carries its own `.gitattributes` and is migrated where it is checked out.
+It rewrites the line in the checked-out commit's `.gitattributes`, committing only that, and in the working file with its other edits in place, and replaces the clone's config. The same run that rewrites the checkout's `rwv.toml` keys (Step 3) does this too. Every workweave shares its clone's config; another branch carries its own `.gitattributes` and is migrated where it is checked out.
+
+## Ending an operation an earlier release left
+
+A `.rwv-op` an earlier release wrote carries no record schema, so this release neither resumes nor rolls it back. Every verb that reads it refuses with `unreadable-op-record`, and `rwv status` reports it, in every workspace whose marker this release reads; inside a workweave whose marker is unmigrated, the marker refusal of Step 1 comes first. The record's refusal lists the lines that end the operation, in the order they run:
+
+```text
+  rwv -C <primary> doctor --fix
+  rwv -C <workspace> doctor --fix
+  rwv -C <workspace> abort --discard-unreadable-record
+```
+
+The first is printed while the marker of the workspace holding the record is unmigrated, and the second while that workspace's `rwv.toml` names keys an earlier release wrote and its project repo is stopped in no rebase or merge. The last removes the record and releases the lease and claims the operation held; it moves nothing back, since without its record which tips are the operation's own cannot be told, and lists what it leaves: each repo stopped in a rebase or merge, and each savepoint. Finish or cancel a stopped rebase with the VCS; `rwv doctor --fix` then keeps each savepoint tip no branch reaches as a backup and drops the savepoints.
 
 ## Branches in the pre-flat shape
 

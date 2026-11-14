@@ -646,14 +646,25 @@ exist nowhere else.
 
 ### `legacy-workweave-marker`
 
-**Warning. Auto-fixable.** A `.rwv-workweave` marker this build cannot use as
-written: YAML (markers are JSON now), possibly also missing the `parent:`
-field required before the format changed.
+**Warning. Auto-fixable.** A `.rwv-workweave` marker an earlier release wrote,
+which this build cannot use as written: one with no `name` field, or YAML
+(markers are JSON now), possibly also missing the `parent:` field required
+before the format changed. It is reported for every workweave a checkout of
+the project clone sits in, wherever its directory is, and for every directory
+in a workweave container.
 
 **What to do:** `rwv doctor --fix` rewrites the marker as JSON, backfilling
-`parent: <primary value>` where it is absent. Run it from the primary weave —
-this finding is only ever reported from there, because from inside the
-workweave the marker refuses before any verb dispatches.
+`parent: <primary value>` where it is absent, and with the name the project's
+workweave index records for that directory. While the index an earlier release
+kept at `projects/<project>/.rwv-workweave-index` stands, the name is read from
+that file, so run the fix before anything removes it. A workweave no index
+lists takes the name its directory's name `<project>--<name>` spells. One whose
+name nothing records is reported with the verb that names it,
+`rwv workweave create <name> --project <project> --dir <dir>` run from its
+parent, which writes the name into the marker and records the workweave as it
+stands. Run `--fix` from the primary weave: from inside the workweave the
+marker refuses before any verb dispatches, naming `rwv -C <primary> doctor
+--fix`.
 
 ### `unreadable-owned-state`
 

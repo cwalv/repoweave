@@ -6632,7 +6632,7 @@ impl CheckViolation {
                 Manifest::legacy_format_refusal(legacy_path.as_path())
             ),
             CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
-                "{} is a workweave marker an earlier release wrote, in YAML or with no \
+                "{} is a legacy workweave marker an earlier release wrote, in YAML or with no \
                      `parent` or `name`; run `rwv doctor --fix` to migrate it",
                 marker_path.display()
             ),
@@ -8299,6 +8299,43 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
     }
 }
 
+/// Rewrite each pre-schema `rwv.toml` of this workspace before the world is
+/// loaded, so the repairs that read a project, the lock merge driver's among
+/// them, see it in the same run. A rewrite withheld or failed here is left
+/// for the `unparseable-project` finding's arm, which reports why.
+fn repair_pre_schema_manifests(
+    ctx: &crate::workspace::WorkspaceContext,
+    project_scope: Option<&ProjectName>,
+) {
+    let vcs = crate::vcs::project_vcs();
+    for project in crate::workspace::discover_projects(ctx.active_path()) {
+        if project_scope.is_some_and(|scope| scope != &project) {
+            continue;
+        }
+        let manifest_path = project_dir(ctx.active_path(), &project).join(Manifest::FILE_NAME);
+        let Ok(text) = std::fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        if crate::manifest::pre_schema_keys(&text).is_empty() {
+            continue;
+        }
+        if let Ok(PreSchemaFix::Rewritten { committed }) =
+            fix_pre_schema_manifest(vcs.as_ref(), &manifest_path)
+        {
+            announce_pre_schema_rewrite(&project, committed);
+        }
+    }
+}
+
+fn announce_pre_schema_rewrite(project: &ProjectName, committed: bool) {
+    let note = if committed {
+        ", committing only that rewrite"
+    } else {
+        "; HEAD holds none, so there is nothing to commit"
+    };
+    outln!("[fixed] core: {project}: rewrote the member-entry keys in rwv.toml{note}");
+}
+
 /// `--fix` arms that repair the workspace rather than a collected finding.
 ///
 /// They run before [`collect_doctor_violations`], which is what lets a
@@ -9155,27 +9192,20 @@ fn apply_finding_repairs(
                 manifest_path,
                 sub_kind: UnparseableProjectKind::PreSchema,
                 ..
-            } => {
-                match fix_pre_schema_manifest(world.project_vcs.as_ref(), manifest_path) {
-                    Ok(PreSchemaFix::Rewritten { committed }) => {
-                        let note = if committed {
-                            ", committing only that rewrite"
-                        } else {
-                            "; HEAD holds none, so there is nothing to commit"
-                        };
-                        outln!("[fixed] core: {project}: rewrote the member-entry keys in rwv.toml{note}");
-                        true
-                    }
-                    Ok(PreSchemaFix::Withheld(reason)) => {
-                        fix_errors.push(format!("{project}: rwv.toml not rewritten: {reason}"));
-                        false
-                    }
-                    Err(e) => {
-                        fix_errors.push(format!("{project}: rwv.toml not rewritten: {e:#}"));
-                        false
-                    }
+            } => match fix_pre_schema_manifest(world.project_vcs.as_ref(), manifest_path) {
+                Ok(PreSchemaFix::Rewritten { committed }) => {
+                    announce_pre_schema_rewrite(project, committed);
+                    true
                 }
-            }
+                Ok(PreSchemaFix::Withheld(reason)) => {
+                    fix_errors.push(format!("{project}: rwv.toml not rewritten: {reason}"));
+                    false
+                }
+                Err(e) => {
+                    fix_errors.push(format!("{project}: rwv.toml not rewritten: {e:#}"));
+                    false
+                }
+            },
 
             _ => false,
         };
@@ -9796,6 +9826,7 @@ pub fn run_check(
             Scope::Weave => None,
             Scope::ActiveProject => ctx.active_project(),
         };
+        repair_pre_schema_manifests(ctx, project_scope);
         repair_member_gaps(ctx, project_scope, abandon_lost_pins, &mut fix_errors);
         repair_standalone_members(ctx, project_scope, &mut fix_errors);
         repair_uninitialized_submodules(ctx, project_scope);

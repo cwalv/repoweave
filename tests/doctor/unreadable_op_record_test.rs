@@ -433,6 +433,13 @@ fn a_record_an_earlier_release_left_is_ended_by_the_lines_its_refusal_prints_in_
         std::fs::write(&manifest, text.replace("branch = ", "version = ")).unwrap();
     }
 
+    let out = rwv(&parked.seat.root, &["status"]);
+    let refusal = common::cli::refused(&out, RefusalKind::LegacyWorkweaveMarker);
+    assert!(
+        refusal.contains(&format!("rwv -C {} doctor --fix", target.display())),
+        "{refusal}"
+    );
+
     let out = rwv(&target, &["status"]);
     let said = String::from_utf8_lossy(&out.stdout).into_owned();
     let lines: Vec<&str> = said

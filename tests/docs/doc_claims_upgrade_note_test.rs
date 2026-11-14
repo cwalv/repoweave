@@ -109,15 +109,8 @@ fn doctor_fix_run_from_inside_the_workweave_does_not_migrate_its_own_marker() {
 }
 
 /// The refusal is not merely located but executable from where it is printed:
-/// carrying out its own instructions, with cwd never leaving the workweave,
+/// the line it names, run verbatim with cwd never leaving the workweave,
 /// migrates the marker.
-///
-/// Distinct from the `-C` test below, which supplies primary from the fixture.
-/// Here the argument comes from reading `primary:` out of the marker, which is
-/// the step the refusal tells the reader to take — so this reddens if the
-/// refusal stops naming `-C`, and it reddens if a legacy marker's `primary:`
-/// ever stops being readable before migration, neither of which the fixture-fed
-/// version can see.
 #[test]
 fn the_refusal_names_a_repair_that_works_from_the_shell_showing_it() {
     let tmp = common::tempdir().unwrap();
@@ -136,20 +129,17 @@ fn the_refusal_names_a_repair_that_works_from_the_shell_showing_it() {
             .clone(),
     )
     .unwrap();
-    assert!(
-        refusal.contains("--fix -C"),
-        "the refusal must name the form that needs no cd, got: {refusal}"
-    );
-
-    let named_primary = std::fs::read_to_string(&marker_path)
-        .unwrap()
+    let line = refusal
         .lines()
-        .find_map(|line| line.strip_prefix("primary:").map(|v| v.trim().to_string()))
-        .expect("the refusal claims `primary:` is readable before migration");
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv -C ") && line.ends_with("doctor --fix"))
+        .unwrap_or_else(|| {
+            panic!("the refusal must name the form that needs no cd, got: {refusal}")
+        });
+    let words: Vec<&str> = line.split_whitespace().collect();
 
     common::rwv()
-        .args(["doctor", "--fix", "-C"])
-        .arg(&named_primary)
+        .args(&words[1..])
         .current_dir(&ww_dir)
         .assert()
         .stdout(

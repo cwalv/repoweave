@@ -963,7 +963,11 @@ fn each_marker_defect_refuses_under_the_token_doctor_publishes_for_it() {
     assert_eq!(dangling.kind().token(), wire_tag(&dangling));
 
     assert_eq!(
-        MarkerDefect::Legacy.kind().token(),
+        MarkerDefect::Legacy {
+            primary: PathBuf::from("/ws"),
+        }
+        .kind()
+        .token(),
         CheckViolation::LegacyWorkweaveMarker {
             marker_path: PathBuf::from("/ws/.rwv-workweave"),
             primary: PathBuf::from("/ws"),

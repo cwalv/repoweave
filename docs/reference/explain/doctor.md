@@ -719,18 +719,32 @@ Schema:
       "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker `WorkweaveMarker::migrate_legacy` can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a `crate::manifest::ProjectName` from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value `require_exclusive` refuses on, its path respelled by `Self::into_wire`, not a re-description of it.",
       "oneOf": [
         {
-          "type": "string",
-          "enum": [
-            "legacy"
-          ]
-        },
-        {
           "type": "object",
           "required": [
             "dangling-primary"
           ],
           "properties": {
             "dangling-primary": {
+              "type": "object",
+              "required": [
+                "primary"
+              ],
+              "properties": {
+                "primary": {
+                  "$ref": "#/definitions/WirePath"
+                }
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "legacy"
+          ],
+          "properties": {
+            "legacy": {
               "type": "object",
               "required": [
                 "primary"

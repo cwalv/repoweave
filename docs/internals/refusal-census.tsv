@@ -328,7 +328,7 @@ src/vcs.rs	unsupported-vcs-tool	tests/vcs/vcs_tool_floor_test.rs	2
 src/workspace.rs	(untokened:owed)	-	2
 src/workspace.rs	cwd-in-inactive-project	tests/weave/project_and_source_spelling_test.rs	1
 src/workspace.rs	dangling-active-project	-	1
-src/workspace.rs	legacy-workweave-marker	tests/weave/workweave_registry_test.rs	1
+src/workspace.rs	legacy-workweave-marker	tests/doctor/unreadable_op_record_test.rs	1
 src/workspace.rs	marker-binding-disagreement	-	1
 src/workspace.rs	no-active-project	tests/weave/project_and_source_spelling_test.rs	3
 src/workspace.rs	no-weave-root	-	1

@@ -2183,9 +2183,9 @@ impl WorkweaveMarker {
     ) -> anyhow::Result<bool> {
         match observe_marker(&Self::path_in(dir)) {
             MarkerPresence::Defective {
-                defect: MarkerDefect::Legacy,
+                defect: MarkerDefect::Legacy { primary: of },
                 project_hint: Some(hinted),
-                primary_hint: Some(of),
+                ..
             } if &hinted == project && primary.same_directory(&of) => {
                 Self::migrate_legacy_as(dir, Some(name))
             }
@@ -2217,7 +2217,7 @@ impl WorkweaveMarker {
 #[schemars(rename = "MarkerDefect")]
 pub enum MarkerDefect<P> {
     DanglingPrimary { primary: P },
-    Legacy,
+    Legacy { primary: P },
     Unreadable { detail: String },
 }
 
@@ -2227,7 +2227,9 @@ impl MarkerDefect<PathBuf> {
             MarkerDefect::DanglingPrimary { primary } => MarkerDefect::DanglingPrimary {
                 primary: crate::path_spelling::WirePath::of(&primary),
             },
-            MarkerDefect::Legacy => MarkerDefect::Legacy,
+            MarkerDefect::Legacy { primary } => MarkerDefect::Legacy {
+                primary: crate::path_spelling::WirePath::of(&primary),
+            },
             MarkerDefect::Unreadable { detail } => MarkerDefect::Unreadable { detail },
         }
     }
@@ -2240,7 +2242,7 @@ impl MarkerDefect<PathBuf> {
     pub fn kind(&self) -> RefusalKind {
         match self {
             MarkerDefect::DanglingPrimary { .. } => RefusalKind::DanglingPrimary,
-            MarkerDefect::Legacy => RefusalKind::LegacyWorkweaveMarker,
+            MarkerDefect::Legacy { .. } => RefusalKind::LegacyWorkweaveMarker,
             MarkerDefect::Unreadable { .. } => RefusalKind::UnreadableMarker,
         }
     }
@@ -2259,14 +2261,14 @@ impl MarkerDefect<PathBuf> {
                 primary.display(),
                 marker_path
             ),
-            MarkerDefect::Legacy => format!(
-                "{} is a legacy workweave marker (YAML format, or missing the required \
-                 `parent` or `name` field). Run `rwv doctor --fix` from the primary weave, not \
-                 from inside this workweave: resolving the marker precedes the repair, \
-                 so a self-invoked `--fix` hits this same refusal and changes nothing. \
-                 The file is still readable YAML, so its own `primary:` names the weave \
-                 to run from — `rwv doctor --fix -C <that path>` needs no `cd`.",
-                marker_path
+            MarkerDefect::Legacy { primary } => format!(
+                "{} is a legacy workweave marker, written by an earlier release (YAML, or \
+                 missing the required `parent` or `name` field). Run `rwv doctor --fix` from \
+                 the primary weave, not from inside this workweave: resolving the marker \
+                 precedes the repair, so a self-invoked `--fix` hits this same refusal and \
+                 changes nothing:\n  rwv -C {} doctor --fix",
+                marker_path,
+                primary.display()
             ),
             MarkerDefect::Unreadable { detail } => format!(
                 "{detail}. Repair {}, or delete it to adopt this tree as a \
@@ -2283,7 +2285,6 @@ enum MarkerPresence {
     Defective {
         defect: MarkerDefect<PathBuf>,
         project_hint: Option<ProjectName>,
-        primary_hint: Option<PathBuf>,
     },
 }
 
@@ -2295,27 +2296,22 @@ enum MarkerPresence {
 /// it and let [`WorkweaveMarker::migrate_legacy`] rewrite it; a YAML parse
 /// failure past that point means the file witnesses neither format.
 ///
-/// `project_hint` and `primary_hint` are carried out of the defective arms
-/// because a root whose marker no verb may act on still presents a project
-/// (for surfacing) and, if the defect is [`MarkerDefect::Legacy`], a primary
-/// (for `rwv doctor`'s legacy-marker report) — and this is the last point
-/// anything can read either from the raw YAML.
+/// `project_hint` is carried out of the defective arms because a root whose
+/// marker no verb may act on still presents a project (for surfacing), and
+/// this is the last point anything can read it from the raw YAML.
 fn observe_marker(marker_path: &StatePath) -> MarkerPresence {
     if !marker_path.exists() {
         return MarkerPresence::Absent;
     }
     let unreadable =
-        |detail: String, project_hint: Option<ProjectName>, primary_hint: Option<PathBuf>| {
-            MarkerPresence::Defective {
-                defect: MarkerDefect::Unreadable { detail },
-                project_hint,
-                primary_hint,
-            }
+        |detail: String, project_hint: Option<ProjectName>| MarkerPresence::Defective {
+            defect: MarkerDefect::Unreadable { detail },
+            project_hint,
         };
     let content = match marker_path.read_to_string() {
         Ok(content) => content,
         Err(e) => {
-            return unreadable(format!("failed to read {marker_path}: {e:#}"), None, None);
+            return unreadable(format!("failed to read {marker_path}: {e:#}"), None);
         }
     };
     if let Ok(marker) = serde_json::from_str::<WorkweaveMarker>(&content) {
@@ -2327,16 +2323,11 @@ fn observe_marker(marker_path: &StatePath) -> MarkerPresence {
             return unreadable(
                 format!("failed to parse .rwv-workweave at {marker_path}: {e:#}"),
                 None,
-                None,
             );
         }
     };
     let Some(raw) = docs.first().filter(|raw| raw.as_mapping().is_some()) else {
-        return unreadable(
-            format!("{marker_path} is not a JSON or YAML mapping"),
-            None,
-            None,
-        );
+        return unreadable(format!("{marker_path} is not a JSON or YAML mapping"), None);
     };
     let project_raw = raw.as_mapping_get("project").and_then(|v| v.as_str());
     let project_hint = project_raw
@@ -2356,7 +2347,6 @@ fn observe_marker(marker_path: &StatePath) -> MarkerPresence {
                 marker_path
             ),
             project_hint,
-            None,
         );
     };
     if project_hint.is_none() {
@@ -2372,13 +2362,13 @@ fn observe_marker(marker_path: &StatePath) -> MarkerPresence {
                 marker_path
             ),
             None,
-            Some(primary_hint),
         );
     }
     MarkerPresence::Defective {
-        defect: MarkerDefect::Legacy,
+        defect: MarkerDefect::Legacy {
+            primary: primary_hint,
+        },
         project_hint,
-        primary_hint: Some(primary_hint),
     }
 }
 
@@ -2390,15 +2380,14 @@ fn observe_marker(marker_path: &StatePath) -> MarkerPresence {
 /// `None` covers every case but the one it names: no marker at `dir`, a
 /// marker that reads as usable, or one broken some other way
 /// ([`MarkerDefect::Unreadable`], [`MarkerDefect::DanglingPrimary`]) —
-/// [`MarkerDefect::Legacy`] always carries a `primary_hint`, since a legacy
+/// [`MarkerDefect::Legacy`] always carries a primary, since a legacy
 /// marker with no `primary:` of its own classifies `Unreadable` instead.
 pub(crate) fn legacy_marker_primary(dir: &Path) -> Option<PathBuf> {
     match observe_marker(&WorkweaveMarker::path_in(dir)) {
         MarkerPresence::Defective {
-            defect: MarkerDefect::Legacy,
-            primary_hint,
+            defect: MarkerDefect::Legacy { primary },
             ..
-        } => primary_hint,
+        } => Some(primary),
         _ => None,
     }
 }
@@ -5173,7 +5162,7 @@ mod tests {
                 ..
             } => {
                 assert!(
-                    matches!(defect, MarkerDefect::Legacy),
+                    matches!(defect, MarkerDefect::Legacy { .. }),
                     "expected Legacy, got {defect:?}"
                 );
                 assert_eq!(
@@ -5377,7 +5366,9 @@ mod tests {
             MarkerDefect::DanglingPrimary {
                 primary: PathBuf::from("/nowhere"),
             },
-            MarkerDefect::Legacy,
+            MarkerDefect::Legacy {
+                primary: PathBuf::from("/ws"),
+            },
             MarkerDefect::Unreadable {
                 detail: "failed to parse .rwv-workweave".to_string(),
             },
@@ -5385,7 +5376,7 @@ mod tests {
         for defect in &all {
             match defect {
                 MarkerDefect::DanglingPrimary { .. }
-                | MarkerDefect::Legacy
+                | MarkerDefect::Legacy { .. }
                 | MarkerDefect::Unreadable { .. } => {}
             }
         }
