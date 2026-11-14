@@ -117,19 +117,16 @@ const ALLOWLIST: &[Allowed] = &[
             `dest` there IS the canonical store, so the delete would take \
             the object database and the worktree administration of every \
             live workweave checkout of that repo with it. Behind the \
-            local-only-branch scan AND, in FRONT of the delete, R4 via \
+            scan of what the store holds that no remote has \
+            (Vcs::held_by_no_remote: every ref outside the remote-tracking \
+            ones, and a detached HEAD, whose commits no remote-tracking \
+            branch reaches) AND, in FRONT of the delete, R4 via \
             judge_store_checkouts — no worktree still registered against \
-            the store. The \
-            local-only refusal is NOT relaxed in exchange: it is \
-            incidentally what has been keeping this call off a live \
-            workweave's store, so a workweave's branch stays inside its \
-            predicate (§5, prune_dropped_repo row). That scan is now \
-            fail-CLOSED throughout: an unreadable branch list refuses, an \
-            absent remote counterpart refuses, and a count git could not \
-            take refuses with its own message instead of being read as \
-            \"nothing unpushed\" (the previous unwrap_or(0), recorded here \
-            as a measured fail-open and since fixed; mutation-verified by \
-            prune_dropped_repo_refuses_when_the_ahead_count_cannot_be_taken). \
+            the store. A workweave's branch holding unpublished commits \
+            stays inside that scan's predicate. The scan is fail-CLOSED: a \
+            walk git could not take refuses with its own message \
+            (mutation-verified by \
+            prune_dropped_repo_refuses_when_what_no_remote_has_cannot_be_read). \
             (2) WORKWEAVE arm — a checkout removal, and it is one because \
             the arm proves it rather than inferring it. The divergence \
             refusal covers only the `canonical.exists()` branch, which ends \

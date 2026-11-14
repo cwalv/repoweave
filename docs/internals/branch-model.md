@@ -472,18 +472,16 @@ the test is what keeps it from coming back.
   unreadable ref database is `CommandFailed`, not a state `[V]`. §4.5 is the
   argument, and the four-state collapse no longer has a value to live in.
 
-- **`prune_dropped_repo` is blocked by rwv's own refs while they exist.**
-  *(This one is unchanged, by design.)* It refuses if any local branch lacks
-  an `origin/` counterpart (`sync.rs:1478-1519`) `[V]` — which every
-  rwv-authored ephemeral branch does by construction. A store that *currently
-  holds* an rwv-authored ephemeral branch cannot be pruned; a clean
-  `workweave delete` removes the ephemeral branches, after which the predicate
-  passes. The refusal's full message is "dropped from lock but clone has
-  local-only commits; push them and re-run, or remove manually"
-  (`sync.rs:1521-1524`) `[V]` — the second remedy works. This refusal was also
-  the only thing standing between a live workweave's git backing and
-  `remove_dir_all`; that is no longer true, because R4 now gates the destroy
-  independently (`judge_store_checkouts` and `refuse_standing_receipts` in
+- **`prune_dropped_repo` is blocked by rwv's own refs while they hold work.**
+  It refuses while the store holds any ref, or a detached HEAD, whose commits
+  no remote-tracking branch reaches (`Vcs::held_by_no_remote`): a branch, a
+  tag, a backup, edits set aside, a savepoint. An rwv-authored ephemeral branch
+  holding commits nothing has published blocks it until a clean `workweave
+  delete` removes the branch; one whose commits a remote holds does not. This
+  refusal was also the only thing standing between a live workweave's git
+  backing and `remove_dir_all`; that is no longer true, because R4 now gates
+  the destroy independently (`judge_store_checkouts` and
+  `refuse_standing_receipts` in
   `sync.rs`, before the `remove_dir_all`) `[V]`. See the `prune_dropped_repo` row
   in §5.
 

@@ -449,6 +449,76 @@ pub fn dc10_store_destroy() -> Scenario {
     )
 }
 
+/// A member's clone in the primary is its repo's only store: removing it
+/// removes edits the VCS set aside there. The dirty refusal of `member remove
+/// --delete` does not offer to set the edits aside, and once they are set
+/// aside anyway the removal refuses, naming them.
+pub fn store_removal_refuses_edits_set_aside() -> Scenario {
+    scenario(
+        "a store removal refuses edits set aside",
+        vec![
+            Step::hand_edit(&a(), Repo::App, "README", "app", "hours of work"),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses(Repo::App, State::EditsDirty))
+                .claim(Claim::OutputLacks("stash"))
+                .claim(Claim::OutputContains(" commit")),
+            Step::git(&a(), Repo::App, &["stash", "push"]),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+                .claim(Claim::OutputContains("edits set aside"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::git(&a(), Repo::App, &["stash", "pop"]).may_strand(&[Repo::App]),
+            Step::git(&a(), Repo::App, &["commit", "-qam", "kept"]),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+                .claim(Claim::OutputContains("branch main"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+        ],
+    )
+}
+
+/// A landing that drops a member prunes the target's clone of it only when
+/// that store holds nothing no remote has: edits set aside there, or a commit
+/// only a tag holds, refuse the prune and leave the clone.
+pub fn landing_prune_refuses_a_store_holding(held: StoreHolds) -> Scenario {
+    let mut steps = vec![create("w")];
+    steps.extend(match held {
+        StoreHolds::SetAsideEdits => vec![
+            Step::hand_edit(&a(), Repo::App, "README", "app", "hours of work"),
+            Step::git(&a(), Repo::App, &["stash", "push"]),
+        ],
+        StoreHolds::TaggedCommit => vec![
+            Step::commit(&a(), Repo::App, "tagged-only"),
+            Step::git(&a(), Repo::App, &["tag", "keepme"]),
+            Step::git(&a(), Repo::App, &["reset", "-q", "--hard", "HEAD~1"])
+                .may_rewrite(&[Repo::App]),
+        ],
+    });
+    steps.extend([
+        Step::rwv(&ww("w"), &["member", "remove", APP, "--delete"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--allow-member-change", APP])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/app: prune in the target's workspace skipped",
+            ))
+            .claim(Claim::OutputContains(match held {
+                StoreHolds::SetAsideEdits => "edits set aside",
+                StoreHolds::TaggedCommit => "tag keepme",
+            }))
+            .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+    ]);
+    scenario(
+        "a landing's prune refuses a store holding what no remote has",
+        steps,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StoreHolds {
+    SetAsideEdits,
+    TaggedCommit,
+}
+
 /// tombstone-to-backup: a savepoint an earlier release left behind, the only
 /// ref to commits it discarded, becomes a backup under `doctor --fix`, and
 /// `backup drop` releases it.

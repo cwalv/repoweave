@@ -1465,6 +1465,44 @@ impl ListedBackup {
     }
 }
 
+/// Something a repository's store holds whose commits no remote-tracking
+/// branch reaches: removing the store removes them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldAlone {
+    pub kind: HeldKind,
+    /// The name the backend gives it; empty for edits set aside.
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeldKind {
+    Branch,
+    Tag,
+    Backup,
+    /// Uncommitted edits the VCS keeps aside from the working copy.
+    SetAsideEdits,
+    /// A savepoint an operation keeps until it ends.
+    Savepoint,
+    /// The commit a checkout stands on, on no branch.
+    CheckedOut,
+    Other,
+}
+
+impl fmt::Display for HeldAlone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = &self.name;
+        match self.kind {
+            HeldKind::Branch => write!(f, "branch {name}"),
+            HeldKind::Tag => write!(f, "tag {name}"),
+            HeldKind::Backup => write!(f, "backup {name}"),
+            HeldKind::SetAsideEdits => f.write_str("edits set aside"),
+            HeldKind::Savepoint => write!(f, "an operation's savepoint {name}"),
+            HeldKind::CheckedOut => write!(f, "the checked-out commit {name}"),
+            HeldKind::Other => f.write_str(name),
+        }
+    }
+}
+
 /// Which branches count as reaching a commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RemoteTracking {
@@ -4021,37 +4059,14 @@ pub trait Vcs: Send + Sync {
     /// [`mid_op`]: Vcs::mid_op
     fn cancel_in_flight_op(&self, repo: &Path);
 
-    /// Return `true` when `branch` in `repo` has a counterpart on some remote
-    /// (`refs/remotes/<remote>/<branch>` for git).
+    /// Everything `repo`'s store holds whose commits no remote-tracking
+    /// branch reaches: each ref outside the remote-tracking ones, and a
+    /// checkout's HEAD on no branch. Empty when every commit the store holds
+    /// is on a remote as last fetched.
     ///
-    /// Used by `prune_dropped_repo` to refuse pruning a clone that has
-    /// local-only branches: a branch with no remote counterpart is
-    /// conservatively assumed to carry unique work.
-    fn branch_has_remote_counterpart(
-        &self,
-        repo: &Path,
-        branch: &RawRefName,
-    ) -> Result<bool, VcsError>;
-
-    /// Count commits reachable from `branch` but not from any remote
-    /// counterpart of it in `repo`.
-    ///
-    /// Returns 0 when the branch is fully merged into its counterpart, and
-    /// `>0` when it carries unique local commits. Caller is responsible
-    /// for verifying the counterpart exists first via
-    /// [`branch_has_remote_counterpart`]; this method may error when it
-    /// does not.
-    ///
-    /// For git: runs
-    /// `git rev-list --count refs/heads/<branch> --not refs/remotes/<remote>/<branch>...`,
-    /// the negation naming every remote that has the branch.
-    ///
-    /// [`branch_has_remote_counterpart`]: Vcs::branch_has_remote_counterpart
-    fn count_commits_ahead_of_remote(
-        &self,
-        repo: &Path,
-        branch: &RawRefName,
-    ) -> Result<usize, VcsError>;
+    /// For git: `git rev-list --all --not --remotes`, then every ref and a
+    /// detached HEAD whose tip that lists.
+    fn held_by_no_remote(&self, repo: &Path) -> Result<Vec<HeldAlone>, VcsError>;
 
     /// The commits of `branch` that no remote-tracking branch reaches and no
     /// superseded tip reaches, newest first: its unpushed commits.

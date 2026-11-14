@@ -7,12 +7,12 @@ use crate::vcs::{
     AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
     BackupWitness, BranchChange, BranchTip, CommitId, CommitSummary, CommittedFile, ConflictOp,
     ContentIdentity, Copied, DerivedContentPolicy, DerivedContentResolution, DestroyProof,
-    DiffBeyond, DiscardOutcome, FileChange, HeadAttachment, HeadObservation, Holds, InTheWay,
-    LeftBehind, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup, MemberBirth,
-    MidOperation, NamedBranch, PatchEquivalents, PathStanding, PinOutcome, PruningFetch,
-    PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId, RecordedSubmodule,
-    RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge, RefOrigin,
-    RefRestoreOutcome, RefSavepoint, RefreshScope, RefreshWrite, RegistrationPrune,
+    DiffBeyond, DiscardOutcome, FileChange, HeadAttachment, HeadObservation, HeldAlone, HeldKind,
+    Holds, InTheWay, LeftBehind, ListedBackup, LocalRefName, LockDriverPart, LockDriverSetup,
+    MemberBirth, MidOperation, NamedBranch, PatchEquivalents, PathStanding, PinOutcome,
+    PruningFetch, PublishRef, RangeCommit, RangeListing, RawRefName, RawRevisionId,
+    RecordedSubmodule, RecordedUrl, RecordsAdvance, RecordsPublish, RecordsSite, RefMerge,
+    RefOrigin, RefRestoreOutcome, RefSavepoint, RefreshScope, RefreshWrite, RegistrationPrune,
     RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
     RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId,
     SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile,
@@ -1786,31 +1786,6 @@ impl GitVcs {
                 ),
             }),
         }
-    }
-
-    /// The remote-tracking refs, one per remote that has it, of `branch`.
-    fn remote_counterparts(repo: &Path, branch: &str) -> Result<Vec<String>, VcsError> {
-        let mut found = Vec::new();
-        for name in Self::remote_names(repo)? {
-            let qualified = remote_tracking(&RemoteHandle::new(name), branch);
-            let status = git_command()
-                .args(["rev-parse", "--verify", "--quiet", &qualified])
-                .current_dir(repo)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map_err(|e| VcsError::Io {
-                    ctx: format!(
-                        "failed to spawn git rev-parse --verify --quiet {qualified} in {}",
-                        repo.display()
-                    ),
-                    source: e,
-                })?;
-            if status.success() {
-                found.push(qualified);
-            }
-        }
-        Ok(found)
     }
 
     /// Every remote-tracking branch of `repo`, remote-qualified, at its tip.
@@ -3991,28 +3966,8 @@ impl Vcs for GitVcs {
         let _ = Self::run(abort_args, repo);
     }
 
-    fn branch_has_remote_counterpart(
-        &self,
-        repo: &Path,
-        branch: &RawRefName,
-    ) -> Result<bool, VcsError> {
-        Ok(!Self::remote_counterparts(repo, branch.as_str())?.is_empty())
-    }
-
-    fn count_commits_ahead_of_remote(
-        &self,
-        repo: &Path,
-        branch: &RawRefName,
-    ) -> Result<usize, VcsError> {
-        let mut args = vec![
-            "rev-list".to_owned(),
-            "--count".to_owned(),
-            local_branch(branch.as_str()),
-            "--not".to_owned(),
-        ];
-        args.extend(Self::remote_counterparts(repo, branch.as_str())?);
-        let out = Self::run_trimmed(&args, repo)?;
-        Ok(out.trim().parse::<usize>().unwrap_or(0))
+    fn held_by_no_remote(&self, repo: &Path) -> Result<Vec<HeldAlone>, VcsError> {
+        Self::held_by_no_remote_tracking(&Self::work_dir_for_store(repo))
     }
 
     fn unpushed_commits(
@@ -5750,6 +5705,29 @@ impl Vcs for GitVcs {
     ) -> Result<(), VcsError> {
         Self::witness_backs_up(repo, expected, kept)?;
         Self::update_branch_ref(repo, branch, expected, to)
+    }
+}
+
+/// What `refname` holds, as [`Vcs::held_by_no_remote`] names it.
+pub(super) fn held_ref(refname: &str) -> HeldAlone {
+    let named = |kind, name: &str| HeldAlone {
+        kind,
+        name: name.to_owned(),
+    };
+    let backups = RwvRef::Backup.prefix();
+    let savepoints = RwvRef::PreOp.prefix();
+    if let Some(name) = refname.strip_prefix(LOCAL_BRANCH_NAMESPACE) {
+        named(HeldKind::Branch, name)
+    } else if let Some(name) = refname.strip_prefix("refs/tags/") {
+        named(HeldKind::Tag, name)
+    } else if let Some(name) = refname.strip_prefix(backups.as_str()) {
+        named(HeldKind::Backup, name)
+    } else if let Some(name) = refname.strip_prefix(savepoints.as_str()) {
+        named(HeldKind::Savepoint, name)
+    } else if refname == "refs/stash" {
+        named(HeldKind::SetAsideEdits, "")
+    } else {
+        named(HeldKind::Other, refname)
     }
 }
 
@@ -8488,21 +8466,6 @@ mod branch_model_tests {
         assert!(
             matches!(err, VcsError::RevisionNotFound { ref rev, .. } if rev == "refs/remotes/origin/feature"),
             "got {err:?}"
-        );
-    }
-
-    #[test]
-    fn count_commits_ahead_of_remote_is_not_answered_by_a_tag_named_like_the_branch() {
-        let (_tmp, clone, _remote_tip) = clone_ahead_of_its_remote();
-        git(&clone, &["tag", "main", "refs/remotes/origin/main"]);
-
-        let ahead = GitVcs
-            .count_commits_ahead_of_remote(&clone, &RawRefName::new("main"))
-            .unwrap();
-
-        assert_eq!(
-            ahead, 1,
-            "the unpushed commit is on the branch, not the tag"
         );
     }
 

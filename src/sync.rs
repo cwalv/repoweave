@@ -23,7 +23,7 @@ use crate::status::{compute_relation, LockRelation};
 use crate::vcs::{
     project_vcs, vcs_for, AttachedRef, Attribution, CheckoutRestorePlan, CommitId, ConflictOp,
     DerivedContentPolicy, HeadAttachment, InTheWay, Integrates, RefRestorePlan, RefSavepoint,
-    RemoteTracking, ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
+    ResolvedRevisionId, Vcs, VcsError, VcsErrorOutput, VerifiedRestoreOutcome,
 };
 use crate::wire_token::wire_token;
 use crate::workspace::{
@@ -2103,8 +2103,8 @@ pub(crate) fn recorded_workweaves(
 
 /// Conservatively remove a repo's worktree/clone after it has been dropped
 /// from the lock. Refuses (and warns) if the worktree has uncommitted changes
-/// or local-only commits (branch tip differs from canonical HEAD in workweave;
-/// any commits at all in primary).
+/// or work no other clone reaches (a tip the canonical clone lacks, in a
+/// workweave; anything no remote-tracking branch reaches, in the primary).
 ///
 /// Whether the second of those questions can be asked at all depends on what
 /// is being removed, so the arms below establish that first rather than
@@ -2226,13 +2226,18 @@ pub(crate) fn plan_checkout_removal(
         .dirty_file_names(&dest)
         .with_context(|| format!("{repo_path}: {dropped}, but its status could not be read"))
         .map_err(|e| crate::refusal::refusing(RefusalKind::UnreadableStatus, e))?;
+    let removes_store = matches!(ctx.checkout, Checkout::Primary { .. });
     if let Some(judging) = (!dirty.is_empty())
         .then(|| crate::diagnosis::dirty_beside_drift(vcs, repo_path, &dest, dirty))
         .flatten()
     {
+        let judging = match removes_store {
+            true => judging.removing_store(),
+            false => judging,
+        };
         report.add(judging.checkout(&dest).judge(vcs));
     }
-    if let Checkout::Primary { .. } = &ctx.checkout {
+    if removes_store {
         judge_store_checkouts(vcs, &dest, ctx.primary_path(), repo_path, &mut report)?;
     }
     report.note(format!(
@@ -2323,84 +2328,28 @@ pub(crate) fn plan_checkout_removal(
             }
         }
         Checkout::Primary { .. } => {
-            // Primary: refuse if local-only branches with unique commits exist.
-            // Conservative — any branch with commits not on origin is grounds.
-            let any_local_only = match vcs.list_local_branch_names(&dest) {
-                Ok(names) => {
-                    let mut any = false;
-                    for branch in &names {
-                        let has_counterpart = vcs
-                            .branch_has_remote_counterpart(&dest, branch)
-                            .unwrap_or(false);
-                        if !has_counterpart {
-                            any = true;
-                            break;
-                        }
-                        // A count git could not produce is "we could not
-                        // tell", never "nothing unpushed" — the reading the
-                        // old `unwrap_or(0)` gave it, which let a git failure
-                        // clear the branch and hand the store to the delete.
-                        // Refuse on the same terms as an unreadable branch
-                        // list below, and say which of the two happened.
-                        let count = vcs
-                            .count_commits_ahead_of_remote(&dest, branch)
-                            .with_context(|| {
-                                format!(
-                                    "{repo_path}: {dropped}, but counting {branch}'s \
-                                     commits against its remote counterpart failed; refusing \
-                                     to remove a clone whose unpushed work could not be \
-                                     ruled out — {}",
-                                    cause.then_rerun("push", repo_path)
-                                )
-                            })
-                            .map_err(|e| {
-                                crate::refusal::refusing(
-                                    RefusalKind::DroppedRepoHasUniqueCommits,
-                                    e,
-                                )
-                            })?;
-                        if count > 0 {
-                            any = true;
-                            break;
-                        }
-                    }
-                    any
-                }
-                Err(_) => true, // conservative: refuse on uncertainty
-            };
-            if any_local_only {
-                crate::refuse!(
-                    RefusalKind::DroppedRepoHasUniqueCommits,
-                    "{repo_path}: {dropped} but clone has local-only commits; {}",
-                    cause.then_rerun("push them", repo_path)
-                );
-            }
-            let kept_alone: Vec<String> = vcs
-                .list_backups(&dest, RemoteTracking::Counted)
+            let held = vcs
+                .held_by_no_remote(&dest)
                 .with_context(|| {
                     format!(
-                        "{repo_path}: {dropped}, but its backups could not be listed; refusing \
-                         to remove a clone whose backups could not be ruled out"
+                        "{repo_path}: {dropped}, but what its clone holds that no remote has \
+                         could not be read; refusing to remove a clone whose unpublished work \
+                         could not be ruled out"
                     )
                 })
-                .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?
-                .into_iter()
-                .filter(|listed| !listed.redundant())
-                .map(|listed| listed.backup.name.to_string())
-                .collect();
-            if !kept_alone.is_empty() {
+                .map_err(|e| {
+                    crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e)
+                })?;
+            if !held.is_empty() {
                 crate::refuse!(
                     RefusalKind::DroppedRepoHasUniqueCommits,
-                    "{repo_path}: {dropped} but clone holds backups with commits nothing else \
-                     reaches ({}); `rwv backup list` shows them. {}",
-                    kept_alone.join(", "),
-                    cause.then_rerun(
-                        &format!(
-                            "drop the backups (`rwv backup drop {repo_path} {}`)",
-                            kept_alone.join(" ")
-                        ),
-                        repo_path
-                    )
+                    "{repo_path}: {dropped} but its clone, the repo's only store here, holds what \
+                     no remote has: {}; removing the clone removes them. {}",
+                    held.iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    cause.then_rerun(&publish_or_drop(repo_path, &held), repo_path)
                 );
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
@@ -2409,6 +2358,30 @@ pub(crate) fn plan_checkout_removal(
             Ok(CheckoutRemoval(Removal::Store(dest)))
         }
     }
+}
+
+/// The ways to keep or let go of what a store holds that no remote has:
+/// publish it, commit what was set aside, and drop the backups, named.
+fn publish_or_drop(repo_path: &RepoPath, held: &[crate::vcs::HeldAlone]) -> String {
+    let backups: Vec<&str> = held
+        .iter()
+        .filter(|h| h.kind == crate::vcs::HeldKind::Backup)
+        .map(|h| h.name.as_str())
+        .collect();
+    let mut ways = vec!["publish what you keep (`rwv push` for branches)".to_owned()];
+    if held
+        .iter()
+        .any(|h| h.kind == crate::vcs::HeldKind::SetAsideEdits)
+    {
+        ways.push("take back the edits set aside and commit them".to_owned());
+    }
+    if !backups.is_empty() {
+        ways.push(format!(
+            "drop the backups you do not keep (`rwv backup drop {repo_path} {}`)",
+            backups.join(" ")
+        ));
+    }
+    ways.join(", ")
 }
 
 // ---------------------------------------------------------------------------
@@ -12905,14 +12878,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // prune_dropped_repo — R4 in front of the store destroy, and the shipped
-    // local-only refusal behind it, unrelaxed
+    // prune_dropped_repo — R4 in front of the store destroy, and the scan of
+    // what the store holds that no remote has behind it
     // -----------------------------------------------------------------------
 
     /// A primary weave whose `github/example/server` is a *clone* of a bare
-    /// origin, so `main` has a remote counterpart and is not ahead of it —
-    /// which is what makes the shipped local-only predicate pass and leaves
-    /// R4 as the thing under test. A fixture without the remote would refuse
+    /// origin, so everything it holds is on the remote — which is what makes
+    /// the held-alone scan pass and leaves R4 as the thing under test. A fixture without the remote would refuse
     /// before ever reaching the gate, and every assertion below would be
     /// about the wrong refusal.
     fn primary_with_cloned_store(tmp: &Path) -> (WorkspaceContext, PathBuf, ProjectName) {
@@ -13024,7 +12996,7 @@ mod tests {
         let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a store holding a commit that exists nowhere else is not prunable");
         assert!(
-            format!("{err:#}").contains("local-only commits"),
+            format!("{err:#}").contains("holds what no remote has: branch web-app--feat"),
             "the local-only refusal must fire; got:\n{err:#}"
         );
         assert_eq!(
@@ -13045,7 +13017,7 @@ mod tests {
             .expect_err("a store holding an unpushed commit is not prunable");
 
         assert!(
-            format!("{err:#}").contains("local-only commits"),
+            format!("{err:#}").contains("holds what no remote has: branch main"),
             "the local-only refusal must fire on the branch, not be answered by the tag; got:\n{err:#}"
         );
         assert_eq!(
@@ -13056,13 +13028,10 @@ mod tests {
     }
 
     #[test]
-    fn prune_dropped_repo_refuses_when_the_ahead_count_cannot_be_taken() {
-        // The remote-tracking ref is present, so the counterpart probe passes
-        // and the branch reaches the ahead-count; it points at an object the
-        // clone does not have, which is the shape that makes `rev-list`
-        // FAIL rather than answer. That failure is "we could not tell" and
-        // has to refuse — read as "nothing unpushed" it clears the branch and
-        // hands the store to the delete.
+    fn prune_dropped_repo_refuses_when_what_no_remote_has_cannot_be_read() {
+        // The remote-tracking ref points at an object the clone does not
+        // have, which makes the reachability walk FAIL rather than answer.
+        // That failure is "we could not tell" and has to refuse.
         let tmp = crate::tempdir().unwrap();
         let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
 
@@ -13070,16 +13039,9 @@ mod tests {
         let dangling = store.join(".git/refs/remotes/origin/main");
         std::fs::create_dir_all(dangling.parent().unwrap()).unwrap();
         std::fs::write(&dangling, "1111111111111111111111111111111111111111\n").unwrap();
-        assert!(
-            git_vcs()
-                .branch_has_remote_counterpart(&store, &crate::vcs::RawRefName::new("main"))
-                .unwrap(),
-            "the fixture must still pass the counterpart probe, or the refusal \
-             under test is never reached"
-        );
 
         let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
-            .expect_err("a count git could not take is not evidence that nothing is unpushed");
+            .expect_err("a walk git could not take is not evidence that nothing is unpushed");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("could not be ruled out"),
@@ -13090,6 +13052,67 @@ mod tests {
             store.exists(),
             "a refused prune must leave the clone on disk"
         );
+    }
+
+    #[test]
+    fn prune_dropped_repo_names_edits_set_aside_and_a_commit_only_a_tag_holds() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        let tagged = commit(&store, "tagged-only");
+        git(&store, &["tag", "keepme"]);
+        git(&store, &["reset", "-q", "--hard", "HEAD~1"]);
+        std::fs::write(store.join("work.txt"), "hours of work").unwrap();
+        git(&store, &["stash", "push", "--include-untracked"]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("a store holding what no remote has is not prunable");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("holds what no remote has: tag keepme, edits set aside;")
+                || msg.contains("holds what no remote has: edits set aside, tag keepme;"),
+            "the refusal names each thing held and nothing else; got:\n{msg}"
+        );
+        assert_eq!(
+            git(&store, &["rev-parse", "keepme^{commit}"]),
+            tagged.id().as_str()
+        );
+        assert!(
+            !git(&store, &["stash", "list"]).is_empty(),
+            "the set-aside edits must survive the refused prune"
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_refuses_a_store_holding_edits_rwv_set_aside() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        std::fs::write(store.join("f"), "edited by hand").unwrap();
+        let set_aside = git_vcs()
+            .set_edits_aside(&store, &["f".to_owned()], "main")
+            .unwrap();
+        assert!(matches!(set_aside, crate::vcs::Refusable::Done(_)));
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("edits rwv set aside in the store go with it");
+        assert!(
+            format!("{err:#}").contains("holds what no remote has: edits set aside;"),
+            "got:\n{err:#}"
+        );
+        assert!(store.exists());
+    }
+
+    #[test]
+    fn prune_dropped_repo_removes_a_store_whose_extra_branch_a_remote_reaches() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        git(
+            &store,
+            &["branch", "web-app--parked", "refs/remotes/origin/main"],
+        );
+
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect("a branch whose commits the remote holds loses nothing");
+        assert!(!store.exists());
     }
 
     // -----------------------------------------------------------------------

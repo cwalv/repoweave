@@ -1894,6 +1894,7 @@ impl State {
             dependents_workspace: None,
             target_workspace: None,
             untracked: false,
+            removes_store: false,
             without_at: Vec::new(),
             verb: None,
             only: None,
@@ -1983,6 +1984,7 @@ pub enum ChoiceId {
     RecreateBranchThenMerge,
     ClearRefusalThenMerge,
     TakeBackSetAside,
+    CommitEdits,
 }
 
 /// A choice's id, as `--json` and the page print it (none for a choice the
@@ -2052,6 +2054,11 @@ impl ChoiceId {
                 id: Some("C13"),
                 phrase: "commit your edits, or set them aside",
                 keeps_work: "both keep edits",
+            },
+            Self::CommitEdits => &ChoiceRow {
+                id: None,
+                phrase: "commit your edits: removing the clone removes anything set aside in it",
+                keeps_work: "the commit keeps them; the removal refuses a commit no remote has",
             },
             Self::C14 => &ChoiceRow {
                 id: Some("C14"),
@@ -2508,6 +2515,8 @@ pub enum Form {
     C12RestoreTarget,
     C13,
     C13Untracked,
+    C13Commit,
+    C13CommitUntracked,
     C13WorkweaveDelete,
     C14Keep,
     C14Return,
@@ -2615,7 +2624,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 118] = [
+    pub const ALL: [Form; 120] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2654,6 +2663,8 @@ impl Form {
         Self::C12RestoreTarget,
         Self::C13,
         Self::C13Untracked,
+        Self::C13Commit,
+        Self::C13CommitUntracked,
         Self::C13WorkweaveDelete,
         Self::C14Keep,
         Self::C14Return,
@@ -2973,6 +2984,18 @@ impl Form {
             Self::C13Untracked => &FormRow {
                 choice: C::C13,
                 steps: &[Vcs(A::AddAll), Vcs(A::Commit), Vcs(A::StashUntracked)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C13Commit => &FormRow {
+                choice: C::CommitEdits,
+                steps: &[Vcs(A::Commit)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::C13CommitUntracked => &FormRow {
+                choice: C::CommitEdits,
+                steps: &[Vcs(A::AddAll), Vcs(A::Commit)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -3530,6 +3553,17 @@ impl Form {
         }
     }
 
+    /// The form a refusal of a removal that takes the repo's only store
+    /// prints where the table lists this one: what is set aside there goes
+    /// with the store.
+    fn for_store_removal(self) -> Self {
+        match self {
+            Self::C13 => Self::C13Commit,
+            Self::C13Untracked => Self::C13CommitUntracked,
+            _ => self,
+        }
+    }
+
     /// What the route this form spells keeps, where its choice's phrase
     /// alone does not say; written to follow the phrase.
     fn because(self) -> Option<&'static str> {
@@ -3628,6 +3662,7 @@ pub struct Judging {
     dependents_workspace: Option<PathBuf>,
     target_workspace: Option<PathBuf>,
     untracked: bool,
+    removes_store: bool,
     without_at: Vec<Where>,
     verb: Option<&'static str>,
     only: Option<Vec<ChoiceId>>,
@@ -3693,6 +3728,13 @@ impl Judging {
             "a commit on {branch} that makes its rwv.toml parse fixes it"
         )])
         .without(&[ChoiceId::DoctorFix])
+    }
+
+    /// The refusal stands in front of removing the repo's only store, so no
+    /// choice keeps work by setting it aside there.
+    pub fn removing_store(mut self) -> Self {
+        self.removes_store = true;
+        self
     }
 
     pub fn without(mut self, choices: &[ChoiceId]) -> Self {
@@ -3885,6 +3927,10 @@ impl Judging {
             let form = match (self.untracked, form) {
                 (true, Form::C13) => Form::C13Untracked,
                 _ => form,
+            };
+            let form = match self.removes_store {
+                true => form.for_store_removal(),
+                false => form,
             };
             if !forms.contains(&form) {
                 forms.push(form);
@@ -5169,8 +5215,18 @@ fn kind_sections(axis: Axis, vcs: &dyn Vcs, vcs_name: &str) -> String {
         let by_verb = state_row
             .verb_offers
             .iter()
-            .map(|(verb, form)| (Some(*verb), form));
-        for (verb, form) in every.chain(by_verb).filter(|(_, f)| f.printable()) {
+            .map(|(verb, form)| (Some(*verb), *form));
+        let by_store_removal = state_row
+            .offers
+            .iter()
+            .filter(|form| form.for_store_removal() != **form)
+            .map(|form| (Some(STORE_REMOVAL), form.for_store_removal()));
+        for (verb, form) in every
+            .map(|(verb, form)| (verb, *form))
+            .chain(by_verb)
+            .chain(by_store_removal)
+            .filter(|(_, f)| f.printable())
+        {
             let row = form.row();
             let choice = row.choice.row();
             let label = match choice.id {
@@ -5179,13 +5235,17 @@ fn kind_sections(axis: Axis, vcs: &dyn Vcs, vcs_name: &str) -> String {
             };
             let state_cell = match verb {
                 None => format!("`{}`", state.name()),
+                Some(STORE_REMOVAL) => format!(
+                    "`{}`, for a removal of a clone that is the repo's only store",
+                    state.name()
+                ),
                 Some(verb) => format!("`{}`, for `rwv {verb}`", state.name()),
             };
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} |\n",
                 state_cell,
                 label,
-                spelled(*form, vcs, vcs_name),
+                spelled(form, vcs, vcs_name),
                 row.at.describe(),
                 choice.keeps_work
             ));
@@ -5196,6 +5256,8 @@ fn kind_sections(axis: Axis, vcs: &dyn Vcs, vcs_name: &str) -> String {
     }
     out
 }
+
+const STORE_REMOVAL: &str = "";
 
 fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
     let mut parts: Vec<String> = Vec::new();

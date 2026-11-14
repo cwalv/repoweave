@@ -1097,20 +1097,8 @@ impl Vcs for FakeVcs {
         unsupported("cancel_in_flight_op")
     }
 
-    fn branch_has_remote_counterpart(
-        &self,
-        _repo: &Path,
-        _branch: &RawRefName,
-    ) -> Result<bool, VcsError> {
-        unsupported("branch_has_remote_counterpart")
-    }
-
-    fn count_commits_ahead_of_remote(
-        &self,
-        _repo: &Path,
-        _branch: &RawRefName,
-    ) -> Result<usize, VcsError> {
-        unsupported("count_commits_ahead_of_remote")
+    fn held_by_no_remote(&self, _repo: &Path) -> Result<Vec<HeldAlone>, VcsError> {
+        unsupported("held_by_no_remote")
     }
 
     fn pushed_range(

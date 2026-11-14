@@ -690,6 +690,27 @@ fn a_clone_holding_a_backup_is_not_destroyed_by_member_remove() {
 }
 
 #[test]
+fn a_store_removal_refuses_edits_set_aside_and_never_offers_to_set_them_aside() {
+    runner::run(scenarios::store_removal_refuses_edits_set_aside()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_prune_refuses_a_store_holding_edits_set_aside() {
+    runner::run(scenarios::landing_prune_refuses_a_store_holding(
+        scenarios::StoreHolds::SetAsideEdits,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_prune_refuses_a_store_holding_a_commit_only_a_tag_reaches() {
+    runner::run(scenarios::landing_prune_refuses_a_store_holding(
+        scenarios::StoreHolds::TaggedCommit,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn a_tombstone_becomes_a_backup_and_backup_drop_releases_it() {
     runner::run(scenarios::tombstone_to_backup()).assert_green();
 }
@@ -1563,6 +1584,9 @@ every_scenario!(
     workweave_without_b_then_pr,
     workweave_without_b_given_up_before_publishing,
     dc10_store_destroy,
+    store_removal_refuses_edits_set_aside,
+    landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
+    landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     tombstone_to_backup,
     workweave_without_b_given_up_after_publishing,
     feature_off_stable,

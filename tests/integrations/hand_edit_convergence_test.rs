@@ -771,7 +771,8 @@ fn remove_delete_in_a_workweave_keeps_its_branch_when_it_holds_commits() {
     assert_eq!(common::git_in(&clone, &["rev-parse", "demo--feat"]), kept);
     let out = run(&["member", "remove", &beta, "--delete"], &weave.ws);
     assert!(
-        !out.status.success() && stderr_of(&out).contains("clone has local-only commits"),
+        !out.status.success()
+            && stderr_of(&out).contains("holds what no remote has: branch demo--feat"),
         "the branch still holds commits only the clone has; {}",
         describe(&out)
     );

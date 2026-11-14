@@ -99,6 +99,7 @@ The others follow.
 | `dirty`, for `rwv workweave delete` | C13: commit your edits, or set them aside | `rwv workweave delete <ww> --discard-uncommitted` | the primary | both keep edits |
 | `dirty`, for `rwv lock` | record the committed HEAD, leaving these uncommitted edits out of the lock | `rwv lock --dirty` | here | the edits stay in the checkout, uncommitted |
 | `dirty`, for `rwv update --remote` | record the committed HEAD, leaving these uncommitted edits out of the lock | `rwv update --remote --dirty` | here | the edits stay in the checkout, uncommitted |
+| `dirty`, for a removal of a clone that is the repo's only store | commit your edits: removing the clone removes anything set aside in it | VCS action (git: `git -C <checkout> commit`) | the checkout | the commit keeps them; the removal refuses a commit no remote has |
 | `drift left in place` | land again once nothing else is changing the checkout: the landing reads it afresh and refreshes what still holds the old tip | `rwv land` | here | a refresh writes only paths that still hold the old tip's content |
 | `drift left in place` | land again once nothing else is changing the checkout: the landing reads it afresh and refreshes what still holds the old tip | VCS action (git: `git -C <checkout> status`); `rwv land` | here | a refresh writes only paths that still hold the old tip's content |
 | `drift left in place` | refresh again once nothing else is changing the checkout: doctor reads it afresh and refreshes what still holds the old tip | `rwv doctor --fix` | the checkout's workspace | a refresh writes only paths that still hold the old tip's content |
@@ -624,16 +625,21 @@ so the previous state is intact.
 ### `dropped-repo-has-unique-commits`
 
 **Condition.** A checkout being dropped from the lock, or deleted by `rwv
-member remove --delete`, carries commits no other clone reaches: a branch
-whose commits no remote-tracking branch holds, or a [backup](../explanation/destructive-operations.md)
-holding commits no branch reaches.
+member remove --delete`, carries work no other clone reaches. In the primary
+weave, where the clone is the repo's only store, that is anything the store
+holds whose commits no remote-tracking branch reaches, each named: a branch, a
+tag, a [backup](../explanation/destructive-operations.md), edits the VCS set
+aside, or a checked-out commit on no branch. In a workweave, it is a worktree
+tip the canonical clone does not contain.
 
 **Why.** Dropping a repo removes its checkout. If it holds the only copy of
-some commits, removal destroys them, and no `rwv abort` recovers work that was
-never anywhere else. A backup is the only copy by construction, so it counts.
+some work, removal destroys it, and no `rwv abort` recovers work that was
+never anywhere else. A backup and a set-aside edit are the only copy by
+construction, so they count.
 
 **Exits.** Push the commits to their remote, or merge them somewhere that
-survives, then re-run `rwv member remove --delete`. `rwv backup list` shows the
+survives; take back edits set aside and commit them; then re-run `rwv member
+remove --delete`. `rwv backup list` shows the
 backups and what each holds; `rwv backup drop <repo> <name>` drops the ones that are
 not wanted; the refusal prints that line with the backups it names, and
 dropping them is the deliberate act that gives the commits up. A sync whose

@@ -7,9 +7,10 @@
 
 use super::{git_command, Argv, GitVcs, RwvRef, Scratch, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
-    Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, ListedBackup,
-    RemoteTracking, ResolvedRevisionId, VcsError,
+    Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, HeldAlone,
+    HeldKind, ListedBackup, RemoteTracking, ResolvedRevisionId, VcsError,
 };
+use std::collections::HashSet;
 use std::path::Path;
 
 const REMOTE_TRACKING_ROOT: &str = "refs/remotes/";
@@ -231,6 +232,49 @@ impl GitVcs {
                 })
             })
             .collect()
+    }
+
+    pub(super) fn held_by_no_remote_tracking(repo: &Path) -> Result<Vec<HeldAlone>, VcsError> {
+        let unreached = Self::run(["rev-list", "--all", "--not", "--remotes", "--"], repo)?;
+        let unreached: HashSet<&str> = unreached.lines().filter(|l| !l.is_empty()).collect();
+        if unreached.is_empty() {
+            return Ok(Vec::new());
+        }
+        let listing = Self::run(
+            [
+                "for-each-ref",
+                "--format=%(refname)%09%(objectname)%09%(*objectname)",
+            ],
+            repo,
+        )?;
+        let mut held = Vec::new();
+        let mut tips = HashSet::new();
+        for line in listing.lines() {
+            let mut fields = line.split('\t');
+            let (Some(refname), Some(object), peeled) =
+                (fields.next(), fields.next(), fields.next())
+            else {
+                continue;
+            };
+            let tip = peeled.filter(|p| !p.is_empty()).unwrap_or(object);
+            if refname.starts_with(REMOTE_TRACKING_ROOT) || !unreached.contains(tip) {
+                continue;
+            }
+            tips.insert(tip.to_owned());
+            held.push(super::held_ref(refname));
+        }
+        let detached = Self::run(["symbolic-ref", "-q", "HEAD"], repo).is_err();
+        if detached {
+            let head = Self::run(["rev-parse", "--verify", "-q", "HEAD"], repo).unwrap_or_default();
+            let head = head.trim();
+            if unreached.contains(head) && !tips.contains(head) {
+                held.push(HeldAlone {
+                    kind: HeldKind::CheckedOut,
+                    name: head.chars().take(ID_WIDTH).collect(),
+                });
+            }
+        }
+        Ok(held)
     }
 
     pub(super) fn holds_unreached(
