@@ -750,7 +750,9 @@ impl ProjectMerge<'_> {
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
             .collect();
-        if crate::manifest_conflict::check_merge_in_flight(vcs, dir, self.ctx.active_path())? {
+        if crate::manifest_conflict::check_merge_in_flight(vcs, dir, self.ctx.active_path())?
+            && !paths.iter().any(|path| path == Manifest::FILE_NAME)
+        {
             paths.push(Manifest::FILE_NAME.to_owned());
         }
         if paths.is_empty() {

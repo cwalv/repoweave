@@ -6335,6 +6335,40 @@ pub fn a_replayed_recorded_resolution_stops_the_sync_as_a_conflict() -> Scenario
     )
 }
 
+/// A replayed recorded resolution of `rwv.toml` that differs from the merge
+/// of both sides' values stops the sync at the check, which names
+/// `rwv.toml` once among the paths it stopped on.
+pub fn a_replayed_resolution_the_check_stops_names_the_manifest_once() -> Scenario {
+    scenario(
+        "a replayed resolution the check stops names the manifest once",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-recurse-submodules", LIB, "false"])
+                .expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["config", "rerere.enabled", "true"]),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["config", "rerere.autoupdate", "true"],
+            ),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "main"]).expect(Exit::Code(1)),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.toml"]),
+            Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+            Step::git(&ww("w"), Repo::Proj, &["commit", "--no-edit"]),
+            Step::git(&ww("w"), Repo::Proj, &["reset", "--hard", "HEAD~1"]),
+            Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains(
+                    "merge conflict in projects/proj (rwv.toml) at",
+                )),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_restore(&[Repo::Proj]),
+        ],
+    )
+}
+
 /// `app` holds a pinned commit its upstream lacks while the upstream moves:
 /// `update --remote` refuses the diverged pin and prints each way on that runs.
 pub fn update_remote_at_a_diverged_pin_prints_every_way_on() -> Scenario {

@@ -812,6 +812,12 @@ fn a_retire_with_no_submodule_store_asks_no_remote() {
 }
 
 #[test]
+fn a_replayed_resolution_the_check_stops_names_the_manifest_once() {
+    runner::run(scenarios::a_replayed_resolution_the_check_stops_names_the_manifest_once())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1771,6 +1777,7 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    a_replayed_resolution_the_check_stops_names_the_manifest_once,
     store_removal_asks_a_submodule_store_with_no_checkout(scenarios::SubmoduleLeft::Deinitialized),
     store_removal_asks_a_submodule_store_with_no_checkout(
         scenarios::SubmoduleLeft::RemovedByACommit
