@@ -816,9 +816,12 @@ enum InTheTarget {
     Released,
 }
 
-fn in_the_target(point: &str) -> InTheTarget {
+fn in_the_target(shape: &Shape, point: &str) -> InTheTarget {
+    if shape.id == "land_linear_as_refs" || point.starts_with("drift-") {
+        return InTheTarget::NotYet;
+    }
     match point {
-        "claimed" | "landing-claim-held" => InTheTarget::NotYet,
+        "recorded" | "claimed" | "landing-claim-held" => InTheTarget::NotYet,
         "ending" => InTheTarget::Released,
         _ => InTheTarget::Ends,
     }
@@ -833,7 +836,7 @@ fn aborted(shape: &Shape, typed_at: Place, point: &str, in_target: bool) -> Vec<
     let mut steps = Vec::new();
     let mut ender = Step::rwv(&typed_at, &["abort"]);
     if in_target && recorded(point) {
-        match in_the_target(point) {
+        match in_the_target(shape, point) {
             InTheTarget::Ends => {}
             InTheTarget::NotYet => {
                 steps.push(
