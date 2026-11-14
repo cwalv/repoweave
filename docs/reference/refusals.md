@@ -183,14 +183,14 @@ The others follow.
 | `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `diverged` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
 | `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
-| `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
+| `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv workweave create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv push` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
 | `diverged`, for `rwv sync` | republish rwv's own rebase over the push branch it rewrote | `rwv push --overwrite <repo>` | here | leased to the push branch's tip, which the `rebased` backup holds; the backup goes once the push lands |
-| `diverged`, for `rwv update --remote` | C3: take theirs; yours is kept in a backup | then `rwv update --remote --reset-to-upstream <repo>` | any workspace | backup first |
-| `diverged`, for `rwv update --remote` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick -x <ids>`); then `rwv lock --commit`; then `rwv update --remote --reset-to-upstream <repo>` | where `<b>` is checked out | a copy adds only |
-| `diverged`, for `rwv update --remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`); then `rwv update --remote --reset-to-upstream <repo>` | any workspace | creates or fast-forwards |
+| `diverged`, for `rwv update --remote` | C3: take theirs; yours is kept in a backup | then `rwv update --remote --reset-to-upstream <repo> --commit` | any workspace | backup first |
+| `diverged`, for `rwv update --remote` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <b-checkout> cherry-pick -x <ids>`); then `rwv lock --commit`; then `rwv update --remote --reset-to-upstream <repo> --commit` | where `<b>` is checked out | a copy adds only |
+| `diverged`, for `rwv update --remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`); then `rwv update --remote --reset-to-upstream <repo> --commit` | any workspace | creates or fast-forwards |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C7: publish it (again) | `rwv push` | here | adds only |

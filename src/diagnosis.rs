@@ -3864,6 +3864,13 @@ impl Judging {
         self
     }
 
+    /// The workspace holding the dependent the judged line names, where its
+    /// choices run.
+    pub fn dependents_at(mut self, workspace: &Path) -> Self {
+        self.dependents_workspace = Some(workspace.to_path_buf());
+        self
+    }
+
     /// A branch whose record lands into the judged one: its bindings, and the
     /// workspace holding it where its choices run. One checked out nowhere has
     /// no workspace for them to run in, so they are left out.
@@ -3910,9 +3917,12 @@ impl Judging {
     }
 
     /// The workspace a form that runs `at` is spelled to run in, where the
-    /// judgement knows one and it is not the workspace the verb runs in.
-    fn addressed_to(&self, at: Where) -> Option<&Path> {
-        match at {
+    /// judgment knows one and it is not the workspace the verb runs in.
+    fn addressed_to(&self, form: Form) -> Option<&Path> {
+        if form.row().choice == ChoiceId::C12 {
+            return self.dependents_workspace.as_deref();
+        }
+        match form.row().at {
             Where::CheckoutsWorkspace | Where::WithBranch => self.workspace.as_deref(),
             Where::OnTarget => self
                 .target_workspace
@@ -3984,7 +3994,7 @@ impl Judging {
                     .lines(vcs, self.verb)
                     .iter()
                     .map(|line| for_spelled_project(fill(line, &self.bindings)))
-                    .map(|line| match self.addressed_to(form.row().at) {
+                    .map(|line| match self.addressed_to(*form) {
                         Some(workspace) => in_workspace(&line, workspace),
                         None => line,
                     })
@@ -4018,8 +4028,8 @@ fn in_workspace(line: &str, workspace: &Path) -> String {
     }
 }
 
-/// The placeholders only a judgement can fill, from the repo, branch or
-/// workspace it judged: a form that spells one the judgement did not bind is
+/// The placeholders only a judgment can fill, from the repo, branch or
+/// workspace it judged: a form that spells one the judgment did not bind is
 /// not offered, where the operator-chosen ones (`<T>`, `<rev>`, `<h>`) print
 /// for the operator to fill.
 const JUDGED_PLACEHOLDERS: &[&str] = &["<m>", "<target>", "<dep>", "<repo>"];

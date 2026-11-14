@@ -1188,7 +1188,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             if let Some(line) = unbound_placeholder_line(&output) {
                 report.unmet.push((
                     step.label.clone(),
-                    format!("a printed line holds a placeholder the judgement binds:\n{line}"),
+                    format!("a printed line holds a placeholder the judgment binds:\n{line}"),
                 ));
             }
         }
@@ -1215,7 +1215,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     report
 }
 
-/// The placeholders a judgement always binds from what it judged: one left
+/// The placeholders a judgment always binds from what it judged: one left
 /// in a printed choice is a line nothing filled. The ones the operator
 /// chooses (`<T>`, `<W>`, `<b>`, `<rev>`, `<h>`, `<role>`, `<url>`) are not
 /// among them.

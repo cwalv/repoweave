@@ -265,6 +265,19 @@ fn holds_remote_copies(
     Ok(true)
 }
 
+/// The root of the workweave a checkout belongs to.
+fn workweave_root_of(checkout: &Path, project: &ProjectName) -> Option<PathBuf> {
+    let prefix = format!("{project}--");
+    checkout
+        .ancestors()
+        .find(|dir| {
+            dir.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(&prefix))
+        })
+        .map(Path::to_path_buf)
+}
+
 /// The workweave a checkout belongs to, by its root's name.
 fn workweave_of(checkout: &Path, project: &ProjectName) -> Option<String> {
     let prefix = format!("{project}--");
@@ -332,6 +345,9 @@ pub(crate) fn judge(
             Why::CheckedOut(at) => {
                 if let Some(ww) = at.iter().find_map(|p| workweave_of(p, repos.project)) {
                     judging = judging.bind("<ww>", ww);
+                }
+                if let Some(root) = at.iter().find_map(|p| workweave_root_of(p, repos.project)) {
+                    judging = judging.dependents_at(&root);
                 }
                 judging.listing(at.iter().map(|p| format!("checked out at {}", p.display())))
             }

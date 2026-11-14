@@ -21600,9 +21600,9 @@ pub fn stack_checked_out(choice: CheckedOutChoice) -> Scenario {
                 State::TargetDependentCheckedOut,
             ))
             .claim(Claim::OutputContains("w2 lands into proj--w1"))
-            .claim(Claim::OutputContains("rwv land"))
+            .claim(Claim::OutputContains(" land"))
             .claim(Claim::OutputContains(
-                "rwv branch set-mode w2 feature --target main",
+                " branch set-mode w2 feature --target main",
             ))
             .claim(Claim::OutputContains("rwv workweave delete w2"))
             .claim(Claim::OutputLacks("then run"))
@@ -21610,13 +21610,15 @@ pub fn stack_checked_out(choice: CheckedOutChoice) -> Scenario {
             .claim(Claim::LocalStateUnchanged(ww("w2"))),
     );
     match choice {
-        CheckedOutChoice::Rebind => steps
-            .push(Step::rwv_printed(&ww("w1"), "rwv branch set-mode w2 ").expect(Exit::Succeeds)),
+        CheckedOutChoice::Rebind => steps.push(
+            Step::rwv_printed_holding(&ww("w1"), "rwv -C", " branch set-mode w2 ")
+                .expect(Exit::Succeeds),
+        ),
         CheckedOutChoice::LandThenRetire => steps.extend([
-            Step::rwv_printed_exactly(&ww("w2"), "rwv land").expect(Exit::Succeeds),
+            Step::rwv_printed_holding(&ww("w1"), "rwv -C", " land").expect(Exit::Succeeds),
             Step::rwv(&ww("w1"), &["sync"])
                 .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut)),
-            Step::rwv_printed_exactly(&ww("w2"), "rwv land --retire")
+            Step::rwv_printed_holding(&ww("w1"), "rwv -C", " land --retire")
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w2"))),
         ]),
@@ -23305,7 +23307,7 @@ pub fn a_dependent_opened_elsewhere_as_its_carry_moves_it_is_not_moved() -> Scen
             .may_rewind(&[Repo::App]),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::refuses(Repo::Proj, State::TargetDependentCheckedOut))
-            .claim(Claim::OutputContains("rwv land")),
+            .claim(Claim::OutputContains(" land")),
         Step::rwv_printed(&a(), "rwv workweave delete w2s").expect(Exit::Code(3)),
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
@@ -23367,7 +23369,7 @@ pub fn a_stopped_carry_continued_meets_a_dependent_checked_out(
             .claim(Claim::OutputLacks("rwv land"))
             .claim(Claim::OutputContains("rwv workweave delete w3"))
             .claim(Claim::OutputContains(
-                "rwv branch set-mode w3 feature --target main",
+                " branch set-mode w3 feature --target main",
             )),
     ];
     match ends {
@@ -23380,7 +23382,8 @@ pub fn a_stopped_carry_continued_meets_a_dependent_checked_out(
                 .claim(Claim::OutputContains("carried 'w2' along")),
         ]),
         ContinuedCarryMeets::Rebind => steps.extend([
-            Step::rwv_printed(&ww("w3"), "rwv branch set-mode w3 ").expect(Exit::Succeeds),
+            Step::rwv_printed_holding(&ww("w1"), "rwv -C", " branch set-mode w3 ")
+                .expect(Exit::Succeeds),
             Step::rwv(&ww("w1"), &["sync", "--continue"])
                 .expect(Exit::Succeeds)
                 .resolved_by_hand(&[Repo::App])
