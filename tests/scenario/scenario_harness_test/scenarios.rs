@@ -16181,7 +16181,9 @@ pub fn a_landing_killed_while_it_waits_continues_once_free() -> Scenario {
 /// A landing with no retire killed once it released its target, after
 /// another landing built on it: its `rwv land --continue` takes the claim
 /// back, and when it is refused it leaves the target released, so a third
-/// landing into it lands.
+/// landing into it lands. The refusal's one choice, since the landing wrote
+/// its target, ends it leaving the target as it stands; run as printed, it
+/// restores the source and keeps what both landings put on `main`.
 pub fn a_refused_continue_of_a_released_landing_leaves_the_target_free() -> Scenario {
     scenario(
         "a refused continue of a released landing leaves the target free",
@@ -16207,6 +16209,20 @@ pub fn a_refused_continue_of_a_released_landing_leaves_the_target_free() -> Scen
             Step::rwv(&ww("w3"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::WorkweaveGone(ww("w3"))),
+            Step::rwv(&ww("w1"), &["land", "--continue"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation))
+                .claim(Claim::OutputLacks("    rwv abort\n")),
+            Step::rwv_printed_exactly(&ww("w1"), "rwv abort --leave-target")
+                .expect(Exit::Succeeds)
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w1-app",
+                }),
+            Step::rwv(&ww("w1"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
         ],
     )
 }

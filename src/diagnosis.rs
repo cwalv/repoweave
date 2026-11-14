@@ -1797,10 +1797,13 @@ impl State {
                         landing read it, or the checkout there is on another branch, so the \
                         work composed in the source no longer fast-forwards onto it: the repo \
                         and where it now stands, listed. The landing stopped with its op \
-                        record kept and the refs it already moved left as moved",
+                        record kept and the refs it already moved left as moved. Once the \
+                        landing has written its target, abort cannot put the target back over \
+                        what moved it, so the choice ends the landing leaving the target as it \
+                        stands",
                 refused_by: "`rwv land`, at the fast-forward, and its `--continue`, since \
                              the plan no longer describes the landing",
-                offers: &[Form::LostRace],
+                offers: &[Form::LostRace, Form::LeaveTarget],
                 verb_offers: &[],
             },
             Self::PublishTargetUnpublished => &StateRow {
@@ -1961,6 +1964,7 @@ pub enum ChoiceId {
     KeepRecordedHistory,
     MigrateLockDriver,
     LostRace,
+    LeaveTarget,
     CarryAgain,
     Republish,
     LandAgain,
@@ -2220,6 +2224,13 @@ impl ChoiceId {
                          tips",
                 keeps_work: "`rwv abort` moves only what the operation moved, from the tips it \
                              wrote; a branch someone else moved stays where they left it",
+            },
+            Self::LeaveTarget => &ChoiceRow {
+                id: None,
+                phrase: "end the landing, putting back the source and leaving the target as it \
+                         stands, the landing's tips in it included",
+                keeps_work: "each tip the landing wrote in the target is kept as a backup first \
+                             where no branch reaches it",
             },
             Self::MarkResolved => &ChoiceRow {
                 id: None,
@@ -2571,6 +2582,7 @@ pub enum Form {
     MigrateLockDriver,
     LostRace,
     LostRaceSync,
+    LeaveTarget,
     CarryAgain,
     CarryAgainLand,
     Republish,
@@ -2627,7 +2639,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 120] = [
+    pub const ALL: [Form; 121] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2719,6 +2731,7 @@ impl Form {
         Self::MigrateLockDriver,
         Self::LostRace,
         Self::LostRaceSync,
+        Self::LeaveTarget,
         Self::CarryAgain,
         Self::CarryAgainLand,
         Self::Republish,
@@ -3479,6 +3492,12 @@ impl Form {
             Self::CarryAgainLand => &FormRow {
                 choice: C::CarryAgain,
                 steps: &[Resume(crate::op_state::OpVerb::Land)],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::LeaveTarget => &FormRow {
+                choice: C::LeaveTarget,
+                steps: &[Rwv("rwv abort --leave-target")],
                 at: W::Here,
                 shipped: true,
             },

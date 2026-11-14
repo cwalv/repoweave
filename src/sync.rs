@@ -4385,6 +4385,7 @@ fn guard_and_mark<'a>(
             &cwd_project_name,
             dest_workspace_dir.as_deref(),
             rewound_in_place,
+            false,
         )
         .refused());
     }
@@ -5127,7 +5128,12 @@ fn target_moved(
     if moved.is_empty() {
         return Ok(None);
     }
-    Ok(Some(target_moved_line(project, target_workspace, moved)))
+    Ok(Some(target_moved_line(
+        project,
+        target_workspace,
+        moved,
+        take_in.wrote_target(),
+    )))
 }
 
 /// The other branch a checkout is on when it is not on `branch`, the branch
@@ -5146,6 +5152,7 @@ fn target_moved_line(
     project: &ProjectName,
     target_workspace: Option<&Path>,
     moved: Vec<String>,
+    wrote_target: bool,
 ) -> crate::diagnosis::Judged {
     let subject = match target_workspace {
         Some(workspace) => format!(
@@ -5160,6 +5167,11 @@ fn target_moved_line(
         .subject(subject)
         .listing(moved)
         .by_verb("land")
+        .only_forms(&[if wrote_target {
+            crate::diagnosis::Form::LeaveTarget
+        } else {
+            crate::diagnosis::Form::LostRace
+        }])
         .judge(project_vcs().as_ref())
 }
 
