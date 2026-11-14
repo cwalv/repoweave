@@ -2073,6 +2073,13 @@ pub struct PruningFetch {
     pub unconfirmed: Vec<UnconfirmedRemote>,
 }
 
+/// Whether a pruning fetch keeps the tip a remote rewrote a branch off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Superseded {
+    Kept,
+    Forgotten,
+}
+
 /// What a pruning fetch did to one remote-tracking branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoteBranchMove {
@@ -3320,16 +3327,19 @@ pub trait Vcs: Send + Sync {
     /// branches a remote no longer has, and report each remote-tracking
     /// branch that moved. No local branch and no checkout moves.
     ///
-    /// A branch that moved to a tip not descending from its old one keeps the
-    /// old tip as its superseded tip, a backup marked [`BackupMark::Superseded`]
-    /// recorded before this returns (git: `refs/rwv/backup/<remote>/<branch>/
-    /// superseded-<old tip>`). `claim` is the
+    /// Where `superseded` is [`Superseded::Kept`], a branch that moved to a
+    /// tip not descending from its old one keeps the old tip as its
+    /// superseded tip, a backup marked [`BackupMark::Superseded`] recorded
+    /// before this returns (git: `refs/rwv/backup/<remote>/<branch>/
+    /// superseded-<old tip>`); where it is [`Superseded::Forgotten`], the
+    /// fetch writes nothing but the remote-tracking branches. `claim` is the
     /// proof that no other rwv fetches into this store meanwhile.
     fn fetch_pruning(
         &self,
         claim: &crate::fetch_claim::FetchClaim,
         repo: &Path,
         only: Option<&[RemoteHandle]>,
+        superseded: Superseded,
     ) -> Result<PruningFetch, VcsError>;
 
     /// Resolve `branch` on `remote`, as last fetched.

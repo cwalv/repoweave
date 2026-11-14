@@ -173,7 +173,15 @@ pub(crate) fn pruning_fetch(
         if let Some(absent) = add {
             vcs.add_url_remote(dir, absent)?;
         }
-        claim.fetch_pruning(vcs, dir, None)
+        claim.fetch_pruning(vcs, dir, None, crate::vcs::Superseded::Kept)
+    })
+}
+
+/// A pruning fetch of every remote of the repo at `dir` that writes nothing
+/// but its remote-tracking branches.
+pub(crate) fn refreshing_fetch(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<PruningFetch> {
+    FetchClaim::hold(vcs, dir, |claim| {
+        claim.fetch_pruning(vcs, dir, None, crate::vcs::Superseded::Forgotten)
     })
 }
 
@@ -184,7 +192,7 @@ pub(crate) fn pruning_fetch_of(
     remotes: &[crate::vcs::RemoteHandle],
 ) -> anyhow::Result<PruningFetch> {
     FetchClaim::hold(vcs, dir, |claim| {
-        claim.fetch_pruning(vcs, dir, Some(remotes))
+        claim.fetch_pruning(vcs, dir, Some(remotes), crate::vcs::Superseded::Kept)
     })
 }
 

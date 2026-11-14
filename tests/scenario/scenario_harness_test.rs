@@ -723,6 +723,18 @@ fn a_store_removal_offers_an_exit_for_a_savepoint_it_holds() {
 }
 
 #[test]
+fn a_store_removal_keeps_nothing_of_a_submodule_remote_rewrite() {
+    runner::run(scenarios::store_removal_keeps_nothing_of_a_submodule_remote_rewrite())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_store_removal_after_a_rewrite_ends_once_its_backup_is_dropped() {
+    runner::run(scenarios::store_removal_after_a_rewrite_ends_once_its_backup_is_dropped())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1688,6 +1700,8 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    store_removal_keeps_nothing_of_a_submodule_remote_rewrite,
+    store_removal_after_a_rewrite_ends_once_its_backup_is_dropped,
     store_removal_offers_an_exit_for_a_savepoint_it_holds,
     a_detached_project_repo_offers_the_branch_it_left,
     landing_prune_judges_against_the_remote_as_it_is,

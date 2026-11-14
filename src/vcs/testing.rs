@@ -1225,6 +1225,7 @@ impl Vcs for FakeVcs {
         _claim: &crate::fetch_claim::FetchClaim,
         _repo: &Path,
         _only: Option<&[RemoteHandle]>,
+        _superseded: crate::vcs::Superseded,
     ) -> Result<PruningFetch, VcsError> {
         unsupported("fetch_pruning")
     }

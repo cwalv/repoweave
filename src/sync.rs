@@ -2472,8 +2472,10 @@ fn stores_removed_with(
 }
 
 /// Bring what each of `stores` knows of its remotes up to date, so what no
-/// remote has is judged against the remotes as they are. A remote that does
-/// not answer refuses the removal: what it holds cannot be confirmed.
+/// remote has is judged against the remotes as they are. A nested store keeps
+/// no tip a remote rewrote a branch off: nothing rwv can drop may be left in
+/// it. A remote that does not answer refuses the removal: what it holds
+/// cannot be confirmed.
 fn refresh_remotes(
     vcs: &dyn Vcs,
     stores: &[(Option<PathBuf>, PathBuf)],
@@ -2487,7 +2489,11 @@ fn refresh_remotes(
             .as_ref()
             .map(|n| format!(" (submodule {})", n.display()))
             .unwrap_or_default();
-        match crate::fetch::pruning_fetch(vcs, store, None) {
+        let fetched = match nested {
+            None => crate::fetch::pruning_fetch(vcs, store, None),
+            Some(_) => crate::fetch::refreshing_fetch(vcs, store),
+        };
+        match fetched {
             Ok(fetched) => unanswered.extend(
                 fetched
                     .unconfirmed

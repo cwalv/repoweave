@@ -74,8 +74,9 @@ impl FetchClaim {
         vcs: &dyn Vcs,
         repo: &Path,
         only: Option<&[RemoteHandle]>,
+        superseded: crate::vcs::Superseded,
     ) -> anyhow::Result<PruningFetch> {
-        let fetched = vcs.fetch_pruning(self, repo, only)?;
+        let fetched = vcs.fetch_pruning(self, repo, only, superseded)?;
         if !fetched.fetched.is_empty() {
             let path = StateFile::FetchRecord.in_dir(&self.store);
             let mut record: FetchRecord = read_record(&path)?

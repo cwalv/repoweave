@@ -613,6 +613,94 @@ pub fn landing_prune_asks_a_submodule_store_inside_the_clone() -> Scenario {
     )
 }
 
+/// A submodule whose remote rewrote a branch the store holds nothing else
+/// of: the removal's refresh keeps no tip of it in the submodule store, which
+/// no verb could drop, so the removal goes through.
+pub fn store_removal_keeps_nothing_of_a_submodule_remote_rewrite() -> Scenario {
+    let file = "protocol.file.allow=always";
+    let mut steps = vec![
+        Step::git(
+            &a(),
+            Repo::App,
+            &["-c", file, "submodule", "add", "-q", "../lib.git", "sub"],
+        ),
+        Step::git(&a(), Repo::App, &["commit", "-qm", "add sub"]),
+        Step::git(&a(), Repo::App, &["push", "-q", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::git(
+            &a(),
+            Repo::App,
+            &[
+                "-C",
+                "sub",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "rewritten-away",
+            ],
+        ),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["-C", "sub", "push", "-q", "origin", "HEAD:refs/heads/topic"],
+        )
+        .pushes(Remote::origin(Repo::Lib), "topic"),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["-C", "sub", "reset", "-q", "--hard", "HEAD~1"],
+        ),
+        Step::git(&Place::Forge, Repo::Lib, &["fetch", "-q", "origin"]),
+    ];
+    steps.extend(
+        Step::forge_force_push(Repo::Lib, "topic", "replaced")
+            .into_iter()
+            .map(|step| step.may_strand(&[Repo::Lib])),
+    );
+    steps.push(
+        Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+    );
+    scenario(
+        "a store removal keeps nothing of a submodule remote's rewrite",
+        steps,
+    )
+}
+
+/// The clone's own refresh keeps the tip a remote rewrote a branch off as a
+/// backup, and the removal refuses naming it; the drop it prints, run as
+/// printed, lets the removal through on the next run, with no new backup.
+pub fn store_removal_after_a_rewrite_ends_once_its_backup_is_dropped() -> Scenario {
+    let mut steps = vec![
+        Step::git(&a(), Repo::App, &["switch", "-q", "-c", "topic"]),
+        Step::commit(&a(), Repo::App, "rewritten-away"),
+        Step::git(&a(), Repo::App, &["push", "-q", "origin", "topic"])
+            .pushes(Remote::origin(Repo::App), "topic"),
+        Step::git(&a(), Repo::App, &["switch", "-q", "main"]),
+        Step::git(&a(), Repo::App, &["branch", "-q", "-D", "topic"]),
+        Step::git(&Place::Forge, Repo::App, &["fetch", "-q", "origin"]),
+    ];
+    steps.extend(Step::forge_force_push(Repo::App, "topic", "replaced"));
+    steps.extend([
+        Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains("rwv backup drop local/remotes/app "))
+            .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+        Step::rwv_printed_quoted(&a(), "rwv backup drop ", "")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App]),
+        Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+    ]);
+    scenario(
+        "a store removal after a rewrite ends once its backup is dropped",
+        steps,
+    )
+}
+
 /// A landing's prune judges the target's clone against its remotes as they
 /// are: a branch whose remote copy was deleted after it was pushed holds its
 /// commits alone, and the clone stays.

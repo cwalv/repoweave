@@ -2864,6 +2864,7 @@ impl Vcs for GitVcs {
         _claim: &crate::fetch_claim::FetchClaim,
         repo: &Path,
         only: Option<&[RemoteHandle]>,
+        superseded: crate::vcs::Superseded,
     ) -> Result<PruningFetch, VcsError> {
         let repo = Self::work_dir_for_store(repo);
         let repo = repo.as_path();
@@ -2908,7 +2909,9 @@ impl Vcs for GitVcs {
                     to: to.clone(),
                 },
                 Some(from) => {
-                    Self::record_superseded_tip(repo, branch, from)?;
+                    if superseded == crate::vcs::Superseded::Kept {
+                        Self::record_superseded_tip(repo, branch, from)?;
+                    }
                     BranchChange::Rewritten {
                         from: from.clone(),
                         to: to.clone(),
