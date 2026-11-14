@@ -735,8 +735,12 @@ fn left_behind_at(repo: &Path) -> Result<LeftBehind, VcsError> {
     let HeadAttachment::Attached(_) = GitVcs.head_attachment(repo)? else {
         return Ok(LeftBehind::No);
     };
-    let Some(recorded) = newest_head_log_entry(repo)? else {
-        return Ok(LeftBehind::No);
+    let recorded = match newest_head_log_entry(repo)? {
+        Some(recorded) => recorded,
+        None => match merge_began_at(repo)? {
+            Some(began) => began,
+            None => return Ok(LeftBehind::No),
+        },
     };
     let head = GitVcs.head_revision(repo)?;
     if *head.id() == recorded || !index_has_entries(repo)? {
@@ -746,6 +750,15 @@ fn left_behind_at(repo: &Path) -> Result<LeftBehind, VcsError> {
         true => Ok(LeftBehind::At(recorded)),
         false => Ok(LeftBehind::Rewritten(recorded)),
     }
+}
+
+/// The tip a merge in progress began from, which `git merge` keeps in
+/// `ORIG_HEAD` while `MERGE_HEAD` stands.
+fn merge_began_at(repo: &Path) -> Result<Option<CommitId>, VcsError> {
+    if GitVcs::merge_head(repo)?.is_none() {
+        return Ok(None);
+    }
+    Ok(GitVcs::ref_tip(repo, "ORIG_HEAD")?.map(|tip| tip.id().clone()))
 }
 
 /// Whether the worktree's own `HEAD` log holds an entry. On the files ref

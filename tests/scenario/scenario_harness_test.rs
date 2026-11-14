@@ -1348,6 +1348,7 @@ every_scenario!(
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::PullMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::CherryPickMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::UpdateRemoteMember),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncMemberUnrecorded),
     pull_reset_killed("op-savepoint-taken", true),
     pull_reset_killed("reset-to-upstream", true),
     pull_reset_killed("reset-to-upstream", false),
@@ -4179,6 +4180,14 @@ fn pull_continue_refuses_a_member_moved_mid_merge() {
 fn cherry_pick_continue_refuses_a_member_moved_mid_copy() {
     runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
         scenarios::StoppedMidMerge::CherryPickMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_refuses_a_member_moved_mid_merge_with_no_record_of_where_it_stood() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::SyncMemberUnrecorded,
     ))
     .assert_fully_decided_green();
 }

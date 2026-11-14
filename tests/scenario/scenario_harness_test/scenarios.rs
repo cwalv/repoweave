@@ -24755,6 +24755,9 @@ pub fn continue_after_another_seat_moves(which: StoppedMoved) -> Scenario {
 pub enum StoppedMidMerge {
     /// A `merge` sync's member merge, resolved, resumed bare.
     SyncMember,
+    /// [`StoppedMidMerge::SyncMember`], the checkout's record of where it
+    /// stood gone once the branch moved.
+    SyncMemberUnrecorded,
     /// A `merge` sync's project merge on `rwv.toml`, resumed with
     /// `--keep yours`.
     SyncProjectKeepYours,
@@ -24783,7 +24786,7 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
         &'static str,
         &[&str],
     ) = match which {
-        S::SyncMember => (
+        S::SyncMember | S::SyncMemberUnrecorded => (
             sync_stopped_on_app_resolved("merge"),
             a(),
             ww("w"),
@@ -24870,8 +24873,15 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
         }
     };
     let slot = format!("refs/rwv/backup/{branch}/aborted");
+    steps.push(another_seat_commits(&from, repo, branch));
+    if matches!(which, S::SyncMemberUnrecorded) {
+        steps.push(Step::git(
+            &at,
+            repo,
+            &["reflog", "expire", "--expire=now", "--all"],
+        ));
+    }
     steps.extend([
-        another_seat_commits(&from, repo, branch),
         Step::rwv(&at, resume)
             .expect(Exit::refuses(repo, State::EditsDriftLeftInPlace))
             .claim(Claim::OutputContains("outside this checkout while the"))
@@ -24891,6 +24901,9 @@ pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario
     scenario(
         match which {
             S::SyncMember => "sync --continue refuses a member moved mid-merge",
+            S::SyncMemberUnrecorded => {
+                "sync --continue refuses a member moved mid-merge with no record of where it stood"
+            }
             S::SyncProjectKeepYours => {
                 "sync --continue --keep yours refuses the project moved mid-merge"
             }
