@@ -109,7 +109,10 @@ control and concurrent rwv processes; `vcs` the git seam and branch model;
 `doctor` doctor, status and the health and state checks; `sync` sync, land,
 abort, lock, push, pull, fetch and update; `weave` workweaves, branches,
 members, clone, init, activation and project resolution; `integrations` the
-ecosystem integrations, hooks and surfacing; `scenario` the scenario harness.
+ecosystem integrations, hooks and surfacing; `scenario` the scenario harness;
+`kill_matrix` the matrix that kills every verb at every pause point it passes and
+continues or aborts it, in a binary of its own because it runs as long as the rest
+of the scenario binary and the gate runs binaries side by side.
 `test_pause_build` is a binary of its own because the gate's `no-test-pause`
 stage builds it without the `test-pause` feature, and a binary of one file is
 all that stage should compile.
@@ -433,12 +436,12 @@ alone runs no faster; the script's header gives the measurement.
 
 `tests/scenario/scenario_harness_test.rs` runs branching scenarios step by step in a
 hermetic sandbox and holds every step to a set of invariants. A scenario is
-data: a [`Seed`](../../tests/scenario/scenario_harness_test/sandbox.rs) saying what the
+data: a [`Seed`](../../tests/common/scenario_harness/sandbox.rs) saying what the
 sandbox holds beyond its fixed shape, and a list of steps, each carrying its
 expected outcome and what it may do that an invariant would otherwise report.
 Three modules carry it, and each has one job:
 
-- **`tests/scenario/scenario_harness_test/sandbox.rs`** builds the world: bare remotes,
+- **`tests/common/scenario_harness/sandbox.rs`** builds the world: bare remotes,
   the machines that clone them, and the forge's own clone of each origin. Every
   git and rwv it runs sees a `HOME` inside the sandbox. A seed can add, per
   member, a fork remote and two mirrors of the origin (one keeping branches the
@@ -453,17 +456,40 @@ Three modules carry it, and each has one job:
   outage still leaves the remote where its URL points. The key a member entry
   declares its branch under and the `.gitattributes` line for the lock are one
   constant each, which the seed and every hand edit of an entry spell from.
-- **`tests/scenario/scenario_harness_test/runner.rs`** performs steps and checks their
+- **`tests/common/scenario_harness/runner.rs`** performs steps and checks their
   outcomes. A forge event that a push can express (a force-push, a branch
   rename, a rebase-merge) is a sequence of plain `Action::Git` steps in the
   forge's clone; one no push can express (moving a remote's default branch,
   syncing a mirror) runs in the bare remote itself. A step may also commit by
   hand with git's plumbing, which is how a fixture lands a records entry or a
   lock on a branch nothing has checked out.
-- **`tests/scenario/scenario_harness_test/invariants.rs`** snapshots the sandbox before
+- **`tests/common/scenario_harness/invariants.rs`** snapshots the sandbox before
   and after each step and compares the two. Its module comment is the one
   statement of what each check holds, what it reads, and what it cannot see;
   keep it that way rather than restating checks elsewhere.
+
+The three modules, with the step builders both binaries share
+(`tests/common/scenario_harness/steps.rs`), live under `tests/common/` because
+the `scenario` and `kill_matrix` binaries both run them.
+
+### The kill matrix
+
+`tests/kill_matrix/kill_matrix_test.rs` kills each verb that records an
+operation at every pause point the source declares that it passes, then runs
+the verb's `--continue` in one sandbox and `rwv abort` in another. `POINTS` is
+the one enumeration of pause points: a row per point, naming the cells that
+reach it and why every other shape does not. A source test fails when the
+source declares a point no row holds and when a row names a point the source no
+longer declares. A shape is a verb in one setup (history, a stop, a carried
+dependent, an in-place or as-refs landing); the cells are generated from the
+rows, one test per shape. A cell passes when `--continue` ends in the state an
+unkilled run ends in (compared by commit subject and depth, since ids differ
+between sandboxes) and when abort, typed in the seat and, for a landing, in its
+target, puts every place back where `Step::capture` saw it. A point a verb
+passes before it has written its record has a rerun in place of a continue.
+A cell that fails on the tree is listed in `known_failing` with the defect it
+shows, and must keep failing until the entry is removed. `discover` (ignored)
+prints which shapes reach which points, for adding a row.
 
 ### What a step declares
 

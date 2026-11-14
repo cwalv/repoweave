@@ -8,19 +8,14 @@
 //! recorded as pending and ends the scenario there, announced on stderr.
 //!
 //! The invariants and what they cannot see are stated in
-//! `tests/scenario/scenario_harness_test/invariants.rs`; the sandbox's fixed shape in
-//! `tests/scenario/scenario_harness_test/sandbox.rs`. A test that holds rwv at a pause
+//! `tests/common/scenario_harness/invariants.rs`; the sandbox's fixed shape in
+//! `tests/common/scenario_harness/sandbox.rs`. A test that holds rwv at a pause
 //! point runs only in a build with the `test-pause` feature, and announces
 //! its skip in any other.
 
 use crate::common;
 
-#[path = "scenario_harness_test/invariants.rs"]
-mod invariants;
-#[path = "scenario_harness_test/runner.rs"]
-mod runner;
-#[path = "scenario_harness_test/sandbox.rs"]
-mod sandbox;
+use crate::common::scenario_harness::{invariants, runner, sandbox};
 #[path = "scenario_harness_test/scenarios.rs"]
 mod scenarios;
 
@@ -1403,13 +1398,6 @@ every_scenario!(
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::CherryPickMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::UpdateRemoteMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncMemberUnrecorded),
-    take_in_killed(
-        scenarios::FlaggedTakeIn::PullReset,
-        "reset-to-upstream",
-        true
-    ),
-    landing_killed(scenarios::KilledLanding::Carrying, "landed", false),
-    cherry_pick_killed("cherry-pick-project-copy", false),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncLinear),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::SyncMerge),
     a_stop_marked_resolved_continues(scenarios::StoppedOnApp::LandLinear),
@@ -8508,61 +8496,7 @@ fn manifest_stop_inline_table() {
     .assert_fully_decided_green();
 }
 
-holding_rwv! {
-    /// Pull and `update --remote`, under each flag that records an operation,
-    /// killed at each pause point their run reaches: `--continue` finishes and
-    /// ends the operation, and `rwv abort` puts the local commit back.
-    fn a_flagged_take_in_killed_is_continued_or_aborted() {
-        use scenarios::FlaggedTakeIn as F;
-        for (which, points) in [
-            (F::PullMerge, &["op-savepoint-taken"][..]),
-            (F::PullReset, &["op-savepoint-taken", "reset-to-upstream"][..]),
-            (F::UpdateRemoteMerge, &["op-savepoint-taken"][..]),
-            (F::UpdateRemoteReset, &["op-savepoint-taken", "reset-to-upstream"][..]),
-        ] {
-            for point in points {
-                for continued in [true, false] {
-                    runner::run(scenarios::take_in_killed(which, point, continued))
-                        .assert_fully_decided_green();
-                }
-            }
-        }
-    }
-
-    /// A port killed at each of its pause points: `--continue` ports it and
-    /// `rwv abort` puts the feature back.
-    fn a_port_killed_is_continued_or_aborted() {
-        for point in [
-            "op-savepoint-taken",
-            "cherry-pick-member-copied",
-            "cherry-pick-project-copy",
-            "cherry-pick-project-committed",
-        ] {
-            for continued in [true, false] {
-                runner::run(scenarios::cherry_pick_killed(point, continued))
-                    .assert_fully_decided_green();
-            }
-        }
-    }
-
-    /// An in-place landing and a carrying landing, killed at each pause
-    /// point past the start their run reaches: `--continue` lands and
-    /// `rwv abort` puts every branch back.
-    fn a_landing_killed_is_continued_or_aborted() {
-        use scenarios::KilledLanding as L;
-        for (which, points) in [
-            (L::InPlace, &["leased-in-place", "advance-target-move", "landed"][..]),
-            (L::Carrying, &["composed", "carry-composed", "carry-moved", "landed"][..]),
-        ] {
-            for point in points {
-                for continued in [true, false] {
-                    runner::run(scenarios::landing_killed(which, point, continued))
-                        .assert_fully_decided_green();
-                }
-            }
-        }
-    }
-}
+holding_rwv! {}
 
 holding_rwv! {
     /// An in-place landing killed once it leased the primary is finished by

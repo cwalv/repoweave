@@ -19,9 +19,13 @@
 //! the one the shape's fix does, and a remote that moved while the verb was
 //! down.
 
-use super::*;
-use crate::scenario_harness_test::runner;
-use crate::scenario_harness_test::sandbox::Sandbox;
+use repoweave::diagnosis::State;
+use repoweave::manifest::Role;
+use repoweave::refusal::RefusalKind;
+
+use crate::common::scenario_harness::runner::{self, Claim, Exit, Scenario, Step};
+use crate::common::scenario_harness::sandbox::{Machine, Place, Remote, Repo, Sandbox, Seed};
+use crate::common::scenario_harness::steps::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Phase {
@@ -678,11 +682,23 @@ fn run_of(shape: &Shape, expect: Exit, args: &'static [&'static str]) -> Step {
     loose(Step::rwv(&(shape.at)(), args).expect(expect))
 }
 
-fn ends_clean(shape: &Shape) -> Vec<Step> {
+fn retires_its_seat(shape: &Shape) -> bool {
+    shape.start.contains(&"--retire")
+}
+
+fn ends_clean(shape: &Shape, seat_gone: bool) -> Vec<Step> {
     let mut steps = vec![Step::rwv(&a(), &["status"])
         .expect(Exit::Succeeds)
         .claim(Claim::OutputLacks("in progress"))];
     let at = (shape.at)();
+    if seat_gone {
+        steps.push(
+            Step::rwv(&a(), &["doctor", "--all"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("rwv doctor --fix")),
+        );
+        return steps;
+    }
     if at != a() {
         steps.push(
             Step::rwv(&at, &["status"])
@@ -777,7 +793,7 @@ fn continued(shape: &Shape, phase: Phase, point: &str) -> Vec<Step> {
     let mut steps = Vec::new();
     if !recorded(point) {
         steps.extend(rerun(shape));
-        steps.extend(ends_clean(shape));
+        steps.extend(ends_clean(shape, retires_its_seat(shape)));
         return steps;
     }
     if shape.contender == Some(Contention::Live) {
@@ -791,7 +807,7 @@ fn continued(shape: &Shape, phase: Phase, point: &str) -> Vec<Step> {
         }
         _ => steps.push(finishing(shape)),
     }
-    steps.extend(ends_clean(shape));
+    steps.extend(ends_clean(shape, retires_its_seat(shape)));
     steps
 }
 
@@ -869,7 +885,7 @@ fn aborted(shape: &Shape, typed_at: Place, point: &str, in_target: bool) -> Vec<
         );
         return steps;
     }
-    steps.extend(ends_clean(shape));
+    steps.extend(ends_clean(shape, false));
     if shape.contender.is_none() {
         steps.push(Step::rwv(&a(), &["status"]).claim(Claim::TipsAsCaptured("before")));
     }
@@ -1446,7 +1462,7 @@ fn every_row_names_real_shapes_and_says_why_the_others_do_not_reach_it() {
 fn every_shape_has_a_test_and_a_cell() {
     let source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/scenario/scenario_harness_test/kill_matrix.rs"),
+            .join("tests/kill_matrix/kill_matrix_test.rs"),
     )
     .unwrap();
     for shape in SHAPES {

@@ -5,24 +5,14 @@ use super::runner::{
 use super::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, Store, RECORDS_BRANCH,
 };
+use crate::common::scenario_harness::steps::{
+    a, b, create, dependent_of, feature_onto_stable, main_checked_out_nowhere, main_moves_app,
+    port_me_on_main, publish_app_and_project, recurse_moved_back, stable_lines,
+    stack_on_a_seat_under, ww, APP, DOCS, LIB,
+};
 use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
 use repoweave::refusal::RefusalKind;
-
-#[path = "kill_matrix.rs"]
-mod kill_matrix;
-
-fn a() -> Place {
-    Place::Primary(Machine::A)
-}
-
-fn ww(name: &str) -> Place {
-    Place::ww(Machine::A, name)
-}
-
-fn create(name: &str) -> Step {
-    Step::rwv(&a(), &["workweave", "create", "--project", "proj", name]).expect(Exit::Succeeds)
-}
 
 /// A push of the weave branch the project repo is on publishes its record to
 /// the project's origin, creating the records branch there on the first.
@@ -2353,10 +2343,6 @@ pub fn fork_remote_missing() -> Scenario {
     }
 }
 
-fn b() -> Place {
-    Place::Primary(Machine::B)
-}
-
 fn origin_records() -> Remote {
     Remote::origin(Repo::Proj)
 }
@@ -3830,17 +3816,6 @@ pub fn detached_create_start() -> Scenario {
             ),
         ],
     )
-}
-
-fn publish_app_and_project(mark: &'static str) -> Vec<Step> {
-    vec![
-        Step::commit(&a(), Repo::App, mark),
-        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::git(&a(), Repo::App, &["push", "origin", "main"])
-            .pushes(Remote::origin(Repo::App), "main"),
-        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
-            .pushes(Remote::origin(Repo::Proj), "main"),
-    ]
 }
 
 pub fn three_way_pins() -> Scenario {
@@ -9558,10 +9533,6 @@ pub fn moved_and_edited_flag_in_another_workspace() -> Scenario {
     )
 }
 
-const LIB: &str = "local/remotes/lib";
-const APP: &str = "local/remotes/app";
-const DOCS: &str = "local/remotes/docs";
-
 /// `seat-follows-after-landing`: a permanent seat whose `lib` holds no work
 /// of its own declares `lib` on `dev` and lands that change by name. The
 /// seat's `lib` moves to `dev`'s tip, keeping the tip it left in a backup, and
@@ -12904,66 +12875,6 @@ pub fn land_refuses_a_target_checkout_diverged_from_its_pin() -> Scenario {
     )
 }
 
-/// `stable`, declared from `main` with its own `stable-app` and `stable-lib`
-/// lines, and the primary back on `main`.
-fn stable_lines() -> Vec<Step> {
-    vec![
-        Step::rwv(
-            &a(),
-            &[
-                "branch",
-                "create",
-                "stable",
-                "--declared",
-                "--set-new-branch",
-                "local/remotes/app=stable-app",
-                "--set-new-branch",
-                "local/remotes/lib=stable-lib",
-            ],
-        )
-        .expect(Exit::Succeeds),
-        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
-    ]
-}
-
-/// The primary on `stable`, and a workweave `p` holding a feature onto it.
-fn feature_onto_stable() -> Vec<Step> {
-    vec![
-        Step::rwv(&a(), &["switch", "stable"]).expect(Exit::Succeeds),
-        create("p"),
-    ]
-}
-
-/// One project commit on `main`, `port-me`: `app` two commits forward, `lib`
-/// one, the `dependency` `docs` re-pinned one forward, `lib`'s entry and the
-/// top-level `history` changed, and a project file added.
-fn port_me_on_main() -> Vec<Step> {
-    let lib_main = declared_branch_text(Repo::Lib, "main");
-    vec![
-        Step::commit(&a(), Repo::App, "fix-app-1"),
-        Step::commit(&a(), Repo::App, "fix-app-2"),
-        Step::commit(&a(), Repo::Lib, "fix-lib"),
-        Step::commit(&a(), Repo::Docs, "docs-bump"),
-        Step::hand_edit(
-            &a(),
-            Repo::Proj,
-            "rwv.toml",
-            "[integrations.vscode-workspace]",
-            "history = \"linear\"\n\n[integrations.vscode-workspace]",
-        ),
-        Step::hand_edit(
-            &a(),
-            Repo::Proj,
-            "rwv.toml",
-            &lib_main,
-            &format!("{lib_main}\nrecurse-submodules = false"),
-        ),
-        Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
-        Step::git(&a(), Repo::Proj, &["add", "rwv.toml", "rwv.lock"]),
-        Step::commit(&a(), Repo::Proj, "port-me"),
-    ]
-}
-
 /// `cherry-pick-port`: a project commit on `main` ported onto a feature off
 /// `stable`: each owned member's range copied in order and recording its
 /// source, the dependency's pin carried by name, one project commit
@@ -13878,187 +13789,6 @@ pub fn update_remote_reset_killed_after_the_move(detached: bool) -> Scenario {
             .claim(Claim::OutputLacks("beta-lib")),
     ]);
     scenario("update --remote reset killed after the move", steps)
-}
-
-/// Which take-in a flag runs under the op record [`take_in_killed`] kills.
-#[derive(Debug, Clone, Copy)]
-pub enum FlaggedTakeIn {
-    PullMerge,
-    PullReset,
-    UpdateRemoteMerge,
-    UpdateRemoteReset,
-}
-
-/// A branch diverged from its upstream by one commit each side, taken in
-/// by `which` and killed at `point`: `--continue` finishes the take-in and
-/// ends the operation; `rwv abort` puts the local commit back alone.
-pub fn take_in_killed(which: FlaggedTakeIn, point: &'static str, continued: bool) -> Scenario {
-    use FlaggedTakeIn as F;
-    let (at, other, repo, args, resume): (Place, Place, Repo, &[&str], &[&str]) = match which {
-        F::PullMerge => (
-            b(),
-            a(),
-            Repo::Proj,
-            &["pull", "--merge-upstream"],
-            &["pull", "--continue"],
-        ),
-        F::PullReset => (
-            b(),
-            a(),
-            Repo::Proj,
-            &["pull", "--reset-to-upstream", "projects/proj"],
-            &["pull", "--continue"],
-        ),
-        F::UpdateRemoteMerge => (
-            a(),
-            b(),
-            Repo::Lib,
-            &["update", "--remote", "--merge-upstream"],
-            &["update", "--remote", "--continue"],
-        ),
-        F::UpdateRemoteReset => (
-            a(),
-            b(),
-            Repo::Lib,
-            &["update", "--remote", "--reset-to-upstream", LIB],
-            &["update", "--remote", "--continue"],
-        ),
-    };
-    let resets = matches!(which, F::PullReset | F::UpdateRemoteReset);
-    let mut steps = vec![
-        Step::new_machine(Machine::B),
-        Step::commit(&other, repo, "upstream-side"),
-        Step::git(&other, repo, &["push", "origin", "main"]).pushes(Remote::origin(repo), "main"),
-        Step::commit(&at, repo, "local-side"),
-        Step::rwv_paused(&at, args, point, "taking")
-            .may_rewrite(&[repo])
-            .may_strand(&[repo]),
-        Step::kill("taking"),
-    ];
-    let log = || Step::git(&at, repo, &["log", "--format=%s", "main"]);
-    if continued {
-        steps.extend([
-            Step::rwv(&at, resume)
-                .expect(Exit::Succeeds)
-                .may_rewrite(&[repo])
-                .may_strand(&[repo]),
-            if resets {
-                log()
-                    .claim(Claim::OutputContains("upstream-side"))
-                    .claim(Claim::OutputLacks("local-side"))
-            } else {
-                log()
-                    .claim(Claim::OutputContains("upstream-side"))
-                    .claim(Claim::OutputContains("local-side"))
-            },
-            Step::rwv(&at, &["status"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("in progress")),
-        ]);
-    } else {
-        steps.extend([
-            Step::rwv(&at, &["abort"])
-                .expect(Exit::Succeeds)
-                .may_restore(&[repo])
-                .may_rewind(&[repo]),
-            log()
-                .claim(Claim::OutputContains("local-side"))
-                .claim(Claim::OutputLacks("upstream-side")),
-        ]);
-    }
-    steps.extend([
-        Step::rwv(&at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
-        Step::rwv(&at, resume).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
-    ]);
-    scenario("a flagged take-in killed, then continued or aborted", steps)
-}
-
-/// Which landing [`landing_killed`] kills.
-#[derive(Debug, Clone, Copy)]
-pub enum KilledLanding {
-    /// The primary detached on the project: the landing moves `main` as a
-    /// ref and fast-forwards the primary's member checkouts in place.
-    InPlace,
-    /// `w1` carrying its dependent `w2`, `main` having moved.
-    Carrying,
-}
-
-/// A landing killed at `point`: `land --continue` lands it and leaves no
-/// lease behind, so a landing after it runs; `rwv abort` puts every branch
-/// back, the dependent's included.
-pub fn landing_killed(which: KilledLanding, point: &'static str, continued: bool) -> Scenario {
-    let (mut steps, source, args): (Vec<Step>, Place, &[&str]) = match which {
-        KilledLanding::InPlace => (
-            vec![
-                create("w"),
-                Step::git(&a(), Repo::Proj, &["switch", "-q", "--detach"]),
-                Step::commit(&ww("w"), Repo::App, "w1-app"),
-            ],
-            ww("w"),
-            &["land", "--history", "linear"],
-        ),
-        KilledLanding::Carrying => {
-            let mut steps = stack_on_a_seat();
-            steps.extend(main_moves_app("main-app"));
-            (steps, ww("w1"), &["land"])
-        }
-    };
-    let touched = [Repo::App, Repo::Proj];
-    steps.extend([
-        Step::rwv_paused(&source, args, point, "landing")
-            .may_rewind(&touched)
-            .may_strand(&touched),
-        Step::kill("landing"),
-    ]);
-    if continued {
-        steps.extend([
-            Step::rwv(&source, &["land", "--continue"])
-                .expect(Exit::Succeeds)
-                .may_rewind(&touched)
-                .may_strand(&touched),
-            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputContains("w1-app")),
-        ]);
-        if matches!(which, KilledLanding::Carrying) {
-            steps.push(
-                Step::git(&source, Repo::App, &["log", "--format=%s", "w2"])
-                    .claim(Claim::OutputContains("main-app"))
-                    .claim(Claim::OutputContains("w2-app")),
-            );
-        }
-    } else {
-        steps.extend([
-            Step::rwv(&source, &["abort"])
-                .expect(Exit::Succeeds)
-                .may_rewind(&touched)
-                .may_restore(&touched)
-                .may_strand(&touched),
-            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputLacks("w1-app")),
-        ]);
-        if matches!(which, KilledLanding::Carrying) {
-            steps.push(
-                Step::git(&source, Repo::App, &["log", "--format=%s", "w2"])
-                    .claim(Claim::OutputLacks("main-app"))
-                    .claim(Claim::OutputContains("w2-app")),
-            );
-        }
-    }
-    steps.extend([
-        Step::rwv(&source, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
-        Step::rwv(&a(), &["status"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputLacks("in progress")),
-    ]);
-    if matches!(which, KilledLanding::InPlace) {
-        steps.extend([
-            Step::commit(&ww("w"), Repo::App, "w-app-after"),
-            Step::rwv(&ww("w"), &["land", "--history", "linear"])
-                .expect(Exit::Succeeds)
-                .may_strand(&touched),
-        ]);
-    }
-    scenario("a landing killed, then continued or aborted", steps)
 }
 
 /// `update --remote --merge-upstream --reset-to-upstream lib` resets
@@ -16765,15 +16495,6 @@ pub fn a_landing_ending_has_released_its_target() -> Scenario {
     )
 }
 
-/// The primary leaves every branch of `main`'s: its project repo and members
-/// detached, so `main` and each member's `main` are checked out nowhere.
-fn main_checked_out_nowhere() -> Vec<Step> {
-    [Repo::Proj, Repo::App, Repo::Lib]
-        .into_iter()
-        .map(|repo| Step::git(&a(), repo, &["switch", "-q", "--detach"]))
-        .collect()
-}
-
 fn lands_on_main(step: Step, repo: Repo, mark: &'static str) -> Step {
     step.claim(Claim::Contains {
         at: a(),
@@ -18076,51 +17797,6 @@ pub fn cherry_pick_killed_after_each_move() -> Scenario {
     ]);
     Scenario {
         name: "cherry-pick killed after each move",
-        seed: Seed::default().role(Repo::Docs, Role::Dependency),
-        steps,
-    }
-}
-
-/// A port killed at `point`: `cherry-pick --continue` ports it and ends the
-/// operation; `rwv abort` leaves the feature without any of it.
-pub fn cherry_pick_killed(point: &'static str, continued: bool) -> Scenario {
-    let mut steps = stable_lines();
-    steps.extend(port_me_on_main());
-    steps.extend(feature_onto_stable());
-    steps.extend([
-        Step::rwv_paused(&ww("p"), &["cherry-pick", "main"], point, "pick"),
-        Step::kill("pick"),
-    ]);
-    if continued {
-        steps.extend([
-            Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
-                .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("ported")),
-            Step::git(&ww("p"), Repo::App, &["log", "-3", "--format=%s"])
-                .claim(Claim::OutputInOrder(&["fix-app-2", "fix-app-1"])),
-            Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:port-me.txt"])
-                .claim(Claim::OutputLine("port-me")),
-        ]);
-    } else {
-        steps.extend([
-            Step::rwv(&ww("p"), &["abort"])
-                .expect(Exit::Succeeds)
-                .may_rewind(&[Repo::App, Repo::Lib, Repo::Docs, Repo::Proj])
-                .may_restore(&[Repo::App, Repo::Lib, Repo::Docs, Repo::Proj]),
-            Step::git(&ww("p"), Repo::App, &["log", "--format=%s"])
-                .claim(Claim::OutputLacks("fix-app")),
-            Step::git(&ww("p"), Repo::Proj, &["log", "--format=%s"])
-                .claim(Claim::OutputLacks("port-me")),
-        ]);
-    }
-    steps.extend([
-        Step::rwv(&ww("p"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
-        Step::rwv(&ww("p"), &["status"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputLacks("in progress")),
-    ]);
-    Scenario {
-        name: "cherry-pick killed, then continued or aborted",
         seed: Seed::default().role(Repo::Docs, Role::Dependency),
         steps,
     }
@@ -21528,29 +21204,6 @@ pub enum TipSettle {
     StagedUnparseableKeepTextMerge,
 }
 
-/// The operator's settling of a replayed tip whose text merge put `app`'s
-/// `recurse-submodules` under `docs`: the line moved back by hand, then the
-/// printed marking of it resolved.
-fn recurse_moved_back(at: &Place) -> [Step; 3] {
-    [
-        Step::hand_edit(
-            at,
-            Repo::Proj,
-            "rwv.toml",
-            "role = \"owned\"\nrecurse-submodules = false\n",
-            "role = \"owned\"\n",
-        ),
-        Step::hand_edit(
-            at,
-            Repo::Proj,
-            "rwv.toml",
-            "role = \"fork\"\n\n[repositories.\"local/remotes/docs\"]",
-            "role = \"fork\"\nrecurse-submodules = false\n\n[repositories.\"local/remotes/docs\"]",
-        ),
-        Step::rwv_printed_holding(at, "git -C ", "add -- rwv.toml").expect(Exit::Succeeds),
-    ]
-}
-
 fn resume_keep_text_merge(verb: TipVerb) -> &'static [&'static str] {
     match verb {
         TipVerb::Sync => &["sync", "--continue", "--keep", "text-merge"],
@@ -23301,32 +22954,6 @@ pub fn vcs_continue_mid_rebase_then_an_own_commit() -> Scenario {
 /// `w1`'s seat, which then switches back.
 fn stack_on_a_seat() -> Vec<Step> {
     stack_on_a_seat_under("linear")
-}
-
-fn stack_on_a_seat_under(history: &'static str) -> Vec<Step> {
-    vec![
-        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
-        create("w1"),
-        Step::commit(&ww("w1"), Repo::App, "w1-app"),
-        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
-        dependent_of(&ww("w1"), "w2", "proj--w1"),
-        Step::commit(&ww("w1"), Repo::App, "w2-app"),
-        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
-    ]
-}
-
-/// In the workspace `at`, `name` created as a feature onto `onto`, the
-/// workspace switching to it.
-fn dependent_of(at: &Place, name: &'static str, onto: &'static str) -> Step {
-    Step::rwv(at, &["branch", "create", name, "--target", onto]).expect(Exit::Succeeds)
-}
-
-fn main_moves_app(mark: &'static str) -> Vec<Step> {
-    vec![
-        Step::commit(&a(), Repo::App, mark),
-        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
-    ]
 }
 
 /// `w2`, a dependent of `w1` checked out nowhere, sets `app`'s
