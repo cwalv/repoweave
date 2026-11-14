@@ -517,15 +517,14 @@ fn clone_json_wire_output_conforms_on_partial_failure() {
 fn update_remote_json_wire_output_conforms_on_failure() {
     let weave = weave();
 
-    // Point the manifest's declared branch at one the clone has and the remote
-    // lacks, so the branch resolution on the remote fails per-repo.
-    common::git_in(weave.member(), &["branch", "local-only"]);
-    let member_url = common::file_url(weave.member_origin());
+    // Point the manifest's member at a remote that is gone, so its fetch fails
+    // per-repo.
+    let member_url = common::file_url(&weave.member_origin().join("gone"));
     std::fs::write(
         weave.project().join("rwv.toml"),
         format!(
             "[repositories]\n[repositories.\"{MEMBER}\"]\ntype = \"git\"\nurl = \"{member_url}\"\n\
-             branch = \"local-only\"\nrole = \"owned\"\n"
+             branch = \"main\"\nrole = \"owned\"\n"
         ),
     )
     .unwrap();
