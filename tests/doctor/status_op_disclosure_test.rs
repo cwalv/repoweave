@@ -225,7 +225,7 @@ fn status_discloses_a_parked_op_from_a_real_interrupted_sync_to() {
         canon(Path::new(op["target"].as_str().unwrap())),
         canon(&primary.root)
     );
-    assert!(op["overrides"].as_array().unwrap().is_empty());
+    assert!(op.get("overrides").is_none());
     assert!(op["id"].as_str().is_some_and(|s| !s.is_empty()));
     assert!(op["started_at"].as_str().is_some_and(|s| !s.is_empty()));
 

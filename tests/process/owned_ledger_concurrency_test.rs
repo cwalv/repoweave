@@ -133,11 +133,12 @@ fn a_held_claim_refuses_every_stamper_and_leaves_the_ledger_untouched() {
     let before = std::fs::read(ledger.join(LEDGER_FILE)).expect("seeded ledger");
 
     let claim = ledger.join(LEDGER_CLAIM_FILE);
-    std::fs::OpenOptions::new()
+    let holder = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&claim)
         .expect("the test takes the claim itself");
+    holder.try_lock().expect("the test holds the claim's lock");
     let outcomes = run_stampers(&ledger, &results);
     let refused = format!(
         "refused {}",
@@ -156,6 +157,7 @@ fn a_held_claim_refuses_every_stamper_and_leaves_the_ledger_untouched() {
     );
 
     std::fs::remove_file(&claim).expect("the test releases the claim");
+    drop(holder);
     stamp_owned_digest(&ledger, "after.lock", b"after")
         .expect("with the claim released a stamp succeeds again");
 }

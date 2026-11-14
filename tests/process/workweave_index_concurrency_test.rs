@@ -179,11 +179,12 @@ fn a_held_claim_refuses_every_recorder_and_leaves_the_index_untouched() {
     let before = std::fs::read(store_dir.join(INDEX_FILE)).expect("seeded index");
 
     let claim = store_dir.join(INDEX_CLAIM_FILE);
-    std::fs::OpenOptions::new()
+    let holder = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(&claim)
         .expect("the test takes the claim itself");
+    holder.try_lock().expect("the test holds the claim's lock");
     let outcomes = run_recorders(&root, &store, &results);
     let refused = format!(
         "refused {}",
@@ -201,6 +202,7 @@ fn a_held_claim_refuses_every_recorder_and_leaves_the_index_untouched() {
         "a refused record must write nothing"
     );
     std::fs::remove_file(&claim).expect("the test releases the claim");
+    drop(holder);
 }
 
 #[test]
