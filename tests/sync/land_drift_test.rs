@@ -1280,10 +1280,12 @@ fn held_landing(f: &Fixture, point: &str) -> common::pause::Paused {
         .unwrap_or_else(|e| panic!("the landing reaches {point}: {e}"))
 }
 
-/// The workweave with the record of the landing killed in it removed, so the
-/// verbs that refuse while a landing is recorded run.
+/// The workweave with the landing killed in it aborted, so the verbs that
+/// refuse while a landing is recorded run.
 fn without_the_killed_landing(f: &Fixture) {
-    std::fs::remove_file(f.ww.join(".rwv-op")).unwrap();
+    let out = common::cli::run(&["abort"], &f.ww);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    assert!(!f.ww.join(".rwv-op").exists(), "the record stands");
 }
 
 /// The lines the `choices:` block prints.
