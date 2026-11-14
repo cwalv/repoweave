@@ -6609,15 +6609,17 @@ impl CheckViolation {
                 "orphaned clone: {path} — not listed in any project's rwv.toml; to \
                      register it, move it to the path its remote's URL places it at under \
                      the primary weave root, unless it already sits there, and run \
-                     `rwv member add --adopt` with that path; or remove the directory manually"
+                     `rwv member add --adopt` with that path; or remove it with `rwv member \
+                     remove {path} --delete`, which refuses while it holds what no remote has"
             ),
             CheckViolation::UnknownSegmentClone { path } => format!(
                 "unknown-segment clone: {path} — sits under a top-level directory no \
                      built-in registry and no project's rwv.toml names, so no scan compares \
                      it against anything; to register it, move it to the path its remote's \
                      URL places it at under the primary weave root, unless it already sits \
-                     there, and run `rwv member add --adopt` with that path; or remove the directory \
-                     manually"
+                     there, and run `rwv member add --adopt` with that path; or remove it with \
+                     `rwv member remove {path} --delete`, which refuses while it holds what no \
+                     remote has"
             ),
             // `doctor --fix` intentionally does NOT auto-clone: network
             // side effects stay behind an explicit verb.
@@ -6823,7 +6825,9 @@ impl CheckViolation {
                     None => format!("{repo}"),
                 };
                 let detail = match kind {
-                    RecordDriftKind::SafeToFix => "recorded state stale (run `rwv doctor --fix` to reset)",
+                    RecordDriftKind::SafeToFix => {
+                        "recorded state stale (run `rwv doctor --fix` to reset)"
+                    }
                     RecordDriftKind::LiveRecorded => {
                         "live changes are marked for commit (once `rwv doctor --fix` has \
                              refreshed what beside them is stale, commit them if they are yours, \

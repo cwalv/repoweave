@@ -167,14 +167,23 @@ fn adding_its_url_while_it_sits_off_its_placement_makes_a_second_clone() {
 }
 
 #[test]
-fn removing_the_orphan_clears_the_finding() {
+fn the_removal_the_advice_names_removes_the_orphan_and_clears_the_finding() {
     let tmp = common::tempdir().unwrap();
     let ws = bare_weave(&tmp);
     let url = origin(&tmp);
     common::git_in(&ws, &["clone", "--quiet", &url, "local/acme/stray"]);
-    assert!(orphan_advice(&ws, "local/acme/stray").contains("or remove the directory manually"));
-
-    std::fs::remove_dir_all(common::under(&ws, "local/acme/stray")).unwrap();
+    let advice = orphan_advice(&ws, "local/acme/stray");
+    let removal = advice
+        .split('`')
+        .find(|quoted| quoted.starts_with("rwv member remove "))
+        .unwrap_or_else(|| panic!("the advice names the removal verb: {advice}"));
+    let args: Vec<&str> = removal.split_whitespace().skip(1).collect();
+    common::rwv()
+        .args(&args)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(!common::under(&ws, "local/acme/stray").exists());
 
     assert_eq!(doctor_findings(&ws), Vec::new());
 }
