@@ -759,6 +759,12 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
                 .subject(sync.source_name())
                 .listing([format!("{e:#}")])
                 .bind("<b>", sync.source_name())
+                .doctor_fix_for(
+                    vcs.read_file_at_revision(dir, &rev(&source), Path::new(Manifest::FILE_NAME))
+                        .ok()
+                        .as_deref(),
+                    sync.source_name(),
+                )
                 .by_verb("sync");
             if let Some(there) = vcs
                 .checkouts_of_branch(dir, &source_branch)?

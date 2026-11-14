@@ -2061,9 +2061,10 @@ impl Manifest {
                 .unwrap_or_default();
             let annotated = if msg.contains("missing field `repositories`") {
                 anyhow::Error::new(e).context(format!(
-                    "{} holds no `repositories` table, which every manifest declares, bare for a \
-                     project with no members yet as `rwv init` writes it: an emptied or truncated \
-                     file is no manifest; restore it from the VCS",
+                    "{} holds no `repositories` table, which every manifest declares: where \
+                     every member was removed, add the line `[repositories]`, as `rwv init` \
+                     writes it for a project with no members; an emptied or truncated file is no \
+                     manifest, to restore from the VCS",
                     Self::FILE_NAME
                 ))
             } else if suggestion.is_empty() {

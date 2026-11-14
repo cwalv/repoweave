@@ -780,6 +780,16 @@ pub fn judge(
                     landing.target_tip.short()
                 ))
                 .bind("<b>", &landing.target)
+                .doctor_fix_for(
+                    vcs.read_file_at_revision(
+                        &dir,
+                        &ResolvedRevisionId::from(landing.target_tip.clone()),
+                        Path::new(Manifest::FILE_NAME),
+                    )
+                    .ok()
+                    .as_deref(),
+                    &landing.target,
+                )
                 .checkout(&dir)
                 .judge(vcs),
         );
@@ -1284,6 +1294,16 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
                 resumed.target_tip.short()
             ))
             .bind("<b>", resumed.target)
+            .doctor_fix_for(
+                vcs.read_file_at_revision(
+                    &dir,
+                    &ResolvedRevisionId::from(resumed.target_tip.clone()),
+                    Path::new(Manifest::FILE_NAME),
+                )
+                .ok()
+                .as_deref(),
+                resumed.target,
+            )
             .checkout(&dir)
             .judge(vcs)
             .refused());

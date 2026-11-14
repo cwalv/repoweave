@@ -1019,6 +1019,7 @@ fn w_manifest(
             .subject(branch)
             .listing([format!("{e:#}")])
             .bind("<b>", branch)
+            .doctor_fix_for(Some(&text), branch)
             .by_verb(verb)
             .judge(vcs)
             .refused()),

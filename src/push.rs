@@ -455,6 +455,12 @@ fn resolve(
                     .subject(&branch)
                     .listing([format!("{e:#}")])
                     .bind("<b>", &branch)
+                    .doctor_fix_for(
+                        pvcs.read_file_at_revision(&dir, &tip, Path::new(Manifest::FILE_NAME))
+                            .ok()
+                            .as_deref(),
+                        &branch,
+                    )
                     .by_verb("push")
                     .judge(pvcs)
                     .refused())

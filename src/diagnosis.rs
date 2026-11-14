@@ -1186,7 +1186,9 @@ impl State {
                 name: "at",
                 means: "the `rwv.toml` at the tip of a live branch the verb acts on, not the \
                         checked-out one, names member-entry keys an earlier release wrote or \
-                        does not parse, with the parser's error",
+                        does not parse, with the parser's error. `rwv doctor --fix` is offered \
+                        for the keys an earlier release wrote; any other cause is fixed by a \
+                        commit on that branch",
                 refused_by: "the verbs that act on that branch",
                 offers: &[Form::DoctorFixOnBranch],
                 verb_offers: &[],
@@ -3673,6 +3675,22 @@ impl Judging {
 
     /// Leave out the forms of these choices, where the judging knows they
     /// cannot run: the state's row says what it can offer.
+    /// `rwv doctor --fix` only where `text`, the `rwv.toml` that was read,
+    /// names member-entry keys an earlier release wrote, the one thing it
+    /// rewrites; otherwise a line says a commit on `branch` fixes it.
+    pub fn doctor_fix_for(self, text: Option<&str>, branch: impl fmt::Display) -> Self {
+        let rewrites = text.is_some_and(|text| {
+            matches!(crate::manifest::rewrite_pre_schema_keys(text), Ok(Some(_)))
+        });
+        if rewrites {
+            return self;
+        }
+        self.listing([format!(
+            "a commit on {branch} that makes its rwv.toml parse fixes it"
+        )])
+        .without(&[ChoiceId::DoctorFix])
+    }
+
     pub fn without(mut self, choices: &[ChoiceId]) -> Self {
         self.without.extend_from_slice(choices);
         self
