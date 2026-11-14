@@ -478,6 +478,19 @@ pub(crate) fn sides_at(
     }
 }
 
+/// The sides of `rwv.toml` a merge of `theirs` into `ours` records, where the
+/// two have at most one merge base. With several, no one base is both sides'
+/// common one, and the VCS's own merge stands unchecked.
+pub(crate) fn sides_to_check(
+    vcs: &dyn Vcs,
+    dir: &Path,
+    ours: &CommitId,
+    theirs: &CommitId,
+) -> anyhow::Result<Option<ConflictSides>> {
+    let bases = vcs.merge_bases(dir, ours, theirs)?;
+    Ok((bases.len() <= 1).then(|| sides_at(vcs, dir, bases.first(), ours, theirs)))
+}
+
 /// Whether `text_merge`, the text the VCS merged `rwv.toml` into with no
 /// conflict, differs from the merge of the values of `sides`.
 pub(crate) fn text_merge_differs(sides: &ConflictSides, text_merge: &str) -> anyhow::Result<bool> {
@@ -502,8 +515,9 @@ pub(crate) fn check_merge_in_flight(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result
         return Ok(false);
     };
     let ours = vcs.head_revision(dir)?.id().clone();
-    let base = vcs.merge_bases(dir, &ours, &theirs)?.into_iter().next();
-    let sides = sides_at(vcs, dir, base.as_ref(), &ours, &theirs);
+    let Some(sides) = sides_to_check(vcs, dir, &ours, &theirs)? else {
+        return Ok(false);
+    };
     check_text_merge(vcs, dir, &sides, &text_merge)
 }
 

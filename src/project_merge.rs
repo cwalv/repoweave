@@ -725,13 +725,17 @@ impl ProjectMerge<'_> {
                 let merged = Merged::Tree(tree);
                 let held = sides.held(self.head);
                 let incoming = sides.incoming(self.head);
-                let base = vcs.merge_bases(dir, held, incoming)?.into_iter().next();
                 let text = merged
                     .file(vcs, dir, Manifest::FILE_NAME)?
                     .unwrap_or_default();
-                let recorded =
-                    crate::manifest_conflict::sides_at(vcs, dir, base.as_ref(), held, incoming);
-                if !crate::manifest_conflict::text_merge_differs(&recorded, &text)? {
+                let differs =
+                    match crate::manifest_conflict::sides_to_check(vcs, dir, held, incoming)? {
+                        Some(recorded) => {
+                            crate::manifest_conflict::text_merge_differs(&recorded, &text)?
+                        }
+                        None => false,
+                    };
+                if !differs {
                     return Ok(merged);
                 }
             }
@@ -1187,9 +1191,11 @@ pub(crate) fn replayed_tip_differs(
     let Some(tip) = manifest_text_at(vcs, dir, vcs.head_revision(dir)?.id()) else {
         return Ok(None);
     };
-    let base = vcs.merge_bases(dir, &rebase.from, &rebase.onto)?;
-    let sides =
-        crate::manifest_conflict::sides_at(vcs, dir, base.first(), &rebase.onto, &rebase.from);
+    let Some(sides) =
+        crate::manifest_conflict::sides_to_check(vcs, dir, &rebase.onto, &rebase.from)?
+    else {
+        return Ok(None);
+    };
     Ok(crate::manifest_conflict::check_tip(&sides, &tip)?.map(|differs| (rebase, differs)))
 }
 

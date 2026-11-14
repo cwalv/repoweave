@@ -832,12 +832,14 @@ impl Carrier<'_> {
     ) -> anyhow::Result<Option<String>> {
         let dir = self.repos.dir(&RepoKey::Project);
         let vcs = self.repos.vcs(&RepoKey::Project);
-        let base = match base == onto {
-            true => vcs.merge_bases(&dir, from, onto)?.into_iter().next(),
-            false => Some(base.clone()),
+        let sides = if base == onto {
+            match crate::manifest_conflict::sides_to_check(vcs.as_ref(), &dir, onto, from)? {
+                Some(sides) => sides,
+                None => return Ok(None),
+            }
+        } else {
+            crate::manifest_conflict::sides_at(vcs.as_ref(), &dir, Some(base), onto, from)
         };
-        let sides =
-            crate::manifest_conflict::sides_at(vcs.as_ref(), &dir, base.as_ref(), onto, from);
         let Ok(text) = vcs.read_file_at_revision(
             &dir,
             &rev(tip),
