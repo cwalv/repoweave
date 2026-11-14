@@ -259,6 +259,27 @@ impl ReleaseUnreachableClaimsConsent {
     }
 }
 
+/// The claim releases the operator consented to, each minted from its flag.
+#[derive(Debug, Clone, Default)]
+pub struct ClaimReleases {
+    pub unreadable: Option<ReleaseUnreadableClaimsConsent>,
+    pub unreachable: Option<ReleaseUnreachableClaimsConsent>,
+}
+
+impl ClaimReleases {
+    /// `pub(in crate::cli)`: see [`DiscardUnlandedConsent::from_flag`]'s doc
+    /// comment.
+    pub(in crate::cli) fn new(
+        unreadable: Option<ReleaseUnreadableClaimsConsent>,
+        unreachable: Option<ReleaseUnreachableClaimsConsent>,
+    ) -> Self {
+        Self {
+            unreadable,
+            unreachable,
+        }
+    }
+}
+
 /// Proof that the operator consented to discarding the current content of
 /// an rwv-attested generated file and regenerating it from the current
 /// inputs. Minted from `--regenerate-drifted`.

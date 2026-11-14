@@ -8830,8 +8830,7 @@ fn apply_finding_repairs(
     world: &DoctorWorld,
     violations: Vec<CheckViolation>,
     repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
-    release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
-    release_unreachable_claims: Option<crate::cli::consent::ReleaseUnreachableClaimsConsent>,
+    claim_releases: crate::cli::consent::ClaimReleases,
     held: &mut HeldDrift,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
@@ -9147,7 +9146,8 @@ fn apply_finding_repairs(
                 }
             }
 
-            CheckViolation::ClaimUnreadable { file, seen } => match release_unreadable_claims
+            CheckViolation::ClaimUnreadable { file, seen } => match claim_releases
+                .unreadable
                 .as_ref()
                 .filter(|consent| consent.admits(file, ctx.active_project()))
             {
@@ -9181,7 +9181,7 @@ fn apply_finding_repairs(
             },
 
             CheckViolation::ClaimHolderUnreachable { file, held_by } => {
-                if release_unreachable_claims.is_none() {
+                if claim_releases.unreachable.is_none() {
                     false
                 } else {
                     match crate::liveness::release_unreachable(file, held_by) {
@@ -9842,8 +9842,7 @@ pub fn run_check(
     repair: Repair,
     scope: Scope,
     abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
-    release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
-    release_unreachable_claims: Option<crate::cli::consent::ReleaseUnreachableClaimsConsent>,
+    claim_releases: crate::cli::consent::ClaimReleases,
     edited_drift: Option<crate::cli::consent::EditedDriftConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
@@ -9914,8 +9913,7 @@ pub fn run_check(
             &world,
             violations,
             &findings.repo_locations,
-            release_unreadable_claims,
-            release_unreachable_claims,
+            claim_releases,
             &mut held,
             &mut fix_errors,
         );
