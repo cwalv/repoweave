@@ -5928,28 +5928,27 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         }
     }
 
-    let failed: Vec<bool> =
-        run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
-            let outcome = sync_one_repo(
-                task.vcs.as_ref(),
-                &task.abs,
-                &task.target,
-                task.verdicts,
-                task.how,
-                task.pre_replay_tip.as_ref(),
-            );
-            let is_failure = outcome.is_failure();
-            if !is_failure {
-                refresh_drift_after(ctx.verb, &task.repo_path, task.vcs.as_ref(), &task.abs);
-            }
-            ctx.handler.record(
-                task.repo_path.as_str(),
-                &task.abs,
-                &outcome,
-                ContainmentOutput::observed(task.verdicts.containment, task.verdicts.baseline),
-            );
-            is_failure
-        });
+    let failed: Vec<bool> = run_in_parallel(&sync_tasks, ctx.jobs, |_idx, task| {
+        let outcome = sync_one_repo(
+            task.vcs.as_ref(),
+            &task.abs,
+            &task.target,
+            task.verdicts,
+            task.how,
+            task.pre_replay_tip.as_ref(),
+        );
+        let is_failure = outcome.is_failure();
+        if !is_failure {
+            refresh_drift_after(ctx.verb, &task.repo_path, task.vcs.as_ref(), &task.abs);
+        }
+        ctx.handler.record(
+            task.repo_path.as_str(),
+            &task.abs,
+            &outcome,
+            ContainmentOutput::observed(task.verdicts.containment, task.verdicts.baseline),
+        );
+        is_failure
+    });
 
     if failed.contains(&true) {
         any_failure = true;
@@ -6818,11 +6817,11 @@ fn run_advance_target(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let composed = Some(owner.converged_tips.clone())
         .filter(|tips| !tips.is_empty())
         .ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "internal: advance-target reached before the landing recorded its composed tips"
-        )
-    })?;
+            crate::untokened!(
+                InternalInvariant,
+                "internal: advance-target reached before the landing recorded its composed tips"
+            )
+        })?;
     if let Some(moved) = target_moved(
         &ctx.cwd_project_name,
         ctx.dest_workspace_dir.as_deref(),
