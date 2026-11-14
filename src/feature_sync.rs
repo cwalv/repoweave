@@ -1726,7 +1726,8 @@ fn conflict_refusal(
         RefusalKind::OpParked,
         format!(
             "rwv sync: the {} of {repo} onto {} stopped on a conflict ({}) at {}.\n{}\n{}then run \
-             `{resume}`, or `{}` to put everything back as it was",
+             `{resume}`, or `{}` to put everything back as it was; edits to tracked files \
+             not yet committed are not kept, as the VCS's own abort does not keep them",
             match op {
                 ConflictOp::Rebase => "rebase",
                 _ => "merge",

@@ -1774,7 +1774,8 @@ fn per_conflict_bail_message(
          then resume (repos already composed are left as they are):\n\
            {resume}\n\
          \n\
-         If you'd rather roll everything back: `{abort}`."
+         If you'd rather roll everything back: `{abort}`; edits to tracked files not yet\n\
+         committed are not kept, as the VCS's own abort does not keep them."
     )
 }
 
