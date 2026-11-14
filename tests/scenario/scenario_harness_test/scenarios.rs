@@ -15414,8 +15414,9 @@ pub fn a_landing_killed_before_its_plan_releases_its_claim_on_abort() -> Scenari
     )
 }
 
-/// A landing stopped once it landed, and its `rwv abort` refused on a commit
-/// made in the source after the stop. The abort puts back only what it took:
+/// A landing stopped once it landed, and its `rwv abort` from the source
+/// refused on an edit made in the target after the stop, which only abort
+/// typed there may keep as a backup. The abort puts back only what it took:
 /// a landing stopped in its retire had released its target, so another
 /// landing into it lands; one stopped before its retire still held it, so
 /// another landing refuses on its claim.
@@ -15443,10 +15444,13 @@ pub fn a_refused_abort_puts_back_what_it_took(stop: LandedStop) -> Scenario {
                 "landing",
             ),
             Step::kill("landing"),
-            Step::commit(&ww("w1"), Repo::App, "after-the-stop"),
+            Step::hand_edit(&a(), Repo::App, "w1-app.txt", "w1-app", "after the stop"),
             abort_refused_whole(
                 Step::rwv(&ww("w1"), &["abort"])
-                    .expect(Exit::refuses_kind(RefusalKind::ForeignTip)),
+                    .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                    .claim(Claim::OutputContains(
+                        "[target] local/remotes/app: holds uncommitted edits",
+                    )),
                 true,
                 &[a(), ww("w1")],
             ),

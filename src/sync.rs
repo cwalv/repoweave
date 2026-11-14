@@ -10842,9 +10842,14 @@ fn refuse_abort(
     }
     lines.extend(fixes(&source));
     lines.extend(fixes(&target));
-    if !target_foreign || unit.is_none() {
-        lines.extend(closing("rwv abort", &[&source, &target]));
-    } else {
+    match unit {
+        None => lines.extend(closing("rwv abort", &[&source, &target])),
+        Some(unit) if unit.moved.is_empty() && unit.pinned.is_empty() => {
+            lines.push("  once each fix above is made, rerun:\n\trwv abort".to_owned())
+        }
+        Some(_) => {}
+    }
+    if target_foreign {
         if let Some(record) = record.filter(|r| {
             r.phase == op_state::OpPhase::Retire && !begun && !source_blocked && built_on.is_none()
         }) {
