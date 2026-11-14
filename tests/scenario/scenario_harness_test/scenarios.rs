@@ -26329,11 +26329,9 @@ pub fn a_carried_fix_killed_part_way(
                     "projects/proj log ",
                     "rwv.toml",
                 )),
-                "remap-moved" => steps.push(kept_backup_shown(
-                    &ww("w"),
-                    "projects/proj log ",
-                    "+w-proj",
-                )),
+                "remap-moved" => {
+                    steps.push(kept_backup_shown(&ww("w"), "projects/proj log ", "+w-proj"))
+                }
                 _ => {}
             }
         }
