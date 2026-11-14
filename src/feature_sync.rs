@@ -1728,7 +1728,7 @@ fn conflict_refusal(
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(
-            "rwv sync: the {} of {repo} onto {} stopped on a conflict ({}) at {}.\n{}\n{}then run \
+            "rwv sync: the {} of {repo} onto {} stopped on a conflict ({}) at {}.\n{}{}then run \
              `{resume}`, or `{}` to put everything back as it was; edits to tracked files \
              not yet committed are not kept, as the VCS's own abort does not keep them",
             match op {
@@ -1738,7 +1738,7 @@ fn conflict_refusal(
             sync.source_name(),
             paths.join(", "),
             dir.display(),
-            vcs.conflict_resolution_hint(op),
+            crate::manifest_conflict::resolution_hint(vcs, op, &paths, &entries),
             entries
                 .iter()
                 .map(|line| format!("{line}\n"))

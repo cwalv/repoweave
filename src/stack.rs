@@ -524,10 +524,18 @@ impl Carrier<'_> {
             RefusalKind::OpParked,
             format!(
                 "rwv {verb}: carrying '{dependent}' along in {repo} stopped on a conflict at {}.\n\
-                 {}\n{entries}then run `{resume}`, or `rwv abort` to put everything back as it \
+                 {}{entries}then run `{resume}`, or `rwv abort` to put everything back as it \
                  was; no dependent's branch moves until every one is carried",
                 dir.display(),
-                vcs.conflict_resolution_hint(ConflictOp::Rebase),
+                crate::manifest_conflict::resolution_hint(
+                    vcs,
+                    ConflictOp::Rebase,
+                    &vcs.unmerged_paths(dir).unwrap_or_default(),
+                    &[entries.clone()]
+                        .into_iter()
+                        .filter(|e| !e.is_empty())
+                        .collect::<Vec<_>>()
+                ),
                 verb = self.verb,
                 repo = self.repos.label(repo),
             ),

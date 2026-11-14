@@ -387,11 +387,16 @@ pub(crate) fn conflict_stop(
     setters: &[String],
 ) -> anyhow::Error {
     let mut text = format!(
-        "rwv {verb}: merge conflict in {} ({}) at {}.\n{}\n",
+        "rwv {verb}: merge conflict in {} ({}) at {}.\n{}",
         conflicted.repo,
         conflicted.paths.join(", "),
         conflicted.checkout.display(),
-        vcs.conflict_resolution_hint(crate::vcs::ConflictOp::Rebase),
+        crate::manifest_conflict::resolution_hint(
+            vcs,
+            crate::vcs::ConflictOp::Rebase,
+            &conflicted.paths,
+            setters
+        ),
     );
     for line in setters {
         text.push_str(line);

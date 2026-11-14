@@ -1311,11 +1311,19 @@ fn conflict_stop(
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(
-            "rwv {VERB}: the copy of {what} in {repo} stopped on a conflict ({}) at {}.\n{note}{}\n\
+            "rwv {VERB}: the copy of {what} in {repo} stopped on a conflict ({}) at {}.\n{note}{}\
              then run\n  {}\nor put everything back as it was\n  rwv abort",
             paths.join(", "),
             checkout.display(),
-            vcs.conflict_resolution_hint(crate::vcs::ConflictOp::Rebase),
+            crate::manifest_conflict::resolution_hint(
+                vcs,
+                crate::vcs::ConflictOp::Rebase,
+                paths,
+                &[note.to_owned()]
+                    .into_iter()
+                    .filter(|note| !note.is_empty())
+                    .collect::<Vec<_>>()
+            ),
             crate::op_state::resume_command(OpVerb::CherryPick),
         ),
     )

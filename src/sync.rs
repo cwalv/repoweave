@@ -1759,7 +1759,12 @@ fn per_conflict_bail_message(
     owner: &Path,
     entries: &[String],
 ) -> String {
-    let hint = vcs.conflict_resolution_hint(op);
+    let hint = crate::manifest_conflict::resolution_hint(
+        vcs,
+        op,
+        &vcs.unmerged_paths(repo).unwrap_or_default(),
+        entries,
+    );
     let resume = op_state::resume_command_at(verb, owner);
     let abort = op_state::abort_command_at(owner);
     let repo_display = repo.display();
@@ -1769,7 +1774,7 @@ fn per_conflict_bail_message(
          \n\
          To resolve:\n\
            cd {repo_display}\n\
-         {hint}\n\
+         {hint}\
          {entries}\
          then resume (repos already composed are left as they are):\n\
            {resume}\n\

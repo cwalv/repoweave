@@ -12717,6 +12717,7 @@ pub fn cherry_pick_two_tables_stop() -> Scenario {
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
             .claim(Claim::OutputContains("does not parse"))
             .claim(Claim::OutputContains("duplicate key `workweave`"))
+            .claim(Claim::OutputLacks("git add <files>"))
             .claim(Claim::OutputContains("rwv cherry-pick --continue"))
             .claim(Claim::OutputContains("rwv abort")),
         Step::rwv_printed_exactly(&ww("p"), "rwv cherry-pick --continue")
@@ -20232,7 +20233,8 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     ))
                     .claim(Claim::OutputContains(
                         "or edit rwv.toml into what you mean and mark it resolved, then continue:",
-                    )),
+                    ))
+                    .claim(Claim::OutputLacks("git add <files>")),
                 Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),

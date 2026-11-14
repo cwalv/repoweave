@@ -929,6 +929,21 @@ fn in_flight_is_the_operations(
     }))
 }
 
+/// The VCS's own steps for resolving `paths`, a line each, left out where
+/// `rwv.toml` is the only one and `lines`, the stop's own, say how to settle
+/// it.
+pub(crate) fn resolution_hint(
+    vcs: &dyn Vcs,
+    op: crate::vcs::ConflictOp,
+    paths: &[String],
+    lines: &[String],
+) -> String {
+    if !lines.is_empty() && paths.iter().all(|path| path == Manifest::FILE_NAME) {
+        return String::new();
+    }
+    format!("{}\n", vcs.conflict_resolution_hint(op))
+}
+
 pub(crate) fn mark_resolved(vcs: &dyn Vcs, dir: &Path) -> String {
     vcs.hint(VcsAction::MarkResolved)
         .replace("<checkout>", &crate::workspace::quoted(dir))
