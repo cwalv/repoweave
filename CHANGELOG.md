@@ -9,12 +9,18 @@ claim that nothing changed in them.
 ### Upgrade: finish or abort an operation in progress first
 
 An operation a release before this one left in progress cannot be resumed or
-rolled back by this one: its `.rwv-op` is in a record schema this release does
-not read, so every verb that reads it refuses with `unreadable-op-record`, and
-`rwv status` reports it. Finish it with `--continue`, or end it with `rwv abort`,
-on the release that started it before upgrading. A record this release cannot
-read is ended with `rwv abort --discard-unreadable-record`, which moves nothing
-back. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other state an
+rolled back by this one: its `.rwv-op` carries no record schema (this release
+writes and reads schema 8 alone), so every verb that reads it refuses with
+`unreadable-op-record`, and `rwv status` reports it. Finish it with
+`--continue`, or end it with `rwv abort`, on the release that started it before
+upgrading. A record this release cannot read whole, whatever failed in it, is
+refused the same way, plain `rwv abort` included, and is ended with
+`rwv abort --discard-unreadable-record`, which moves nothing back.
+
+A workweave's `.rwv-workweave` marker now records the workweave's name. One an
+earlier release wrote is written again from the project's workweave index by
+the first command run inside the workweave, or for every workweave at once by
+`rwv doctor --fix` in the primary. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other state an
 earlier release wrote and the command that migrates each part.
 
 ### Verbs renamed, split or removed

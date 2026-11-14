@@ -3851,21 +3851,9 @@ impl Vcs for GitVcs {
                         why: checked_out_at(&held),
                     });
                 }
-                let backup = self.keep_in_slot(
-                    repo,
-                    &BackupSource::Branch(saved.branch.clone()),
-                    from,
-                    &saved.at,
-                )?;
                 Self::update_branch_ref(repo, &saved.branch, from, &saved.at)?;
                 self.drop_ref_savepoint(repo, key, &saved.branch)?;
-                Ok(match backup {
-                    Some(backup) => RefRestoreOutcome::Kept {
-                        tip: from.clone(),
-                        backup,
-                    },
-                    None => RefRestoreOutcome::Restored,
-                })
+                Ok(RefRestoreOutcome::Restored)
             }
         }
     }

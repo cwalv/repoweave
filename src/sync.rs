@@ -11485,19 +11485,6 @@ fn execute_ref_step(
         Ok(crate::vcs::RefRestoreOutcome::Restored) => {
             outln!("  {named}: '{branch}' restored to {}", saved.at.short());
         }
-        Ok(crate::vcs::RefRestoreOutcome::Kept { backup, .. }) => {
-            outln!(
-                "{}",
-                kept_line(
-                    vcs,
-                    &at.label,
-                    &format!("'{branch}' restored to {}", saved.at.short()),
-                    dir,
-                    &[&backup.backup().name],
-                    &saved.at,
-                )
-            );
-        }
         Ok(crate::vcs::RefRestoreOutcome::Foreign { observed, why }) => {
             let at = observed
                 .as_ref()

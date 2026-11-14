@@ -1275,12 +1275,6 @@ pub enum RefRestoreOutcome {
         observed: Option<CommitId>,
         why: String,
     },
-    /// The branch held a commit nothing else reaches: its tip was kept in
-    /// the branch's backup slot and the branch put back.
-    Kept {
-        tip: CommitId,
-        backup: BackupWitness,
-    },
 }
 
 /// What restoring a checkout to its savepoint would do, judged from what
@@ -5081,7 +5075,11 @@ pub trait Vcs: Send + Sync {
     /// Write the backup of `tip` for `source`, and return it.
     ///
     /// Idempotent: backing up a tip already held under the same source and
-    /// mark names the backup that exists. A caller that must hold proof goes
+    /// mark names the backup that exists. A backup whose name a mark makes one
+    /// deep (a slot) is overwritten by the next write to it, and what it held
+    /// before stays readable in the VCS's own history of that name until the
+    /// VCS expires it; a backend whose names keep no history numbers the
+    /// slot's earlier values itself, since operators are told they remain. A caller that must hold proof goes
     /// through [`create_backup`], which is the only producer of one.
     ///
     /// [`create_backup`]: Vcs::create_backup
@@ -5166,8 +5164,9 @@ pub trait Vcs: Send + Sync {
     }
 
     /// Keep `tip` in the one backup slot of `source`, overwriting what the
-    /// slot held, where it holds a commit that neither `beside` nor any
-    /// other branch reaches; `None` where it holds none.
+    /// slot held (which stays in the slot's history, as [`Vcs::write_backup`]
+    /// states), where it holds a commit that neither `beside` nor any other
+    /// branch reaches; `None` where it holds none.
     fn keep_in_slot(
         &self,
         repo: &Path,

@@ -35,9 +35,10 @@ what the checkout holds:
 | Stopped in an operation begun at the savepoint, in a repo the op never integrates (or with no savepoint) | `left stopped in a <operation>, which this operation never starts there`; left as it is |
 | In the target workspace of a `land`, in a repo whose branch the landing never fast-forwarded | `left at <tip>, where something other than this landing moved it`; not the op's, so not restored |
 
-A branch moved as a ref is put back the same way, its tip kept first in its
-slot where nothing else reaches it. Where the op record parses no further
-than its header, abort restores by the same rule.
+A branch a landing moved as a ref is put back to its savepoint only where it
+stands at the tip the landing wrote (anywhere else, abort refuses as for a
+moved target), so what the reset discards is the landing's own and no slot
+is written for it.
 
 ### The backup slots
 
@@ -134,9 +135,11 @@ they stand.
 
 ### A record this rwv cannot read
 
-A `.rwv-op` whose op id does not parse, or that another release wrote in a
-record schema this one does not read, is refused by every verb that reads it
-as `unreadable-op-record`, plain `abort` included; `rwv status` reports it.
+A `.rwv-op` this rwv does not read whole (a field missing, one it does not
+know, a value of another type or variant, or a record schema it does not
+read) is refused by every verb that reads it as `unreadable-op-record`,
+plain `abort` included, since what the part it cannot read records would not
+be put back; `rwv status` reports it.
 `rwv abort --discard-unreadable-record`, run in the workspace holding the
 record or in one the operation leases, ends the operation: it removes the
 record, the leases it holds on other workspaces and its landing claims, and

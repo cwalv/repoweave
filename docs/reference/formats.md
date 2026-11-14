@@ -295,9 +295,9 @@ Used by `rwv doctor` (`managed-file-drift`, `derived-state-stale`) and by `rwv m
 
 ## `.rwv-op` — owner op record
 
-Written at the **initiating workspace** (the owner) when a `rwv sync` or `rwv land` operation starts, and cleared by the same verbs on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with `rwv sync --continue` / `rwv land --continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason.
+Written at the **initiating workspace** (the owner) when a `rwv sync`, `rwv land`, `rwv pull`, `rwv update --remote` or `rwv cherry-pick` operation starts, and cleared by the same verb on success or precondition refusal. It is the sole copy of mutable op state: it records the op's parameters and which phase it reached, so a run that stopped mid-way can be finished with the verb's `--continue` or undone with `rwv abort`. Preserved on phase failure for exactly that reason. A record this rwv does not read whole is refused by every verb, `rwv abort` included, as `unreadable-op-record`; `rwv abort --discard-unreadable-record` ends it.
 
-Its presence is what those two verbs mean by "an operation is in progress" — `rwv abort` with no `.rwv-op` present reports `no operation in progress`. See [resume or abort a mid-op sync](../how-to/resume-or-abort-mid-op-sync.md) for the operator path.
+Its presence is what those verbs mean by "an operation is in progress" — `rwv abort` with no `.rwv-op` present reports `no operation in progress`. See [resume or abort a mid-op sync](../how-to/resume-or-abort-mid-op-sync.md) for the operator path.
 
 ## `.rwv-op-lease` — thin lease pointer
 
