@@ -19144,6 +19144,11 @@ pub enum ManifestSettle {
     /// continue refuses: under merge `--keep yours` keeps `app` as the
     /// workweave set it; under linear the replay stop lists it too.
     RegionAcrossMembers(ManifestStopHistory),
+    /// Each side adds a `[workweave]` table under a comment of its own at the
+    /// same place: under linear history `--keep yours` keeps the
+    /// workweave's table and comment, though git's own `ours` is `main`'s
+    /// during the replay.
+    LayoutOfTheKeptSide,
     /// `lib` declared as one inline table, its line changed by both sides:
     /// the role both changed is listed, and `--keep yours` keeps the
     /// workweave's role and the `recurse-submodules` only `main` set.
@@ -19593,6 +19598,9 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 ),
                 parked()
                     .claim(Claim::OutputContains("rwv.toml was edited since the stop"))
+                    .claim(Claim::OutputContains(
+                        "to take one, abort the operation and run it again",
+                    ))
                     .claim(Claim::OutputContains("add -- rwv.toml"))
                     .claim(Claim::OutputContains("rwv abort"))
                     .claim(Claim::OutputLacks("wrote the merge")),
@@ -20010,6 +20018,33 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
             ]);
             "an inline member table both sides changed takes the kept side's role and the field \
              only the other side changed"
+        }
+        S::LayoutOfTheKeptSide => {
+            let table = |at: &Place, mark: &str, file: &str| {
+                Step::hand_edit(
+                    at,
+                    Repo::Proj,
+                    "rwv.toml",
+                    UNDER_INTEGRATIONS,
+                    &format!("enabled = false\n\n# {mark}\n[workweave]\ncopy = [\"{file}\"]\n"),
+                )
+            };
+            steps.extend([
+                table(&a(), "MAIN-SIDE", "main.txt"),
+                Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+                table(&ww("w"), "W-SIDE", "notes.txt"),
+                Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+                stop(H::Linear).claim(Claim::OutputContains(
+                    "rwv.toml entry [workweave] is in conflict",
+                )),
+                keeps("--keep yours", H::Linear),
+                head_manifest()
+                    .claim(Claim::OutputContains(
+                        "# W-SIDE\n[workweave]\ncopy = [\"notes.txt\"]",
+                    ))
+                    .claim(Claim::OutputLacks("MAIN-SIDE")),
+            ]);
+            "--keep yours at a linear stop keeps the workweave's text in the region, not git's ours"
         }
         S::RegionAcrossMembers(history) => {
             steps = vec![
@@ -22982,6 +23017,68 @@ pub fn a_carry_stopped_in_the_project_continues() -> Scenario {
     ]);
     scenario(
         "stack: a carry stopped in the project repo continues",
+        steps,
+    )
+}
+
+/// [`a_carry_stopped_in_the_project_continues`] with the conflict in
+/// `rwv.toml`: `w2` and `main` each add a `[workweave]` table, under a
+/// comment of their own, at the same place. The carry's stop lists the table,
+/// and the printed `--keep yours` keeps `w2`'s, comment and all: yours is the
+/// dependent's side of the replay.
+pub fn a_carry_stopped_on_rwv_toml_keeps_the_dependents_side() -> Scenario {
+    let table = |at: &Place, mark: &str, file: &str| {
+        Step::hand_edit(
+            at,
+            Repo::Proj,
+            "rwv.toml",
+            "[integrations.vscode-workspace]\nenabled = false\n",
+            &format!(
+                "[integrations.vscode-workspace]\nenabled = false\n\n# {mark}\n[workweave]\n\
+                 copy = [\"{file}\"]\n"
+            ),
+        )
+    };
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        create("w1"),
+        Step::commit(&ww("w1"), Repo::App, "w1-app"),
+        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        dependent_of(&ww("w1"), "w2", "proj--w1"),
+        table(&ww("w1"), "W2-SIDE", "w2.txt"),
+        Step::git(&ww("w1"), Repo::Proj, &["commit", "-qam", "w2-proj"]),
+        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
+        table(&a(), "MAIN-SIDE", "main.txt"),
+        Step::git(&a(), Repo::Proj, &["commit", "-qam", "main-proj"]),
+    ];
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv(&ww("w1"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("carrying 'w2' along"))
+            .claim(Claim::OutputContains(
+                "rwv.toml entry [workweave] is in conflict",
+            ))
+            .claim(Claim::OutputContains("rwv sync --continue --keep yours")),
+        Step::rwv_printed_holding(&ww("w1"), "rwv sync --continue", "--keep yours")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj])
+            .claim(Claim::OutputContains("carried 'w2' along"))
+            .claim(Claim::OnBranch {
+                at: ww("w1"),
+                repo: Repo::Proj,
+                branch: "proj--w1",
+            }),
+        Step::git(&ww("w1"), Repo::Proj, &["show", "w2:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "# W2-SIDE\n[workweave]\ncopy = [\"w2.txt\"]",
+            ))
+            .claim(Claim::OutputLacks("MAIN-SIDE"))
+            .claim(Claim::OutputLacks("main.txt")),
+    ]);
+    scenario(
+        "stack: a carry stopped on rwv.toml keeps the dependent's side",
         steps,
     )
 }

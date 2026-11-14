@@ -929,6 +929,7 @@ every_scenario!(
     siblings_at_one_commit_are_carried_to_one_commit,
     a_landing_resumed_after_its_carry_judges_an_entry_changed_since,
     a_carry_stopped_in_the_project_continues,
+    a_carry_stopped_on_rwv_toml_keeps_the_dependents_side,
     sync_continue_judges_dependents_before_a_rejudged_rebase,
     a_sync_continued_after_its_relock_keeps_it,
     a_sync_continued_after_its_project_tip_moved_recomposes_the_project_carry,
@@ -6535,6 +6536,12 @@ fn a_landing_killed_after_its_carry_continues() {
 }
 
 #[test]
+fn a_carry_stopped_on_rwv_toml_keeps_the_dependents_side() {
+    runner::run(scenarios::a_carry_stopped_on_rwv_toml_keeps_the_dependents_side())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carry_stopped_in_the_project_continues() {
     runner::run(scenarios::a_carry_stopped_in_the_project_continues()).assert_fully_decided_green();
 }
@@ -7902,6 +7909,14 @@ fn manifest_stop_region_across_members_linear() {
 fn manifest_stop_cherry_pick_at_a_raw_git_merge() {
     runner::run(scenarios::settle_a_manifest_stop(
         scenarios::ManifestSettle::CherryPickAtARawGitMerge,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn manifest_stop_layout_of_the_kept_side() {
+    runner::run(scenarios::settle_a_manifest_stop(
+        scenarios::ManifestSettle::LayoutOfTheKeptSide,
     ))
     .assert_fully_decided_green();
 }

@@ -304,8 +304,19 @@ pub(crate) fn reading(
     dir: &Path,
     stop: Option<&ManifestStop>,
 ) -> anyhow::Result<Option<Reading>> {
-    let Some(recorded) = vcs.conflict_sides(dir, Manifest::FILE_NAME)? else {
+    if !unmerged(vcs, dir)? {
         return Ok(None);
+    }
+    let recorded = match vcs.conflict_sides(dir, Manifest::FILE_NAME) {
+        Ok(Some(recorded)) => recorded,
+        Ok(None) => return Ok(None),
+        Err(e) => {
+            return Ok(Some(Reading::Unreadable {
+                what: format!(
+                    "rwv.toml's sides do not read as text ({e}), so no side of it can be taken"
+                ),
+            }))
+        }
     };
     let sides = match read(&recorded) {
         Ok(sides) => sides,
@@ -317,7 +328,9 @@ pub(crate) fn reading(
     };
     let Some(stop) = stop else {
         return Ok(Some(Reading::Unreadable {
-            what: "rwv.toml is unmerged at no stop of an rwv operation".to_owned(),
+            what: "the stop at rwv.toml was not recorded, so no side of it can be taken; to take \
+                   one, abort the operation and run it again"
+                .to_owned(),
         }));
     };
     if stop.kind == ManifestStopKind::Checked {
@@ -786,7 +799,8 @@ pub(crate) fn continue_at_stop(
         return Err(refused(
             "rwv.toml was edited since the stop",
             vec![
-                "no side is written over an edit; to finish it by hand, mark it resolved, then \
+                "no side is written over an edit; to take one, abort the operation and run it \
+                 again; to finish it by hand, mark it resolved once it holds what you mean, then \
                  run the continue again:"
                     .to_owned(),
                 format!("  {}", mark_resolved(vcs, &dir)),
@@ -908,6 +922,10 @@ fn in_flight_is_the_operations(
                 .rebases
                 .iter()
                 .any(|r| r.repo == project && r.onto == incoming)
+            || take_in
+                .carries
+                .iter()
+                .any(|c| c.repo == project && c.onto == incoming)
     }))
 }
 
@@ -953,8 +971,15 @@ pub(crate) fn enter_stop(vcs: &dyn Vcs, dir: &Path, workspace: &Path, resume: &s
     }
 }
 
+fn unmerged(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<bool> {
+    Ok(vcs
+        .unmerged_paths(dir)?
+        .iter()
+        .any(|path| path == Manifest::FILE_NAME))
+}
+
 fn entered(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<Option<Reading>> {
-    if vcs.conflict_sides(dir, Manifest::FILE_NAME)?.is_none() {
+    if !unmerged(vcs, dir)? {
         return Ok(None);
     }
     let mut stop = journaled_stop(workspace)?;
@@ -1320,6 +1345,89 @@ mod tests {
             }
         }
         text
+    }
+
+    fn stopped_merge(repo: &Path, yours: &[u8], incoming: &[u8]) {
+        let git = |args: &[&str]| {
+            crate::git::git_command_in_test()
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .current_dir(repo)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        };
+        let commit = |text: &[u8]| {
+            std::fs::write(repo.join(Manifest::FILE_NAME), text).unwrap();
+            assert!(git(&["commit", "-qam", "side"]));
+        };
+        assert!(git(&["init", "-q", "-b", "main"]));
+        crate::git::LineEndings::Verbatim.pin(repo);
+        std::fs::write(repo.join(Manifest::FILE_NAME), member("a", "main")).unwrap();
+        assert!(git(&["add", "."]) && git(&["commit", "-qm", "base"]));
+        assert!(git(&["branch", "incoming"]));
+        commit(yours);
+        assert!(git(&["checkout", "-q", "incoming"]));
+        commit(incoming);
+        assert!(git(&["checkout", "-q", "main"]));
+        assert!(!git(&["merge", "-q", "--no-edit", "incoming"]));
+    }
+
+    fn unreadable(reading: Option<Reading>) -> String {
+        match reading {
+            Some(Reading::Unreadable { what }) => what,
+            other => panic!("not unreadable: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_stop_not_recorded_names_the_abort_that_brings_the_sides_back() {
+        let tmp = crate::tempdir().unwrap();
+        stopped_merge(
+            tmp.path(),
+            member("a", "x").as_bytes(),
+            member("a", "y").as_bytes(),
+        );
+        let vcs = crate::git::git_vcs();
+        let what = unreadable(reading(vcs.as_ref(), tmp.path(), None).unwrap());
+        assert!(
+            what.contains("the stop at rwv.toml was not recorded"),
+            "{what}"
+        );
+        assert!(
+            what.contains("abort the operation and run it again"),
+            "{what}"
+        );
+    }
+
+    #[test]
+    fn bytes_that_are_not_text_leave_only_the_hand_route() {
+        let tmp = crate::tempdir().unwrap();
+        let mut latin = member("a", "x").into_bytes();
+        latin.extend_from_slice(b"# caf\xe9\n");
+        stopped_merge(tmp.path(), &latin, member("a", "y").as_bytes());
+        let vcs = crate::git::git_vcs();
+        let stop = ManifestStop {
+            kind: ManifestStopKind::Conflicted,
+            working: String::new(),
+        };
+        let reading = reading(vcs.as_ref(), tmp.path(), Some(&stop)).unwrap();
+        let lines = reading_lines(
+            vcs.as_ref(),
+            tmp.path(),
+            reading.as_ref().unwrap(),
+            Some("rwv sync --continue"),
+        );
+        let what = unreadable(reading);
+        assert!(
+            what.contains("not UTF-8") || what.contains("do not read as text"),
+            "{what}"
+        );
+        assert!(
+            lines.iter().any(|line| line.contains("add -- rwv.toml")),
+            "{lines:?}"
+        );
     }
 
     #[test]

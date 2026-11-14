@@ -5688,7 +5688,9 @@ impl Vcs for GitVcs {
             .next()
             .and_then(|size| size.parse().ok())
             .unwrap_or(conflict_markers::DEFAULT_SIZE);
-        let Some([head, other]) = conflict_markers::halves(text, size) else {
+        let based = Self::run(["config", "--get", "merge.conflictStyle"], checkout)
+            .is_ok_and(|style| matches!(style.trim(), "diff3" | "zdiff3"));
+        let Some([head, other]) = conflict_markers::halves(text, size, based) else {
             return Ok(None);
         };
         Ok(Some(match yours_and_incoming_stages(self, checkout)? {

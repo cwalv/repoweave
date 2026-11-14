@@ -510,15 +510,24 @@ fn take_in(workspace: &Path) -> anyhow::Result<crate::op_state::TakeInRecord> {
 
 impl Carrier<'_> {
     fn stopped(&self, repo: &RepoKey, dependent: &str, dir: &Path, vcs: &dyn Vcs) -> anyhow::Error {
+        let resume = crate::op_state::resume_command(self.verb);
+        let entries: String = match repo {
+            RepoKey::Project => {
+                crate::manifest_conflict::enter_stop(vcs, dir, self.workspace, &resume)
+                    .into_iter()
+                    .map(|line| format!("{line}\n"))
+                    .collect()
+            }
+            RepoKey::Member(_) => String::new(),
+        };
         crate::refusal::refusal(
             RefusalKind::OpParked,
             format!(
                 "rwv {verb}: carrying '{dependent}' along in {repo} stopped on a conflict at {}.\n\
-                 {}\nthen run `{}`, or `rwv abort` to put everything back as it was; no \
-                 dependent's branch moves until every one is carried",
+                 {}\n{entries}then run `{resume}`, or `rwv abort` to put everything back as it \
+                 was; no dependent's branch moves until every one is carried",
                 dir.display(),
                 vcs.conflict_resolution_hint(ConflictOp::Rebase),
-                crate::op_state::resume_command(self.verb),
                 verb = self.verb,
                 repo = self.repos.label(repo),
             ),

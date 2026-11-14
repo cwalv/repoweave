@@ -23,13 +23,15 @@ fn marker(line: &str, size: usize) -> Option<char> {
 
 /// `text` with every region git marked in conflict taken from HEAD's half,
 /// then from the other's; `None` where it holds no region, or a marker out
-/// of place.
-pub(super) fn halves(text: &str, size: usize) -> Option<[String; 2]> {
+/// of place. With `based`, the conflict style writes a base section in every
+/// region; without, a line that reads as its marker is the file's own.
+pub(super) fn halves(text: &str, size: usize, based: bool) -> Option<[String; 2]> {
     let mut halves = [String::new(), String::new()];
     let mut at = At::Outside;
     let mut regions = 0;
     for line in text.split_inclusive('\n') {
-        at = match (at, marker(line, size)) {
+        let marker = marker(line, size).filter(|&m| based || m != '|');
+        at = match (at, marker) {
             (At::Outside, None) => {
                 halves.iter_mut().for_each(|half| half.push_str(line));
                 At::Outside
@@ -44,7 +46,8 @@ pub(super) fn halves(text: &str, size: usize) -> Option<[String; 2]> {
             }
             (At::Base, None) | (At::Head, Some('|')) => At::Base,
             (At::Outside, Some('<')) => At::Head,
-            (At::Head | At::Base, Some('=')) => At::Other,
+            (At::Base, Some('=')) => At::Other,
+            (At::Head, Some('=')) if !based => At::Other,
             (At::Other, Some('>')) => {
                 regions += 1;
                 At::Outside
@@ -66,9 +69,9 @@ mod tests {
 
     #[test]
     fn each_half_takes_its_side_of_every_region_and_drops_a_base_section() {
-        let text = "a\n<<<<<<< HEAD\nb\n||||||| base\nc\n=======\nd\n>>>>>>> i\ne\r\n<<<<<<< HEAD\r\n=======\r\nf\r\n>>>>>>> i\r\n";
+        let text = "a\n<<<<<<< HEAD\nb\n||||||| base\nc\n=======\nd\n>>>>>>> i\ne\r\n<<<<<<< HEAD\r\n||||||| base\r\n=======\r\nf\r\n>>>>>>> i\r\n";
         assert_eq!(
-            halves(text, DEFAULT_SIZE),
+            halves(text, DEFAULT_SIZE, true),
             Some(["a\nb\ne\r\n".to_owned(), "a\nd\ne\r\nf\r\n".to_owned()])
         );
     }
@@ -82,15 +85,82 @@ mod tests {
             "<<<<<<< HEAD\na\n>>>>>>> i\n",
             "<<<<<<< HEAD\na\n=======\nb\n=======\nc\n>>>>>>> i\n",
         ] {
-            assert_eq!(halves(text, DEFAULT_SIZE), None, "{text}");
+            assert_eq!(halves(text, DEFAULT_SIZE, false), None, "{text}");
         }
         assert_eq!(
-            halves("<<<<<<<< HEAD\na\n========\nb\n>>>>>>>> i\n", 8),
+            halves("<<<<<<<< HEAD\na\n========\nb\n>>>>>>>> i\n", 8, false),
             Some(["a\n".to_owned(), "b\n".to_owned()])
         );
         assert_eq!(
-            halves("<<<<<<<< HEAD\na\n========\nb\n>>>>>>>> i\n", DEFAULT_SIZE),
+            halves(
+                "<<<<<<<< HEAD\na\n========\nb\n>>>>>>>> i\n",
+                DEFAULT_SIZE,
+                true
+            ),
             None
+        );
+    }
+
+    #[test]
+    fn a_line_of_the_files_own_that_reads_as_a_marker_never_splits_a_region_wrong() {
+        let pair = |head: &str, other: &str| Some([head.to_owned(), other.to_owned()]);
+        for own in ["<<<<<<<\n", "=======\n", ">>>>>>>\n", "|||||||\n"] {
+            let content = own == "|||||||\n";
+            let based = "a\n<<<<<<< HEAD\nb\n||||||| base\nx\n=======\nc\n>>>>>>> i\nz\n";
+            let plain = "a\n<<<<<<< HEAD\nb\n=======\nc\n>>>>>>> i\nz\n";
+            for at in ["a\n", "b\n", "x\n", "c\n"] {
+                let with_own = |text: &str| text.replacen(at, &format!("{at}{own}"), 1);
+                assert_eq!(
+                    halves(&with_own(based), DEFAULT_SIZE, true),
+                    None,
+                    "{own:?} after {at:?}"
+                );
+            }
+            let own_line = own.trim_end();
+            let expected = |at: &str| match (content, at) {
+                (true, "a\n") => pair(
+                    &format!("a\n{own_line}\nb\nz\n"),
+                    &format!("a\n{own_line}\nc\nz\n"),
+                ),
+                (true, "b\n") => pair(&format!("a\nb\n{own_line}\nz\n"), "a\nc\nz\n"),
+                (true, _) => pair("a\nb\nz\n", &format!("a\nc\n{own_line}\nz\n")),
+                (false, _) => None,
+            };
+            for at in ["a\n", "b\n", "c\n"] {
+                let text = plain.replacen(at, &format!("{at}{own}"), 1);
+                assert_eq!(halves(&text, DEFAULT_SIZE, false), expected(at), "{text:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_picks_read_markers_of_the_size_the_attributes_set() {
+        let dir = crate::tempdir().unwrap();
+        let repo = dir.path();
+        assert!(git(repo, &["init", "-q"]).status.success());
+        LineEndings::Verbatim.pin(repo);
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "rwv.toml conflict-marker-size=11\n",
+        )
+        .unwrap();
+        import(
+            repo,
+            &[[
+                "a\nb\nc\n".to_owned(),
+                "a\nyours\nc\n".to_owned(),
+                "a\nincoming\nc\n".to_owned(),
+            ]],
+        );
+        git(repo, &["checkout", "-qf", "--detach", "y0"]);
+        assert!(!git(repo, &["merge", "-q", "--no-edit", "i0"])
+            .status
+            .success());
+        let text = working(repo);
+        assert!(text.contains("<<<<<<<<<<< "), "{text}");
+        assert_eq!(
+            GitVcs.conflict_picks(repo, "rwv.toml", &text).unwrap(),
+            Some(["a\nyours\nc\n".to_owned(), "a\nincoming\nc\n".to_owned()])
         );
     }
 
@@ -259,20 +329,15 @@ mod tests {
         for n in 0..cases.len() {
             let (yours, incoming) = (format!("y{n}"), format!("i{n}"));
             let style = ["merge", "diff3", "zdiff3"][n % 3];
-            let replay = n % 3 == 1;
+            let replay = (n / 3) % 2 == 1;
+            git(repo, &["config", "merge.conflictStyle", style]);
             git(repo, &["checkout", "-qf", "--detach", &yours]);
-            let style_arg = format!("merge.conflictStyle={style}");
             let how: &[&str] = if replay {
                 &["rebase", "-q"]
             } else {
                 &["merge", "-q", "--no-edit"]
             };
-            let args: Vec<&str> = ["-c", style_arg.as_str()]
-                .iter()
-                .chain(how)
-                .copied()
-                .chain([incoming.as_str()])
-                .collect();
+            let args: Vec<&str> = how.iter().copied().chain([incoming.as_str()]).collect();
             let stopped = !git(repo, &args).status.success();
             let picks = GitVcs
                 .conflict_picks(repo, "rwv.toml", &working(repo))
