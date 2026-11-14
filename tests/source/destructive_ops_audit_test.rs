@@ -229,18 +229,22 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "remove_dir_all",
-        count: 1,
+        count: 2,
         callers: &[],
         justification: "register_worktree_in_place: removes the staging \
             directory it created empty in the same call, only when the \
             `git worktree add --no-checkout` into it failed. It holds nothing \
             but what that add wrote; the checkout being registered is never \
-            under it.",
+            under it. keep_working_copy_before_cancel: removes an untracked \
+            directory the restore plan named as in the way of canceling a \
+            stopped operation, in the same function and after the snapshot \
+            of the whole working copy, untracked and in-the-way ignored \
+            paths included, is kept as a backup.",
     },
     Allowed {
         file: "git.rs",
         pattern: "remove_file",
-        count: 3,
+        count: 4,
         callers: &[],
         justification: "register_worktree_in_place: removes the checkout's \
             `.git` link file, which names a git directory that is not there \
@@ -256,7 +260,11 @@ const ALLOWLIST: &[Allowed] = &[
             not show. Any other state returns an outcome and touches nothing, \
             so what is deleted is always a byte-for-byte copy of what the \
             caller holds. refresh_paths_if_left: removes the scratch index it \
-            built the merge's target tree in.",
+            built the merge's target tree in. keep_working_copy_before_cancel: \
+            removes an untracked file the restore plan named as in the way \
+            of canceling a stopped operation, under the same terms as its \
+            remove_dir_all entry: only after the working copy that holds it \
+            is kept as a backup in the same function.",
     },
     Allowed {
         file: "git/scratch.rs",
@@ -419,7 +427,7 @@ const ALLOWLIST: &[Allowed] = &[
             ("reset_and_drop_savepoint", 1),
             ("hard_reset", 1),
             ("discard_edits_kept", 1),
-            ("finish_refused_cancel", 1),
+            ("keep_working_copy_before_cancel", 1),
         ],
         justification: "(1) hard_reset(): the operation's intent is to \
             discard divergent commits. It has NO caller outside the trait: \
@@ -429,38 +437,36 @@ const ALLOWLIST: &[Allowed] = &[
             BackupWitness of the tip being left, refusing a witness that \
             backs up another repo or tip, so the rewind is type-gated and \
             the commits it leaves stay reachable from the backup. \
-            (2) reset_and_drop_savepoint(): \
-            its one caller executes a planned Reset, which the restore plan \
-            makes for a tip the op's replay wrote or any other tip the op \
-            wrote — each gated on the tip being one the record attributes to \
-            the op — and for a foreign tip under \
-            ForeignTipPolicy::Abandon, which is the operator's \
-            --abandon-foreign-tip naming that one repo; the executor first \
-            checks the checkout still holds the tip the plan judged. The \
-            abandoned case \
-            waives the attributability precondition and no other: it keeps \
-            the observed tip as an `abandoned` backup first (a \
-            BackupWitness it holds before the reset), so the commits it \
-            moves the branch off remain reachable and the flag consents to \
-            abandonment rather than loss. Before every reset the helper \
-            keeps, as a backup, the uncommitted edits the reset would \
-            discard. A checkout stopped mid-operation is never reset \
-            directly: it is canceled and its tip classified again. \
+            (2) reset_and_drop_savepoint(): its one caller executes a \
+            planned Reset of a checkout to its savepoint; the executor first \
+            checks the checkout still holds the tip the plan judged. A tip \
+            the savepoint reaches, or one the record names as written by \
+            the op, leaves no commit behind; any other tip is kept as a \
+            backup (a BackupWitness held before the reset) in the same arm, \
+            so the commits it moves the branch off remain reachable. Before \
+            every reset the helper keeps, as a backup, the uncommitted edits \
+            the reset would discard, or refuses where they are in another \
+            workspace than the one abort runs in. A checkout stopped \
+            mid-operation is never reset directly: it is canceled and its \
+            tip classified again. \
             (3) discard_edits_kept(): the reset to HEAD that lets a \
             checkout switch back over edits that collide with its saved \
-            branch. It runs only under ForeignTipPolicy::Abandon, the \
-            operator naming that repo, and only after the edits are kept as \
-            a backup; HEAD does not move, so no commit is touched. \
-            (4) finish_refused_cancel(): ends an operation in progress whose \
-            own abort the VCS refused (an unstaged edit to a file a merge \
-            staged cleanly), by a reset to where canceling returns. It runs \
-            only under ForeignTipPolicy::Abandon, the operator naming that \
-            repo, and only after the edits the reset discards and a detached \
-            HEAD's commits are kept as backups. The unverified \
-            restore_savepoint() that used to sit between these two — a bare \
-            `reset --hard` on the public trait, gated by nothing — was \
-            deleted, so verified_restore_savepoint is the only way to reach \
-            a savepoint-driven rewind.",
+            branch, only in the workspace abort runs in, and only after the \
+            edits are kept as a backup in the same function; HEAD does not \
+            move, so no commit is touched. \
+            (4) keep_working_copy_before_cancel(): the reset to HEAD that \
+            clears what would make the VCS refuse to cancel a stopped \
+            operation (an unstaged edit to a path the operation staged, an \
+            untracked path the cancel writes). It runs in the same function \
+            after the whole working copy is kept as a backup, and only where \
+            the plan named something in the cancel's way, which it plans \
+            only in the workspace abort runs in; HEAD does not move. \
+            restore_plan_tests::an_untracked_file_in_a_cancels_way_is_kept_before_it_is_cleared \
+            reads the backup back. The unverified restore_savepoint() that \
+            used to sit beside these — a bare `reset --hard` on the public \
+            trait, gated by nothing — was deleted, so \
+            verified_restore_savepoint is the only way to reach a \
+            savepoint-driven rewind.",
     },
     Allowed {
         file: "git.rs",

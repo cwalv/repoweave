@@ -5829,25 +5829,34 @@ impl GitVcs {
     /// as a backup, once per restore, the ignored paths the cancel's move
     /// would discard included. What the operator changed since the stop
     /// cannot be told from the operation's own conflict state, so the whole
-    /// of it is kept, in whichever workspace abort was typed.
+    /// of it is kept, in whichever workspace abort was typed. Only once it
+    /// is kept are the working copy's edits and the untracked paths `clear`
+    /// names, which would make the VCS refuse the cancel, removed.
     fn keep_working_copy_before_cancel(
         &self,
         repo: &Path,
+        clear: Option<&[String]>,
         kept: &mut Vec<KeptWork>,
     ) -> Result<(), VcsError> {
-        if kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
-            return Ok(());
+        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
+            let lands_at = match self.cancel_returns_to(repo)? {
+                Some(to) => to,
+                None => self.head_revision(repo)?,
+            };
+            let ignored = Self::hard_move_discards(repo, &lands_at)?.unwrap_or_default();
+            if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
+                let source = self.head_backup_source(repo)?;
+                kept.push(KeptWork::Edits(
+                    self.create_backup(repo, &source, &snapshot, None)?,
+                ));
+            }
         }
-        let lands_at = match self.cancel_returns_to(repo)? {
-            Some(to) => to,
-            None => self.head_revision(repo)?,
-        };
-        let ignored = Self::hard_move_discards(repo, &lands_at)?.unwrap_or_default();
-        if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
-            let source = self.head_backup_source(repo)?;
-            kept.push(KeptWork::Edits(
-                self.create_backup(repo, &source, &snapshot, None)?,
-            ));
+        if let Some(in_the_way) = clear {
+            Self::run(["reset", "--hard", "HEAD"], repo)?;
+            for path in in_the_way {
+                let path = repo.join(path);
+                let _ = std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
+            }
         }
         Ok(())
     }
@@ -6475,18 +6484,10 @@ impl GitVcs {
                 if self.mid_op(repo) != Some(*stopped) {
                     return self.diverged(repo, key);
                 }
-                self.keep_working_copy_before_cancel(repo, kept)?;
+                self.keep_working_copy_before_cancel(repo, clear_first.as_deref(), kept)?;
                 if *keep_head {
                     if let Some(commits) = self.backup_unpreserved_head(repo)? {
                         kept.push(KeptWork::Commits(commits));
-                    }
-                }
-                if let Some(in_the_way) = clear_first {
-                    Self::run(["reset", "--hard", "HEAD"], repo)?;
-                    for path in in_the_way {
-                        let path = repo.join(path);
-                        let _ =
-                            std::fs::remove_dir_all(&path).or_else(|_| std::fs::remove_file(&path));
                     }
                 }
                 if self.mid_op(repo).is_some() {

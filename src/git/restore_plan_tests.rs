@@ -769,3 +769,56 @@ fn a_switch_back_from_a_detached_head_keeps_its_commits() {
         "the commit stays on a ref: {outcome:?}"
     );
 }
+
+#[test]
+fn an_untracked_file_in_a_cancels_way_is_kept_before_it_is_cleared() {
+    let p = repo();
+    git(p.path(), &["switch", "-q", "-c", "topic"]);
+    std::fs::write(p.path().join("f"), "topic").unwrap();
+    git(p.path(), &["commit", "-qam", "topic"]);
+    commit(p.path(), "g");
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    git(p.path(), &["switch", "-q", "main"]);
+    std::fs::write(p.path().join("f"), "main").unwrap();
+    git(p.path(), &["commit", "-qam", "main"]);
+    git(p.path(), &["switch", "-q", "topic"]);
+    let rebase = git_command()
+        .args(["rebase", "main"])
+        .current_dir(p.path())
+        .output()
+        .unwrap();
+    assert!(!rebase.status.success(), "the rebase was meant to stop");
+    std::fs::write(p.path().join("g"), "mine").unwrap();
+    std::fs::write(p.path().join("f"), "resolving").unwrap();
+
+    let plan = GitVcs
+        .plan_checkout_restore(
+            p.path(),
+            &key(),
+            &Attribution {
+                edits_here: true,
+                ..Attribution::default()
+            },
+        )
+        .unwrap();
+    assert!(
+        matches!(&plan, CheckoutRestorePlan::Cancel { clear_first: Some(paths), .. }
+            if paths.iter().any(|path| path == "g")),
+        "{plan:?}"
+    );
+    let outcome = GitVcs
+        .execute_checkout_restore(p.path(), &key(), &plan, true)
+        .unwrap();
+
+    assert_eq!(GitVcs.mid_op(p.path()), None, "{outcome:?}");
+    let VerifiedRestoreOutcome::Kept { kept, .. } = &outcome else {
+        panic!("expected the working copy kept, got {outcome:?}");
+    };
+    let Some(KeptWork::Edits(edits)) = kept.iter().find(|k| matches!(k, KeptWork::Edits(_)))
+    else {
+        panic!("expected the working copy kept, got {outcome:?}");
+    };
+    let tip = edits.backup().tip.id().as_str().to_owned();
+    assert_eq!(git(p.path(), &["show", &format!("{tip}:g")]), "mine");
+    assert_eq!(git(p.path(), &["show", &format!("{tip}:f")]), "resolving");
+}
