@@ -248,3 +248,50 @@ fn the_verbs_that_run_during_an_operation_run() {
         }
     }
 }
+
+/// The words between the backticks after `marker` in `text`.
+fn backticked_after<'a>(text: &'a str, marker: &str) -> &'a str {
+    let rest = &text[text
+        .find(marker)
+        .unwrap_or_else(|| panic!("no `{marker}` in:\n{text}"))..];
+    let start = rest.find('`').unwrap() + 1;
+    let end = start + rest[start..].find('`').unwrap();
+    &rest[start..end]
+}
+
+fn run_line(line: &str, dir: &Path) -> std::process::Output {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(words[0], "rwv", "{line}");
+    run(&words[1..], dir)
+}
+
+/// `rwv doctor` in the target a stopped landing leases reports the landing
+/// recorded in its source with resume and abort lines that act on the
+/// source from where doctor printed them.
+#[test]
+fn doctors_resume_and_abort_lines_run_from_where_it_printed_them() {
+    let weave = weave();
+    let out = run(&["land", "--history", "linear"], &weave.seat);
+    assert!(!out.status.success(), "{}", describe(&out));
+    let doctor = describe(&run(&["doctor"], &weave.primary));
+    let finding = doctor
+        .lines()
+        .find(|l| l.contains("stale-op-state present"))
+        .unwrap_or_else(|| panic!("{doctor}"))
+        .to_owned();
+    let resume = backticked_after(&finding, "resume with");
+    let resumed = run_line(resume, &weave.primary);
+    let said = describe(&resumed);
+    assert!(
+        !said.contains("no operation in progress"),
+        "`{resume}` must act on the landing:\n{said}"
+    );
+    let abort = backticked_after(&finding, "; or ");
+    let aborted = run_line(abort, &weave.primary);
+    assert!(
+        aborted.status.success(),
+        "`{abort}`:\n{}",
+        describe(&aborted)
+    );
+    assert!(!weave.seat.join(".rwv-op").exists());
+}
