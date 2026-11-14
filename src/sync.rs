@@ -1265,6 +1265,17 @@ impl MemberOutput {
         }
     }
 
+    /// The line a prune outcome prints: removed, or kept and why.
+    pub(crate) fn prune_line(&self) -> Option<String> {
+        match self {
+            Self::Pruned { path, .. } => Some(format!("{path}: pruned (dropped from lock)")),
+            Self::PruneRefused { path, message, .. } => {
+                Some(format!("{path}: prune skipped: {message}"))
+            }
+            _ => None,
+        }
+    }
+
     fn materialize_failed(repo_path: &RepoPath, checkout: &Path, error: &anyhow::Error) -> Self {
         Self::MaterializeFailed {
             path: repo_path.to_string(),
@@ -2137,6 +2148,12 @@ pub(crate) fn prune_dropped_repo(
     Ok(())
 }
 
+/// The line that removes `repo`'s checkout in `workspace`, spelled to run
+/// from where this invocation was typed.
+pub(crate) fn remove_delete_line(workspace: &Path, repo: &RepoPath) -> String {
+    crate::workspace::rwv_line(workspace, &format!("member remove {repo} --delete"))
+}
+
 /// What is removing a checkout, as a refusal of that removal tells it.
 #[derive(Clone, Copy)]
 pub(crate) enum RemovalCause {
@@ -2162,19 +2179,33 @@ impl RemovalCause {
     /// The last step of a remedy. A dropped checkout the op could not prune
     /// stays unpruned: the next op starts from a manifest that no longer names
     /// it, so re-running sync is not a way to remove it.
-    fn rerun(self, repo: &RepoPath) -> String {
+    fn rerun(self, workspace: &Path, repo: &RepoPath) -> String {
         match self {
-            Self::DroppedFromLock => {
-                format!("remove the checkout with `rwv member remove {repo} --delete`")
-            }
+            Self::DroppedFromLock => format!(
+                "remove the checkout with `{}`",
+                remove_delete_line(workspace, repo)
+            ),
             Self::RemoveDelete => format!("re-run `rwv member remove {repo} --delete`"),
         }
     }
 
-    fn then_rerun(self, first: &str, repo: &RepoPath) -> String {
+    fn then_rerun(self, first: &str, workspace: &Path, repo: &RepoPath) -> String {
         match self {
-            Self::DroppedFromLock => format!("{first}, then {}", self.rerun(repo)),
-            Self::RemoveDelete => format!("{first} and {}", self.rerun(repo)),
+            Self::DroppedFromLock => format!("{first}, then {}", self.rerun(workspace, repo)),
+            Self::RemoveDelete => format!("{first} and {}", self.rerun(workspace, repo)),
+        }
+    }
+
+    fn when_unconfirmed(self, workspace: &Path, repo: &RepoPath) -> String {
+        match self {
+            Self::DroppedFromLock => format!(
+                "The checkout is kept; once the remote answers, {}",
+                self.rerun(workspace, repo)
+            ),
+            Self::RemoveDelete => format!(
+                "Run it again once the remote answers, or keep the clone: `rwv member remove \
+                 {repo}`, without `--delete`, removes the member and leaves its clone on disk"
+            ),
         }
     }
 }
@@ -2265,7 +2296,7 @@ pub(crate) fn plan_checkout_removal(
     }
     report.note(format!(
         "{repo_path}: {dropped}; once nothing above refuses it, {}",
-        cause.rerun(repo_path)
+        cause.rerun(ctx.active_path(), repo_path)
     ));
     report.into_result()?;
 
@@ -2287,7 +2318,7 @@ pub(crate) fn plan_checkout_removal(
                         if !is_ancestor && !on_a_branch {
                             crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
                                 "{repo_path}: {dropped} but worktree has commits not in canonical clone; {}",
-                                cause.then_rerun("push/merge them", repo_path)
+                                cause.then_rerun("push/merge them", ctx.active_path(), repo_path)
                             );
                         }
                     }
@@ -2354,18 +2385,27 @@ pub(crate) fn plan_checkout_removal(
             }
         }
         Checkout::Primary { .. } => {
-            let held = vcs
-                .held_by_no_remote(&dest)
-                .with_context(|| {
-                    format!(
-                        "{repo_path}: {dropped}, but what its clone holds that no remote has \
-                         could not be read; refusing to remove a clone whose unpublished work \
-                         could not be ruled out"
-                    )
-                })
-                .map_err(|e| {
-                    crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e)
-                })?;
+            let stores = stores_removed_with(vcs, &dest, repo_path, dropped)?;
+            refresh_remotes(vcs, &stores, ctx.active_path(), repo_path, cause)?;
+            let mut held = Vec::new();
+            for (nested, store) in &stores {
+                let found = vcs
+                    .held_by_no_remote(store)
+                    .with_context(|| {
+                        format!(
+                            "{repo_path}: {dropped}, but what its clone holds that no remote has \
+                             could not be read; refusing to remove a clone whose unpublished work \
+                             could not be ruled out"
+                        )
+                    })
+                    .map_err(|e| {
+                        crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e)
+                    })?;
+                held.extend(found.into_iter().map(|h| Held {
+                    nested: nested.clone(),
+                    held: h,
+                }));
+            }
             if !held.is_empty() {
                 crate::refuse!(
                     RefusalKind::DroppedRepoHasUniqueCommits,
@@ -2375,7 +2415,11 @@ pub(crate) fn plan_checkout_removal(
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
                         .join(", "),
-                    cause.then_rerun(&publish_or_drop(repo_path, &held), repo_path)
+                    cause.then_rerun(
+                        &publish_or_drop(repo_path, &held),
+                        ctx.active_path(),
+                        repo_path
+                    )
                 );
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical
@@ -2386,18 +2430,98 @@ pub(crate) fn plan_checkout_removal(
     }
 }
 
+/// Something a store removed with a clone holds that no remote has, with the
+/// path of the nested store holding it, `None` for the clone's own.
+struct Held {
+    nested: Option<PathBuf>,
+    held: crate::vcs::HeldAlone,
+}
+
+impl std::fmt::Display for Held {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.nested {
+            None => write!(f, "{}", self.held),
+            Some(nested) => write!(f, "{} in submodule {}", self.held, nested.display()),
+        }
+    }
+}
+
+/// The stores removing the clone at `dest` removes: its own, then each nested
+/// inside it, with the nested one's path.
+fn stores_removed_with(
+    vcs: &dyn Vcs,
+    dest: &Path,
+    repo_path: &RepoPath,
+    dropped: &str,
+) -> anyhow::Result<Vec<(Option<PathBuf>, PathBuf)>> {
+    let nested = vcs
+        .nested_stores(dest)
+        .with_context(|| {
+            format!(
+                "{repo_path}: {dropped}, but the stores nested inside its clone could not be \
+                 listed; refusing to remove a clone whose unpublished work could not be ruled out"
+            )
+        })
+        .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?;
+    Ok(std::iter::once((None, dest.to_path_buf()))
+        .chain(nested.into_iter().map(|rel| {
+            let store = dest.join(&rel);
+            (Some(rel), store)
+        }))
+        .collect())
+}
+
+/// Bring what each of `stores` knows of its remotes up to date, so what no
+/// remote has is judged against the remotes as they are. A remote that does
+/// not answer refuses the removal: what it holds cannot be confirmed.
+fn refresh_remotes(
+    vcs: &dyn Vcs,
+    stores: &[(Option<PathBuf>, PathBuf)],
+    workspace: &Path,
+    repo_path: &RepoPath,
+    cause: RemovalCause,
+) -> anyhow::Result<()> {
+    let mut unanswered = Vec::new();
+    for (nested, store) in stores {
+        let within = nested
+            .as_ref()
+            .map(|n| format!(" (submodule {})", n.display()))
+            .unwrap_or_default();
+        match crate::fetch::pruning_fetch(vcs, store, None) {
+            Ok(fetched) => unanswered.extend(
+                fetched
+                    .unconfirmed
+                    .into_iter()
+                    .map(|u| format!("{}{within}: {}", u.remote, u.cause)),
+            ),
+            Err(e) => unanswered.push(format!("its remotes{within}: {e:#}")),
+        }
+    }
+    if unanswered.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::RemotesUnconfirmed,
+        "{repo_path}: {}, but what its remotes hold could not be confirmed ({}), so whether its \
+         clone holds what no remote has cannot be told. {}",
+        cause.situation(),
+        unanswered.join("; "),
+        cause.when_unconfirmed(workspace, repo_path)
+    );
+}
+
 /// The ways to keep or let go of what a store holds that no remote has:
 /// publish it, commit what was set aside, and drop the backups, named.
-fn publish_or_drop(repo_path: &RepoPath, held: &[crate::vcs::HeldAlone]) -> String {
-    let backups: Vec<&str> = held
-        .iter()
+fn publish_or_drop(repo_path: &RepoPath, held: &[Held]) -> String {
+    let own = || held.iter().filter(|h| h.nested.is_none()).map(|h| &h.held);
+    let backups: Vec<&str> = own()
         .filter(|h| h.kind == crate::vcs::HeldKind::Backup)
         .map(|h| h.name.as_str())
         .collect();
     let mut ways = vec!["publish what you keep (`rwv push` for branches)".to_owned()];
     if held
         .iter()
-        .any(|h| h.kind == crate::vcs::HeldKind::SetAsideEdits)
+        .any(|h| h.held.kind == crate::vcs::HeldKind::SetAsideEdits)
     {
         ways.push("take back the edits set aside and commit them".to_owned());
     }
@@ -13104,23 +13228,23 @@ mod tests {
 
     #[test]
     fn prune_dropped_repo_refuses_when_what_no_remote_has_cannot_be_read() {
-        // The remote-tracking ref points at an object the clone does not
-        // have, which makes the reachability walk FAIL rather than answer.
-        // That failure is "we could not tell" and has to refuse.
+        // A ref pointing at an object the clone does not have makes the
+        // refresh of its remotes fail rather than answer. That failure is
+        // "we could not tell" and has to refuse.
         let tmp = crate::tempdir().unwrap();
         let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
 
-        // A loose ref file wins over the packed-refs entry the clone wrote.
-        let dangling = store.join(".git/refs/remotes/origin/main");
+        let dangling = store.join(".git/refs/remotes/gone/main");
         std::fs::create_dir_all(dangling.parent().unwrap()).unwrap();
         std::fs::write(&dangling, "1111111111111111111111111111111111111111\n").unwrap();
 
         let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect_err("a walk git could not take is not evidence that nothing is unpushed");
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("could not be ruled out"),
-            "the unreadable count must be what refused, and must say so rather \
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::RemotesUnconfirmed),
+            "the failed refresh must be what refused, and must say so rather \
              than claim commits it never saw; got:\n{msg}"
         );
         assert!(
@@ -13188,6 +13312,137 @@ mod tests {
         prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
             .expect("a branch whose commits the remote holds loses nothing");
         assert!(!store.exists());
+    }
+
+    /// [`primary_with_cloned_store`] whose origin holds a submodule at `sub`,
+    /// initialised in the store, and the submodule's checkout there.
+    fn primary_with_a_submodule(tmp: &Path) -> (WorkspaceContext, PathBuf, PathBuf) {
+        let sub_origin = tmp.join("sub-origin");
+        init_repo(&sub_origin);
+        let (ctx, store, _project) = primary_with_cloned_store(tmp);
+        let origin = tmp.join("origin");
+        let file = ["-c", "protocol.file.allow=always"];
+        let add = [
+            &file[..],
+            &["submodule", "add", sub_origin.to_str().unwrap(), "sub"],
+        ]
+        .concat();
+        git(&origin, &add);
+        git(&origin, &["commit", "-qm", "add sub"]);
+        git(&store, &["pull", "-q", "--ff-only"]);
+        git(
+            &store,
+            &[&file[..], &["submodule", "update", "--init", "-q"]].concat(),
+        );
+        let sub = store.join("sub");
+        git(&sub, &["config", "user.email", "t@t"]);
+        git(&sub, &["config", "user.name", "T"]);
+        (ctx, store, sub)
+    }
+
+    #[test]
+    fn prune_dropped_repo_removes_a_store_whose_submodule_holds_nothing_alone() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _sub) = primary_with_a_submodule(tmp.path());
+
+        prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect("a submodule whose commits its remote has loses nothing");
+        assert!(!store.exists());
+    }
+
+    #[test]
+    fn prune_dropped_repo_names_what_a_submodule_store_inside_the_clone_holds() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, sub) = primary_with_a_submodule(tmp.path());
+        git(&sub, &["switch", "-q", "-c", "side"]);
+        commit(&sub, "only-in-sub");
+        git(&sub, &["switch", "-q", "--detach", "HEAD~1"]);
+        std::fs::write(sub.join("f"), "hours of work").unwrap();
+        git(&sub, &["stash", "push", "-q"]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("a submodule store goes with the clone it sits in");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("branch side in submodule sub")
+                && msg.contains("edits set aside in submodule sub"),
+            "each thing the submodule holds is named with its path; got:\n{msg}"
+        );
+        assert!(store.exists());
+    }
+
+    #[test]
+    fn prune_dropped_repo_judges_against_the_remote_as_it_is_not_as_last_fetched() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        let origin = tmp.path().join("origin");
+        let rewound = commit(&origin, "rewound-away");
+        git(&store, &["pull", "-q", "--ff-only"]);
+        git(&origin, &["reset", "-q", "--hard", "HEAD~1"]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("a commit the remote no longer has is held by the clone alone");
+        assert!(format!("{err:#}").contains("branch main"), "got:\n{err:#}");
+        assert_eq!(git(&store, &["rev-parse", "main"]), rewound.id().as_str());
+    }
+
+    #[test]
+    fn prune_dropped_repo_counts_no_tracking_ref_of_a_remote_the_store_no_longer_has() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        let forked = commit(&store, "only-on-a-gone-fork");
+        git(&store, &["update-ref", "refs/remotes/fork/x", "HEAD"]);
+        git(&store, &["reset", "-q", "--hard", "HEAD~1"]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("no remote the store has reaches the commit");
+        assert!(
+            format!("{err:#}").contains("refs/remotes/fork/x"),
+            "got:\n{err:#}"
+        );
+        assert_eq!(
+            git(&store, &["rev-parse", "refs/remotes/fork/x"]),
+            forked.id().as_str()
+        );
+    }
+
+    #[test]
+    fn prune_dropped_repo_keeps_a_clone_whose_remote_does_not_answer() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        let fork = tmp.path().join("fork");
+        init_repo(&fork);
+        git(&store, &["remote", "add", "fork", fork.to_str().unwrap()]);
+        git(&store, &["fetch", "-q", "fork"]);
+        std::fs::remove_dir_all(&fork).unwrap();
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("what an unanswering remote holds cannot be confirmed");
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::RemotesUnconfirmed),
+            "got:\n{err:#}"
+        );
+        assert!(format!("{err:#}").contains("member remove github/example/server --delete"));
+        assert!(store.exists());
+    }
+
+    #[test]
+    fn prune_dropped_repo_counts_a_tag_on_an_object_no_remote_has() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        let blob = git(&store, &["hash-object", "-w", "f"]);
+        std::fs::write(store.join("precious"), "precious text").unwrap();
+        let precious = git(&store, &["hash-object", "-w", "precious"]);
+        std::fs::remove_file(store.join("precious")).unwrap();
+        git(&store, &["tag", "pushed-blob", &blob]);
+        git(&store, &["tag", "blobtag", &precious]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("a tag on an object only this store has holds it alone");
+        let msg = format!("{err:#}");
+        assert!(msg.contains("tag blobtag"), "got:\n{msg}");
+        assert!(!msg.contains("pushed-blob"), "got:\n{msg}");
     }
 
     // -----------------------------------------------------------------------

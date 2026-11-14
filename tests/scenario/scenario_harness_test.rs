@@ -711,6 +711,30 @@ fn a_landing_prune_refuses_a_store_holding_a_commit_only_a_tag_reaches() {
 }
 
 #[test]
+fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
+    runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_prune_judges_against_the_remote_as_it_is() {
+    runner::run(scenarios::landing_prune_judges_against_the_remote_as_it_is())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_prune_skips_a_clone_whose_remote_does_not_answer() {
+    runner::run(scenarios::landing_prune_skips_a_clone_whose_remote_does_not_answer())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_store_removal_refuses_while_its_remote_does_not_answer() {
+    runner::run(scenarios::store_removal_refuses_while_its_remote_does_not_answer())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_carry_that_drops_a_commit_names_its_sides_and_keeps_its_rebased_backup() {
     runner::run(scenarios::a_carry_that_drops_a_commit_keeps_its_rebased_backup())
         .assert_fully_decided_green();
@@ -1651,6 +1675,10 @@ every_scenario!(
     a_sync_prune_leaves_no_savepoint_in_the_store,
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
+    landing_prune_asks_a_submodule_store_inside_the_clone,
+    landing_prune_judges_against_the_remote_as_it_is,
+    landing_prune_skips_a_clone_whose_remote_does_not_answer,
+    store_removal_refuses_while_its_remote_does_not_answer,
     tombstone_to_backup,
     workweave_without_b_given_up_after_publishing,
     feature_off_stable,

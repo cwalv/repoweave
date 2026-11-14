@@ -706,6 +706,12 @@ fn merge_project(
         }
         .run(&sides)
         .and_then(|(commit, pruning)| {
+            for line in pruning
+                .iter()
+                .filter_map(crate::sync::MemberOutput::prune_line)
+            {
+                say(line);
+            }
             crate::sync::fail_on_refused_prunes(&pruning)?;
             Ok(commit)
         })?

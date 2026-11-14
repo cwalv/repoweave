@@ -4005,6 +4005,24 @@ impl Vcs for GitVcs {
         Self::held_by_no_remote_tracking(&Self::work_dir_for_store(repo))
     }
 
+    fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
+        let listed = Self::run(
+            [
+                "submodule",
+                "--quiet",
+                "foreach",
+                "--recursive",
+                "printf '%s\\n' \"$displaypath\"",
+            ],
+            checkout,
+        )?;
+        Ok(listed
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(PathBuf::from)
+            .collect())
+    }
+
     fn unpushed_commits(
         &self,
         repo: &Path,

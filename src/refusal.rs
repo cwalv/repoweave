@@ -65,6 +65,10 @@ pub enum RefusalKind {
     HeadNotOnBranch,
     /// A checkout dropped from the lock carries commits nothing else reaches.
     DroppedRepoHasUniqueCommits,
+    /// A checkout's removal would destroy its repo's only store, and what
+    /// that store's remotes hold could not be confirmed: a remote did not
+    /// answer.
+    RemotesUnconfirmed,
     /// `--continue` arguments disagree with the recorded op.
     ResumeContradictsRecord,
     /// Abort found a tip the op does not account for.

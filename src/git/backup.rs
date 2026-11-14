@@ -235,33 +235,76 @@ impl GitVcs {
     }
 
     pub(super) fn held_by_no_remote_tracking(repo: &Path) -> Result<Vec<HeldAlone>, VcsError> {
-        let unreached = Self::run(["rev-list", "--all", "--not", "--remotes", "--"], repo)?;
+        let remotes = Self::run(["remote"], repo)?;
+        let tracking: Vec<String> = remotes
+            .lines()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+            .map(|r| format!("{REMOTE_TRACKING_ROOT}{r}/"))
+            .collect();
+        let remote_globs: Vec<String> = tracking
+            .iter()
+            .map(|root| format!("--glob={root}*"))
+            .collect();
+        let mut walk = vec![
+            "rev-list".to_owned(),
+            "--all".to_owned(),
+            "--not".to_owned(),
+        ];
+        walk.extend(remote_globs.iter().cloned());
+        walk.push("--".to_owned());
+        let unreached = Self::run(walk, repo)?;
         let unreached: HashSet<&str> = unreached.lines().filter(|l| !l.is_empty()).collect();
-        if unreached.is_empty() {
-            return Ok(Vec::new());
-        }
         let listing = Self::run(
             [
                 "for-each-ref",
-                "--format=%(refname)%09%(objectname)%09%(*objectname)",
+                "--format=%(refname)%09%(objectname)%09%(objecttype)%09%(*objectname)%09%(*objecttype)",
             ],
             repo,
         )?;
         let mut held = Vec::new();
         let mut tips = HashSet::new();
+        let mut not_commits = Vec::new();
         for line in listing.lines() {
-            let mut fields = line.split('\t');
-            let (Some(refname), Some(object), peeled) =
-                (fields.next(), fields.next(), fields.next())
-            else {
+            let fields: Vec<&str> = line.split('\t').collect();
+            let [refname, object, kind, peeled, peeled_kind] = fields[..] else {
                 continue;
             };
-            let tip = peeled.filter(|p| !p.is_empty()).unwrap_or(object);
-            if refname.starts_with(REMOTE_TRACKING_ROOT) || !unreached.contains(tip) {
+            let (tip, kind) = match peeled.is_empty() {
+                true => (object, kind),
+                false => (peeled, peeled_kind),
+            };
+            if tracking
+                .iter()
+                .any(|root| refname.starts_with(root.as_str()))
+            {
                 continue;
             }
-            tips.insert(tip.to_owned());
-            held.push(super::held_ref(refname));
+            if kind != "commit" {
+                not_commits.push((refname, tip));
+            } else if unreached.contains(tip) {
+                tips.insert(tip.to_owned());
+                held.push(super::held_ref(refname));
+            }
+        }
+        if !not_commits.is_empty() {
+            let mut reach = vec!["rev-list".to_owned(), "--objects".to_owned()];
+            reach.extend(remote_globs.iter().cloned());
+            reach.push("--".to_owned());
+            let reached = match remote_globs.is_empty() {
+                true => String::new(),
+                false => Self::run(reach, repo)?,
+            };
+            let reached: HashSet<&str> = reached
+                .lines()
+                .filter_map(|l| l.split(' ').next())
+                .collect();
+            held.extend(
+                not_commits
+                    .into_iter()
+                    .filter(|(_, tip)| !reached.contains(tip))
+                    .map(|(refname, _)| super::held_ref(refname)),
+            );
         }
         let detached = Self::run(["symbolic-ref", "-q", "HEAD"], repo).is_err();
         if detached {

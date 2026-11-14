@@ -1105,6 +1105,10 @@ impl Vcs for FakeVcs {
         unsupported("held_by_no_remote")
     }
 
+    fn nested_stores(&self, _checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
+        unsupported("nested_stores")
+    }
+
     fn pushed_range(
         &self,
         _repo: &Path,

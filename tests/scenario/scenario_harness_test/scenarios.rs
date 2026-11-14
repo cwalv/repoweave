@@ -514,6 +514,143 @@ pub fn landing_prune_refuses_a_store_holding(held: StoreHolds) -> Scenario {
     )
 }
 
+/// A landing's prune of the target's clone asks each submodule store inside
+/// it what it holds that no remote has, and names it with the submodule's
+/// path; the per-path removal the landing prints refuses the same way until
+/// it is let go.
+pub fn landing_prune_asks_a_submodule_store_inside_the_clone() -> Scenario {
+    let file = "protocol.file.allow=always";
+    scenario(
+        "a landing's prune asks a submodule store inside the clone",
+        vec![
+            create("w"),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["-c", file, "submodule", "add", "-q", "../lib.git", "sub"],
+            ),
+            Step::git(&a(), Repo::App, &["commit", "-qm", "add sub"]),
+            Step::git(&a(), Repo::App, &["push", "-q", "origin", "main"])
+                .pushes(Remote::origin(Repo::App), "main"),
+            Step::git(
+                &a(),
+                Repo::App,
+                &[
+                    "-C",
+                    "sub",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "side-only",
+                ],
+            ),
+            Step::git(&a(), Repo::App, &["-C", "sub", "branch", "side"]),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["-C", "sub", "reset", "-q", "--hard", "HEAD~1"],
+            ),
+            Step::rwv(&ww("w"), &["member", "remove", APP, "--delete"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", APP])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: prune in the target's workspace skipped",
+                ))
+                .claim(Claim::OutputContains("branch side in submodule sub"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::rwv_printed_quoted(
+                &ww("w"),
+                "rwv -C ",
+                "member remove local/remotes/app --delete",
+            )
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains("branch side in submodule sub"))
+            .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["-C", "sub", "branch", "-q", "-D", "side"],
+            ),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+        ],
+    )
+}
+
+/// A landing's prune judges the target's clone against its remotes as they
+/// are: a branch whose remote copy was deleted after it was pushed holds its
+/// commits alone, and the clone stays.
+pub fn landing_prune_judges_against_the_remote_as_it_is() -> Scenario {
+    scenario(
+        "a landing's prune asks the remote as it is",
+        vec![
+            create("w"),
+            Step::git(&a(), Repo::App, &["switch", "-q", "-c", "topic"]),
+            Step::commit(&a(), Repo::App, "pushed-then-deleted"),
+            Step::git(&a(), Repo::App, &["push", "-q", "origin", "topic"])
+                .pushes(Remote::origin(Repo::App), "topic"),
+            Step::git(&a(), Repo::App, &["switch", "-q", "main"]),
+            Step::forge_delete_branch(Repo::App, "topic"),
+            Step::rwv(&ww("w"), &["member", "remove", APP, "--delete"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", APP])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: prune in the target's workspace skipped",
+                ))
+                .claim(Claim::OutputContains("branch topic"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+        ],
+    )
+}
+
+/// A landing whose prune cannot reach the target clone's remote skips it,
+/// saying why and printing the removal that works once the remote answers.
+pub fn landing_prune_skips_a_clone_whose_remote_does_not_answer() -> Scenario {
+    scenario(
+        "a landing's prune skips a clone whose remote does not answer",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "remove", APP, "--delete"]).expect(Exit::Succeeds),
+            Step::unreachable(Remote::origin(Repo::App)),
+            Step::rwv(&ww("w"), &["land", "--allow-member-change", APP])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: prune in the target's workspace skipped",
+                ))
+                .claim(Claim::OutputContains("could not be confirmed"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::reachable(Remote::origin(Repo::App)),
+            Step::rwv_printed_quoted(
+                &ww("w"),
+                "rwv -C ",
+                "member remove local/remotes/app --delete",
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+        ],
+    )
+}
+
+/// `member remove --delete` of a clone whose remote does not answer refuses,
+/// and the removal it offers that keeps the clone runs as printed.
+pub fn store_removal_refuses_while_its_remote_does_not_answer() -> Scenario {
+    scenario(
+        "a store removal refuses while its remote does not answer",
+        vec![
+            Step::unreachable(Remote::origin(Repo::App)),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::RemotesUnconfirmed))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::rwv_printed_quoted(&a(), "rwv member remove local/remotes/app", "")
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::reachable(Remote::origin(Repo::App)),
+        ],
+    )
+}
+
 /// A sync that prunes a dropped member's checkout from a workweave takes the
 /// checkout's savepoint with it: nothing of the operation is left in the
 /// store the checkout was linked into.

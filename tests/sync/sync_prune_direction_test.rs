@@ -620,6 +620,28 @@ fn a_refused_prune_fails_sync_to_once_it_completes() {
     );
 }
 
+/// A sync that takes in a drop it cannot prune says which checkout it kept
+/// and why, under either history, before it fails on it.
+#[test]
+fn a_sync_that_cannot_prune_a_dropped_checkout_says_so_and_why() {
+    for history in ["linear", "merge"] {
+        let weave = weave();
+        let s1 = seat_with_an_unprunable_drop(&weave);
+        commit_note(&project_dir(&s1), "the seat's own project commit\n");
+
+        let out = run(&s1, &["sync", "--history", history]);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{history}:\n{stderr}");
+        assert!(
+            stderr.contains(&format!(
+                "rwv sync: {EXTRA}: prune skipped: {EXTRA}: edits dirty\n    scratch.txt\n"
+            )),
+            "{history}:\n{stderr}"
+        );
+        assert!(common::under(&s1, EXTRA).join("scratch.txt").is_file());
+    }
+}
+
 /// Replay refuses the prune, then the op `args` starts reaches a relock commit
 /// the project repo's hook refuses: the seat declares the member on a branch
 /// it holds no work of its own on, so the landing moves the member there and

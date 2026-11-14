@@ -1604,6 +1604,12 @@ fn act(
                 first: head.clone(),
                 second: source.clone(),
             })?;
+            for line in pruning
+                .iter()
+                .filter_map(crate::sync::MemberOutput::prune_line)
+            {
+                say(output, &line);
+            }
             reported.members.extend(pruning);
             say(
                 output,
@@ -2386,16 +2392,18 @@ fn settle(
             _ => false,
         });
         if !now.contains_repo(path) && checkout.exists() && !judged {
-            members.push(
-                match crate::sync::prune_dropped_repo(
-                    vcs_for(entry.vcs_type).as_ref(),
-                    sync.ctx,
-                    path,
-                ) {
-                    Ok(()) => crate::sync::MemberOutput::pruned(path, &checkout),
-                    Err(e) => crate::sync::MemberOutput::prune_refused(path, &checkout, &e),
-                },
-            );
+            let member = match crate::sync::prune_dropped_repo(
+                vcs_for(entry.vcs_type).as_ref(),
+                sync.ctx,
+                path,
+            ) {
+                Ok(()) => crate::sync::MemberOutput::pruned(path, &checkout),
+                Err(e) => crate::sync::MemberOutput::prune_refused(path, &checkout, &e),
+            };
+            if let Some(line) = member.prune_line() {
+                say(output, &line);
+            }
+            members.push(member);
         }
     }
     let run = crate::update::align_after_sync(sync.ctx, sync.jobs, output)?;

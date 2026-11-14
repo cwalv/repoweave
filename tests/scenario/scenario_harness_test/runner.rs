@@ -120,6 +120,8 @@ pub enum Printed {
     Starting,
     /// The line ends with it, after what the line says.
     Within,
+    /// The line quotes it in backticks, among what the line says.
+    Quoted,
 }
 
 #[derive(Debug, Clone)]
@@ -633,6 +635,12 @@ impl Step {
         ]
     }
 
+    /// The forge deletes `branch` on the origin.
+    pub fn forge_delete_branch(repo: Repo, branch: &'static str) -> Step {
+        let delete = format!(":refs/heads/{branch}");
+        Step::forge_git(repo, &["push", "origin", &delete]).deletes(Remote::origin(repo), branch)
+    }
+
     /// The forge renames `from` to `to` on the origin, moving the default
     /// branch with it when `from` was the default.
     pub fn forge_rename_branch(repo: Repo, from: &'static str, to: &'static str) -> Vec<Step> {
@@ -874,6 +882,22 @@ impl Step {
             Action::RwvPrinted {
                 at: at.clone(),
                 found: Printed::Within,
+                prefix,
+                holding,
+                fill: &[],
+            },
+            Expect::undecided(),
+        )
+    }
+
+    /// The command a printed line quotes in backticks, beginning `prefix`
+    /// and holding `holding`, run as printed.
+    pub fn rwv_printed_quoted(at: &Place, prefix: &'static str, holding: &'static str) -> Step {
+        Step::new(
+            format!("the quoted `{prefix}...{holding}...`"),
+            Action::RwvPrinted {
+                at: at.clone(),
+                found: Printed::Quoted,
                 prefix,
                 holding,
                 fill: &[],
@@ -1424,20 +1448,23 @@ impl Run<'_> {
                 holding,
                 fill,
             } => {
-                let Some(line) = self
-                    .last_rwv_output
-                    .lines()
-                    .map(str::trim)
-                    .find_map(|line| match found {
-                        Printed::Exactly => (line == *prefix).then_some(line),
-                        Printed::Starting => {
-                            (line.starts_with(prefix) && line.contains(holding)).then_some(line)
-                        }
-                        Printed::Within => line
-                            .find(prefix)
-                            .map(|at| &line[at..])
-                            .filter(|command| command.contains(holding)),
-                    })
+                let Some(line) =
+                    self.last_rwv_output
+                        .lines()
+                        .map(str::trim)
+                        .find_map(|line| match found {
+                            Printed::Exactly => (line == *prefix).then_some(line),
+                            Printed::Starting => {
+                                (line.starts_with(prefix) && line.contains(holding)).then_some(line)
+                            }
+                            Printed::Within => line
+                                .find(prefix)
+                                .map(|at| &line[at..])
+                                .filter(|command| command.contains(holding)),
+                            Printed::Quoted => line.split('`').skip(1).step_by(2).find(|quoted| {
+                                quoted.starts_with(prefix) && quoted.contains(holding)
+                            }),
+                        })
                 else {
                     return (
                         false,

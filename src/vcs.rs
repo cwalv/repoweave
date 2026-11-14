@@ -4060,13 +4060,24 @@ pub trait Vcs: Send + Sync {
     fn cancel_in_flight_op(&self, repo: &Path);
 
     /// Everything `repo`'s store holds whose commits no remote-tracking
-    /// branch reaches: each ref outside the remote-tracking ones, and a
+    /// branch of a remote it has reaches: each ref outside those, and a
     /// checkout's HEAD on no branch. Empty when every commit the store holds
-    /// is on a remote as last fetched.
+    /// is on a remote as last fetched. A remote-tracking branch of a remote
+    /// the store no longer has is a ref like any other.
     ///
-    /// For git: `git rev-list --all --not --remotes`, then every ref and a
-    /// detached HEAD whose tip that lists.
+    /// For git: `git rev-list --all --not` the configured remotes'
+    /// remote-tracking refs, then every ref and a detached HEAD whose tip
+    /// that lists; a ref on a tree or blob counts where `rev-list --objects`
+    /// of those refs does not list it.
     fn held_by_no_remote(&self, repo: &Path) -> Result<Vec<HeldAlone>, VcsError>;
+
+    /// The checkouts of the stores nested inside `checkout` whose directory
+    /// removing it removes, at any depth, each as a path relative to
+    /// `checkout`, outermost first.
+    ///
+    /// For git: every initialised submodule, `git submodule foreach
+    /// --recursive`.
+    fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
     /// The commits of `branch` that no remote-tracking branch reaches and no
     /// superseded tip reaches, newest first: its unpushed commits.
