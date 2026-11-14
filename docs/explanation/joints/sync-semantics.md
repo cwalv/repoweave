@@ -166,7 +166,8 @@ neither the savepoint nor another branch reaches, in the branch's one slot,
 and the working copy of each checkout it cancels a stopped rebase, merge or
 copy in, or discards edits in, in the checkout's one slot, from whichever
 workspace abort runs in. The next abort that keeps something in a slot
-overwrites it. This is the bar a single-repository reset sets, where the VCS
+overwrites it, and what it held stays in the VCS's history of the slot until
+that expires. This is the bar a single-repository reset sets, where the VCS
 keeps the last tip a reset moved off, one deep: an operation's own commits and
 a commit you made at a stop are kept alike, so no record of whose a tip is can
 be wrong about it. Abort prints one line per repo it keeps something for, with

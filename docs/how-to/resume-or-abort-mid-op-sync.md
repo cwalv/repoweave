@@ -41,10 +41,20 @@ A branch the landing moved without a checkout is put back once every checkout is
 `rwv abort` never discards a commit or an edit without keeping it first, from whichever workspace you run it in, and it does not ask whose it is: a commit you made at a stop, whether or not `--continue` ran after it, a conflict resolution you staged or `--continue` committed, and the operation's own replayed commits are kept alike. It keeps them in slots: one per branch, `<branch>/aborted`, for the tip it reset the branch from, and one per checkout, `<branch>/aborted-working-copy`, for the working copy it discarded there. Each repository it keeps something for is one line, naming the slots and the command that shows what they hold:
 
 ```
-  local/remotes/app: what abort discarded is kept as backup feat/aborted-working-copy, feat/aborted (canceled the rebase in progress and restored); this shows it: git -C <checkout> log -p --diff-merges=first-parent ^<savepoint> refs/rwv/backup/feat/aborted-working-copy refs/rwv/backup/feat/aborted
+  local/remotes/app: what abort discarded is kept as backup feat/aborted-working-copy, feat/aborted (canceled the rebase in progress and restored); this shows it: git -C <checkout> log -p --diff-merges=first-parent refs/rwv/backup/feat/aborted-working-copy refs/rwv/backup/feat/aborted --not <savepoint> --branches --remotes
 ```
 
-A slot is one deep: the next abort that keeps something in it overwrites it. What it held before is still in the VCS's own history of the branch until that expires (git: `git reflog <branch>`), as it is after any single-repository reset. `rwv backup list` shows the slots, `rwv backup drop <repo> <name>` drops one, and `rwv backup prune` takes each one a branch now reaches. A tip another branch or remote-tracking branch reaches is reset without a slot, since nothing would be lost.
+The printed command shows what the slots hold that neither the savepoint nor any branch or remote-tracking branch reaches.
+
+A slot is one deep: the next abort that keeps something in it overwrites it. What it held before stays in the VCS's own history of that slot until that expires, as a branch's earlier tips do after any single-repository reset. For git, this lists each value a slot has held, newest first, with `<slot>` spelled as the printed command spells it (`refs/rwv/backup/<branch>/aborted` or `refs/rwv/backup/<branch>/aborted-working-copy`):
+
+```bash
+git -C <checkout> log -g -p <slot>
+```
+
+`rwv backup list` shows the slots, and `rwv backup drop <repo> <name>` drops one with its history. `rwv backup prune` takes a slot only once a branch reaches what it holds; until then the slot stays until the next abort overwrites it or you drop it, the slots of a retired workweave's branch included. A tip another branch or remote-tracking branch reaches is reset without a slot, since nothing would be lost.
+
+Abort does not tell your work from the operation's, so an abort nobody disturbed still keeps the operation's own replayed commits and conflict markers: each repository the operation moved onto commits nothing else reaches, or left stopped, gets a slot and one line, worded the same whichever it holds. A commit you made at a stop that `--continue` then rebased is also in the backup the operation made before rebasing, which abort names on a line of its own with the command that shows it. A commit that two branches reset by one abort both hold is kept once, in the slot of the branch reset last, and named on that branch's line, which can be another repository's or, under a `land`, the other workspace's.
 
 A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a branch that is gone or checked out elsewhere, a branch of a landing's target, project or member, that something else moved, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort as `foreign-tip`, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
 

@@ -797,7 +797,7 @@ Schema:
       ]
     },
     "OpStatus": {
-      "description": "The in-flight op recorded at this workspace (owner) or the workspace this one leases to (owner elsewhere), disclosed read-only on `rwv status`.\n\nThe record minus the tip tables (`advanced_tips`/`converged_tips`): those are replay bookkeeping an operator deciding `--continue` vs `abort` doesn't need. `verb` and `phase` are the op-state crate's own types, not a re-encoding of them — a second vocabulary for the same facts is the thing this disclosure must not become.",
+      "description": "The in-flight op recorded at this workspace (owner) or the workspace this one leases to (owner elsewhere), disclosed read-only on `rwv status`.\n\nThe record minus its tip table (`converged_tips`): that is replay bookkeeping an operator deciding `--continue` vs `abort` doesn't need. `verb` and `phase` are the op-state crate's own types, not a re-encoding of them — a second vocabulary for the same facts is the thing this disclosure must not become.",
       "type": "object",
       "required": [
         "id",

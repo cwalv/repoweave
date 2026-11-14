@@ -46,11 +46,19 @@ it from, and each checkout one, `<branch>/aborted-working-copy`, for the
 working copy abort last discarded there (named for the branch the checkout
 is on). The next abort that keeps something there overwrites it: a slot is
 one deep, like the VCS's own record of the last tip a reset moved off. What
-an earlier abort kept and a later one overwrote is still in the VCS's own
-history of the branch (git: its reflog) until that expires. `rwv backup list`
-shows the slots with the other backups, `rwv backup drop` drops one, and
-`rwv backup prune` takes one a branch reaches, as it takes any backup that
-holds nothing a branch does not.
+an earlier abort kept and a later one overwrote stays in the VCS's own
+history of that slot until that expires (git: `git -C <checkout> log -g -p
+refs/rwv/backup/<branch>/aborted`, and the same for
+`<branch>/aborted-working-copy`). `rwv backup list` shows the slots with the
+other backups, `rwv backup drop` drops one with its history, and
+`rwv backup prune` takes one only once a branch reaches what it holds, as it
+takes any backup that holds nothing a branch does not.
+
+Abort does not tell your work from the operation's: each repo the operation
+moved onto commits nothing else reaches, or left stopped, gets a slot and one
+line, worded the same whether it holds a commit you made or the operation's
+own replayed commits. A commit two branches reset by one abort both hold is
+kept once, in the slot of the branch reset last, and named on that line.
 
 Abort never discards a commit or an edit without keeping it first. Each repo
 it keeps something for is one line, naming the slots and the command that
@@ -175,10 +183,15 @@ them:
   <repo-path>: canceled the rebase in progress and restored
   <repo-path>: what abort discarded is kept as backup <slot>[, <slot>] (<outcome>); this shows it: <the VCS command that shows the slots>
   <repo-path>: left stopped in a merge, which this operation never starts there
+  <repo-path>: what the operation rebased is kept as backup <branch>/rebased-<id>; this shows it: <the VCS command that shows it>
 ```
 
-Run as printed, the command lists each commit the slots hold beyond the
-savepoint with its changes, a working copy's edits among them, so what abort
+The last form names a backup the operation made before it rebased a branch
+that still holds a commit no branch reaches once abort has restored, such as
+a commit made at a stop that `--continue` then rebased.
+
+Run as printed, the command lists each commit the slots hold that neither the
+savepoint nor any branch or remote-tracking branch reaches, with its changes, a working copy's edits among them, so what abort
 moved off is recoverable from the transcript alone.
 
 For a `land`, lines for the workspace `abort` was invoked from carry no
@@ -244,7 +257,7 @@ slot, and the printed command shows it:
 
 ```
 rwv abort
-# ... github/foo/bar: what abort discarded is kept as backup main/aborted (restored); this shows it: git -C github/foo/bar log -p --diff-merges=first-parent ^<savepoint> refs/rwv/backup/main/aborted
+# ... github/foo/bar: what abort discarded is kept as backup main/aborted (restored); this shows it: git -C github/foo/bar log -p --diff-merges=first-parent refs/rwv/backup/main/aborted --not <savepoint> --branches --remotes
 ```
 
 ## Common errors

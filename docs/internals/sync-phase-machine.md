@@ -530,12 +530,15 @@ member) refuses the whole abort as `foreign-tip`, offering
 made; the op drops them when it completes. A clean abort drops, in each repo
 of both workspaces, every `rebased` backup a branch reaches
 (`drop_reached_rebased_backups`): the restore put the branch back where the
-rebase found it.
+rebase found it. Each journaled one it leaves holding a commit no branch
+reaches (a hand commit a `--continue` rebased) gets a line of its own with
+the show command (`name_unreached_rebased_backups`); the journal chooses only
+that line, never what is kept.
 
 **Output.** One line per repo abort keeps something for
 (`sync::kept_line`), naming the slots and the command `Vcs::show_kept`
-spells, which lists each commit they hold beyond the savepoint with its
-changes; a repo restored with nothing kept prints `restored`, and untouched
+spells, which lists each commit they hold that neither the savepoint nor
+any branch or remote-tracking branch reaches, with its changes; a repo restored with nothing kept prints `restored`, and untouched
 repos are counted in the summary line.
 
 ### Checkouts a landing fast-forwarded in place

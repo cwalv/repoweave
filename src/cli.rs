@@ -362,7 +362,8 @@ pub enum Commands {
     /// The tip of each branch it resets, where nothing else reaches it, and
     /// the working copy of each checkout it cancels or discards edits in, are
     /// kept first, whoever made them, in one slot per branch and per checkout
-    /// that the next abort overwrites, named with the command that shows them.
+    /// that the next abort overwrites, named with the command that shows them;
+    /// what a slot held before stays in the VCS's history of the slot.
     Abort {
         /// End a landing whose target something else has moved since (another landing built on it, a commit, a branch deleted or checked out): its source is restored and its whole target left as it stands, each tip the landing wrote there first kept as a backup where no branch reaches it, its savepoints dropped. Refused where abort can restore the target.
         #[arg(long = "leave-target")]
