@@ -1249,6 +1249,7 @@ pub fn run() -> anyhow::Result<()> {
             abandon_lost_pins,
             release_unreadable_claims,
             release_unreadable_claims_on,
+            release_unreachable_claims,
             merge_edited_drift,
             set_aside_edited_drift,
             kind,
@@ -1264,6 +1265,8 @@ pub fn run() -> anyhow::Result<()> {
                 release_unreadable_claims,
                 release_unreadable_claims_on,
             );
+            let release_unreachable_claims =
+                consent::ReleaseUnreachableClaimsConsent::from_flag(release_unreachable_claims);
             let edited_drift = consent::MergeEditedDriftConsent::from_flag(merge_edited_drift)
                 .map(consent::EditedDriftConsent::Merge)
                 .or(
@@ -1292,6 +1295,7 @@ pub fn run() -> anyhow::Result<()> {
                     scope,
                     abandon_lost_pins,
                     release_unreadable_claims,
+                    release_unreachable_claims,
                     edited_drift,
                     kind_filter.as_ref(),
                 )?

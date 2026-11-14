@@ -104,9 +104,9 @@ impl FetchClaim {
                 crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another rwv is still fetching into the object store of {repo} \
-                     ({held_by}). Rerun once it finishes, or from the host it runs on \
-                     if that is not this one.",
+                     ({held_by}). {advice}",
                     repo = repo.display(),
+                    advice = crate::durable_file::held_advice(&path.reported()),
                 );
             }
             Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),

@@ -225,9 +225,9 @@ impl LedgerClaim {
                 crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another rwv still holds the owned-digest ledger of {dir} \
-                     ({held_by}). Rerun once it finishes, or from the host it runs on \
-                     if that is not this one.",
+                     ({held_by}). {advice}",
                     dir = dir.display(),
+                    advice = crate::durable_file::held_advice(&path.reported()),
                 );
             }
             Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),

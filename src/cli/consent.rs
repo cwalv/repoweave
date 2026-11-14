@@ -243,6 +243,22 @@ impl ReleaseUnreadableClaimsConsent {
     }
 }
 
+/// Proof that the operator consented to releasing the fetch, workweave-index
+/// and owned-digest claims `rwv doctor` reports as `claim-holder-unreachable`,
+/// giving up the claim a holder on a host this one cannot reach may still
+/// hold. Minted from `--release-unreachable-claims`.
+#[derive(Debug, Clone, Copy)]
+pub struct ReleaseUnreachableClaimsConsent(());
+
+impl ReleaseUnreachableClaimsConsent {
+    /// Mint from the parsed flag: `Some` iff the operator passed it.
+    /// `pub(in crate::cli)`: see [`DiscardUnlandedConsent::from_flag`]'s doc
+    /// comment.
+    pub(in crate::cli) fn from_flag(release: bool) -> Option<Self> {
+        release.then_some(Self(()))
+    }
+}
+
 /// Proof that the operator consented to discarding the current content of
 /// an rwv-attested generated file and regenerating it from the current
 /// inputs. Minted from `--regenerate-drifted`.

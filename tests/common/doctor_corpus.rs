@@ -266,6 +266,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         },
         CheckViolation::ClaimOwnerUnreachable { .. } => "claim-owner-unreachable".into(),
         CheckViolation::ClaimUnreadable { .. } => "claim-unreadable".into(),
+        CheckViolation::ClaimHolderUnreachable { .. } => "claim-holder-unreachable".into(),
         CheckViolation::ClaimUnopenable { .. } => "claim-unopenable".into(),
         CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
             OrphanedSavepointKind::Redundant => "orphaned-savepoint/redundant".into(),
@@ -784,6 +785,10 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::ClaimUnreadable {
             file: path("/store/rwv-landings/0/.rwv-landing.lock"),
             seen: b"{\"holder\": 4242}".to_vec(),
+        },
+        CheckViolation::ClaimHolderUnreachable {
+            file: path("/store/.rwv-fetch.lock"),
+            held_by: "pid 4242 host elsewhere".into(),
         },
         CheckViolation::ClaimUnopenable {
             file: path("/store/rwv-landings/0/.rwv-landing.lock"),

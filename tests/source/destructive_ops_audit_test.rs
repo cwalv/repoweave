@@ -822,6 +822,19 @@ const ALLOWLIST: &[Allowed] = &[
             since deleting nothing destroys nothing.",
     },
     Allowed {
+        file: "liveness.rs",
+        pattern: "remove_file",
+        count: 1,
+        callers: &[],
+        justification: "release_unreachable: removes a short claim file \
+            (.rwv-fetch.lock, rwv-workweave-index.lock, \
+            .rwv-owned-digests.lock), rwv-internal bookkeeping and never user \
+            data, only on `rwv doctor --fix --release-unreachable-claims`, \
+            consent the operator gives by that flag's name, and only while \
+            the file still records the holder the finding reported and the \
+            filesystem still gives no lock to read its liveness from.",
+    },
+    Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
         count: 10,

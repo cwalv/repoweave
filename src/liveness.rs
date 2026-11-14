@@ -50,27 +50,52 @@ fn host() -> String {
     String::new()
 }
 
-/// Whether `body`, as [`holder_body`] wrote it, names a process on this host
-/// that no longer runs.
-#[cfg(unix)]
-pub(crate) fn holder_is_gone(body: &str) -> bool {
+/// The pid in `body`, as [`holder_body`] wrote it, when it names this host.
+fn local_pid(body: &str) -> Option<i32> {
     let mut words = body.split_whitespace();
     let (Some("pid"), Some(pid), Some("host"), Some(host_name)) =
         (words.next(), words.next(), words.next(), words.next())
     else {
-        return false;
+        return None;
     };
-    let Ok(pid) = pid.parse::<i32>() else {
-        return false;
-    };
-    host_name == host()
-        && nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None)
+    (host_name == host()).then(|| pid.parse().ok()).flatten()
+}
+
+/// Whether `body`, as [`holder_body`] wrote it, names a process on this host
+/// that no longer runs.
+#[cfg(unix)]
+pub(crate) fn holder_is_gone(body: &str) -> bool {
+    local_pid(body).is_some_and(|pid| {
+        nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), None)
             == Err(nix::errno::Errno::ESRCH)
+    })
 }
 
 #[cfg(not(unix))]
 pub(crate) fn holder_is_gone(_body: &str) -> bool {
     false
+}
+
+/// What the file at `path` says of its holder when this host cannot tell
+/// whether it still runs: the filesystem has no advisory locks, and the file
+/// names a process on another host or no process at all. `None` wherever the
+/// lock is the evidence, and wherever a process on this host answers.
+pub(crate) fn unreachable_holder(path: &Path) -> Option<String> {
+    let file = std::fs::OpenOptions::new().write(true).open(path).ok()?;
+    if !matches!(try_hold(&file, path), Hold::Unavailable) {
+        return None;
+    }
+    let body = std::fs::read_to_string(path).unwrap_or_default();
+    (local_pid(&body).is_none()).then(|| body.trim().to_owned())
+}
+
+/// Remove the file at `path` while it still reads as `seen` from
+/// [`unreachable_holder`].
+pub(crate) fn release_unreachable(path: &Path, seen: &str) -> std::io::Result<bool> {
+    if unreachable_holder(path).as_deref() != Some(seen) {
+        return Ok(false);
+    }
+    std::fs::remove_file(path).map(|()| true)
 }
 
 /// Whether the file at `path` has no live holder, taking its lock to say so.

@@ -86,6 +86,18 @@ pub(crate) enum ClaimError {
     NoExclusivePublish(anyhow::Error),
 }
 
+/// What an operator does about a [`ClaimError::Held`] claim at `path`: wait,
+/// and where nothing here can tell whether its holder still runs, the verb
+/// that releases it on their word that the holder's host is gone.
+pub(crate) fn held_advice(path: &Path) -> &'static str {
+    if crate::liveness::unreachable_holder(path).is_some() {
+        "Rerun once it finishes, or, if the host it runs on is gone, run \
+         `rwv doctor --fix --release-unreachable-claims`."
+    } else {
+        "Rerun once it finishes."
+    }
+}
+
 /// A claim file this process holds, removed by [`ClaimFile::release`]. Where
 /// the filesystem has advisory locks the claim is the lock on the file, which
 /// the kernel drops with the process; elsewhere it is the file's existence.

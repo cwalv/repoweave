@@ -157,7 +157,10 @@ holder's pid and host, and a process on the same host reads the pid
 (`holder_is_gone`); a holder on another host is never shown gone from here.
 What is then left, and only then, is a temp or scratch file whose owner
 cannot be shown dead, and for a short claim the refusal that names its holder
-and says to rerun from that host, where the pid check takes the claim over.
+and says to rerun from that host, where the pid check takes the claim over, or
+to run `rwv doctor --fix --release-unreachable-claims` where that host is gone
+(the `claim-holder-unreachable` finding, found only where the lock is
+`Unavailable`).
 A short claim is a file at a published name (`.rwv-fetch.lock`,
 `rwv-workweave-index.lock`, `.rwv-owned-digests.lock`) created with
 `create_new`, then locked; its holder removes it before it lets go of the

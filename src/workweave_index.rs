@@ -360,9 +360,9 @@ impl IndexClaim {
                 crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another rwv still holds the workweave index of project \
-                     {project} at {root} ({held_by}). Rerun once it finishes, or from \
-                     the host it runs on if that is not this one.",
+                     {project} at {root} ({held_by}). {advice}",
                     root = primary_root.display(),
+                    advice = crate::durable_file::held_advice(&path.reported()),
                 );
             }
             Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),

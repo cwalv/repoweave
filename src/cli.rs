@@ -254,6 +254,12 @@ pub enum Commands {
         /// or the active project names.
         #[arg(long, requires = "fix", value_name = "TARGET", conflicts_with = "all")]
         release_unreadable_claims_on: Option<String>,
+        /// With `--fix`, release every fetch, workweave-index and owned-digest
+        /// claim this run reports as `claim-holder-unreachable`: a holder on
+        /// a host this one cannot reach, which loses its claim if it still
+        /// runs. Without this flag, `--fix` reports them.
+        #[arg(long, requires = "fix")]
+        release_unreachable_claims: bool,
         /// With `--fix`, in each checkout of this workspace whose branch
         /// moved under it and that holds files both that move and an edit
         /// here changed, keep the working copy and the VCS's record of it as a backup, point

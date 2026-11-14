@@ -1447,6 +1447,10 @@ mod doctor_json {
             file: String,
             content: String,
         },
+        ClaimHolderUnreachable {
+            file: String,
+            held_by: String,
+        },
         ClaimUnopenable {
             file: String,
             error: String,

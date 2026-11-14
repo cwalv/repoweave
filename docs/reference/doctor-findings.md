@@ -119,6 +119,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
 | [`claim-owner-unreachable`](#claim-owner-unreachable) | Warning | Auto-fixable |
 | [`claim-unreadable`](#claim-unreadable) | Warning | Report-only by default (`--release-unreadable-claims`) |
+| [`claim-holder-unreachable`](#claim-holder-unreachable) | Warning | Report-only by default (`--release-unreachable-claims`) |
 | [`claim-unopenable`](#claim-unopenable) | Warning | Report-only |
 | [`cargo-version-skew`](#cargo-version-skew) | Warning | Report-only |
 | [`cargo-patch-shadowing`](#cargo-patch-shadowing) | Warning | Report-only |
@@ -1651,6 +1652,26 @@ claim a live landing of another release would hold, which is the consent the
 flag stands for, and the next landing into the target runs. A file that holds
 something else by the time the release reaches it, readable again or not, is
 left for the next report. Both flags are refused without `--fix`.
+
+### `claim-holder-unreachable`
+
+**Warning. Report-only by default.** A fetch claim (`.rwv-fetch.lock` in an
+object store), a workweave-index claim, or an owned-digest claim file on a
+filesystem with no file locks records a holder on another host, or one this
+host cannot name. Where the filesystem has file locks the lock shows whether the
+holder runs, and this finding never arises. Here nothing on this host can show
+whether the holder ended, so no run takes the claim over: a fetch, a pull or a
+workweave edit that needs it waits and then refuses with `state-claim-held`.
+The finding names the file and the pid and host the claim records. Bare `--fix`
+reports it and changes nothing.
+
+**What to do:** run the verb again from the host the claim names; a holder that
+has ended there releases it. If that host is gone,
+`rwv doctor --fix --release-unreachable-claims` releases every claim this run
+reports here. It gives up the claim a holder that still runs would have, which
+is the consent the flag stands for. A claim that records something else by the
+time the release reaches it is left for the next report. The flag is refused
+without `--fix`.
 
 ### `claim-unopenable`
 

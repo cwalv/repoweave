@@ -534,23 +534,84 @@ mod claim {
         assert!(!claim_file(&weave).exists());
     }
 
+    fn doctor(weave: &Weave, args: &[&str], no_locks: bool) -> std::process::Output {
+        let mut doctor = common::rwv_std();
+        doctor.arg("doctor").args(args).current_dir(&weave.primary);
+        if no_locks {
+            doctor.env("RWV_TEST_WITHHOLD", NO_LOCKS);
+        }
+        doctor.output().expect("rwv runs")
+    }
+
     /// Where the filesystem has no advisory locks, a claim held by a process
     /// on another host cannot be shown gone from here: the fetch refuses,
-    /// names the holder and the host to rerun on, and no file is to be deleted.
+    /// names the holder, and prints the one command that releases it. Doctor
+    /// reports the claim and releases it only on that command, and the fetch
+    /// then goes on.
     #[test]
-    fn without_file_locks_a_claim_from_another_host_is_waited_on_and_refused() {
+    fn without_file_locks_a_claim_from_another_host_is_released_by_the_printed_command() {
         let weave = weave();
         std::fs::write(claim_file(&weave), "pid 1 host another-host.invalid\n").unwrap();
 
         let (out, _) = next_fetch(&weave, true);
 
-        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
         assert_eq!(out.status.code(), Some(1), "{stderr}");
         assert!(
             stderr.contains("pid 1 host another-host.invalid"),
             "{stderr}"
         );
         assert!(!stderr.contains("delete"), "{stderr}");
+        let printed = stderr
+            .split('`')
+            .find(|span| span.starts_with("rwv doctor --fix"))
+            .unwrap_or_else(|| panic!("the refusal prints no doctor command:\n{stderr}"));
         assert!(claim_file(&weave).exists());
+
+        let report = doctor(&weave, &["--fix"], true);
+        let said = common::cli::describe(&report);
+        assert!(said.contains("claim-holder-unreachable"), "{said}");
+        assert!(
+            claim_file(&weave).exists(),
+            "bare --fix releases nothing: {said}"
+        );
+
+        let words: Vec<&str> = printed.split_whitespace().skip(2).collect();
+        let released = doctor(&weave, &words, true);
+        let said = common::cli::describe(&released);
+        assert!(
+            said.contains("[fixed] core: claim-holder-unreachable"),
+            "{said}"
+        );
+        assert!(!claim_file(&weave).exists());
+        let (out, _) = next_fetch(&weave, true);
+        assert!(
+            out.status.success(),
+            "{}",
+            common::pause::describe("fetch", &out)
+        );
+    }
+
+    /// Where the filesystem has advisory locks the lock is the evidence: a
+    /// claim naming another host is no one's, so doctor reports nothing and
+    /// releases nothing, and the next fetch takes it over.
+    #[test]
+    fn with_file_locks_no_claim_is_ever_unreachable() {
+        let weave = weave();
+        std::fs::write(claim_file(&weave), "pid 1 host another-host.invalid\n").unwrap();
+
+        let report = doctor(&weave, &["--fix", "--release-unreachable-claims"], false);
+
+        let said = common::cli::describe(&report);
+        assert!(!said.contains("claim-holder-unreachable"), "{said}");
+        assert!(claim_file(&weave).exists(), "{said}");
+        let (out, took) = next_fetch(&weave, false);
+        assert!(
+            out.status.success(),
+            "{}",
+            common::pause::describe("fetch", &out)
+        );
+        assert!(took < Duration::from_secs(5), "waited {took:?}");
+        assert!(!claim_file(&weave).exists());
     }
 }

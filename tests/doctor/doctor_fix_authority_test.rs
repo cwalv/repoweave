@@ -341,8 +341,8 @@ fn the_page_walk_actually_reads_the_page() {
         "only {auto} findings are auto-fixable; the register has stopped classifying"
     );
     assert_eq!(
-        consented, 2,
-        "the findings repaired behind a consent flag are pinned at 2; got {consented}"
+        consented, 3,
+        "the findings repaired behind a consent flag are pinned at 3; got {consented}"
     );
     for expected in [
         "record-drift/safe-to-fix",
@@ -1494,6 +1494,10 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
             Findings(&["claim-owner-unreachable"]),
         ),
         ("claim-unreadable at", Findings(&["claim-unreadable"])),
+        (
+            "claim-holder-unreachable at",
+            Findings(&["claim-holder-unreachable"]),
+        ),
         (
             "dead-op-lease for",
             Findings(&[

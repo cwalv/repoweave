@@ -504,6 +504,17 @@ pub enum CheckViolation {
         seen: Vec<u8>,
     },
 
+    /// A fetch, workweave-index or owned-digest claim file on a filesystem
+    /// with no advisory locks, held by a process on another host or by none
+    /// this one can name. This host cannot tell whether it still runs, so no
+    /// run takes it over; `--fix --release-unreachable-claims` releases it,
+    /// the operator's word that the holder's host is gone.
+    ClaimHolderUnreachable {
+        file: PathBuf,
+        /// What the file records about its holder when it was reported.
+        held_by: String,
+    },
+
     /// A landing claim, or a takeover guard beside one, that this rwv cannot
     /// read at all: a file this user may not read, or something that is not a
     /// file. Whose it is cannot be told and its bytes cannot be compared, so
@@ -718,6 +729,9 @@ impl CheckViolation {
             | CheckViolation::MemberPermissions { .. } => Auto,
 
             CheckViolation::ClaimUnreadable { .. } => Consented("--release-unreadable-claims"),
+            CheckViolation::ClaimHolderUnreachable { .. } => {
+                Consented("--release-unreachable-claims")
+            }
             CheckViolation::ClaimUnopenable { .. } => ReportOnly,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -829,6 +843,7 @@ impl CheckViolation {
             | CheckViolation::DeadOpLease { .. }
             | CheckViolation::ClaimOwnerUnreachable { .. }
             | CheckViolation::ClaimUnreadable { .. }
+            | CheckViolation::ClaimHolderUnreachable { .. }
             | CheckViolation::ClaimUnopenable { .. }
             | CheckViolation::OrphanedSavepoint { .. }
             | CheckViolation::UnrecognizedSavepointRef { .. }
@@ -908,6 +923,7 @@ impl CheckViolation {
             CheckViolation::DeadOpLease { .. } => ViolationKind::DeadOpLease,
             CheckViolation::ClaimOwnerUnreachable { .. } => ViolationKind::ClaimOwnerUnreachable,
             CheckViolation::ClaimUnreadable { .. } => ViolationKind::ClaimUnreadable,
+            CheckViolation::ClaimHolderUnreachable { .. } => ViolationKind::ClaimHolderUnreachable,
             CheckViolation::ClaimUnopenable { .. } => ViolationKind::ClaimUnopenable,
             CheckViolation::OrphanedSavepoint { .. } => ViolationKind::OrphanedSavepoint,
             CheckViolation::UnrecognizedSavepointRef { .. } => {
@@ -964,6 +980,7 @@ pub enum ViolationKind {
     DeadOpLease,
     ClaimOwnerUnreachable,
     ClaimUnreadable,
+    ClaimHolderUnreachable,
     ClaimUnopenable,
     OrphanedSavepoint,
     UnrecognizedSavepointRef,
@@ -976,7 +993,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1013,6 +1030,7 @@ impl ViolationKind {
         Self::DeadOpLease,
         Self::ClaimOwnerUnreachable,
         Self::ClaimUnreadable,
+        Self::ClaimHolderUnreachable,
         Self::ClaimUnopenable,
         Self::OrphanedSavepoint,
         Self::UnrecognizedSavepointRef,
@@ -2264,6 +2282,12 @@ pub enum ViolationOutput {
         /// What it holds, as text, invalid UTF-8 replaced.
         content: String,
     },
+    ClaimHolderUnreachable {
+        /// Absolute path to the claim file.
+        file: WirePath,
+        /// What it records about its holder: a pid and a host.
+        held_by: String,
+    },
     ClaimUnopenable {
         /// Absolute path to the claim or takeover guard.
         file: WirePath,
@@ -2748,6 +2772,12 @@ impl ViolationOutput {
                 file: WirePath::of(&file),
                 content: unreadable_claim_text(&seen),
             },
+            CheckViolation::ClaimHolderUnreachable { file, held_by } => {
+                Self::ClaimHolderUnreachable {
+                    file: WirePath::of(&file),
+                    held_by,
+                }
+            }
             CheckViolation::ClaimUnopenable { file, error } => Self::ClaimUnopenable {
                 file: WirePath::of(&file),
                 error,
@@ -5839,6 +5869,12 @@ pub fn scan_state_hygiene(
             }
         }
 
+        violations.extend(unreachable_claim_findings(
+            vcs,
+            &repo.abs,
+            &mut reported_refs,
+        ));
+
         let listing = match vcs.list_savepoints(&repo.abs) {
             Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
@@ -7137,6 +7173,14 @@ impl CheckViolation {
                  release would lose its claim.",
                 file.display(),
                 unreadable_claim_text(&seen)
+            ),
+            CheckViolation::ClaimHolderUnreachable { file, held_by } => format!(
+                "{}: claim-holder-unreachable — the filesystem has no file locks and the claim \
+                 records {held_by}, a process this host cannot check. No run takes it over. \
+                 Rerun from that host, where a holder that has ended releases it; if the host is \
+                 gone, `rwv doctor --fix --release-unreachable-claims` releases it, and a live \
+                 holder would lose its claim.",
+                file.display()
             ),
             CheckViolation::ClaimUnopenable { file, error } => format!(
                 "{}: claim-unopenable — it cannot be read ({error}), so whose it is cannot be \
@@ -8757,12 +8801,37 @@ fn drift_findings_standing(
         .collect()
 }
 
+/// The short claims of the store `repo` draws from and of the project
+/// directory `repo` may be, whose holders this host cannot check.
+fn unreachable_claim_findings(
+    vcs: &dyn crate::vcs::Vcs,
+    repo: &Path,
+    reported: &mut std::collections::HashSet<(PathBuf, String)>,
+) -> Vec<CheckViolation> {
+    use crate::state_file::StateFile;
+    let mut files = vec![StateFile::OwnedDigestsClaim.in_dir(repo).reported()];
+    if let Some(store) = vcs.store_of(repo) {
+        if reported.insert((store.clone(), "short-claims".to_owned())) {
+            files.push(StateFile::FetchClaim.in_dir(&store).reported());
+            files.push(StateFile::IndexClaim.in_dir(&store).reported());
+        }
+    }
+    files
+        .into_iter()
+        .filter_map(|file| {
+            crate::liveness::unreachable_holder(&file)
+                .map(|held_by| CheckViolation::ClaimHolderUnreachable { file, held_by })
+        })
+        .collect()
+}
+
 fn apply_finding_repairs(
     ctx: &crate::workspace::WorkspaceContext,
     world: &DoctorWorld,
     violations: Vec<CheckViolation>,
     repo_locations: &std::collections::HashMap<(Option<WorkweaveId>, RepoPath), std::path::PathBuf>,
     release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
+    release_unreachable_claims: Option<crate::cli::consent::ReleaseUnreachableClaimsConsent>,
     held: &mut HeldDrift,
     fix_errors: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
@@ -9110,6 +9179,27 @@ fn apply_finding_repairs(
                     }
                 },
             },
+
+            CheckViolation::ClaimHolderUnreachable { file, held_by } => {
+                if release_unreachable_claims.is_none() {
+                    false
+                } else {
+                    match crate::liveness::release_unreachable(file, held_by) {
+                        Ok(true) => {
+                            outln!(
+                                "[fixed] core: claim-holder-unreachable at {}: released it ({held_by})",
+                                file.display()
+                            );
+                            true
+                        }
+                        Ok(false) => false,
+                        Err(e) => {
+                            fix_errors.push(format!("unreachable claim release failed: {e:#}"));
+                            false
+                        }
+                    }
+                }
+            }
 
             // Operates on the lease's own workspace dir, so no repo lookup.
             CheckViolation::DeadOpLease {
@@ -9753,6 +9843,7 @@ pub fn run_check(
     scope: Scope,
     abandon_lost_pins: Option<crate::cli::consent::AbandonLostPinsConsent>,
     release_unreadable_claims: Option<crate::cli::consent::ReleaseUnreadableClaimsConsent>,
+    release_unreachable_claims: Option<crate::cli::consent::ReleaseUnreachableClaimsConsent>,
     edited_drift: Option<crate::cli::consent::EditedDriftConsent>,
     kind_filter: Option<&KindFilter>,
 ) -> anyhow::Result<Verdict> {
@@ -9824,6 +9915,7 @@ pub fn run_check(
             violations,
             &findings.repo_locations,
             release_unreadable_claims,
+            release_unreachable_claims,
             &mut held,
             &mut fix_errors,
         );
