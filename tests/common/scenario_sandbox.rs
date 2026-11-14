@@ -300,6 +300,7 @@ pub struct Sandbox {
     home: PathBuf,
     remotes: Vec<Remote>,
     shim: Option<PathBuf>,
+    tracing: std::sync::atomic::AtomicBool,
 }
 
 impl Sandbox {
@@ -314,6 +315,7 @@ impl Sandbox {
             home,
             remotes: Vec::new(),
             shim: None,
+            tracing: std::sync::atomic::AtomicBool::new(false),
         };
         if seed.old_git {
             sandbox.shim = Some(sandbox.install_git_shim());
@@ -749,7 +751,20 @@ impl Sandbox {
     pub fn rwv_command(&self, dir: &Path, args: &[&str]) -> Command {
         let mut cmd = self.hermetic(common::rwv_std());
         cmd.args(args).current_dir(dir);
+        if self.tracing.load(std::sync::atomic::Ordering::SeqCst) {
+            cmd.env("RWV_TEST_PAUSE_TRACE", self.point_trace());
+        }
         cmd
+    }
+
+    /// Where the points every rwv spawned while tracing passes are written,
+    /// one name a line.
+    pub fn point_trace(&self) -> PathBuf {
+        self.root.join("point-trace")
+    }
+
+    pub fn trace_points(&self, on: bool) {
+        self.tracing.store(on, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn rwv(&self, dir: &Path, args: &[&str]) -> Output {

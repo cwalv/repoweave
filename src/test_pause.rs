@@ -8,10 +8,17 @@
 //! through the named point then writes `<dir>/paused` and waits until
 //! `<dir>/release` exists; every pass after the release proceeds. A value of
 //! any other shape stops the process rather than running unpaused.
+//!
+//! `RWV_TEST_PAUSE_TRACE=<file>` makes every pass through any point append
+//! the point's name to `<file>`, one per line, so a test can learn which
+//! points a run reaches without holding it at each.
 
 pub(crate) fn point(name: &str) {
     #[cfg(feature = "test-pause")]
-    armed::wait_at(name);
+    {
+        armed::trace(name);
+        armed::wait_at(name);
+    }
     #[cfg(not(feature = "test-pause"))]
     let _ = name;
 }
@@ -45,6 +52,19 @@ mod armed {
 
     const RELEASE_DEADLINE: Duration = Duration::from_secs(120);
 
+    pub(super) fn trace(name: &str) {
+        use std::io::Write;
+        let Some(file) = std::env::var_os("RWV_TEST_PAUSE_TRACE") else {
+            return;
+        };
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&file)
+            .unwrap_or_else(|e| panic!("cannot open {}: {e:#}", Path::new(&file).display()));
+        writeln!(file, "{name}").expect("a trace line is written");
+    }
+
     pub(super) fn wait_at(name: &str) {
         let Some(arming) = std::env::var_os("RWV_TEST_PAUSE") else {
             return;
@@ -69,5 +89,23 @@ mod armed {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+    }
+}
+
+#[cfg(all(test, feature = "test-pause"))]
+mod tests {
+    #[test]
+    fn a_traced_pass_through_a_point_appends_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("trace");
+        std::env::set_var("RWV_TEST_PAUSE_TRACE", &file);
+        super::point("first-point");
+        super::point("second-point");
+        super::point("first-point");
+        std::env::remove_var("RWV_TEST_PAUSE_TRACE");
+        super::point("untraced-point");
+        let traced = std::fs::read_to_string(&file).unwrap();
+        let mine: Vec<&str> = traced.lines().filter(|l| l.ends_with("-point")).collect();
+        assert_eq!(mine, ["first-point", "second-point", "first-point"]);
     }
 }
