@@ -5641,7 +5641,7 @@ fn classify_lock_relations(
 
 /// What is true of a refused resume and of no fresh refusal: the op is still
 /// recorded, and both ways out of it are still open.
-fn parked_note(verb: op_state::OpVerb) -> String {
+pub(crate) fn parked_note(verb: op_state::OpVerb) -> String {
     format!(
         "This op is still parked at its recorded phase; the refusal changed nothing. \
          Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",

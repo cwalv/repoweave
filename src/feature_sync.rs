@@ -1531,6 +1531,7 @@ fn act(
         };
         let dir = sync.ctx.active_path().join(path.as_path());
         let vcs = vcs_for(entry.vcs_type);
+        hold_on_drift(vcs.as_ref(), path, &dir, |judging| judging.member())?;
         let reset = resets.contains(&RepoOperand::Member(path.clone()));
         let how = if take_in.merged.contains(&RepoKey::Member(path.clone())) {
             Integration::Merge
@@ -1564,6 +1565,9 @@ fn act(
 
     let resets_project = resets.iter().any(|r| matches!(r, RepoOperand::Project(_)));
     let vcs = sync.vcs.as_ref();
+    hold_on_drift(vcs, sync.label(), &sync.dir, |judging| {
+        judging.project_repo()
+    })?;
     let head = vcs.head_revision(&sync.dir)?.id().clone();
     let project_merges = sync.merging()
         || take_in.merged.contains(&RepoKey::Project)
@@ -1712,6 +1716,27 @@ fn act(
     );
     say(output, &format!("took in {}", sync.source_name()));
     Ok(())
+}
+
+/// Refresh the drift a branch's move left in `dir` before the sync takes
+/// it in, refusing where the drift holds it; a checkout stopped in an
+/// operation is the operation's to finish.
+fn hold_on_drift(
+    vcs: &dyn Vcs,
+    repo: impl std::fmt::Display,
+    dir: &Path,
+    role: impl FnOnce(crate::diagnosis::Judging) -> crate::diagnosis::Judging,
+) -> anyhow::Result<()> {
+    if vcs.mid_op(dir).is_some() || !vcs.is_repo(dir) {
+        return Ok(());
+    }
+    let Some(held) = crate::diagnosis::drift_held(vcs, repo, dir) else {
+        return Ok(());
+    };
+    let mut report = crate::diagnosis::Report::default();
+    report.add(role(held).checkout(dir).judge(vcs));
+    report.note(crate::sync::parked_note(OpVerb::Sync));
+    report.into_result()
 }
 
 fn conflict_refusal(

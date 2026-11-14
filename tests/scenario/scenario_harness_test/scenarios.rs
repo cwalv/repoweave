@@ -18540,6 +18540,14 @@ pub fn sync_continue_replays_what_the_stopped_run_reported() -> Scenario {
 /// planned a fast-forward, is reached. The operator resolves `app` and
 /// commits in `lib` during the stop.
 fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
+    let mut steps = sync_stopped_on_app_resolved(history);
+    steps.push(Step::commit(&ww("w"), Repo::Lib, "w-lib-stop"));
+    steps
+}
+
+/// [`sync_stopped_then_lib_committed`]'s stop, `app` resolved and nothing
+/// committed.
+fn sync_stopped_on_app_resolved(history: &'static str) -> Vec<Step> {
     vec![
         Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
         create("w"),
@@ -18553,8 +18561,91 @@ fn sync_stopped_then_lib_committed(history: &'static str) -> Vec<Step> {
         Step::rwv(&ww("w"), &["sync"]).expect(Exit::refuses_kind(RefusalKind::OpParked)),
         Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
         Step::git(&ww("w"), Repo::App, &["add", "README"]),
-        Step::commit(&ww("w"), Repo::Lib, "w-lib-stop"),
     ]
+}
+
+/// What another seat does to a branch of `w`'s while `w`'s sync is stopped.
+#[derive(Debug, Clone, Copy)]
+pub enum SeatMove {
+    /// Commits on it.
+    Commits,
+    /// Commits on it, and the checkout's record of where it stood is gone.
+    CommitsUnrecorded,
+    /// Moves it back one commit.
+    MovesBack,
+}
+
+/// A sync of `w` under `history` stopped on `app`, resolved; during the
+/// stop another seat moves `repo`'s branch as `how` says. `--continue`
+/// reads that drift before it takes `repo` in: a plain move is refreshed
+/// and the sync finishes with it; a move it cannot read is held, and the
+/// choice it prints, run as printed, lets the next `--continue` finish.
+pub fn continue_reads_drift_a_stop_left(
+    history: &'static str,
+    repo: Repo,
+    how: SeatMove,
+) -> Scenario {
+    let at = ww("w");
+    let mut steps = sync_stopped_on_app_resolved(history);
+    match how {
+        SeatMove::Commits => steps.push(another_seat_commits(&a(), repo, "proj--w")),
+        SeatMove::CommitsUnrecorded => steps.extend([
+            another_seat_commits(&a(), repo, "proj--w"),
+            Step::git(&at, repo, &["reflog", "expire", "--expire=now", "--all"]),
+        ]),
+        SeatMove::MovesBack => steps.push(
+            Step::git(
+                &a(),
+                repo,
+                &["update-ref", "refs/heads/proj--w", "proj--w~1"],
+            )
+            .may_rewind(&[repo]),
+        ),
+    }
+    let continues = || {
+        Step::rwv(&at, &["sync", "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_rewind(&[Repo::App])
+    };
+    match how {
+        SeatMove::Commits => steps.extend([
+            continues().claim(Claim::OutputContains("refreshed drift")),
+            Step::git(&at, repo, &["cat-file", "-e", "HEAD:other-seat.txt"]).expect(Exit::Succeeds),
+            Step::git(&at, repo, &["status", "--porcelain"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("other-seat.txt")),
+        ]),
+        SeatMove::CommitsUnrecorded | SeatMove::MovesBack => steps.extend([
+            Step::rwv(&at, &["sync", "--continue"])
+                .expect(Exit::refuses(repo, State::EditsDriftLeftInPlace))
+                .claim(Claim::OutputContains("rwv sync --continue"))
+                .claim(Claim::OutputContains("rwv abort")),
+            Step::rwv_printed_holding(&at, "git -C ", "stash push").expect(Exit::Succeeds),
+            continues(),
+        ]),
+    }
+    scenario(
+        match (history, repo, how) {
+            ("linear", Repo::Lib, SeatMove::Commits) => {
+                "linear sync --continue refreshes a member another seat moved"
+            }
+            ("merge", Repo::Lib, SeatMove::Commits) => {
+                "merge sync --continue refreshes a member another seat moved"
+            }
+            ("linear", Repo::Proj, SeatMove::Commits) => {
+                "linear sync --continue refreshes the project another seat moved"
+            }
+            ("linear", Repo::Lib, SeatMove::CommitsUnrecorded) => {
+                "linear sync --continue holds a member moved with no record"
+            }
+            ("linear", Repo::Lib, SeatMove::MovesBack) => {
+                "linear sync --continue holds a member moved back"
+            }
+            _ => "sync --continue reads drift a stop left",
+        },
+        steps,
+    )
 }
 
 /// A `linear` sync of `w` that rebases `app` and stops on a conflict in
@@ -24076,16 +24167,19 @@ pub fn abort_a_carried_stack_blocked(blocked: CarriedBlocked) -> Scenario {
 }
 
 /// Another seat's commit of `other-seat.txt` on `branch` of `repo`, written
-/// to the ref the checkout at `at` shares, the checkout itself untouched.
-fn another_seat_commits(at: &Place, repo: Repo, branch: &str) -> Step {
-    Step::hand_commit(at, repo, branch, &[("other-seat.txt", "other seat\n")])
+/// from the checkout at `from` to the ref every checkout of that store
+/// shares.
+fn another_seat_commits(from: &Place, repo: Repo, branch: &str) -> Step {
+    Step::hand_commit(from, repo, branch, &[("other-seat.txt", "other seat\n")])
 }
 
-/// After `stopped`, another seat commits on `branch` of the stopped `repo`
-/// at `at`; `rwv abort` ends the operation keeping that commit in the
-/// branch's `slot`, as it keeps the tip of every branch it resets.
+/// After `stopped`, another seat commits from `from` on `branch` of the
+/// stopped `repo` at `at`; `rwv abort` ends the operation keeping that
+/// commit in the branch's `slot`, as it keeps the tip of every branch it
+/// resets.
 fn abort_keeps_another_seats_commit(
     stopped: Vec<Step>,
+    from: Place,
     at: Place,
     repo: Repo,
     branch: &'static str,
@@ -24093,7 +24187,7 @@ fn abort_keeps_another_seats_commit(
 ) -> Vec<Step> {
     let mut steps = stopped;
     steps.extend([
-        another_seat_commits(&at, repo, branch),
+        another_seat_commits(&from, repo, branch),
         Step::rwv(&at, &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
@@ -24118,6 +24212,7 @@ pub fn sync_abort_keeps_another_seats_commit() -> Scenario {
         "sync abort keeps another seat's commit on a branch stopped mid-rebase",
         abort_keeps_another_seats_commit(
             sync_linear_stopped_on_lib(),
+            a(),
             ww("w"),
             Repo::Lib,
             "proj--w",
@@ -24149,6 +24244,7 @@ pub fn sync_abort_keeps_another_seats_project_commit() -> Scenario {
         "sync abort keeps another seat's commit on a project branch stopped mid-rebase",
         abort_keeps_another_seats_commit(
             sync_linear_stopped_on_the_manifest(),
+            a(),
             ww("w"),
             Repo::Proj,
             "proj--w",
@@ -24164,6 +24260,7 @@ pub fn land_abort_keeps_another_seats_commit() -> Scenario {
         "land abort keeps another seat's commit on a branch stopped mid-rebase",
         abort_keeps_another_seats_commit(
             land_linear_stopped_on_app(),
+            a(),
             ww("w"),
             Repo::App,
             "proj--w",
@@ -24180,6 +24277,7 @@ pub fn pull_abort_keeps_another_seats_commit() -> Scenario {
         abort_keeps_another_seats_commit(
             both_sides_move_app_conflictingly(),
             b(),
+            b(),
             Repo::App,
             "main",
             "refs/rwv/backup/main/aborted",
@@ -24194,6 +24292,7 @@ pub fn cherry_pick_abort_keeps_another_seats_commit() -> Scenario {
         "cherry-pick abort keeps another seat's commit on a branch stopped mid-copy",
         abort_keeps_another_seats_commit(
             app_conflicting_port(),
+            a(),
             ww("p"),
             Repo::App,
             "proj--p",

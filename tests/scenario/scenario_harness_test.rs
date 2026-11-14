@@ -1332,6 +1332,11 @@ every_scenario!(
     update_remote_aborted_after_a_hand_commit_and_a_continue,
     cherry_pick_aborted_after_a_hand_commit_and_a_continue,
     sync_abort_keeps_another_seats_commit,
+    continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::Commits),
+    continue_reads_drift_a_stop_left("merge", Repo::Lib, scenarios::SeatMove::Commits),
+    continue_reads_drift_a_stop_left("linear", Repo::Proj, scenarios::SeatMove::Commits),
+    continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::CommitsUnrecorded),
+    continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::MovesBack),
     sync_abort_keeps_another_seats_project_commit,
     land_abort_keeps_another_seats_commit,
     pull_abort_keeps_another_seats_commit,
@@ -4040,6 +4045,25 @@ fn sync_abort_keeps_another_seats_commit() {
 fn sync_abort_keeps_another_seats_project_commit() {
     runner::run(scenarios::sync_abort_keeps_another_seats_project_commit())
         .assert_fully_decided_green();
+}
+
+/// A sync stopped on `app`; another seat moves a repo not yet taken in;
+/// `--continue` refreshes the move or holds it, never commits its reverse.
+#[test]
+fn sync_continue_reads_drift_a_stop_left() {
+    use scenarios::SeatMove as M;
+    for (history, repo, how) in [
+        ("linear", Repo::Lib, M::Commits),
+        ("merge", Repo::Lib, M::Commits),
+        ("linear", Repo::Proj, M::Commits),
+        ("linear", Repo::Lib, M::CommitsUnrecorded),
+        ("linear", Repo::Lib, M::MovesBack),
+    ] {
+        runner::run(scenarios::continue_reads_drift_a_stop_left(
+            history, repo, how,
+        ))
+        .assert_fully_decided_green();
+    }
 }
 
 #[test]
