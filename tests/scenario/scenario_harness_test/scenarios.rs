@@ -20763,6 +20763,24 @@ pub fn a_hand_settled_replay_lands_a_target_change_only_by_consent() -> Scenario
     )
 }
 
+/// `main` commits an emptied `rwv.toml`. It is no manifest, not a project
+/// with no members: a sync onto it refuses before it moves anything, so no
+/// member checkout goes and the lock stays as it is.
+pub fn a_sync_onto_an_emptied_manifest_refuses() -> Scenario {
+    scenario(
+        "a sync onto an emptied manifest refuses",
+        vec![
+            create("w"),
+            Step::hand_commit(&a(), Repo::Proj, "main", &[("rwv.toml", "")]),
+            Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
+                .claim(Claim::OutputContains("holds no `repositories` table"))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+        ],
+    )
+}
+
 /// What the operator does at a `sync` merge stop on `NOTES.txt`, a file of
 /// the project repo both sides added differently.
 #[derive(Debug, Clone, Copy)]

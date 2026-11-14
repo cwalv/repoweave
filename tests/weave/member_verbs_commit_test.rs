@@ -437,3 +437,29 @@ fn add_on_an_emptied_manifest_refuses_and_commits_nothing() {
         "{committed}"
     );
 }
+
+#[test]
+fn a_fresh_project_with_no_members_takes_its_first_member() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    let init = rwv()
+        .args(["-C", &ws.to_string_lossy(), "init", "fresh"])
+        .output()
+        .unwrap();
+    succeeded(&init);
+    let docs = tmp.path().join("docs.git");
+    common::init_bare_repo_with_commit(&docs);
+
+    let add = rwv()
+        .args(["-C", &ws.to_string_lossy(), "member", "add"])
+        .arg(common::file_url(&docs))
+        .output()
+        .unwrap();
+
+    succeeded(&add);
+    let project = ws.join("projects").join("fresh");
+    let committed = git_in(&project, &["show", "HEAD:rwv.toml"]);
+    assert!(committed.contains("[repositories"), "{committed}");
+    assert!(committed.contains("docs"), "{committed}");
+}
