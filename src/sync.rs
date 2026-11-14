@@ -4684,7 +4684,6 @@ fn load_continuing_context<'a>(
     // landing that had released its target and cannot go on leaves it free.
     let under_claim = (|| -> anyhow::Result<(op_state::TakeInRecord, _)> {
         let mut take_in = take_in;
-        keep_what_moved_at_the_stop(&owner_workspace_dir)?;
         // A target that moved after the landing composed is a plan the landing no
         // longer describes: only `rwv abort` and a fresh landing judge the new
         // tips.
@@ -6835,10 +6834,6 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     let named = crate::repin::Naming::by_name("land", named_members);
     if staged_merge {
         vcs.stage_paths(dir, &[LockFile::FILE_NAME])?;
-        op_state::journal_relocking(
-            &ctx.owner_workspace_dir,
-            vec![target.clone(), head.id().clone()],
-        )?;
         let merge = crate::repin::commit_merge_annotated(
             vcs,
             dir,
@@ -6859,7 +6854,6 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
         }
         return Ok(());
     }
-    op_state::journal_relocking(&ctx.owner_workspace_dir, vec![head.id().clone()])?;
     let committed = crate::lock::commit_lock_file_annotated(
         vcs,
         dir,
@@ -8766,7 +8760,6 @@ fn abort_op(
         })
         .flatten()
         .filter(|other| other != workspace);
-    let tips = reading.tips();
     let op_id = header.id.clone();
     let moved_in_target: Option<&[RepoKey]> = match &reading {
         op_state::OwnerReading::Whole(record) => Some(
@@ -8777,14 +8770,6 @@ fn abort_op(
                 .unwrap_or_default(),
         ),
         op_state::OwnerReading::HeaderOnly { .. } => None,
-    };
-    let empty_wrote = std::collections::BTreeMap::new();
-    let wrote_in_target = match &reading {
-        op_state::OwnerReading::Whole(record) => record
-            .take_in
-            .as_ref()
-            .map_or(&empty_wrote, |take_in| &take_in.wrote_in_target),
-        op_state::OwnerReading::HeaderOnly { .. } => &empty_wrote,
     };
 
     // Both of the op's workspaces are enumerated under the op's own project,
@@ -8845,22 +8830,6 @@ fn abort_op(
         op_state::OwnerReading::Whole(record) => record.own_steps(),
         op_state::OwnerReading::HeaderOnly { .. } => Default::default(),
     };
-    let relocking: Vec<CommitId> = match &reading {
-        op_state::OwnerReading::Whole(record) => record
-            .take_in
-            .as_ref()
-            .map(|take_in| take_in.relocking.clone())
-            .unwrap_or_default(),
-        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
-    };
-    let carries: Vec<op_state::Carrying> = match &reading {
-        op_state::OwnerReading::Whole(record) => record
-            .take_in
-            .as_ref()
-            .map(|take_in| take_in.carries.clone())
-            .unwrap_or_default(),
-        op_state::OwnerReading::HeaderOnly { .. } => Vec::new(),
-    };
 
     let make_plan = || {
         let mut plan = AbortPlan::default();
@@ -8877,13 +8846,9 @@ fn abort_op(
             AbortSide::of(workspace, &header),
             "",
             &op_id,
-            tips,
             moved_in_target,
-            wrote_in_target,
             operates_in.as_ref(),
-            &carries,
             &own_steps,
-            &relocking,
             &mut plan,
         );
 
@@ -8912,13 +8877,9 @@ fn abort_op(
                                 side,
                                 side.label(),
                                 &op_id,
-                                tips,
                                 moved_in_target,
-                                wrote_in_target,
                                 operates_in.as_ref(),
-                                &carries,
                                 &own_steps,
-                                &relocking,
                                 &mut plan,
                             );
                             other_ws_dir = Some(dir);
@@ -8984,11 +8945,8 @@ fn abort_op(
         op_state::OwnerReading::Whole(record) => Some(record.as_ref()),
         op_state::OwnerReading::HeaderOnly { .. } => None,
     };
-    let unit_refuses = |standing: &Option<TargetStanding>| {
-        standing
-            .as_ref()
-            .is_some_and(|s| !s.restorable() && !s.abandonable())
-    };
+    let unit_refuses =
+        |standing: &Option<TargetStanding>| standing.as_ref().is_some_and(|s| !s.restorable());
     let (plan, _) = make_plan();
     let standing = judge();
     if leave_target {
@@ -9005,7 +8963,7 @@ fn abort_op(
                         target_label,
                     );
                 }
-                abort_leaving_target(ctx, record, &owner_workspace, standing, &stores, plan)
+                abort_leaving_target(record, &owner_workspace, standing, &stores, plan)
             }
             (op_state::OwnerReading::Whole(_), Some(_)) => crate::refuse!(
                 RefusalKind::InapplicableFlag,
@@ -9097,25 +9055,8 @@ fn abort_op(
     // repo refused (foreign tip) or errored, retain op-state so the operator
     // can re-run `rwv abort` after manually reconciling the divergence.
     if tally.clean() {
-        if let op_state::OwnerReading::Whole(record) = &reading {
-            let kept = record
-                .take_in
-                .as_ref()
-                .map(|take_in| take_in.backups.clone())
-                .unwrap_or_default();
-            settle_journaled_backups(
-                ctx.primary_path(),
-                owner_workspace.as_path(),
-                if owner_workspace.as_path() == ctx.active_root().as_path() {
-                    ""
-                } else {
-                    AbortSide::Replay.label()
-                },
-                &op_project_name,
-                &kept,
-            );
-        }
         for dir in std::iter::once(&workspace_dir).chain(&other_ws_dir) {
+            drop_reached_rebased_backups(dir, &op_project_name);
             forget_replays_in(dir, &op_project_name);
         }
         op_state::clear_owner_of(owner_workspace.as_path(), &op_id);
@@ -9140,141 +9081,53 @@ fn abort_op(
     Ok(())
 }
 
-/// At a `--continue`'s entry, while the op replays: each repo of the op's
-/// own workspace whose checkout moved during the stop off both its savepoint
-/// and the tip the op journaled for it, onto a commit its savepoint does not
-/// reach, has that tip kept as a backup the op journals, and the tip
-/// journaled as where the op left it. Whatever the continue then does over
-/// it, an abort puts the branch back and names the backup.
-pub(crate) fn keep_what_moved_at_the_stop(owner_workspace: &Path) -> anyhow::Result<()> {
-    let Some(record) = op_state::read_owner(owner_workspace)? else {
-        return Ok(());
-    };
-    let Some(journaled) = record.tips.advanced() else {
-        return Ok(());
-    };
-    let key = SavepointKey::Op(record.id.clone());
-    let workspace = record.source.as_path();
-    let project_dir = project_dir(workspace, &record.project);
-    let mut members = OpMembers::default();
-    let pvcs = project_vcs();
-    if let Some(saved) = pvcs.resolve_savepoint(&project_dir, &key) {
-        if let Ok(manifest) = manifest_at_revision(pvcs.as_ref(), &project_dir, &saved) {
-            members.take_manifest(&manifest);
-        }
-    }
+/// Drop, in each repo of the op's project in `workspace`, every `rebased`
+/// backup a branch reaches: abort put that branch back where the rebase
+/// found it, so the backup holds nothing a branch does not.
+fn drop_reached_rebased_backups(workspace: &Path, project: &ProjectName) {
+    let project_dir = project_dir(workspace, project);
+    let mut dirs = vec![(project_dir.clone(), project_vcs())];
     if let Ok(manifest) = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME)) {
-        members.take_manifest(&manifest);
-    }
-    let repos = members
-        .0
-        .iter()
-        .map(|(path, vcs_type)| {
-            (
-                RepoKey::Member(path.clone()),
-                OpMembers::vcs(*vcs_type),
-                workspace.join(path.as_path()),
-            )
-        })
-        .chain(std::iter::once((
-            RepoKey::Project,
-            pvcs,
-            project_dir.clone(),
-        )));
-    for (repo, vcs, dir) in repos {
-        if !vcs.is_repo(&dir) || vcs.mid_op(&dir).is_some() {
-            continue;
+        for (path, entry) in manifest.iter_entries() {
+            dirs.push((workspace.join(path.as_path()), vcs_for(entry.vcs_type)));
         }
-        let Some(saved) = vcs.resolve_savepoint(&dir, &key) else {
+    }
+    for (dir, vcs) in dirs.iter().filter(|(dir, vcs)| vcs.is_repo(dir)) {
+        let Ok(listed) = vcs.list_backups(dir, crate::vcs::RemoteTracking::Ignored) else {
             continue;
         };
-        let head = vcs.head_revision(&dir)?;
-        if head.id() == saved.id()
-            || journaled.get(&repo) == Some(head.id())
-            || vcs.is_ancestor(&dir, &head, &saved)?
-        {
-            continue;
+        for listed in listed.into_iter().filter(|listed| {
+            listed.redundant() && listed.backup.mark == Some(crate::vcs::BackupMark::Rebased)
+        }) {
+            let _ = vcs.drop_backup(dir, &listed.backup.name);
         }
-        let source = vcs.head_backup_source(&dir)?;
-        let kept = vcs.create_backup(&dir, &source, &head, None)?;
-        op_state::journal_backup(
-            owner_workspace,
-            op_state::KeptBackup {
-                repo: repo.clone(),
-                name: kept.backup().name.as_str().to_owned(),
-                published: false,
-            },
-        )?;
-        op_state::journal_tip(owner_workspace, repo, head.id())?;
     }
-    Ok(())
 }
 
-/// The backups the op journaled in `root`, once abort restored it: each one
-/// its repo's restored checkout reaches goes, and every other stays, named
-/// with the command that shows what it holds beyond that checkout.
-fn settle_journaled_backups(
-    primary: &Path,
-    root: &Path,
+/// The line saying what abort did to the checkout at `dir`, and, where it
+/// kept what that discarded, the backups holding it and the command that
+/// shows what they hold beyond `base`.
+fn kept_line(
+    vcs: &dyn Vcs,
     label: &str,
-    project: &ProjectName,
-    kept: &[op_state::KeptBackup],
-) {
-    let mut reached = Vec::new();
-    for one in kept {
-        let (dir, vcs) = match &one.repo {
-            RepoKey::Project => (project_dir(root, project), project_vcs()),
-            RepoKey::Member(path) => (root.join(path.as_path()), crate::vcs::probe_vcs()),
-        };
-        let Some(found) = vcs
-            .list_backups(&dir, crate::vcs::RemoteTracking::Counted)
-            .ok()
-            .and_then(|listed| {
-                listed
-                    .into_iter()
-                    .find(|listed| listed.backup.name.as_str() == one.name)
-            })
-        else {
-            continue;
-        };
-        let restored = vcs.head_revision(&dir).ok();
-        let reaches = restored.as_ref().is_some_and(|restored| {
-            vcs.is_ancestor(&dir, &found.backup.tip, restored)
-                .unwrap_or(false)
-        });
-        if reaches {
-            reached.push(one);
-        } else {
-            outln!(
-                "{}",
-                kept_line(
-                    &format!("{label}{}", RepoOperand::of(&one.repo, project)),
-                    "a tip it held during this operation, which the restore does not reach, is",
-                    &dir,
-                    &one.name,
-                    restored.as_ref().map(ResolvedRevisionId::id),
-                )
-            );
-        }
+    what: &str,
+    dir: &Path,
+    kept: &[&crate::vcs::BackupName],
+    base: &CommitId,
+) -> String {
+    if kept.is_empty() {
+        return format!("  {label}: {what}");
     }
-    crate::backup::drop_rebased(primary, root, project, reached.into_iter());
-}
-
-/// The line naming a backup abort kept in `dir` and the command that shows
-/// what it holds: the commits beyond `base`, or, with no base, the edits of
-/// the working copy it keeps.
-fn kept_line(label: &str, what: &str, dir: &Path, backup: &str, base: Option<&CommitId>) -> String {
-    let vcs = crate::vcs::probe_vcs();
-    let show = match base {
-        Some(base) => vcs
-            .hint(crate::vcs::VcsAction::ShowKeptCommits)
-            .replace("<base>", base.as_str()),
-        None => vcs.hint(crate::vcs::VcsAction::ShowKeptEdits).to_owned(),
+    let names: Vec<String> = kept.iter().map(ToString::to_string).collect();
+    let said = if what.is_empty() {
+        String::new()
+    } else {
+        format!("{what}; ")
     };
     format!(
-        "  {label}: {what} kept as backup {backup}; this shows it:\n\t{}",
-        show.replace("<checkout>", &dir.display().to_string())
-            .replace("<backup>", backup)
+        "  {label}: {said}what abort discarded is kept as backup {}; this shows it: {}",
+        names.join(", "),
+        vcs.show_kept(dir, base, kept)
     )
 }
 
@@ -9298,19 +9151,21 @@ fn restore_op_ref_moves(
                 repo,
                 branch,
                 dir,
-                tip,
                 to,
                 backup,
-            } => outln!(
-                "{}",
-                kept_line(
-                    &RepoOperand::of(&repo, project).to_string(),
-                    &format!("'{branch}' restored to {}; its tip {}, which this operation did not write, is", to.short(), tip.short()),
-                    &dir,
-                    &backup,
-                    Some(&to),
+            } => {
+                outln!(
+                    "{}",
+                    kept_line(
+                        crate::vcs::probe_vcs().as_ref(),
+                        &RepoOperand::of(&repo, project).to_string(),
+                        &format!("'{branch}' restored to {}", to.short()),
+                        &dir,
+                        &[&crate::vcs::BackupName::new(backup)],
+                        &to,
+                    )
                 )
-            ),
+            }
             crate::merge_upstream::RefMoveLeft::Foreign {
                 repo,
                 branch,
@@ -9333,7 +9188,9 @@ fn restore_op_ref_moves(
                         "  {named}: '{branch}' is checked out at {held}, so it is left where \
                          it is"
                     );
-                    tally.blocked.push((named, detach_choice(vcs.as_ref(), &held_at, &branch)));
+                    tally
+                        .blocked
+                        .push((named, detach_choice(vcs.as_ref(), &held_at, &branch)));
                 } else if now.is_none() {
                     let from = ref_moves
                         .iter()
@@ -9726,21 +9583,11 @@ fn plan_abort_workspace(
     side: AbortSide,
     label: &str,
     op_id: &OpId,
-    tips: Option<&op_state::PhaseTips>,
     moved_in_target: Option<&[RepoKey]>,
-    wrote_in_target: &std::collections::BTreeMap<RepoKey, CommitId>,
     operates_in: Option<&std::collections::BTreeSet<RepoKey>>,
-    carries: &[op_state::Carrying],
     own_steps: &std::collections::BTreeMap<RepoKey, Vec<crate::vcs::OwnStep>>,
-    relocking: &[CommitId],
     plan: &mut AbortPlan,
 ) {
-    let empty_tips = std::collections::BTreeMap::new();
-    let converged_tips = tips.and_then(|t| t.converged()).unwrap_or(&empty_tips);
-    let advanced_tips = match side {
-        AbortSide::Replay => tips.and_then(|t| t.advanced()).unwrap_or(&empty_tips),
-        AbortSide::LandTarget => &empty_tips,
-    };
     let restore_key = side.savepoint_key(op_id);
 
     let project_vcs = project_vcs();
@@ -9807,30 +9654,11 @@ fn plan_abort_workspace(
             (AbortSide::Replay, Some(ours)) if ours.contains(&repo_key) => Integrates::Yes,
             (AbortSide::Replay, Some(_)) => Integrates::No,
         };
-        let stopped_carry = match side {
-            AbortSide::Replay => carries
-                .iter()
-                .find(|c| c.repo == repo_key && c.composed.is_none())
-                .map(|c| c.from.clone()),
-            AbortSide::LandTarget => None,
-        };
         let attribution = Attribution {
-            intent: match side {
-                AbortSide::Replay => advanced_tips.get(&repo_key),
-                AbortSide::LandTarget => wrote_in_target
-                    .get(&repo_key)
-                    .filter(|wrote| Some(*wrote) != converged_tips.get(&repo_key)),
-            },
-            converged: converged_tips.get(&repo_key).or(stopped_carry.as_ref()),
-            started_from: stopped_carry.as_ref(),
             integrates,
             own_steps: match side {
                 AbortSide::Replay => own_steps.get(&repo_key).map_or(&[], Vec::as_slice),
                 AbortSide::LandTarget => &[],
-            },
-            relocking: match (side, &repo_key) {
-                (AbortSide::Replay, RepoKey::Project) => relocking,
-                _ => &[],
             },
         };
         plan_checkout(plan, at, &restore_key, &attribution);
@@ -9875,7 +9703,6 @@ fn plan_in_place(
         return;
     };
     let key = SavepointKey::LandInPlace(record.id.clone());
-    let converged = record.tips.converged();
     for workspace in take_in.in_place_workspaces() {
         plan.steps.push(AbortStep::BeginInPlace);
         for (repo_key, wrote) in take_in.in_place_moves(&workspace) {
@@ -9931,12 +9758,8 @@ fn plan_in_place(
                 continue;
             }
             let attribution = Attribution {
-                intent: wrote,
-                converged: converged.and_then(|tips| tips.get(repo_key)),
-                started_from: None,
                 integrates: Integrates::No,
                 own_steps: &[],
-                relocking: &[],
             };
             plan_checkout(plan, at, &key, &attribution);
         }
@@ -10322,25 +10145,6 @@ struct TargetStanding {
 impl TargetStanding {
     fn restorable(&self) -> bool {
         self.moved.is_empty() && self.held.is_empty() && self.pinned.is_empty()
-    }
-
-    /// Whether keeping every moved tip as a backup puts the whole target
-    /// back: not
-    /// where the project branch moved, since its lock pins whatever its
-    /// commits moved, this landing's or not, nor where a branch the landing
-    /// created moved on, which abort deletes rather than restores.
-    fn abandonable(&self) -> bool {
-        self.held.is_empty()
-            && self.pinned.is_empty()
-            && self.moved.iter().all(|moved| {
-                moved.now.is_some()
-                    && moved.repo != RepoKey::Project
-                    && !moved.created
-                    && moved
-                        .in_place
-                        .as_ref()
-                        .is_none_or(|workspace| workspace.is_dir())
-            })
     }
 
     fn writes(&self) -> impl Iterator<Item = &TargetWrite> {
@@ -10841,7 +10645,7 @@ fn refuse_abort(
     target_label: &str,
 ) -> anyhow::Result<()> {
     let vcs = crate::vcs::probe_vcs();
-    let unit = standing.filter(|s| !s.restorable() && !s.abandonable());
+    let unit = standing.filter(|s| !s.restorable());
     let target_foreign = unit.is_some() || plan.blocks(true);
     let source_blocked = plan.blocks(false);
     let mut lines = Vec::new();
@@ -11006,7 +10810,6 @@ fn refuse_abort(
 /// `rwv abort --leave-target`: restore the source, leave the target as it
 /// stands, and end the landing.
 fn abort_leaving_target(
-    ctx: &WorkspaceContext,
     record: &op_state::OwnerRecord,
     owner: &CanonicalPath,
     standing: &TargetStanding,
@@ -11053,18 +10856,7 @@ fn abort_leaving_target(
         print_abort_recovery_options(&tally, "rwv abort --leave-target");
     }
     if tally.clean() {
-        let kept = take_in.map(|t| t.backups.clone()).unwrap_or_default();
-        settle_journaled_backups(
-            ctx.primary_path(),
-            owner.as_path(),
-            if owner.as_path() == ctx.active_root().as_path() {
-                ""
-            } else {
-                AbortSide::Replay.label()
-            },
-            project,
-            &kept,
-        );
+        drop_reached_rebased_backups(source_dir.as_path(), project);
         for dir in std::iter::once(source_dir.as_path())
             .chain(record.target.as_ref().map(CanonicalPath::as_path))
         {
@@ -11227,8 +11019,8 @@ fn plan_landing_refs(
             };
             let written = journaled
                 .iter()
-                .find(|moved| moved.repo == repo_key && moved.branch == saved.branch.as_str());
-            let Some(written) = written else {
+                .any(|moved| moved.repo == repo_key && moved.branch == saved.branch.as_str());
+            if !written {
                 plan.steps.push(AbortStep::UnwrittenRef {
                     at,
                     key: key.clone(),
@@ -11237,7 +11029,7 @@ fn plan_landing_refs(
                 continue;
             };
             let freed = plan.frees(&saved.branch);
-            match vcs.plan_ref_restore(&dir, &saved, Some(&written.to), &freed) {
+            match vcs.plan_ref_restore(&dir, &saved, &freed) {
                 Ok(restore) => plan.steps.push(AbortStep::Ref {
                     at,
                     key: key.clone(),
@@ -11732,20 +11524,16 @@ fn execute_ref_step(
         Ok(crate::vcs::RefRestoreOutcome::Restored) => {
             outln!("  {named}: '{branch}' restored to {}", saved.at.short());
         }
-        Ok(crate::vcs::RefRestoreOutcome::Kept { tip, backup }) => {
+        Ok(crate::vcs::RefRestoreOutcome::Kept { backup, .. }) => {
             outln!(
                 "{}",
                 kept_line(
+                    vcs,
                     &at.label,
-                    &format!(
-                        "'{branch}' restored to {}; its tip {}, which this operation did not \
-                         write, is",
-                        saved.at.short(),
-                        tip.short()
-                    ),
+                    &format!("'{branch}' restored to {}", saved.at.short()),
                     dir,
-                    &backup.backup().name.to_string(),
-                    Some(&saved.at),
+                    &[&backup.backup().name],
+                    &saved.at,
                 )
             );
         }
@@ -11831,17 +11619,15 @@ fn report_abort_outcome(
         VerifiedRestoreOutcome::Untouched => {
             tally.noise.untouched += 1;
         }
-        VerifiedRestoreOutcome::RestoredFromIntent => {
-            outln!("  {label}: restored (from recorded intent tip)");
-        }
-        VerifiedRestoreOutcome::RestoredFromConverged => {
-            outln!("  {label}: restored (from recorded converged tip)");
+        VerifiedRestoreOutcome::Restored => {
+            outln!("  {label}: restored");
         }
         VerifiedRestoreOutcome::Canceled { stopped, then } => match then.as_ref() {
-            VerifiedRestoreOutcome::Untouched
-            | VerifiedRestoreOutcome::RestoredFromIntent
-            | VerifiedRestoreOutcome::RestoredFromConverged => {
-                outln!("  {label}: restored (from mid-op state)");
+            VerifiedRestoreOutcome::Untouched => {
+                outln!("  {label}: canceled the {stopped} in progress");
+            }
+            VerifiedRestoreOutcome::Restored => {
+                outln!("  {label}: canceled the {stopped} in progress and restored");
             }
             then => {
                 outln!("  {label}: canceled the {stopped} in progress");
@@ -11896,40 +11682,35 @@ fn report_abort_outcome(
             );
         }
         VerifiedRestoreOutcome::Kept { kept, then } => {
-            let tip_kept = kept
-                .iter()
-                .any(|work| matches!(work, crate::vcs::KeptWork::Tip(_)));
-            for work in kept {
-                let (what, backup, base) = match work {
-                    crate::vcs::KeptWork::Edits(backup) => {
-                        ("its uncommitted edits are", backup, None)
+            let what = match then.as_ref() {
+                VerifiedRestoreOutcome::Restored => Some("restored".to_owned()),
+                VerifiedRestoreOutcome::Canceled { stopped, then } => match then.as_ref() {
+                    VerifiedRestoreOutcome::Untouched => {
+                        Some(format!("canceled the {stopped} in progress"))
                     }
-                    crate::vcs::KeptWork::Commits(backup) => (
-                        "the commits its detached HEAD held, which no branch reaches, are",
-                        backup,
-                        savepoint,
-                    ),
-                    crate::vcs::KeptWork::Tip(backup) => (
-                        "its tip, holding commits this operation did not make, is",
-                        backup,
-                        savepoint,
-                    ),
-                };
-                outln!(
-                    "{}",
-                    kept_line(
-                        label,
-                        what,
-                        repo_abs,
-                        &backup.backup().name.to_string(),
-                        base
-                    )
-                );
-            }
-            if tip_kept {
-                outln!("  {label}: restored");
-            } else {
+                    VerifiedRestoreOutcome::Restored => {
+                        Some(format!("canceled the {stopped} in progress and restored"))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
+            let what = what.unwrap_or_else(|| {
                 report_abort_outcome(vcs, at, then, savepoint, tally);
+                String::new()
+            });
+            let names: Vec<&crate::vcs::BackupName> =
+                kept.iter().map(|kept| &kept.backup().name).collect();
+            let base = match savepoint {
+                Some(saved) => Ok(saved.clone()),
+                None => vcs.head_revision(repo_abs).map(|head| head.id().clone()),
+            };
+            match base {
+                Ok(base) => outln!("{}", kept_line(vcs, label, &what, repo_abs, &names, &base)),
+                Err(e) => {
+                    eprintln!("  {label}: {e:#}");
+                    tally.any_failure = true;
+                }
             }
         }
         VerifiedRestoreOutcome::SwitchedBack { off, then } => {

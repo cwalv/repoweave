@@ -52,13 +52,7 @@ fn named(plan: &CheckoutRestorePlan) -> String {
         CheckoutRestorePlan::NoSavepoint => "NoSavepoint".to_owned(),
         CheckoutRestorePlan::LeaveStopped { .. } => "LeftStopped".to_owned(),
         CheckoutRestorePlan::Untouched { .. } => "Untouched".to_owned(),
-        CheckoutRestorePlan::Reset { why, .. } => match why {
-            RestoredFrom::Intent => "RestoredFromIntent",
-            RestoredFrom::Converged | RestoredFrom::Reached | RestoredFrom::Kept => {
-                "RestoredFromConverged"
-            }
-        }
-        .to_owned(),
+        CheckoutRestorePlan::Reset { .. } => "Restored".to_owned(),
         CheckoutRestorePlan::Cancel { then, .. } => format!("Canceled({})", named(then)),
         CheckoutRestorePlan::SwitchBack { then, .. } => format!("SwitchedBack({})", named(then)),
         CheckoutRestorePlan::Blocked(outcome) => shape(outcome),
@@ -103,54 +97,62 @@ fn a_checkout_at_its_savepoint_is_untouched() {
 }
 
 #[test]
-fn a_tip_the_op_wrote_is_reset_to_the_savepoint() {
+fn a_tip_the_savepoint_reaches_is_reset_keeping_nothing() {
     let p = repo();
+    commit(p.path(), "ahead");
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    let wrote = commit(p.path(), "op");
-    planned_then_run(
-        p.path(),
-        &Attribution {
-            intent: Some(&wrote),
-            ..Attribution::default()
-        },
-        "RestoredFromIntent",
-    );
+    git(p.path(), &["reset", "-q", "--hard", "HEAD~1"]);
+    let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
+    assert_eq!(outcome, VerifiedRestoreOutcome::Restored);
     assert_eq!(&head(p.path()), saved.id());
 }
 
 #[test]
-fn a_tip_the_op_did_not_write_is_kept_before_the_reset() {
+fn a_tip_another_branch_reaches_is_reset_keeping_nothing() {
     let p = repo();
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    commit(p.path(), "resolved by hand");
-    let attribution = Attribution::default();
-    let plan = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution)
-        .unwrap();
-    assert!(
-        matches!(
-            &plan,
-            CheckoutRestorePlan::Reset {
-                why: RestoredFrom::Kept,
-                ..
-            }
-        ),
-        "{plan:?}"
-    );
-    let outcome = GitVcs
-        .execute_checkout_restore(p.path(), &key(), &plan)
-        .unwrap();
-    assert!(
-        matches!(&outcome, VerifiedRestoreOutcome::Kept { kept, .. }
-            if matches!(kept.as_slice(), [KeptWork::Tip(_)])),
-        "{outcome:?}"
-    );
+    commit(p.path(), "also on another branch");
+    git(p.path(), &["branch", "other"]);
+    let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
+    assert_eq!(outcome, VerifiedRestoreOutcome::Restored);
     assert_eq!(&head(p.path()), saved.id());
-    assert!(!git(
-        p.path(),
-        &["log", "--all", "--format=%H", "-Sresolved by hand"]
-    )
-    .is_empty());
+}
+
+#[test]
+fn a_tip_holding_a_commit_nothing_else_reaches_is_kept_in_the_branch_slot_whoever_made_it() {
+    let p = repo();
+    let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    let tip = commit(p.path(), "resolved by hand");
+    let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
+    let VerifiedRestoreOutcome::Kept { kept, .. } = &outcome else {
+        panic!("{outcome:?}");
+    };
+    let [slot] = kept.as_slice() else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(slot.backup().name.as_str(), "main/aborted");
+    assert_eq!(slot.backup().tip.id(), &tip);
+    assert_eq!(&head(p.path()), saved.id());
+}
+
+#[test]
+fn a_second_restore_overwrites_the_branch_slot() {
+    let p = repo();
+    let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    commit(p.path(), "first");
+    planned_then_run(p.path(), &Attribution::default(), "Restored");
+    GitVcs.create_savepoint(p.path(), &key()).unwrap();
+    let second = commit(p.path(), "second");
+    planned_then_run(p.path(), &Attribution::default(), "Restored");
+    let listed = GitVcs
+        .list_backups(p.path(), RemoteTracking::Counted)
+        .unwrap();
+    let slots: Vec<_> = listed
+        .iter()
+        .map(|b| (b.backup.name.as_str().to_owned(), b.backup.tip.id().clone()))
+        .collect();
+    assert_eq!(slots, vec![("main/aborted".to_owned(), second)]);
+    assert_eq!(&head(p.path()), saved.id());
 }
 
 /// A merge stopped on a conflict: `side` and `main` both change `f`.
@@ -206,7 +208,7 @@ fn a_merge_the_op_never_started_on_a_tip_it_never_wrote_is_canceled_and_its_tip_
         &Attribution {
             ..Attribution::default()
         },
-        "Canceled(RestoredFromConverged)",
+        "Canceled(Restored)",
     );
     assert_eq!(GitVcs.mid_op(p.path()), None);
     assert_eq!(&head(p.path()), saved.id());
@@ -238,16 +240,9 @@ fn a_detached_checkout_is_put_back_on_its_branch() {
 fn edits_are_kept_before_the_reset() {
     let p = repo();
     let saved = GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    let wrote = commit(p.path(), "op");
+    commit(p.path(), "op");
     std::fs::write(p.path().join("f"), "edited").unwrap();
-    let outcome = planned_then_run(
-        p.path(),
-        &Attribution {
-            intent: Some(&wrote),
-            ..Attribution::default()
-        },
-        "RestoredFromIntent",
-    );
+    let outcome = planned_then_run(p.path(), &Attribution::default(), "Restored");
     assert!(
         matches!(outcome, VerifiedRestoreOutcome::Kept { .. }),
         "{outcome:?}"
@@ -273,16 +268,9 @@ fn a_submodule_left_dirty_elsewhere_does_not_block_the_reset_that_never_touches_
     );
     git(p.path(), &["commit", "-qm", "sub"]);
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    let wrote = commit(p.path(), "op");
+    commit(p.path(), "op");
     std::fs::write(p.path().join("sub/f"), "dirt in the submodule").unwrap();
-    planned_then_run(
-        p.path(),
-        &Attribution {
-            intent: Some(&wrote),
-            ..Attribution::default()
-        },
-        "RestoredFromIntent",
-    );
+    planned_then_run(p.path(), &Attribution::default(), "Restored");
     assert_eq!(
         std::fs::read_to_string(p.path().join("sub/f")).unwrap(),
         "dirt in the submodule"
@@ -319,13 +307,9 @@ fn a_branch_gone_blocks_the_switch_back() {
 fn a_plan_the_checkout_moved_under_writes_nothing_and_reports_what_it_holds() {
     let p = repo();
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
-    let wrote = commit(p.path(), "op");
-    let attribution = Attribution {
-        intent: Some(&wrote),
-        ..Attribution::default()
-    };
+    commit(p.path(), "op");
     let plan = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution)
+        .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     let moved = commit(p.path(), "meanwhile");
 
@@ -353,9 +337,7 @@ fn a_ref_plan_the_branch_moved_under_writes_nothing() {
         branch: RawRefName::new("topic"),
         at,
     };
-    let plan = GitVcs
-        .plan_ref_restore(p.path(), &saved, Some(&wrote), &[])
-        .unwrap();
+    let plan = GitVcs.plan_ref_restore(p.path(), &saved, &[]).unwrap();
     assert!(matches!(plan, RefRestorePlan::Restore { .. }), "{plan:?}");
     let moved = commit(p.path(), "meanwhile");
     git(p.path(), &["branch", "-qf", "topic", moved.as_str()]);
@@ -626,9 +608,7 @@ fn a_ref_untouched_plan_the_branch_moved_under_keeps_its_savepoint() {
     GitVcs
         .create_ref_savepoint(p.path(), &key(), &saved.branch, &saved.at)
         .unwrap();
-    let plan = GitVcs
-        .plan_ref_restore(p.path(), &saved, None, &[])
-        .unwrap();
+    let plan = GitVcs.plan_ref_restore(p.path(), &saved, &[]).unwrap();
     assert!(matches!(plan, RefRestorePlan::Untouched), "{plan:?}");
     git(p.path(), &["switch", "-q", "topic"]);
     let moved = commit(p.path(), "meanwhile");
@@ -650,9 +630,7 @@ fn a_ref_untouched_plan_the_branch_moved_under_keeps_its_savepoint() {
 fn a_ref_restore_plan_the_branch_was_checked_out_under_writes_nothing() {
     let p = repo();
     let (saved, wrote) = ref_at_a_tip_the_op_wrote(p.path());
-    let plan = GitVcs
-        .plan_ref_restore(p.path(), &saved, Some(&wrote), &[])
-        .unwrap();
+    let plan = GitVcs.plan_ref_restore(p.path(), &saved, &[]).unwrap();
     assert!(matches!(plan, RefRestorePlan::Restore { .. }), "{plan:?}");
     git(p.path(), &["switch", "-q", "topic"]);
 
@@ -671,19 +649,15 @@ fn a_ref_restore_plan_the_branch_was_checked_out_under_writes_nothing() {
 #[test]
 fn a_branch_held_by_a_checkout_the_plan_switches_off_does_not_block_its_restore() {
     let p = repo();
-    let (saved, wrote) = ref_at_a_tip_the_op_wrote(p.path());
+    let (saved, _) = ref_at_a_tip_the_op_wrote(p.path());
     git(p.path(), &["switch", "-q", "topic"]);
     let held = vec![p.path().to_path_buf()];
-    let blocked = GitVcs
-        .plan_ref_restore(p.path(), &saved, Some(&wrote), &[])
-        .unwrap();
+    let blocked = GitVcs.plan_ref_restore(p.path(), &saved, &[]).unwrap();
     assert!(
         matches!(blocked, RefRestorePlan::Blocked { .. }),
         "{blocked:?}"
     );
-    let freed = GitVcs
-        .plan_ref_restore(p.path(), &saved, Some(&wrote), &held)
-        .unwrap();
+    let freed = GitVcs.plan_ref_restore(p.path(), &saved, &held).unwrap();
     assert!(matches!(freed, RefRestorePlan::Restore { .. }), "{freed:?}");
 }
 
@@ -696,12 +670,8 @@ fn edits_that_collide_with_the_switch_back_are_kept_and_it_runs() {
     GitVcs.create_savepoint(p.path(), &key()).unwrap();
     git(p.path(), &["switch", "-q", "-c", "other", base.as_str()]);
     std::fs::write(p.path().join("f"), "mine").unwrap();
-    let attribution = Attribution {
-        intent: Some(&base),
-        ..Attribution::default()
-    };
     let plan = GitVcs
-        .plan_checkout_restore(p.path(), &key(), &attribution)
+        .plan_checkout_restore(p.path(), &key(), &Attribution::default())
         .unwrap();
     let outcome = GitVcs
         .execute_checkout_restore(p.path(), &key(), &plan)
@@ -784,7 +754,10 @@ fn an_untracked_file_in_a_cancels_way_is_kept_before_it_is_cleared() {
     let VerifiedRestoreOutcome::Kept { kept, .. } = &outcome else {
         panic!("expected the working copy kept, got {outcome:?}");
     };
-    let Some(KeptWork::Edits(edits)) = kept.iter().find(|k| matches!(k, KeptWork::Edits(_))) else {
+    let Some(edits) = kept
+        .iter()
+        .find(|k| k.backup().mark == Some(BackupMark::AbortedWorkingCopy))
+    else {
         panic!("expected the working copy kept, got {outcome:?}");
     };
     let tip = edits.backup().tip.id().as_str().to_owned();

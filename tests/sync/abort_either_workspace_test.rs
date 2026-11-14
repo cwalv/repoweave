@@ -223,11 +223,11 @@ fn abort_restores_both_workspaces(from: Invoked) {
         Invoked::Workweave => "",
     };
     for line in [
-        format!("  {seat_label}projects/{PROJECT}: restored (from recorded intent tip)"),
-        format!("  {seat_label}{LIB}: restored (from mid-op state)"),
+        format!("  {seat_label}projects/{PROJECT}: restored"),
+        format!("  {seat_label}{LIB}: canceled the rebase in progress"),
     ] {
         assert!(
-            stdout.lines().any(|l| l == line),
+            stdout.lines().any(|l| l.starts_with(&line)),
             "{from:?}: expected the line {line:?}\n{}",
             transcript(&out)
         );
@@ -302,15 +302,14 @@ fn from_the_workweave_the_targets_tip_at_its_journaled_tip_is_left() {
 /// printed.
 fn shown_backups(out: &Output) -> String {
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let mut lines = stdout.lines();
     let mut shown = String::new();
-    while let Some(line) = lines.next() {
-        if !line.contains("kept as backup") || !line.ends_with("this shows it:") {
+    for line in stdout.lines() {
+        let Some((_, show)) = line.split_once("kept as backup ") else {
             continue;
-        }
-        let show = lines
-            .next()
-            .unwrap_or_else(|| panic!("{}", transcript(out)));
+        };
+        let Some((_, show)) = show.split_once("this shows it: ") else {
+            panic!("{}", transcript(out));
+        };
         let words: Vec<&str> = show.split_whitespace().collect();
         assert_eq!(words[0], "git", "{show}");
         shown.push_str(&common::git_in(Path::new("."), &words[1..]));
@@ -372,7 +371,7 @@ fn a_staged_resolution_is_kept_as_a_backup(from: Invoked) {
     let out = parked.abort(from);
     assert!(out.status.success(), "{from:?}:\n{}", transcript(&out));
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("uncommitted edits are kept as backup"),
+        String::from_utf8_lossy(&out.stdout).contains("what abort discarded is kept as backup"),
         "{from:?}:\n{}",
         transcript(&out)
     );
@@ -413,12 +412,11 @@ fn an_uncommitted_edit_is_kept_as_a_backup(from: Invoked) {
         Invoked::Target => "[source] ",
         Invoked::Workweave => "",
     };
-    let line =
-        format!("  {seat_label}projects/{PROJECT}: its uncommitted edits are kept as backup");
+    let line = format!("  {seat_label}projects/{PROJECT}: ");
     assert!(
         String::from_utf8_lossy(&out.stdout)
             .lines()
-            .any(|l| l.starts_with(&line)),
+            .any(|l| l.starts_with(&line) && l.contains("what abort discarded is kept as backup")),
         "{from:?}: expected {line:?}\n{}",
         transcript(&out)
     );

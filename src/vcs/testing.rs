@@ -664,7 +664,6 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _saved: &RefSavepoint,
-        _wrote: Option<&CommitId>,
         _freed: &[PathBuf],
     ) -> Result<crate::vcs::RefRestorePlan, VcsError> {
         unsupported("plan_ref_restore")
@@ -742,6 +741,20 @@ impl Vcs for FakeVcs {
 
     fn drop_backup(&self, _repo: &Path, _name: &BackupName) -> Result<(), VcsError> {
         unsupported("drop_backup")
+    }
+
+    fn holds_only_its_own(
+        &self,
+        _repo: &Path,
+        _tip: &CommitId,
+        _branch: Option<&RawRefName>,
+        _beside: &CommitId,
+    ) -> Result<bool, VcsError> {
+        unsupported("holds_only_its_own")
+    }
+
+    fn show_kept(&self, _checkout: &Path, _base: &CommitId, _kept: &[&BackupName]) -> String {
+        String::new()
     }
 
     fn reached_by_no_branch(

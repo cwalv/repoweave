@@ -1341,35 +1341,6 @@ fn held(repo: &str, what: &str, error: &dyn std::fmt::Display) -> anyhow::Error 
     )
 }
 
-/// A checkout at a tip the port did not write.
-fn foreign_tip(
-    repo: &str,
-    dir: &Path,
-    vcs: &dyn Vcs,
-    found: &CommitId,
-    left: &CommitId,
-    branch: &str,
-) -> anyhow::Error {
-    let keep = vcs
-        .hint(crate::vcs::VcsAction::BranchAt)
-        .replace("<checkout>", &dir.display().to_string())
-        .replace("<sha>", found.short());
-    crate::refusal::refusal(
-        RefusalKind::ForeignTip,
-        format!(
-            "rwv {VERB}: {repo}: its checkout is at {}, a commit the port did not make; the port \
-             left '{branch}' at {}.\nKeep {} on a branch of its own if it is wanted (`{keep}`), \
-             move '{branch}' back to {}, then run `{}`; or `rwv abort` to put everything back as \
-             it was",
-            found.short(),
-            left.short(),
-            found.short(),
-            left.short(),
-            crate::op_state::resume_command(OpVerb::CherryPick),
-        ),
-    )
-}
-
 /// A checkout no longer on the branch the port copies onto.
 fn off_branch(
     repo: &str,
@@ -1427,9 +1398,10 @@ fn holds_project_commit(
 }
 
 /// What `--continue` finds before it moves anything: each repo the port
-/// moves on the branch it planned against, at the tip the port left it or
-/// holding the copy it started, and no operation in progress the port did
-/// not start; each excepted member judged again at its tip.
+/// moves on the branch it planned against, and no operation in progress the
+/// port did not start; each excepted member judged again at its tip. A
+/// commit made on a branch at the stop is taken in: the port goes on from
+/// it, as every `--continue` does.
 fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow::Result<()> {
     for pick in &record.members {
         let RepoKey::Member(path) = &pick.repo else {
@@ -1469,16 +1441,6 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
             }
             continue;
         }
-        if head != *pick.expected() && !holds_started_copy(vcs, &dir, pick, &head)? {
-            return Err(foreign_tip(
-                path.as_str(),
-                &dir,
-                vcs,
-                &head,
-                pick.expected(),
-                &pick.branch,
-            ));
-        }
     }
     if !record.project_started {
         let vcs = here.vcs.as_ref();
@@ -1487,18 +1449,7 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
         {
             return Err(busy.refused());
         }
-        let head = vcs.head_revision(&here.dir)?.id().clone();
-        if head != record.head {
-            let branch = crate::branch::checked_out(vcs, &here.dir)?.unwrap_or_default();
-            return Err(foreign_tip(
-                &here.label(),
-                &here.dir,
-                vcs,
-                &head,
-                &record.head,
-                &branch,
-            ));
-        }
+        record.head = vcs.head_revision(&here.dir)?.id().clone();
     }
     if !record.excepted.is_empty() {
         let aligner = Aligner::open(here.ctx.active_path(), &here.project, Accounting::default())?;
@@ -1688,17 +1639,10 @@ fn copy_members(
             let copied = if pick.copying && head == expected && in_flight.as_ref() == Some(&next) {
                 vcs.continue_copy(&dir)
                     .map_err(|e| held(path.as_str(), next.short(), &e))?
-            } else if in_flight.is_none() && head != expected {
-                if !holds_started_copy(vcs, &dir, pick, &head)? {
-                    return Err(foreign_tip(
-                        path.as_str(),
-                        &dir,
-                        vcs,
-                        &head,
-                        &expected,
-                        &pick.branch,
-                    ));
-                }
+            } else if in_flight.is_none()
+                && head != expected
+                && holds_started_copy(vcs, &dir, pick, &head)?
+            {
                 Copied::Commit(head)
             } else if vcs.mid_operation(&dir).is_none() {
                 record.members[i].copying = true;
@@ -1801,12 +1745,8 @@ fn start_project_copy(
                     .context("a checkout in an operation is judged busy")?;
                 return Err(busy.refused());
             }
-            None if head != record.head => {
-                if holds_project_commit(vcs, dir, record, &head)? {
-                    return Ok(ProjectCopy::Made(head));
-                }
-                let branch = crate::branch::checked_out(vcs, dir)?.unwrap_or_default();
-                return Err(foreign_tip(&label, dir, vcs, &head, &record.head, &branch));
+            None if head != record.head && holds_project_commit(vcs, dir, record, &head)? => {
+                return Ok(ProjectCopy::Made(head));
             }
             None => {
                 let authored =

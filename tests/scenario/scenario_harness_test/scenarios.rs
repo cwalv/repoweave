@@ -3652,9 +3652,9 @@ pub fn pull_abort_over_a_cancel_the_vcs_refuses() -> Scenario {
             Step::rwv(&b(), &["abort"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
-                    "local/remotes/app: its uncommitted edits are kept as backup",
+                    "local/remotes/app: what abort discarded is kept as backup",
                 )),
-            kept_backup_shown(&b(), "remotes/app diff ", "edited mid-merge"),
+            kept_backup_shown(&b(), "remotes/app log ", "edited mid-merge"),
             Step::git(
                 &b(),
                 Repo::App,
@@ -12937,7 +12937,7 @@ fn abort_refused_whole(step: Step, landing: bool, unchanged: &[Place]) -> Step {
 /// The show line the last rwv step printed for a backup it kept, the one
 /// holding `holding`, run as printed: what it shows holds `shows`.
 fn kept_backup_shown(at: &Place, holding: &'static str, shows: &'static str) -> Step {
-    Step::rwv_printed_holding(at, "git -C ", holding)
+    Step::rwv_printed_within(at, "git -C ", holding)
         .expect(Exit::Succeeds)
         .claim(Claim::OutputContains(shows))
 }
@@ -12958,10 +12958,10 @@ fn abort_keeps_the_operators_merge_and_commit(
             .may_strand(may_strand)
             .may_restore(&[repo])
             .claim(Claim::OutputContains(
-                "its uncommitted edits are kept as backup",
+                "what abort discarded is kept as backup",
             ))
             .claim(Claim::OutputContains(
-                "its tip, holding commits this operation did not make, is kept as backup",
+                "what abort discarded is kept as backup",
             )),
         Step::rwv_printed_holding(at, "git -C ", named)
             .expect(Exit::Succeeds)
@@ -12984,9 +12984,9 @@ pub fn pull_abort_cancels_a_merge_the_operator_began_at_the_savepoint() -> Scena
         Step::rwv(&b(), &["abort"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
-                "local/remotes/app: its uncommitted edits are kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
-        kept_backup_shown(&b(), "remotes/app diff ", "own-side.txt"),
+        kept_backup_shown(&b(), "remotes/app log ", "own-side.txt"),
         Step::git(
             &b(),
             Repo::App,
@@ -13020,7 +13020,7 @@ pub fn abort_cancels_an_interactive_rebase_the_operator_began() -> Scenario {
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "local/remotes/app: the commits its detached HEAD held, which no branch reaches, are kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "remotes/app log ", "inside-edit"),
     ]);
@@ -13346,11 +13346,11 @@ pub fn abort_keeps_edits_made_in_the_target_after_the_stop(
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(if label.is_empty() {
-                "local/remotes/app: its uncommitted edits are kept as backup"
+                "local/remotes/app: what abort discarded is kept as backup"
             } else {
-                "[target] local/remotes/app: its uncommitted edits are kept as backup"
+                "[target] local/remotes/app: what abort discarded is kept as backup"
             })),
-        kept_backup_shown(&at, "remotes/app diff ", "edited in the target"),
+        kept_backup_shown(&at, "remotes/app log ", "edited in the target"),
     ]);
     steps.push(
         Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
@@ -13397,9 +13397,9 @@ pub fn abort_keeps_an_untracked_file_in_the_way_in_the_target() -> Scenario {
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "[target] local/remotes/app: its uncommitted edits are kept as backup",
+                "[target] local/remotes/app: what abort discarded is kept as backup",
             )),
-        kept_backup_shown(&ww("w"), "remotes/app diff ", "untracked in the target"),
+        kept_backup_shown(&ww("w"), "remotes/app log ", "untracked in the target"),
         Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
             .claim(Claim::OutputLacks("w drops README")),
         Step::rwv(&ww("w"), &["land", "--retire"])
@@ -13433,9 +13433,9 @@ pub fn abort_from_the_source_keeps_a_merge_in_a_target_repo_the_landing_moved(
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "[target] local/remotes/app: its uncommitted edits are kept as backup",
+                "[target] local/remotes/app: what abort discarded is kept as backup",
             )),
-        kept_backup_shown(&ww("w"), "remotes/app diff ", "own-side.txt"),
+        kept_backup_shown(&ww("w"), "remotes/app log ", "own-side.txt"),
         Step::git(
             &a(),
             Repo::App,
@@ -13516,7 +13516,7 @@ pub fn cherry_pick_abort_keeps_edits_made_after_the_stop() -> Scenario {
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::App])
             .claim(Claim::OutputContains(
-                "local/remotes/app: its uncommitted edits are kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             ))
             .claim(Claim::AtPin {
                 at: ww("p"),
@@ -14087,14 +14087,14 @@ pub fn abort_from_the_source_keeps_colliding_edits(stop: LandedStop) -> Scenario
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib])
             .claim(Claim::OutputContains(
-                "[target] local/remotes/lib: its uncommitted edits are kept as backup",
+                "[target] local/remotes/lib: what abort discarded is kept as backup",
             ))
             .claim(Claim::OnBranch {
                 at: a(),
                 repo: Repo::Lib,
                 branch: "main",
             }),
-        kept_backup_shown(&ww("w"), "remotes/lib diff ", "edited in the target"),
+        kept_backup_shown(&ww("w"), "remotes/lib log ", "edited in the target"),
         Step::rwv(
             &ww("w"),
             &[
@@ -14124,14 +14124,14 @@ pub fn abort_in_the_target_keeps_colliding_edits(stop: LandedStop) -> Scenario {
             .may_rewind(&[Repo::Lib])
             .may_restore(&[Repo::Proj, Repo::Lib])
             .claim(Claim::OutputContains(
-                "local/remotes/lib: its uncommitted edits are kept as backup",
+                "local/remotes/lib: what abort discarded is kept as backup",
             ))
             .claim(Claim::OnBranch {
                 at: a(),
                 repo: Repo::Lib,
                 branch: "main",
             }),
-        kept_backup_shown(&a(), "remotes/lib diff ", "edited in the target"),
+        kept_backup_shown(&a(), "remotes/lib log ", "edited in the target"),
     ]);
     scenario("abort in the target keeps colliding edits", steps)
 }
@@ -14198,7 +14198,7 @@ pub fn a_continued_landing_racing_a_commit_on_a_repo_it_moved() -> Scenario {
                 .may_rewind(&[Repo::App])
                 .may_restore(&[Repo::App])
                 .claim(Claim::OutputContains(
-                    "[target] local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                    "[target] local/remotes/app: what abort discarded is kept as backup",
                 )),
             kept_backup_shown(&ww("w"), "remotes/app log ", "again"),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
@@ -14471,7 +14471,7 @@ pub fn abort_over_a_target_built_on_with_a_commit_in_the_source() -> Scenario {
                 .may_rewind(&[Repo::App, Repo::Proj])
                 .may_restore(&[Repo::App, Repo::Proj])
                 .claim(Claim::OutputContains(
-                    "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                    "local/remotes/app: what abort discarded is kept as backup",
                 )),
             kept_backup_shown(&ww("w1"), "remotes/app log ", "w1-after-the-stop"),
             Step::rwv(&ww("w1"), &["status"])
@@ -14665,9 +14665,9 @@ pub fn abort_past_a_target_whose_rwv_toml_does_not_parse(from: AbortFrom) -> Sce
     };
     let abort = vec![
         restores(Step::rwv(&at, &["abort"])).claim(Claim::OutputContains(
-            "projects/proj: its uncommitted edits are kept as backup",
+            "projects/proj: what abort discarded is kept as backup",
         )),
-        kept_backup_shown(&at, "projects/proj diff ", "[[["),
+        kept_backup_shown(&at, "projects/proj log ", "[[["),
     ];
     let mut steps = vec![
         create("w1"),
@@ -14807,7 +14807,7 @@ pub fn abort_judges_again_once_it_holds_the_target() -> Scenario {
                 .may_rewind(&[Repo::App, Repo::Proj])
                 .may_restore(&[Repo::App, Repo::Proj])
                 .claim(Claim::OutputContains(
-                    "[target] local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                    "[target] local/remotes/app: what abort discarded is kept as backup",
                 )),
             kept_backup_shown(&ww("w1"), "remotes/app log ", "late-app"),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
@@ -18239,7 +18239,7 @@ pub fn sync_continue_refuses_a_tip_amended_during_a_stop() -> Scenario {
             .may_rewind(&[Repo::App, Repo::Lib])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "local/remotes/app: a tip it held during this operation, which the restore does not reach, is kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "remotes/app log ", "README"),
     ];
@@ -18276,7 +18276,7 @@ pub fn abort_keeps_a_tip_amended_during_a_stop() -> Scenario {
             .may_rewind(&[Repo::App, Repo::Lib])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
         Step::rwv_printed_holding(&ww("w"), "git -C ", "remotes/app log ")
             .expect(Exit::Succeeds)
@@ -18507,10 +18507,10 @@ pub fn abort_of_a_landing_over_a_cancel_the_vcs_refuses() -> Scenario {
         Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
-                "local/remotes/app: its uncommitted edits are kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             ))
             .claim(Claim::LocalStateUnchanged(a())),
-        kept_backup_shown(&ww("w"), "remotes/app diff ", "edited mid-merge"),
+        kept_backup_shown(&ww("w"), "remotes/app log ", "edited mid-merge"),
         Step::git(
             &ww("w"),
             Repo::App,
@@ -18628,7 +18628,7 @@ pub fn abort_in_the_target_keeps_edits_in_the_source_before_canceling_its_rebase
             .may_rewind(&[Repo::App, Repo::Proj])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "[source] local/remotes/app: its uncommitted edits are kept as backup",
+                "[source] local/remotes/app: what abort discarded is kept as backup",
             )),
         Step::git(
             &a(),
@@ -21865,7 +21865,7 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "projects/proj: a tip it held during this operation, which the restore does not reach, is kept as backup",
+                "projects/proj: what abort discarded is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "projects/proj log ", "operator-own"),
     ]);
@@ -21941,7 +21941,7 @@ pub fn vcs_continue_mid_rebase_then_an_own_commit() -> Scenario {
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
             .claim(Claim::OutputContains(
-                "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
         kept_backup_shown(&ww("w"), "remotes/app log ", "operator-own"),
         Step::git(
@@ -23248,11 +23248,9 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     }
     let w1_app = if unpinned { "w1-unpinned" } else { "w1-app" };
     let abort = match before {
-        BeforeTheCarry::FinishedByHand => {
-            Step::rwv(&ww("w1"), &["abort"]).claim(Claim::OutputContains(
-                "local/remotes/app: the commits its detached HEAD held, which no branch reaches, are kept as backup",
-            ))
-        }
+        BeforeTheCarry::FinishedByHand => Step::rwv(&ww("w1"), &["abort"]).claim(
+            Claim::OutputContains("local/remotes/app: what abort discarded is kept as backup"),
+        ),
         _ => Step::rwv(&ww("w1"), &["abort"]),
     };
     steps.extend([
@@ -23554,9 +23552,9 @@ pub fn abort_over_a_carry_left_by_a_quit() -> Scenario {
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains(
-                "local/remotes/app: its uncommitted edits are kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
-        kept_backup_shown(&ww("w1"), "remotes/app diff ", "README"),
+        kept_backup_shown(&ww("w1"), "remotes/app log ", "README"),
         Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLine("w2-app")),
@@ -23673,9 +23671,9 @@ pub fn a_carry_left_by_a_quit_is_unrecorded() -> Scenario {
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains(
-                "local/remotes/app: its uncommitted edits are kept as backup",
+                "local/remotes/app: what abort discarded is kept as backup",
             )),
-        kept_backup_shown(&ww("w1"), "remotes/app diff ", "README"),
+        kept_backup_shown(&ww("w1"), "remotes/app log ", "README"),
         Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "-1", "w2"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLine("w2-app")),
@@ -26060,7 +26058,7 @@ pub fn a_carried_fix_killed_part_way(
                         "uncommitted edits are kept as backup",
                     )),
                     "remap-moved" => abort.claim(Claim::OutputContains(
-                        "projects/proj: its tip, holding commits this operation did not make, is kept as backup",
+                        "projects/proj: what abort discarded is kept as backup",
                     )),
                     _ => abort,
                 },

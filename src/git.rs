@@ -19,9 +19,7 @@ use crate::vcs::{
     TrackedFileKind, TreeMerges, UnconfirmedRemote, Unrecorded, Upstream, UrlRemote, Vcs,
     VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
-use crate::vcs::{
-    Attribution, CheckoutRestorePlan, Integrates, KeptWork, OwnStep, RefRestorePlan, RestoredFrom,
-};
+use crate::vcs::{Attribution, CheckoutRestorePlan, Integrates, OwnStep, RefRestorePlan};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::Write;
@@ -3308,12 +3306,6 @@ impl Vcs for GitVcs {
                 "git -C <checkout> config core.logAllRefUpdates true"
             }
             VcsAction::ShowKeptFile => "git -C <checkout> show <revision>:<paths>",
-            VcsAction::ShowKeptCommits => {
-                "git -C <checkout> log --stat <base>..refs/rwv/backup/<backup>"
-            }
-            VcsAction::ShowKeptEdits => {
-                "git -C <checkout> diff refs/rwv/backup/<backup>^1 refs/rwv/backup/<backup>"
-            }
             VcsAction::SetCommitIdentity => {
                 "git config --global user.name <name> && git config --global user.email <email>"
             }
@@ -3798,7 +3790,6 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         saved: &RefSavepoint,
-        wrote: Option<&CommitId>,
         freed: &[PathBuf],
     ) -> Result<RefRestorePlan, VcsError> {
         let now = self
@@ -3824,8 +3815,7 @@ impl Vcs for GitVcs {
                 why: checked_out_at(&held),
             });
         }
-        let keep = Some(&now) != wrote && !self.reached_from(repo, &now, &saved.at)?;
-        Ok(RefRestorePlan::Restore { from: now, keep })
+        Ok(RefRestorePlan::Restore { from: now })
     }
 
     fn execute_ref_restore(
@@ -3854,7 +3844,7 @@ impl Vcs for GitVcs {
                 self.drop_ref_savepoint(repo, key, &saved.branch)?;
                 Ok(RefRestoreOutcome::Untouched)
             }
-            RefRestorePlan::Restore { from, keep } => {
+            RefRestorePlan::Restore { from } => {
                 if now.as_ref() != Some(from) {
                     return Ok(moved(now));
                 }
@@ -3865,16 +3855,12 @@ impl Vcs for GitVcs {
                         why: checked_out_at(&held),
                     });
                 }
-                let backup = if *keep {
-                    Some(self.create_backup(
-                        repo,
-                        &BackupSource::Branch(saved.branch.clone()),
-                        &ResolvedRevisionId::from(from.clone()),
-                        None,
-                    )?)
-                } else {
-                    None
-                };
+                let backup = self.keep_in_slot(
+                    repo,
+                    &BackupSource::Branch(saved.branch.clone()),
+                    from,
+                    &saved.at,
+                )?;
                 Self::update_branch_ref(repo, &saved.branch, from, &saved.at)?;
                 self.drop_ref_savepoint(repo, key, &saved.branch)?;
                 Ok(match backup {
@@ -4505,6 +4491,20 @@ impl Vcs for GitVcs {
 
     fn drop_backup(&self, repo: &Path, name: &BackupName) -> Result<(), VcsError> {
         Self::drop_backup_ref(repo, name)
+    }
+
+    fn holds_only_its_own(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        branch: Option<&RawRefName>,
+        beside: &CommitId,
+    ) -> Result<bool, VcsError> {
+        Self::holds_unreached(&Self::work_dir_for_store(repo), tip, branch, beside)
+    }
+
+    fn show_kept(&self, checkout: &Path, base: &CommitId, kept: &[&BackupName]) -> String {
+        Self::show_kept_command(checkout, base, kept)
     }
 
     fn reached_by_no_branch(
@@ -5767,48 +5767,55 @@ fn savepoint_ref(key: &SavepointKey) -> String {
 }
 
 impl GitVcs {
-    /// Reset `repo` to `savepoint` via `git reset --hard`, drop the savepoint
-    /// ref, and return `outcome`. This factors out the identical reset+drop
-    /// sequence shared by the intent, converged, and mid-op restore branches
-    /// of [`Vcs::verified_restore_savepoint`].
-    fn reset_and_drop_savepoint(
+    /// Reset `repo` from `from` to `savepoint`, keeping first what the reset
+    /// discards: the working copy where the move would discard any of it,
+    /// and `from` where it holds a commit nothing else reaches.
+    fn reset_to_savepoint(
         &self,
         repo: &Path,
         key: &SavepointKey,
-        savepoint: &ResolvedRevisionId,
-        outcome: VerifiedRestoreOutcome,
-        kept: &mut Vec<KeptWork>,
+        from: &CommitId,
+        savepoint: &CommitId,
+        kept: &mut Vec<BackupWitness>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
-        self.keep_before_discarding(repo, savepoint, kept)?;
-        Self::run(["reset", "--hard", savepoint.id().as_str()], repo)?;
-        self.drop_checkout_savepoint(repo, key)?;
-        Ok(outcome)
-    }
-
-    /// Before a hard move of `repo`'s checkout to `to`: keep its uncommitted
-    /// edits as a backup where the move would discard any (a tracked change,
-    /// or an untracked or ignored file or directory where `to` has a path),
-    /// the ignored ones it would discard included, once per restore, and the
-    /// commits a detached HEAD holds that no branch reaches.
-    fn keep_before_discarding(
-        &self,
-        repo: &Path,
-        to: &ResolvedRevisionId,
-        kept: &mut Vec<KeptWork>,
-    ) -> Result<(), VcsError> {
-        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
-            if let Some(ignored) = Self::hard_move_discards(repo, to)? {
-                if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
-                    let source = self.head_backup_source(repo)?;
-                    kept.push(KeptWork::Edits(
-                        self.create_backup(repo, &source, &snapshot, None)?,
-                    ));
-                }
+        let to = ResolvedRevisionId::from(savepoint.clone());
+        if let Some(ignored) = Self::hard_move_discards(repo, &to)? {
+            if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
+                self.keep_working_copy(repo, &snapshot, kept)?;
             }
         }
-        if let Some(commits) = self.backup_unpreserved_head(repo)? {
-            kept.push(KeptWork::Commits(commits));
+        let source = self.head_backup_source(repo)?;
+        kept.extend(self.keep_in_slot(repo, &source, from, savepoint)?);
+        Self::run(["reset", "--hard", savepoint.as_str()], repo)?;
+        self.drop_checkout_savepoint(repo, key)?;
+        Ok(VerifiedRestoreOutcome::Restored)
+    }
+
+    /// Keep `snapshot`, a commit holding `repo`'s working copy, in the
+    /// checkout's one backup slot, once per restore: named for the branch
+    /// the checkout is on, or that the rebase stopped there moves.
+    fn keep_working_copy(
+        &self,
+        repo: &Path,
+        snapshot: &ResolvedRevisionId,
+        kept: &mut Vec<BackupWitness>,
+    ) -> Result<(), VcsError> {
+        if kept
+            .iter()
+            .any(|k| k.backup().mark == Some(BackupMark::AbortedWorkingCopy))
+        {
+            return Ok(());
         }
+        let source = match Self::rebasing(repo)? {
+            Some(branch) => BackupSource::Branch(branch),
+            None => self.head_backup_source(repo)?,
+        };
+        kept.push(self.create_backup(
+            repo,
+            &source,
+            snapshot,
+            Some(BackupMark::AbortedWorkingCopy),
+        )?);
         Ok(())
     }
 
@@ -5823,20 +5830,22 @@ impl GitVcs {
         &self,
         repo: &Path,
         clear: Option<&[String]>,
-        kept: &mut Vec<KeptWork>,
+        kept: &mut Vec<BackupWitness>,
     ) -> Result<(), VcsError> {
-        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
-            let lands_at = match self.cancel_returns_to(repo)? {
-                Some(to) => to,
-                None => self.head_revision(repo)?,
-            };
-            let ignored = Self::hard_move_discards(repo, &lands_at)?.unwrap_or_default();
-            if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)? {
-                let source = self.head_backup_source(repo)?;
-                kept.push(KeptWork::Edits(
-                    self.create_backup(repo, &source, &snapshot, None)?,
-                ));
-            }
+        let lands_at = match self.cancel_returns_to(repo)? {
+            Some(to) => to,
+            None => self.head_revision(repo)?,
+        };
+        let ignored = Self::hard_move_discards(repo, &lands_at)?.unwrap_or_default();
+        let head = self.head_revision(repo)?;
+        let working_copy = match Self::snapshot_working_tree_forcing(repo, &ignored)? {
+            Some(snapshot) => Some(snapshot),
+            None => self
+                .holds_only_its_own(repo, head.id(), None, lands_at.id())?
+                .then_some(head),
+        };
+        if let Some(working_copy) = working_copy {
+            self.keep_working_copy(repo, &working_copy, kept)?;
         }
         if let Some(in_the_way) = clear {
             Self::run(["reset", "--hard", "HEAD"], repo)?;
@@ -5931,13 +5940,15 @@ impl GitVcs {
         Ok(None)
     }
 
-    /// Keep `repo`'s uncommitted edits as a backup, once per restore, then
-    /// discard them, HEAD staying where it is.
-    fn discard_edits_kept(&self, repo: &Path, kept: &mut Vec<KeptWork>) -> Result<(), VcsError> {
-        if !kept.iter().any(|k| matches!(k, KeptWork::Edits(_))) {
-            if let Some(edits) = self.backup_edits(repo)? {
-                kept.push(KeptWork::Edits(edits));
-            }
+    /// Keep `repo`'s uncommitted edits in the checkout's slot, once per
+    /// restore, then discard them, HEAD staying where it is.
+    fn discard_edits_kept(
+        &self,
+        repo: &Path,
+        kept: &mut Vec<BackupWitness>,
+    ) -> Result<(), VcsError> {
+        if let Some(snapshot) = self.snapshot_edits(repo)? {
+            self.keep_working_copy(repo, &snapshot, kept)?;
         }
         Self::run(["reset", "--hard", "HEAD"], repo).map(|_| ())
     }
@@ -6027,30 +6038,6 @@ impl GitVcs {
         Ok((discarded || tracked_dirt).then_some(forced))
     }
 
-    /// Whether `tip` is the relock commit the op journaled `parents` for: a
-    /// commit on exactly those, changing only the lock over its one parent,
-    /// or merging the two.
-    fn relock_of(
-        &self,
-        repo: &Path,
-        tip: &CommitId,
-        parents: &[CommitId],
-    ) -> Result<bool, VcsError> {
-        if parents.is_empty() || self.parents(repo, tip)? != parents {
-            return Ok(false);
-        }
-        Ok(match parents {
-            [parent] => {
-                self.changed_paths_between(
-                    repo,
-                    &ResolvedRevisionId::from(parent.clone()),
-                    &ResolvedRevisionId::from(tip.clone()),
-                )? == [crate::manifest::LockFile::FILE_NAME]
-            }
-            _ => true,
-        })
-    }
-
     /// Whether `savepoint` reaches `tip`, so moving a ref from `tip` back to
     /// `savepoint` leaves no commit behind.
     fn reached_from(
@@ -6067,9 +6054,7 @@ impl GitVcs {
     }
 
     /// Plan the restore of `repo` to `savepoint` from what `held` says the
-    /// checkout holds once the steps planned before have run. A tip that is
-    /// neither the savepoint, nor one the op wrote, nor one the savepoint
-    /// reaches, is kept as a backup before the checkout leaves it.
+    /// checkout holds once the steps planned before have run.
     fn plan_from(
         &self,
         repo: &Path,
@@ -6079,20 +6064,9 @@ impl GitVcs {
         key: &SavepointKey,
         held: CheckoutHolds,
     ) -> Result<CheckoutRestorePlan, VcsError> {
-        let attributable = |tip: &CommitId| {
-            tip == savepoint
-                || attribution.wrote(tip)
-                || self
-                    .relock_of(repo, tip, attribution.relocking)
-                    .unwrap_or(false)
-        };
-        let keeps = |tip: &CommitId| -> Result<bool, VcsError> {
-            Ok(!attributable(tip) && !self.reached_from(repo, tip, savepoint)?)
-        };
         if let Some(stopped) = held.stopped {
             let returns_to = self.cancel_returns_to(repo)?.map(|r| r.id().clone());
             let own = attribution.integrates == Integrates::Yes
-                && returns_to.as_ref().is_some_and(&attributable)
                 && self.stopped_in_own_step(repo, stopped, attribution.own_steps)?;
             let at_savepoint = returns_to.as_ref() == Some(savepoint);
             if !own && attribution.integrates == Integrates::No && at_savepoint {
@@ -6121,7 +6095,6 @@ impl GitVcs {
             )?;
             return Ok(CheckoutRestorePlan::Cancel {
                 stopped,
-                keep_head: !own,
                 clear_first: clear_first.then_some(in_the_way),
                 then: Box::new(then),
             });
@@ -6188,7 +6161,7 @@ impl GitVcs {
                 },
             )?;
             return Ok(CheckoutRestorePlan::SwitchBack {
-                keep_detached: off.is_none() && keeps(&held.head)?,
+                keep_detached: off.is_none() && !self.reached_from(repo, &held.head, savepoint)?,
                 off,
                 from: held.head,
                 onto: onto.map(|(branch, _)| branch),
@@ -6200,19 +6173,9 @@ impl GitVcs {
         if held.head == *savepoint {
             return Ok(CheckoutRestorePlan::Untouched { at: held.head });
         }
-        let why = if attribution.intent == Some(&held.head) {
-            RestoredFrom::Intent
-        } else if attributable(&held.head) {
-            RestoredFrom::Converged
-        } else if keeps(&held.head)? {
-            RestoredFrom::Kept
-        } else {
-            RestoredFrom::Reached
-        };
         Ok(CheckoutRestorePlan::Reset {
             from: held.head,
             savepoint: savepoint.clone(),
-            why,
         })
     }
 
@@ -6407,7 +6370,7 @@ impl GitVcs {
         repo: &Path,
         key: &SavepointKey,
         plan: &CheckoutRestorePlan,
-        kept: &mut Vec<KeptWork>,
+        kept: &mut Vec<BackupWitness>,
     ) -> Result<VerifiedRestoreOutcome, VcsError> {
         match plan {
             CheckoutRestorePlan::NoSavepoint => Ok(VerifiedRestoreOutcome::NoSavepoint),
@@ -6426,41 +6389,14 @@ impl GitVcs {
                 self.drop_checkout_savepoint(repo, key)?;
                 Ok(VerifiedRestoreOutcome::Untouched)
             }
-            CheckoutRestorePlan::Reset {
-                from,
-                savepoint,
-                why,
-            } => {
+            CheckoutRestorePlan::Reset { from, savepoint } => {
                 if !self.holds(repo, from, None)? {
                     return self.diverged(repo, key);
                 }
-                let outcome = match why {
-                    RestoredFrom::Intent => VerifiedRestoreOutcome::RestoredFromIntent,
-                    RestoredFrom::Converged | RestoredFrom::Reached => {
-                        VerifiedRestoreOutcome::RestoredFromConverged
-                    }
-                    RestoredFrom::Kept => {
-                        let source = self.head_backup_source(repo)?;
-                        kept.push(KeptWork::Tip(self.create_backup(
-                            repo,
-                            &source,
-                            &ResolvedRevisionId::from(from.clone()),
-                            None,
-                        )?));
-                        VerifiedRestoreOutcome::RestoredFromConverged
-                    }
-                };
-                self.reset_and_drop_savepoint(
-                    repo,
-                    key,
-                    &ResolvedRevisionId::from(savepoint.clone()),
-                    outcome,
-                    kept,
-                )
+                self.reset_to_savepoint(repo, key, from, savepoint, kept)
             }
             CheckoutRestorePlan::Cancel {
                 stopped,
-                keep_head,
                 clear_first,
                 then,
             } => {
@@ -6468,11 +6404,6 @@ impl GitVcs {
                     return self.diverged(repo, key);
                 }
                 self.keep_working_copy_before_cancel(repo, clear_first.as_deref(), kept)?;
-                if *keep_head {
-                    if let Some(commits) = self.backup_unpreserved_head(repo)? {
-                        kept.push(KeptWork::Commits(commits));
-                    }
-                }
                 if self.mid_op(repo).is_some() {
                     if let Err(refused) = self.cancel_stopped(repo, *stopped) {
                         let why = match refused {
@@ -6503,13 +6434,12 @@ impl GitVcs {
                     return self.diverged(repo, key);
                 }
                 if *keep_detached {
-                    let backup = self.create_backup(
+                    kept.extend(self.keep_in_slot(
                         repo,
                         &BackupSource::DetachedHead,
-                        &ResolvedRevisionId::from(from.clone()),
-                        None,
-                    )?;
-                    kept.push(KeptWork::Commits(backup));
+                        from,
+                        savepoint,
+                    )?);
                 }
                 let switch_back = |vcs: &Self| match onto {
                     Some(branch) => vcs.attach_head_to(repo, &LocalRefName::of_branch(branch)),
@@ -6529,10 +6459,7 @@ impl GitVcs {
                     {
                         if let Some(snapshot) = Self::snapshot_working_tree_forcing(repo, &ignored)?
                         {
-                            let source = self.head_backup_source(repo)?;
-                            kept.push(KeptWork::Edits(
-                                self.create_backup(repo, &source, &snapshot, None)?,
-                            ));
+                            self.keep_working_copy(repo, &snapshot, kept)?;
                         }
                     }
                 }

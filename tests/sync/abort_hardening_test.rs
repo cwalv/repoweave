@@ -328,7 +328,7 @@ fn abort_switches_back_to_the_branch_its_savepoint_names() {
 /// made, so nothing is kept for it and the output names no backup. This is
 /// the "post-replay crash" path.
 #[test]
-fn abort_converged_resets_to_savepoint_and_keeps_nothing_the_op_made() {
+fn abort_of_the_ops_own_converged_tip_keeps_it_in_the_branch_slot_in_one_line() {
     let tmp = common::tempdir().unwrap();
     let ws = make_fixture(tmp.path(), "primary");
 
@@ -362,10 +362,23 @@ fn abort_converged_resets_to_savepoint_and_keeps_nothing_the_op_made() {
         .get_output()
         .clone();
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let server: Vec<&str> = stdout
+        .lines()
+        .filter(|line| line.starts_with(&format!("  {SERVER_PATH}: ")))
+        .filter(|line| !line.contains(" reflinked, "))
+        .collect();
+    let [line] = server.as_slice() else {
+        panic!("one line for the server:\n{stdout}");
+    };
     assert!(
-        !stdout.contains("backup") && !stdout.contains(op_id),
-        "a clean restore's output names neither a backup nor the op-id:\n{stdout}"
+        line.contains("restored; what abort discarded is kept as backup main/aborted")
+            && !stdout.contains(op_id),
+        "{stdout}"
     );
+    let show = line.split_once("this shows it: ").unwrap().1;
+    let words: Vec<&str> = show.split_whitespace().collect();
+    assert_eq!(words[0], "git");
+    assert!(common::git_in(Path::new("."), &words[1..]).contains("+converged"));
 
     assert_eq!(
         common::git_in(&ws.server_dir, &["rev-parse", "HEAD"]),
@@ -376,7 +389,10 @@ fn abort_converged_resets_to_savepoint_and_keeps_nothing_the_op_made() {
         project_savepoint,
         "the project never moved; abort is a no-op there"
     );
-    assert_writes_no_ref(&ws.server_dir);
+    assert_eq!(
+        refs_under(&ws.server_dir, BACKUP),
+        vec![("refs/rwv/backup/main/aborted".to_owned(), server_converged)]
+    );
     assert_writes_no_ref(&ws.project_dir);
     assert!(
         savepoint_sha(&ws.server_dir, op_id).is_none(),
@@ -414,13 +430,23 @@ fn abort_keeps_what_the_reset_destroys(path: &str, made: &str, text: &str) {
     let out = common::cli::run(&["abort"], &ws.root);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("its uncommitted edits are kept as backup"),
+        String::from_utf8_lossy(&out.stdout).contains("what abort discarded is kept as backup"),
         "{}",
         common::cli::describe(&out)
     );
     assert_eq!(common::git_in(dir, &["rev-parse", "HEAD"]), savepoint);
     let backups = refs_under(dir, BACKUP);
-    assert_eq!(backups.len(), 1, "{backups:?}");
+    assert_eq!(
+        backups
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "refs/rwv/backup/main/aborted",
+            "refs/rwv/backup/main/aborted-working-copy"
+        ],
+    );
+    let backups = &backups[1..];
     assert_eq!(
         common::git_in(dir, &["show", &format!("{}:{made}", backups[0].1)]),
         text
@@ -449,7 +475,17 @@ fn abort_keeps_a_staged_change_the_working_tree_no_longer_holds() {
     let out = common::cli::run(&["abort"], &ws.root);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
     let backups = refs_under(dir, BACKUP);
-    assert_eq!(backups.len(), 1, "{backups:?}");
+    assert_eq!(
+        backups
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "refs/rwv/backup/main/aborted",
+            "refs/rwv/backup/main/aborted-working-copy"
+        ],
+    );
+    let backups = &backups[1..];
     let kept = &backups[0].1;
     assert_eq!(
         common::git_in(dir, &["show", &format!("{kept}:README.md")]),

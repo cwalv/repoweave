@@ -2347,10 +2347,6 @@ fn relock(
         })
         .map(|jump| jump.annotation())
         .collect();
-    crate::op_state::journal_relocking(
-        sync.ctx.active_path(),
-        vec![vcs.head_revision(dir)?.id().clone()],
-    )?;
     let committed = crate::lock::commit_lock_file_annotated(
         vcs,
         dir,

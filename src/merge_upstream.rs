@@ -128,7 +128,6 @@ impl Op {
         let take_in = record
             .take_in
             .context("the op record holds no take-in to resume")?;
-        crate::sync::keep_what_moved_at_the_stop(resolved.owner_workspace.as_path())?;
         Ok((
             Self {
                 workspace: resolved.owner_workspace.as_path().to_path_buf(),
@@ -295,22 +294,22 @@ pub(crate) enum RefMoveLeft {
         held_at: Vec<PathBuf>,
         error: Option<VcsError>,
     },
-    /// Put back over a tip the op did not write, holding commits the tip it
-    /// is put back to does not reach, kept first as a backup.
+    /// Put back over a tip holding a commit nothing else reaches, kept first
+    /// in the branch's backup slot.
     Kept {
         repo: RepoKey,
         branch: String,
         dir: PathBuf,
-        tip: CommitId,
         to: CommitId,
         backup: String,
     },
 }
 
 /// Put back the branches an op moved as refs, each from whatever tip it sits
-/// at now, a tip other than the one the op wrote kept first as a backup
-/// where it holds commits the restored tip does not reach. A branch a
-/// checkout holds is left, as one that is gone is.
+/// at now, that tip kept first in the branch's backup slot where it holds a
+/// commit nothing else reaches; a branch moved more than once is kept from
+/// its last tip only. A branch a checkout holds is left, as one that is gone
+/// is.
 pub(crate) fn restore_ref_moves(
     workspace: &Path,
     project_dir: Option<&Path>,
@@ -339,6 +338,8 @@ fn walk_ref_moves(
     let mut left = Vec::new();
     let mut put_back: std::collections::BTreeMap<(PathBuf, String), CommitId> =
         std::collections::BTreeMap::new();
+    let mut slotted: std::collections::BTreeSet<(PathBuf, String)> =
+        std::collections::BTreeSet::new();
     for (at, moved) in moves.iter().enumerate().rev() {
         let dir = match (&moved.repo, project_dir) {
             (RepoKey::Member(path), _) => workspace.join(path.as_path()),
@@ -389,36 +390,31 @@ fn walk_ref_moves(
             }
             continue;
         }
-        let reached = |now: &CommitId| {
-            vcs.is_ancestor(
-                &dir,
-                &ResolvedRevisionId::from(now.clone()),
-                &ResolvedRevisionId::from(moved.from.clone()),
-            )
-        };
         let restored = match &now {
-            Some(now) if *now != moved.to => reached(now).and_then(|reached| {
-                if reached {
-                    return vcs.restore_branch_ref(&dir, &branch, now, &moved.from);
-                }
-                let kept = vcs.create_backup(
-                    &dir,
-                    &BackupSource::Branch(branch.clone()),
-                    &ResolvedRevisionId::from(now.clone()),
-                    None,
-                )?;
+            Some(now) => (|| {
+                let kept = if slotted.insert(key.clone()) {
+                    vcs.keep_in_slot(
+                        &dir,
+                        &BackupSource::Branch(branch.clone()),
+                        now,
+                        &moved.from,
+                    )?
+                } else {
+                    None
+                };
                 vcs.restore_branch_ref(&dir, &branch, now, &moved.from)?;
-                left.push(RefMoveLeft::Kept {
-                    repo: moved.repo.clone(),
-                    branch: moved.branch.clone(),
-                    dir: dir.clone(),
-                    tip: now.clone(),
-                    to: moved.from.clone(),
-                    backup: kept.backup().name.to_string(),
-                });
+                if let Some(kept) = kept {
+                    left.push(RefMoveLeft::Kept {
+                        repo: moved.repo.clone(),
+                        branch: moved.branch.clone(),
+                        dir: dir.clone(),
+                        to: moved.from.clone(),
+                        backup: kept.backup().name.to_string(),
+                    });
+                }
                 Ok(())
-            }),
-            _ => vcs.restore_branch_ref(&dir, &branch, &moved.to, &moved.from),
+            })(),
+            None => vcs.restore_branch_ref(&dir, &branch, &moved.to, &moved.from),
         };
         if let Err(error) = restored {
             left.push(RefMoveLeft::Foreign {
@@ -478,11 +474,31 @@ mod tests {
         (tmp, moved, dir)
     }
 
+    fn slot_tip(dir: &Path) -> Option<CommitId> {
+        crate::vcs::probe_vcs()
+            .list_backups(dir, crate::vcs::RemoteTracking::Counted)
+            .unwrap()
+            .into_iter()
+            .find(|listed| listed.backup.name.as_str() == "main/aborted")
+            .map(|listed| listed.backup.tip.id().clone())
+    }
+
     #[test]
-    fn a_branch_the_op_moved_as_a_ref_is_put_back_where_it_still_sits_at_the_tip_the_op_wrote() {
+    fn a_branch_the_op_moved_as_a_ref_is_put_back_its_tip_kept_in_the_branch_slot() {
         let (tmp, moved, dir) = member_with_a_moved_branch();
         let left = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
-        assert!(left.is_empty());
+        assert!(matches!(&left[..], [RefMoveLeft::Kept { .. }]), "{left:?}");
+        assert_eq!(slot_tip(&dir).as_ref(), Some(&moved.to));
+        assert_eq!(git(&dir, &["rev-parse", "main"]), moved.from.as_str());
+    }
+
+    #[test]
+    fn a_branch_whose_tip_another_branch_reaches_is_put_back_keeping_nothing() {
+        let (tmp, moved, dir) = member_with_a_moved_branch();
+        git(&dir, &["branch", "other", moved.to.as_str()]);
+        let left = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
+        assert!(left.is_empty(), "{left:?}");
+        assert_eq!(slot_tip(&dir), None);
         assert_eq!(git(&dir, &["rev-parse", "main"]), moved.from.as_str());
     }
 
@@ -493,10 +509,8 @@ mod tests {
         let later = commit(&dir, "three");
         git(&dir, &["checkout", "-q", "--detach"]);
         let left = restore_ref_moves(tmp.path(), None, std::slice::from_ref(&moved));
-        assert!(
-            matches!(&left[..], [RefMoveLeft::Kept { tip, .. }] if *tip == later),
-            "{left:?}"
-        );
+        assert!(matches!(&left[..], [RefMoveLeft::Kept { .. }]), "{left:?}");
+        assert_eq!(slot_tip(&dir), Some(later));
         assert_eq!(git(&dir, &["rev-parse", "main"]), moved.from.as_str());
     }
 
@@ -513,7 +527,9 @@ mod tests {
         };
         let moves = [first.clone(), second];
         assert!(judge_ref_moves(tmp.path(), None, &moves).is_empty());
-        assert!(restore_ref_moves(tmp.path(), None, &moves).is_empty());
+        let left = restore_ref_moves(tmp.path(), None, &moves);
+        assert!(matches!(&left[..], [RefMoveLeft::Kept { .. }]), "{left:?}");
+        assert_eq!(slot_tip(&dir).as_ref(), Some(&moves[1].to));
         assert_eq!(git(&dir, &["rev-parse", "main"]), first.from.as_str());
         assert!(judge_ref_moves(tmp.path(), None, &moves).is_empty());
     }

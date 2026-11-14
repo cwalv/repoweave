@@ -2719,7 +2719,9 @@ fn cell_advanced_tips_mixed_foreign_server_is_kept_and_both_restored() {
     );
     assert!(out.status.success(), "[cell6] {said}");
     assert!(
-        said.contains(&format!("{SERVER_PATH}: its tip")),
+        said.contains(&format!(
+            "{SERVER_PATH}: restored; what abort discarded is kept as backup"
+        )),
         "[cell6] the server's tip is named as kept: {said}"
     );
     assert_eq!(
@@ -2827,7 +2829,7 @@ fn a_header_only_record_keeps_a_merge_begun_at_the_savepoint_and_cancels_it() {
     let out = common::cli::run(&["abort"], &ww.root);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
     assert!(
-        String::from_utf8_lossy(&out.stdout).contains("its uncommitted edits are kept as backup"),
+        String::from_utf8_lossy(&out.stdout).contains("what abort discarded is kept as backup"),
         "{}",
         common::cli::describe(&out)
     );

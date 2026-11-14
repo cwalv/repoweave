@@ -17,6 +17,8 @@ const ID_WIDTH: usize = 12;
 const DETACHED_HEAD: &str = "HEAD";
 const REBASED_PREFIX: &str = "rebased-";
 const SUPERSEDED_PREFIX: &str = "superseded-";
+const ABORTED_SLOT: &str = "aborted";
+const ABORTED_WORKING_COPY_SLOT: &str = "aborted-working-copy";
 const EDITS_MESSAGE: &str = "rwv backup of uncommitted edits";
 /// The second parent of an edits backup whose index held content the
 /// working tree no longer does: the index as it stood.
@@ -34,11 +36,24 @@ fn id_text(mark: Option<BackupMark>, hex: &str) -> String {
         None => hex.to_owned(),
         Some(BackupMark::Rebased) => format!("{REBASED_PREFIX}{hex}"),
         Some(BackupMark::Superseded) => format!("{SUPERSEDED_PREFIX}{hex}"),
+        Some(BackupMark::Aborted) => ABORTED_SLOT.to_owned(),
+        Some(BackupMark::AbortedWorkingCopy) => ABORTED_WORKING_COPY_SLOT.to_owned(),
     }
 }
 
+fn slot(mark: Option<BackupMark>) -> bool {
+    matches!(
+        mark,
+        Some(BackupMark::Aborted | BackupMark::AbortedWorkingCopy)
+    )
+}
+
 fn mark_of(id: &str) -> Option<BackupMark> {
-    if id.starts_with(REBASED_PREFIX) {
+    if id == ABORTED_SLOT {
+        Some(BackupMark::Aborted)
+    } else if id == ABORTED_WORKING_COPY_SLOT {
+        Some(BackupMark::AbortedWorkingCopy)
+    } else if id.starts_with(REBASED_PREFIX) {
         Some(BackupMark::Rebased)
     } else if id.starts_with(SUPERSEDED_PREFIX) {
         Some(BackupMark::Superseded)
@@ -89,6 +104,20 @@ impl GitVcs {
     ) -> Result<Backup, VcsError> {
         let repo = Self::work_dir_for_store(repo);
         let full = tip.id().as_str();
+        if slot(mark) {
+            let name = BackupName::new(format!(
+                "{}/{}",
+                source_component(source),
+                id_text(mark, full)
+            ));
+            Self::run(["update-ref", &backup_ref(&name), full], &repo)?;
+            return Ok(Backup {
+                name,
+                tip: tip.clone(),
+                mark,
+                source: source.clone(),
+            });
+        }
         for width in ID_WIDTH..=full.len() {
             let name = BackupName::new(format!(
                 "{}/{}",
@@ -192,6 +221,33 @@ impl GitVcs {
                 })
             })
             .collect()
+    }
+
+    pub(super) fn holds_unreached(
+        repo: &Path,
+        tip: &CommitId,
+        branch: Option<&crate::vcs::RawRefName>,
+        beside: &CommitId,
+    ) -> Result<bool, VcsError> {
+        let exclude = branch.map(|branch| format!("--exclude={branch}"));
+        let mut args = vec!["rev-list", "-n1", tip.as_str(), "--not", beside.as_str()];
+        args.extend(exclude.as_deref());
+        args.extend(["--branches", "--remotes", "--"]);
+        Ok(!Self::run_trimmed(&args[..], repo)?.is_empty())
+    }
+
+    pub(super) fn show_kept_command(
+        checkout: &Path,
+        base: &CommitId,
+        kept: &[&BackupName],
+    ) -> String {
+        let refs: Vec<String> = kept.iter().map(|name| backup_ref(name)).collect();
+        format!(
+            "git -C {} log -p --diff-merges=first-parent ^{} {}",
+            checkout.display(),
+            base.as_str(),
+            refs.join(" ")
+        )
     }
 
     pub(super) fn drop_backup_ref(repo: &Path, name: &BackupName) -> Result<(), VcsError> {
@@ -696,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tip_the_op_did_not_write_is_kept_as_a_backup_before_the_reset() {
+    fn a_tip_holding_a_commit_nothing_else_reaches_is_kept_in_the_branch_slot_before_the_reset() {
         let (p, key, savepoint, foreign) = foreign_tip_fixture();
 
         let outcome = GitVcs
@@ -706,9 +762,11 @@ mod tests {
         let VerifiedRestoreOutcome::Kept { kept, .. } = &outcome else {
             panic!("expected the tip to be kept, got {outcome:?}");
         };
-        let [crate::vcs::KeptWork::Tip(backup)] = kept.as_slice() else {
+        let [backup] = kept.as_slice() else {
             panic!("expected one kept tip, got {outcome:?}");
         };
+        assert_eq!(backup.backup().mark, Some(BackupMark::Aborted));
+        assert_eq!(backup.backup().name.as_str(), "main/aborted");
         assert_eq!(
             head(p.path()),
             savepoint,

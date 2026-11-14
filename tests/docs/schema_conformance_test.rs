@@ -373,12 +373,7 @@ fn backup_corpus() -> Vec<(&'static str, Value)> {
                                 Some(BackupMark::Rebased),
                                 false,
                             ),
-                            backup(
-                                "HEAD/cccccccccccc",
-                                'c',
-                                None,
-                                false,
-                            ),
+                            backup("HEAD/cccccccccccc", 'c', None, false),
                             backup(
                                 "origin/main/superseded-ffffffffffff",
                                 'f',

@@ -556,12 +556,6 @@ pub struct TakeInRecord {
     /// entered and cleared once a continue takes it past.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_stop: Option<ManifestStop>,
-    /// The parents of the relock commit the op is about to make in the
-    /// project repo, written before it is made: a commit on exactly these
-    /// that changes only `rwv.lock` over its one parent, or merges the two,
-    /// is the op's.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub relocking: Vec<CommitId>,
     /// Each dependent's branch the op carries onto its target's new tip,
     /// written before its replay starts, with the tip the replay composed
     /// once it ends; the branch itself moves only once every carry composed.
@@ -1903,8 +1897,7 @@ pub fn created_by(
         }))
 }
 
-/// Record a backup the op made, so it goes when the op completes and an
-/// abort names it where the restored branch does not reach it.
+/// Record a backup the op made, so it goes when the op completes.
 pub fn journal_backup(workspace_dir: &Path, kept: KeptBackup) -> anyhow::Result<()> {
     let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
         crate::untokened!(
@@ -1936,22 +1929,6 @@ pub fn journal_rebasing(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::Res
             .rebases
             .retain(|r| !(r.repo == rebasing.repo && r.branch == rebasing.branch));
         take_in.rebases.push(rebasing);
-    }
-    write_owner(workspace_dir, &record)
-}
-
-/// Journal `parents` as those of the relock commit the op is about to make
-/// in the project repo, on the op at `workspace_dir`.
-pub fn journal_relocking(workspace_dir: &Path, parents: Vec<CommitId>) -> anyhow::Result<()> {
-    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
-        crate::untokened!(
-            InternalInvariant,
-            "no owner record at {} to journal in",
-            workspace_dir.display()
-        )
-    })?;
-    if let Some(take_in) = record.take_in.as_mut() {
-        take_in.relocking = parents;
     }
     write_owner(workspace_dir, &record)
 }

@@ -111,6 +111,17 @@ pub enum MergeHow {
     Squash,
 }
 
+/// Where a printed choice stands on its line.
+#[derive(Debug, Clone, Copy)]
+pub enum Printed {
+    /// The whole line.
+    Exactly,
+    /// The line begins with it.
+    Starting,
+    /// The line ends with it, after what the line says.
+    Within,
+}
+
 #[derive(Debug, Clone)]
 pub enum Action {
     Git {
@@ -159,7 +170,7 @@ pub enum Action {
     /// the operator to choose filled from `fill`.
     RwvPrinted {
         at: Place,
-        exact: bool,
+        found: Printed,
         prefix: &'static str,
         holding: &'static str,
         fill: &'static [(&'static str, &'static str)],
@@ -814,7 +825,7 @@ impl Step {
             format!("the printed `{prefix}...{holding}...`"),
             Action::RwvPrinted {
                 at: at.clone(),
-                exact: false,
+                found: Printed::Starting,
                 prefix,
                 holding,
                 fill: &[],
@@ -835,10 +846,26 @@ impl Step {
             format!("the printed `{prefix}...{holding}...`, filled {fill:?}"),
             Action::RwvPrinted {
                 at: at.clone(),
-                exact: false,
+                found: Printed::Starting,
                 prefix,
                 holding,
                 fill,
+            },
+            Expect::undecided(),
+        )
+    }
+
+    /// The command a printed line holding `holding` ends with, from its
+    /// `prefix` on, run as printed.
+    pub fn rwv_printed_within(at: &Place, prefix: &'static str, holding: &'static str) -> Step {
+        Step::new(
+            format!("the printed `...{prefix}...{holding}...`"),
+            Action::RwvPrinted {
+                at: at.clone(),
+                found: Printed::Within,
+                prefix,
+                holding,
+                fill: &[],
             },
             Expect::undecided(),
         )
@@ -851,7 +878,7 @@ impl Step {
             format!("the printed `{line}`"),
             Action::RwvPrinted {
                 at: at.clone(),
-                exact: true,
+                found: Printed::Exactly,
                 prefix: line,
                 holding: "",
                 fill: &[],
@@ -1381,18 +1408,26 @@ impl Run<'_> {
             }
             Action::RwvPrinted {
                 at,
-                exact,
+                found,
                 prefix,
                 holding,
                 fill,
             } => {
-                let Some(line) = self.last_rwv_output.lines().map(str::trim).find(|line| {
-                    if *exact {
-                        line == prefix
-                    } else {
-                        line.starts_with(prefix) && line.contains(holding)
-                    }
-                }) else {
+                let Some(line) = self
+                    .last_rwv_output
+                    .lines()
+                    .map(str::trim)
+                    .find_map(|line| match found {
+                        Printed::Exactly => (line == *prefix).then_some(line),
+                        Printed::Starting => {
+                            (line.starts_with(prefix) && line.contains(holding)).then_some(line)
+                        }
+                        Printed::Within => line
+                            .find(prefix)
+                            .map(|at| &line[at..])
+                            .filter(|command| command.contains(holding)),
+                    })
+                else {
                     return (
                         false,
                         format!(

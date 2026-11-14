@@ -445,14 +445,10 @@ pub enum VcsAction {
     SetCommitIdentity,
     ShowKeptFile,
     TurnOnCheckoutRecording,
-    /// The commits a backup keeps beyond `<base>`.
-    ShowKeptCommits,
-    /// What a backup of a working copy holds beyond the commit it was on.
-    ShowKeptEdits,
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 34] = [
+    pub const ALL: [VcsAction; 32] = [
         Self::AddAll,
         Self::Commit,
         Self::Stash,
@@ -485,8 +481,6 @@ impl VcsAction {
         Self::SetCommitIdentity,
         Self::ShowKeptFile,
         Self::TurnOnCheckoutRecording,
-        Self::ShowKeptCommits,
-        Self::ShowKeptEdits,
     ];
 }
 
@@ -1183,42 +1177,14 @@ pub enum OwnStep {
     },
 }
 
-/// What an op recorded about one checkout: the tips it wrote there, and
-/// whether its own steps run there.
+/// What an op recorded about one checkout: whether its own steps run there,
+/// and which. It decides only whether a stopped operation is the op's to
+/// cancel, never whether abort keeps what it discards.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Attribution<'a> {
-    /// The tip the op's replay last moved it to.
-    pub intent: Option<&'a CommitId>,
-    /// The tip the op converged it on.
-    pub converged: Option<&'a CommitId>,
-    /// The tip a carry stopped here began from.
-    pub started_from: Option<&'a CommitId>,
-    /// The parents the op journaled for a relock commit it was about to
-    /// make here.
-    pub relocking: &'a [CommitId],
     pub integrates: Integrates,
     /// The operations the op journaled starting here.
     pub own_steps: &'a [OwnStep],
-}
-
-impl Attribution<'_> {
-    /// Whether `tip` is one the op wrote here, the savepoint aside.
-    pub fn wrote(&self, tip: &CommitId) -> bool {
-        [self.intent, self.converged, self.started_from].contains(&Some(tip))
-    }
-}
-
-/// Work an abort kept as a backup before a step that would have left it
-/// unpreserved.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KeptWork {
-    /// The checkout's uncommitted edits.
-    Edits(BackupWitness),
-    /// The commits a detached HEAD held that no branch reaches.
-    Commits(BackupWitness),
-    /// A tip the op did not write that held commits its savepoint does not
-    /// reach.
-    Tip(BackupWitness),
 }
 
 /// Outcome of a [`Vcs::verified_restore_savepoint`] call.
@@ -1234,15 +1200,8 @@ pub enum VerifiedRestoreOutcome {
     /// The current tip equals the savepoint — the op never moved this
     /// repo. Restore is a no-op; HEAD was not touched.
     Untouched,
-    /// The current tip equals the recorded converged tip for this repo
-    /// (from the owner record). The op moved the repo to convergence
-    /// before crashing; the repo was reset back to the savepoint.
-    RestoredFromConverged,
-    /// The current tip equals the op's recorded intent tip for this repo
-    /// (from the owner record's `advanced_tips` map). The op advanced
-    /// the repo during replay before crashing; the repo was reset back to
-    /// the savepoint. Exact-match only — no heuristic.
-    RestoredFromIntent,
+    /// The checkout was reset to its savepoint.
+    Restored,
     /// The checkout was stopped in an operation the op started, or one the
     /// operator gave up by name: it was canceled, and `then` is the outcome
     /// of judging the tip it returned to.
@@ -1266,10 +1225,10 @@ pub enum VerifiedRestoreOutcome {
         /// The checkouts holding the branch; empty where it is gone.
         held_at: Vec<PathBuf>,
     },
-    /// Work was kept as backups before the steps that would have discarded
-    /// it; `then` is what the restore did.
+    /// What the restore discarded was kept first, in the backup slots of the
+    /// checkout and of the branch it reset; `then` is what the restore did.
     Kept {
-        kept: Vec<KeptWork>,
+        kept: Vec<BackupWitness>,
         then: Box<VerifiedRestoreOutcome>,
     },
     /// The checkout moved after abort planned its restore: nothing of it
@@ -1302,7 +1261,7 @@ pub struct RefSavepoint {
     pub at: CommitId,
 }
 
-/// What [`Vcs::restore_ref_savepoint`] did with one branch.
+/// What [`Vcs::execute_ref_restore`] did with one branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefRestoreOutcome {
     /// The branch was still at its savepoint.
@@ -1315,26 +1274,12 @@ pub enum RefRestoreOutcome {
         observed: Option<CommitId>,
         why: String,
     },
-    /// The branch was at a tip the op did not write, holding commits its
-    /// savepoint does not reach: the tip was kept as a backup and the branch
-    /// put back.
+    /// The branch held a commit nothing else reaches: its tip was kept in
+    /// the branch's backup slot and the branch put back.
     Kept {
         tip: CommitId,
         backup: BackupWitness,
     },
-}
-
-/// Why a planned hard move of a checkout back to its savepoint is the op's
-/// to make.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RestoredFrom {
-    Intent,
-    Converged,
-    /// A tip the op did not write that the savepoint reaches.
-    Reached,
-    /// A tip the op did not write holding commits the savepoint does not
-    /// reach, kept as a backup first.
-    Kept,
 }
 
 /// What restoring a checkout to its savepoint would do, judged from what
@@ -1353,20 +1298,19 @@ pub enum CheckoutRestorePlan {
     Untouched {
         at: CommitId,
     },
-    /// Move the checkout hard from `from` to its savepoint.
+    /// Move the checkout hard from `from` to its savepoint, `from` kept
+    /// first where it holds a commit nothing else reaches.
     Reset {
         from: CommitId,
         savepoint: CommitId,
-        why: RestoredFrom,
     },
-    /// Cancel the operation the checkout is stopped in, its working copy
-    /// kept as a backup first, and, where the op did not start it, the
-    /// commits its HEAD holds that no branch reaches. Where the VCS would
-    /// refuse the cancel, `clear_first` names the untracked paths in its
-    /// way, removed with the working copy's edits once both are kept.
+    /// Cancel the operation the checkout is stopped in, its working copy,
+    /// or the commits its HEAD holds that no branch reaches, kept in the
+    /// checkout's backup slot first. Where the VCS would refuse the cancel,
+    /// `clear_first` names the untracked paths in its way, removed with the
+    /// working copy's edits once it is kept.
     Cancel {
         stopped: ConflictOp,
-        keep_head: bool,
         clear_first: Option<Vec<String>>,
         then: Box<CheckoutRestorePlan>,
     },
@@ -1427,8 +1371,9 @@ pub enum RefRestorePlan {
     /// At its savepoint: the savepoint is dropped.
     Untouched,
     /// Move the branch from `from` to its savepoint by compare-and-swap,
-    /// keeping `from` as a backup first where `keep`.
-    Restore { from: CommitId, keep: bool },
+    /// keeping `from` in the branch's backup slot first where it holds a
+    /// commit nothing else reaches.
+    Restore { from: CommitId },
     /// Left as it is: gone, or checked out.
     Blocked {
         observed: Option<CommitId>,
@@ -1456,6 +1401,12 @@ pub enum BackupMark {
     Rebased,
     /// The tip of a remote-tracking branch a fetch found rewritten.
     Superseded,
+    /// The branch's one slot for the tip `rwv abort` last reset it from;
+    /// the next abort that resets the branch overwrites it.
+    Aborted,
+    /// The checkout's one slot for the working copy `rwv abort` last
+    /// discarded on it; the next abort that discards one there overwrites it.
+    AbortedWorkingCopy,
 }
 
 /// What a backup backs up.
@@ -3939,30 +3890,14 @@ pub trait Vcs: Send + Sync {
         branch: &RawRefName,
     ) -> Result<(), VcsError>;
 
-    /// Put `saved.branch` back at `saved.at` by compare-and-swap against
-    /// the tip it holds, and drop its savepoint. A branch at its savepoint
-    /// is left; one gone or checked out anywhere is foreign and never
-    /// moved. A tip other than `wrote` holding commits the savepoint does
-    /// not reach is kept as a backup first.
-    fn restore_ref_savepoint(
-        &self,
-        repo: &Path,
-        key: &SavepointKey,
-        saved: &RefSavepoint,
-        wrote: Option<&CommitId>,
-    ) -> Result<RefRestoreOutcome, VcsError> {
-        let plan = self.plan_ref_restore(repo, saved, wrote, &[])?;
-        self.execute_ref_restore(repo, key, saved, &plan)
-    }
-
-    /// What [`Vcs::restore_ref_savepoint`] would do, writing nothing. A
-    /// checkout in `freed` is one the caller switches off the branch first,
-    /// so it does not hold it.
+    /// What putting `saved.branch` back at `saved.at` would do, writing
+    /// nothing: a branch at its savepoint is left; one gone or checked out
+    /// anywhere is never moved. A checkout in `freed` is one the caller
+    /// switches off the branch first, so it does not hold it.
     fn plan_ref_restore(
         &self,
         repo: &Path,
         saved: &RefSavepoint,
-        wrote: Option<&CommitId>,
         freed: &[PathBuf],
     ) -> Result<RefRestorePlan, VcsError>;
 
@@ -4005,28 +3940,28 @@ pub trait Vcs: Send + Sync {
     /// the branch savepoints filed beside it.
     fn drop_checkout_savepoint(&self, repo: &Path, key: &SavepointKey) -> Result<(), VcsError>;
 
-    /// Restore the checkout to its savepoint, keeping as a backup first
-    /// whatever the restore would otherwise lose:
+    /// Restore the checkout to its savepoint, keeping first whatever the
+    /// restore discards:
     /// - no savepoint exists for `key` → [`VerifiedRestoreOutcome::NoSavepoint`],
     ///   or [`VerifiedRestoreOutcome::LeftStopped`] where it is stopped in an
     ///   operation, which the op cannot have started where it saved nothing.
     /// - stopped in an operation the op never starts here, begun at the
     ///   savepoint → left ([`VerifiedRestoreOutcome::LeftStopped`]). Any other
-    ///   stopped operation is canceled once the working copy, and the commits
-    ///   HEAD holds where the op did not start it, are kept, whichever
-    ///   workspace abort runs in; the tip it returns to is classified in
-    ///   turn ([`VerifiedRestoreOutcome::Canceled`]).
+    ///   stopped operation is canceled once the working copy is kept, whichever
+    ///   workspace abort runs in; the tip it returns to is classified in turn
+    ///   ([`VerifiedRestoreOutcome::Canceled`]).
     /// - on another branch than the savepoint names, or detached where it was
     ///   attached or the reverse → put back where the savepoint was taken
     ///   without moving the branch it leaves
     ///   ([`VerifiedRestoreOutcome::SwitchedBack`]).
     /// - `tip == savepoint` → [`VerifiedRestoreOutcome::Untouched`].
-    /// - any other tip is reset to the savepoint; one the op did not write
-    ///   that holds commits the savepoint does not reach is kept as a backup
-    ///   first ([`KeptWork::Tip`]).
+    /// - any other tip is reset to the savepoint, kept first where it holds a
+    ///   commit nothing else reaches, whoever made it.
     ///
-    /// Uncommitted edits, in whichever workspace, are kept as a backup
-    /// ([`VerifiedRestoreOutcome::Kept`]) before any step that discards them.
+    /// What is kept goes in one slot per branch and one per checkout
+    /// ([`BackupMark::Aborted`], [`BackupMark::AbortedWorkingCopy`]), which
+    /// the next restore that keeps something there overwrites
+    /// ([`VerifiedRestoreOutcome::Kept`]).
     fn verified_restore_savepoint(
         &self,
         repo: &Path,
@@ -5173,6 +5108,21 @@ pub trait Vcs: Send + Sync {
     /// Drop the backup `name`. The pin rule is the caller's to apply first.
     fn drop_backup(&self, repo: &Path, name: &BackupName) -> Result<(), VcsError>;
 
+    /// Whether `tip` holds a commit that neither `beside` nor any local or
+    /// remote-tracking branch reaches, `branch` itself left out of those.
+    fn holds_only_its_own(
+        &self,
+        repo: &Path,
+        tip: &CommitId,
+        branch: Option<&RawRefName>,
+        beside: &CommitId,
+    ) -> Result<bool, VcsError>;
+
+    /// The command an operator runs in `checkout` to see what the backups
+    /// `kept` hold beyond `base`: each commit with its changes, a working
+    /// copy's edits among them.
+    fn show_kept(&self, checkout: &Path, base: &CommitId, kept: &[&BackupName]) -> String;
+
     /// The commits `tip` reaches that no branch reaches, newest first.
     fn reached_by_no_branch(
         &self,
@@ -5196,6 +5146,32 @@ pub trait Vcs: Send + Sync {
         };
         let source = self.head_backup_source(repo)?;
         self.create_backup(repo, &source, &snapshot, None).map(Some)
+    }
+
+    /// Keep `tip` in the one backup slot of `source`, overwriting what the
+    /// slot held, where it holds a commit that neither `beside` nor any
+    /// other branch reaches; `None` where it holds none.
+    fn keep_in_slot(
+        &self,
+        repo: &Path,
+        source: &BackupSource,
+        tip: &CommitId,
+        beside: &CommitId,
+    ) -> Result<Option<BackupWitness>, VcsError> {
+        let branch = match source {
+            BackupSource::Branch(branch) => Some(branch),
+            BackupSource::DetachedHead => None,
+        };
+        if !self.holds_only_its_own(repo, tip, branch, beside)? {
+            return Ok(None);
+        }
+        self.create_backup(
+            repo,
+            source,
+            &ResolvedRevisionId::from(tip.clone()),
+            Some(BackupMark::Aborted),
+        )
+        .map(Some)
     }
 
     /// Keep what a detached HEAD holds as a backup when no branch reaches it;
