@@ -934,13 +934,11 @@ fn refuse_backwards(
         let offered = crate::member_pin::pin_refusals(aligner, &member, &candidate, aligns)?
             .is_empty()
             .then_some(rev.as_str());
-        report.add(lock::backwards_line(
-            &item.repo_path,
-            dir,
-            vcs,
-            subject,
-            offered,
-        ));
+        report.add(
+            lock::backwards_line(&item.repo_path, dir, subject, offered)
+                .by_verb("update")
+                .judge(vcs),
+        );
     }
     report.into_result()
 }

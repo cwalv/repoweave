@@ -546,21 +546,20 @@ impl Judgment {
 pub(crate) fn backwards_line(
     repo: &RepoPath,
     dir: &Path,
-    vcs: &dyn Vcs,
     subject: impl std::fmt::Display,
     repin: Option<&str>,
-) -> Judged {
+) -> crate::diagnosis::Judging {
     let judging = State::PinBackwards
         .of(repo)
         .member()
         .checkout(dir)
         .bind("<m>", repo.as_str())
+        .bind("<repo>", repo.as_str())
         .subject(subject);
     match repin {
         Some(rev) => judging.bind("<rev>", rev),
         None => judging.only(&[]),
     }
-    .judge(vcs)
 }
 
 /// How a commit that does not descend from the pin stands to it, in words.
@@ -696,7 +695,7 @@ fn judge_member(
                         crate::member_pin::pin_refusals(aligner, &member, &candidate, aligns)?
                             .is_empty()
                             .then_some("HEAD");
-                    refusals.add(backwards_line(path, dir, vcs.as_ref(), subject, repin));
+                    refusals.add(backwards_line(path, dir, subject, repin).judge(vcs.as_ref()));
                     return Ok(Judgment::kept(lines));
                 }
             }

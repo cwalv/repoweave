@@ -1634,7 +1634,7 @@ impl State {
                              or a hand edit of the member's entry that `rwv lock --commit` \
                              commits",
                 offers: &[Form::C25],
-                verb_offers: &[],
+                verb_offers: &[("update", Form::C3UpdateRemote)],
             },
             Self::TargetDependents => &StateRow {
                 axis: Axis::Target,

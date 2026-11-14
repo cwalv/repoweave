@@ -5752,6 +5752,35 @@ pub fn a_replayed_recorded_resolution_stops_the_sync_as_a_conflict() -> Scenario
     )
 }
 
+/// `app` holds a pinned commit its upstream lacks while the upstream moves:
+/// `update --remote` refuses the diverged pin and prints each way on that runs.
+pub fn update_remote_at_a_diverged_pin_prints_every_way_on() -> Scenario {
+    scenario(
+        "update --remote at a diverged pin prints every way on",
+        vec![
+            Step::commit(&a(), Repo::App, "app-mine"),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::App,
+                branch: "main",
+                mark: "upstream-app",
+            }),
+            Step::rwv(&a(), &["update", "--remote"])
+                .expect(Exit::refuses(Repo::App, State::PinBackwards))
+                .claim(Claim::OutputContains("rwv member pin local/remotes/app")),
+            Step::rwv_printed(&a(), "rwv update --remote --reset-to-upstream")
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::BackedUp {
+                    repo: Repo::App,
+                    mark: "app-mine",
+                    marked: None,
+                }),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

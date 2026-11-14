@@ -377,6 +377,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `off remote` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `off remote` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `backwards` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
+| `backwards`, for `rwv update` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
 | `unmerged` | C26: merge `<pin>` in as a merge commit | VCS action (git: `git -C <checkout> merge --no-ff <pin>`) | the checkout | a merge adds only |
 | `unmerged` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |

@@ -1164,13 +1164,10 @@ fn judge_excepted(
                 &pinned,
                 relation,
             );
-            report.add(crate::lock::backwards_line(
-                path,
-                &mdir,
-                mvcs,
-                subject,
-                Some(tip.id().short()),
-            ));
+            report.add(
+                crate::lock::backwards_line(path, &mdir, subject, Some(tip.id().short()))
+                    .judge(mvcs),
+            );
             return Ok(None);
         }
         if pin == tip.id() {
