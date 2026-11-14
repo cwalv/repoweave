@@ -653,7 +653,18 @@ impl Step {
         let target = format!("HEAD:refs/heads/{into}");
         vec![
             Step::forge_git(repo, &["switch", "-C", branch, &tracking]),
-            Step::forge_git(repo, &["rebase", "--force-rebase", &onto]),
+            Step::forge_git(
+                repo,
+                &[
+                    "-c",
+                    "user.name=Forge",
+                    "-c",
+                    "user.email=forge@example.invalid",
+                    "rebase",
+                    "--force-rebase",
+                    &onto,
+                ],
+            ),
             Step::forge_git(repo, &["push", "origin", &target]).pushes(Remote::origin(repo), into),
         ]
     }

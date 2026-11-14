@@ -6028,6 +6028,15 @@ pub fn squashed_pin_off_remote_offers_the_reset() -> Scenario {
 /// base with the same change: the pin is landed and the checkout diverges
 /// from it, so `status` names the match and C22, which, run as printed,
 /// resets `app` to `main`'s.
+/// A committer no other step commits as, so a copy made within the second
+/// of its original is still another commit.
+const COPIER: [&str; 4] = [
+    "-c",
+    "user.name=Copier",
+    "-c",
+    "user.email=copier@example.invalid",
+];
+
 pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
     scenario(
         "a landed pin a checkout diverged from offers the reset",
@@ -6038,7 +6047,18 @@ pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
             Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds),
             Step::git(&ww("w"), Repo::App, &["reset", "-q", "--hard", "HEAD~1"])
                 .may_rewind(&[Repo::App]),
-            Step::git(&ww("w"), Repo::App, &["cherry-pick", "main"]),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &[
+                    COPIER[0],
+                    COPIER[1],
+                    COPIER[2],
+                    COPIER[3],
+                    "cherry-pick",
+                    "main",
+                ],
+            ),
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("local/remotes/app: pin diverged"))
@@ -6792,7 +6812,18 @@ pub fn dc29_no_bring() -> Scenario {
             .may_rewind(&[Repo::App])
             .claim(Claim::OutputContains("copy these commits onto the branch"))
             .claim(Claim::OutputContains("w-app")),
-            Step::git(&ww("w"), Repo::App, &["cherry-pick", ":/w-app"]),
+            Step::git(
+                &ww("w"),
+                Repo::App,
+                &[
+                    COPIER[0],
+                    COPIER[1],
+                    COPIER[2],
+                    COPIER[3],
+                    "cherry-pick",
+                    ":/w-app",
+                ],
+            ),
             Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["land", "--history", "linear", "--retire"])
                 .expect(Exit::Succeeds)
