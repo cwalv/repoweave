@@ -84,6 +84,10 @@ fn commit_file(repo: &Path, file: &str, text: &str, message: &str) {
 /// committed to one file of `lib`, the primary relocked: the seat's landing
 /// or sync stops on that member's conflict.
 fn weave() -> Weave {
+    weave_where(true)
+}
+
+fn weave_where(conflicting: bool) -> Weave {
     let tmp = common::tempdir().unwrap();
     let primary = tmp.path().join("ws");
     let project = primary.join("projects").join(PROJECT);
@@ -125,13 +129,15 @@ fn weave() -> Weave {
         .join(".workweaves")
         .join(format!("{PROJECT}--s1"));
     commit_file(&common::under(&seat, LIB), "c.txt", "seat\n", "seat: lib");
-    commit_file(
-        &common::under(&primary, LIB),
-        "c.txt",
-        "primary\n",
-        "primary: lib",
-    );
-    succeed(&["lock", "--commit"], &primary);
+    if conflicting {
+        commit_file(
+            &common::under(&primary, LIB),
+            "c.txt",
+            "primary\n",
+            "primary: lib",
+        );
+        succeed(&["lock", "--commit"], &primary);
+    }
     Weave {
         _tmp: tmp,
         primary,
@@ -265,27 +271,48 @@ fn run_line(line: &str, dir: &Path) -> std::process::Output {
     run(&words[1..], dir)
 }
 
-/// `rwv doctor` in the target a stopped landing leases reports the landing
-/// recorded in its source with resume and abort lines that act on the
-/// source from where doctor printed them.
-#[test]
-fn doctors_resume_and_abort_lines_run_from_where_it_printed_them() {
-    let weave = weave();
-    let out = run(&["land", "--history", "linear"], &weave.seat);
-    assert!(!out.status.success(), "{}", describe(&out));
+/// A landing killed once it released its target, and the stale-op-state
+/// line `rwv doctor` prints in that target.
+fn landing_killed_at_ending() -> (Weave, String) {
+    let weave = weave_where(false);
+    let mut land = common::rwv_std();
+    land.args(["land", "--history", "linear"])
+        .current_dir(&weave.seat);
+    let scratch = weave._tmp.path().join("pause-ending");
+    drop(
+        common::pause::Paused::spawn(land, "ending", &scratch)
+            .unwrap_or_else(|e| panic!("the landing reaches ending: {e}")),
+    );
+    assert!(weave.seat.join(".rwv-op").exists());
+    assert!(!weave.primary.join(".rwv-op-lease").exists());
     let doctor = describe(&run(&["doctor"], &weave.primary));
     let finding = doctor
         .lines()
         .find(|l| l.contains("stale-op-state present"))
         .unwrap_or_else(|| panic!("{doctor}"))
         .to_owned();
+    (weave, finding)
+}
+
+/// `rwv doctor` in the target of a landing killed once it released that
+/// target prints a resume line that acts on the landing's source from there.
+#[test]
+fn doctors_resume_line_runs_from_where_it_printed_it() {
+    let (weave, finding) = landing_killed_at_ending();
     let resume = backticked_after(&finding, "resume with");
     let resumed = run_line(resume, &weave.primary);
-    let said = describe(&resumed);
     assert!(
-        !said.contains("no operation in progress"),
-        "`{resume}` must act on the landing:\n{said}"
+        resumed.status.success(),
+        "`{resume}`:\n{}",
+        describe(&resumed)
     );
+    assert!(!weave.seat.join(".rwv-op").exists());
+}
+
+/// The same finding's abort line acts on the landing from there too.
+#[test]
+fn doctors_abort_line_runs_from_where_it_printed_it() {
+    let (weave, finding) = landing_killed_at_ending();
     let abort = backticked_after(&finding, "; or ");
     let aborted = run_line(abort, &weave.primary);
     assert!(
