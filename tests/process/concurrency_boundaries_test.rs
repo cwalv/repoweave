@@ -140,7 +140,7 @@ const ADVISORY_REFUSAL_SITES: [(&str, usize); 12] = [
     ("cherry_pick.rs", 1),
     ("feature_sync.rs", 1),
     ("land.rs", 1),
-    ("lock.rs", 1),
+    ("lock.rs", 2),
     ("lock_commit.rs", 1),
     ("manifest_commit.rs", 1),
     ("member_pin.rs", 1),
