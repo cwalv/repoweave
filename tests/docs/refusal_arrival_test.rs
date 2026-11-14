@@ -736,8 +736,8 @@ fn a_clone_a_workweave_derives_from_routes_to_checkout() {
     assert!(
         stderr.contains(&format!(
             "rwv member remove: {SERVER_PATH}: checkout in another workspace (web-app--ww)\n"
-        )) && stderr
-            .contains("  free the other checkout\n    rwv workweave delete ww --project web-app\n"),
+        )) && stderr.contains("  free the other checkout\n    rwv -C ")
+            && stderr.contains("    rwv workweave delete ww --project web-app\n"),
         "precondition: the store's checkouts were judged:\n{stderr}"
     );
     assert_routes_to(&stderr, "checkout");

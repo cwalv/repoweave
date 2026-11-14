@@ -325,9 +325,8 @@ fn remove_delete_refuses_a_claimed_store_and_succeeds_after_the_claim_is_gone() 
          got:\n{stderr}"
     );
     assert!(
-        stderr.contains(
-            "  free the other checkout\n    rwv workweave delete live --project web-app\n"
-        ),
+        stderr.contains("  free the other checkout\n    rwv -C ")
+            && stderr.contains("    rwv workweave delete live --project web-app\n"),
         "the refusal must offer the delete that retracts the workweave's claims; got:\n{stderr}"
     );
     assert!(

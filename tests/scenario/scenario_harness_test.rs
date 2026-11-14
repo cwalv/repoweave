@@ -4950,7 +4950,8 @@ fn dc27_envelope_routes_once_per_kind_last_and_changes_nothing() {
             raw.display()
         ),
         "choices:\n".to_owned(),
-        "  free the other checkout\n    rwv workweave delete other --project proj\n".to_owned(),
+        "  free the other checkout\n".to_owned(),
+        "    rwv workweave delete other --project proj\n".to_owned(),
         format!(
             "    git -C {} worktree remove {}\n",
             lib.display(),
