@@ -7032,8 +7032,8 @@ impl CheckViolation {
                      resume with `{resume}`; or {abort}. \
                      Never auto-fixed — another terminal may be mid-conflict-resolution.",
                 workspace_dir.display(),
-                resume = crate::op_state::resume_command(verb),
-                abort = crate::op_state::ABORT_ROLLS_BACK,
+                resume = crate::op_state::resume_command_at(verb, &workspace_dir),
+                abort = crate::op_state::abort_rolls_back_at(&workspace_dir),
             ),
             CheckViolation::DeadOpLease {
                 workspace_dir,
