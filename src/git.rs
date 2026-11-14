@@ -4005,6 +4005,14 @@ impl Vcs for GitVcs {
         Self::held_by_no_remote_tracking(&Self::work_dir_for_store(repo))
     }
 
+    fn branch_left(&self, checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
+        let left = Self::run_trimmed(["rev-parse", "--symbolic-full-name", "@{-1}"], checkout)
+            .unwrap_or_default();
+        Ok(left
+            .strip_prefix(LOCAL_BRANCH_NAMESPACE)
+            .map(RawRefName::new))
+    }
+
     fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
         let listed = Self::run(
             [

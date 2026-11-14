@@ -711,6 +711,12 @@ fn a_landing_prune_refuses_a_store_holding_a_commit_only_a_tag_reaches() {
 }
 
 #[test]
+fn a_detached_project_repo_offers_the_branch_it_left() {
+    runner::run(scenarios::a_detached_project_repo_offers_the_branch_it_left())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1676,6 +1682,7 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    a_detached_project_repo_offers_the_branch_it_left,
     landing_prune_judges_against_the_remote_as_it_is,
     landing_prune_skips_a_clone_whose_remote_does_not_answer,
     store_removal_refuses_while_its_remote_does_not_answer,

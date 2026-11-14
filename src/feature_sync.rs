@@ -251,12 +251,11 @@ fn take(
         Run::Continue => branch_left_by_a_stop(ctx.active_path())?,
     };
     let Some(branch) = crate::branch::checked_out(vcs.as_ref(), &dir)?.or(held) else {
-        return Err(State::AlignmentProjectDetached
-            .of(project_rel_path(&project))
-            .project_repo()
-            .checkout(&dir)
-            .judge(vcs.as_ref())
-            .refused());
+        return Err(
+            crate::alignment::detached_project(vcs.as_ref(), &dir, &project)
+                .judge(vcs.as_ref())
+                .refused(),
+        );
     };
     match run {
         Run::Fresh(args) => {

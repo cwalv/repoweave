@@ -6257,6 +6257,44 @@ pub fn land_into_a_target_checked_out_nowhere() -> Scenario {
     )
 }
 
+/// A sync in a workweave whose project repo was left on no branch, holding a
+/// commit no branch reaches, offers to keep it with the commit filled in and
+/// to return with `rwv switch` naming the branch it left; neither choice
+/// offers `rwv update`, which refuses the same state, and the switch runs as
+/// printed.
+pub fn a_detached_project_repo_offers_the_branch_it_left() -> Scenario {
+    scenario(
+        "a detached project repo offers the branch it left",
+        vec![
+            create("w"),
+            Step::git(&ww("w"), Repo::Proj, &["switch", "-q", "--detach"]),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["commit", "-q", "--allow-empty", "-m", "on no branch"],
+            ),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses(Repo::Proj, State::AlignmentProjectDetached))
+                .claim(Claim::OutputLacks("rwv update"))
+                .claim(Claim::OutputLacks("<b>"))
+                .claim(Claim::OutputLacks("<sha>"))
+                .claim(Claim::OutputContains("    rwv switch proj--w\n")),
+            Step::rwv_printed_filling(
+                &ww("w"),
+                "git -C ",
+                " branch <name> ",
+                &[("<name>", "kept")],
+            )
+            .expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["log", "-1", "--format=%s", "kept"])
+                .claim(Claim::OutputLine("on no branch")),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses(Repo::Proj, State::AlignmentProjectDetached)),
+            Step::rwv_printed(&ww("w"), "rwv switch proj--w").expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// Every refusal a landing owes is reported in one run before anything moves:
 /// an edit in a repo it composes, and a change to the target's entry, which
 /// no landing makes until it is named.

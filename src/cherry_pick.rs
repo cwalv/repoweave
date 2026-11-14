@@ -503,10 +503,7 @@ fn fresh(
     let label = here.label();
     crate::diagnosis::settle_project_drift(&here.project, dir)?;
     let Some(branch) = crate::branch::checked_out(vcs, dir)? else {
-        return Err(State::AlignmentProjectDetached
-            .of(&label)
-            .project_repo()
-            .checkout(dir)
+        return Err(crate::alignment::detached_project(vcs, dir, &here.project)
             .judge(vcs)
             .refused());
     };

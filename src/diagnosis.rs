@@ -1472,7 +1472,7 @@ impl State {
                 refused_by: "`rwv update`; `rwv branch create` with no spelling, `rwv branch \
                              rename` and `rwv workweave create`, which need a checked-out \
                              branch; `rwv status` reports it",
-                offers: &[Form::C14Keep, Form::C30Switch, Form::C30BranchCreate],
+                offers: &[Form::C14KeepThenSwitch, Form::C30Switch, Form::C30BranchCreate],
                 verb_offers: &[],
             },
             Self::PinNotOnDeclaredBranch => &StateRow {
@@ -2582,6 +2582,7 @@ pub enum Form {
     LostRace,
     LostRaceSync,
     LostRaceLanding,
+    C14KeepThenSwitch,
     LeaveTarget,
     CarryAgain,
     CarryAgainLand,
@@ -2639,7 +2640,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 122] = [
+    pub const ALL: [Form; 123] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2732,6 +2733,7 @@ impl Form {
         Self::LostRace,
         Self::LostRaceSync,
         Self::LostRaceLanding,
+        Self::C14KeepThenSwitch,
         Self::LeaveTarget,
         Self::CarryAgain,
         Self::CarryAgainLand,
@@ -3505,6 +3507,12 @@ impl Form {
             Self::LostRaceSync => &FormRow {
                 choice: C::LostRace,
                 steps: &[Rwv("rwv abort"), Rwv("rwv sync")],
+                at: W::Here,
+                shipped: true,
+            },
+            Self::C14KeepThenSwitch => &FormRow {
+                choice: C::C14,
+                steps: &[Vcs(A::BranchAt), Then(Self::C30Switch)],
                 at: W::Here,
                 shipped: true,
             },

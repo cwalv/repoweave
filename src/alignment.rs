@@ -661,6 +661,26 @@ fn checked_out_elsewhere(m: &Member<'_>, branch: &RawRefName) -> anyhow::Result<
         .collect())
 }
 
+/// The project repo at `project_dir`, judged on no branch: its choices name
+/// the commit it stands on and the branch it left, where the VCS knows it.
+pub fn detached_project(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    project: &ProjectName,
+) -> crate::diagnosis::Judging {
+    let mut judging = State::AlignmentProjectDetached
+        .of(crate::workspace::project_rel_path(project))
+        .project_repo()
+        .checkout(project_dir);
+    if let Ok(head) = vcs.head_revision(project_dir) {
+        judging = judging.bind("<sha>", head.id().short());
+    }
+    if let Ok(Some(left)) = vcs.branch_left(project_dir) {
+        judging = judging.bind("<b>", left.as_str());
+    }
+    judging
+}
+
 /// The line for a project repo whose HEAD is on no branch and whose
 /// workspace was not made detached: the commits it holds that no branch
 /// reaches, listed, with the choice that keeps them where it holds any, else
@@ -690,9 +710,7 @@ pub fn project_detached(
     } else {
         crate::diagnosis::ChoiceId::C14
     };
-    Ok(State::AlignmentProjectDetached
-        .of(crate::workspace::project_rel_path(project))
-        .project_repo()
+    Ok(detached_project(vcs.as_ref(), project_dir, project)
         .listing(held.iter().map(|c| {
             format!(
                 "{} {}",

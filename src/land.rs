@@ -167,13 +167,7 @@ pub fn resolve_resumed(
     let label = project_rel_path(&project);
     let mut judged = Report::default();
     let Some(checked_out) = crate::branch::checked_out(vcs, &dir)? else {
-        judged.add(
-            State::AlignmentProjectDetached
-                .of(&label)
-                .project_repo()
-                .checkout(&dir)
-                .judge(vcs),
-        );
+        judged.add(crate::alignment::detached_project(vcs, &dir, &project).judge(vcs));
         return Err(refused_before_target(ctx, None, None, retire, judged));
     };
     let feature = crate::branch::named(vcs, &project, &dir, &checked_out)?;

@@ -4071,6 +4071,12 @@ pub trait Vcs: Send + Sync {
     /// of those refs does not list it.
     fn held_by_no_remote(&self, repo: &Path) -> Result<Vec<HeldAlone>, VcsError>;
 
+    /// The branch `checkout` stood on before HEAD last left it, or `None`
+    /// where the VCS does not know of one.
+    ///
+    /// For git: `git rev-parse --symbolic-full-name @{-1}`.
+    fn branch_left(&self, checkout: &Path) -> Result<Option<RawRefName>, VcsError>;
+
     /// The checkouts of the stores nested inside `checkout` whose directory
     /// removing it removes, at any depth, each as a path relative to
     /// `checkout`, outermost first.
