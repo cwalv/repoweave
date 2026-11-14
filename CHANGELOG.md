@@ -4,6 +4,157 @@ This changelog starts at 0.23.0. Releases 0.4.0 through 0.22.0 shipped without
 entries, and none are reconstructed here — the gap is a gap in the record, not a
 claim that nothing changed in them.
 
+## Unreleased
+
+### Upgrade: finish or abort an operation in progress first
+
+An operation a release before this one left in progress cannot be resumed or
+rolled back by this one: its `.rwv-op` is in a record schema this release does
+not read, so every verb that reads it refuses with `unreadable-op-record`, and
+`rwv status` reports it. Finish it with `--continue`, or end it with `rwv abort`,
+on the release that started it before upgrading. A record this release cannot
+read is ended with `rwv abort --discard-unreadable-record`, which moves nothing
+back. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other state an
+earlier release wrote and the command that migrates each part.
+
+### Verbs renamed, split or removed
+
+- `rwv sync-to` is `rwv land`: it lands the checked-out feature into its target.
+  `rwv sync` takes new work into the checked-out branch and has no positional
+  argument; it takes in the target, or `--from <branch>` merges one in.
+- `rwv add`, `rwv remove` and `rwv role` are `rwv member add`, `member remove`
+  and `member set-role`; `rwv member` also has `pin`, `set-branch`, `set-url`
+  and `set-recurse-submodules`.
+- `rwv fetch <source>` is `rwv clone <source>`. `rwv fetch` takes no source: it
+  prunes and fetches every remote of every repo, and moves no branch, checkout
+  or lock.
+- `rwv workweave <project> <action>` is `rwv workweave <action>`, with
+  `--project`. `workweave set-container` is `workweave
+  set-default-create-basedir`; `workweave log` is `rwv log`.
+- `--strategy`, `--allow-stale-lock`, `--discard-local-commits`, `--frozen`,
+  `--detach-checkouts`, `--abandon-foreign-tip` and `push --force` are removed.
+  How a repo takes in is the branch's `history` (`linear`, `merge` or
+  `ff-only`), recorded with `rwv branch set-history` and overridden for one run
+  with `--history`.
+
+### New verbs
+
+- `rwv branch` creates, lists, renames and deletes weave branches and records
+  how each is used: a `feature` onto a target, or `declared`. `rwv branch
+  delete` deletes the branches that belong to a weave branch once everything on
+  them has landed, and keeps the rest with the reason.
+- `rwv switch` opens a weave branch, or `--detach <rev>`, and aligns the members.
+- `rwv land` lands a feature into its target, with `--target`, `--history`,
+  `--allow-member-change`, `--retire` and `--keep` for a conflicting `rwv.toml`.
+- `rwv cherry-pick <project-rev>` ports one project commit onto the checked-out
+  feature, in each repo it moves.
+- `rwv pull` fetches, fast-forwards the project branch and updates the members;
+  `--merge-upstream` and `--reset-to-upstream` handle a diverged branch.
+  `rwv update --remote` takes the same two flags and `--continue`.
+- `rwv log` shows the log of every repo of the project; `--against <W>` lists
+  what a weave branch's pins lack.
+- `rwv backup list`, `drop` and `prune` manage the refs rwv keeps before a step
+  that would leave a commit or an uncommitted edit unpreserved.
+- `rwv push --branch <W>` pushes another weave branch; `--overwrite <repo>`
+  replaces a diverged push branch after keeping its remote tip as a backup.
+
+### Every operation that stops is resumed or rolled back the same way
+
+`sync`, `land`, `pull`, `update --remote` and `cherry-pick` each leave an
+operation record when a conflict stops them, and each accepts `--continue`.
+`rwv abort` restores every repo to the savepoint taken before the operation
+moved it, from either workspace. What it discards is kept first: a branch tip
+it resets, and the working copy it discards, in one backup slot per branch and
+per checkout (`<branch>/aborted`, `<branch>/aborted-working-copy`), listed by
+`rwv backup list`; an earlier value stays in the VCS's own history of the slot.
+A commit made by hand at a stop is kept by `abort`.
+A landing's target that something else moved since is refused;
+`rwv abort --leave-target` ends the landing and leaves the target as it
+stands.
+
+### A conflict in `rwv.toml` stops with the entries it concerns
+
+A merge or rebase that conflicts in `rwv.toml`, or whose result differs from
+the merge of both sides' values, stops with the entries concerned and the
+choices that resolve them. `--continue --keep yours|incoming|text-merge` writes
+the file by value; a file edited since the stop is never written over.
+
+### Refusals name their repos, states and choices
+
+A refusal that judged repo states is printed, and carried under `--json`, as one
+record per repo and axis (`edits`, `checkout`, `push-branch`, `name`, `publish`,
+`target`, `history`, `protected`, `port`), with the facts and the choices that
+clear it; every printed choice runs as written. `rwv explain <token>` serves
+each token. Refusals removed with the removal of what they judged include
+`dirty-checkout`, `unmerged-commits`, `uncommitted-work`, `mid-operation` and
+`push-from-workweave`; `unsupported-vcs-tool`, `missing-vcs-tool`,
+`filesystem-without-exclusive-publish`, `savepoint-unfiled`,
+`replay-unrecorded` and `abort-in-its-workspace` are new.
+
+### Branches are recorded by weave branch, not by ephemeral names
+
+A workweave's branch is the project repo's `<project>--<name>` branch, with a
+record, and each member's branch of the same name. The ephemeral
+`<project>--<name>/<segment>` branches, the ownership receipts and the
+`branch-discipline`, `dangling-ref-receipt` and `pre-flat-ref-receipt` findings
+are gone. A weave branch an earlier release made has no record: `rwv branch
+set-mode` records it. A member still carrying the old branch shape refuses
+`rwv workweave create` and `rwv update` with `pre-flat-branch-shape`, naming
+the release to step through. `rwv update` records which branch a workspace
+aligned its members for; `rwv status` lists a workspace without it as `project
+unaligned`.
+
+### `rwv doctor` reports what the VCS records without naming git's model
+
+`index-drift` is `record-drift` with sub-kind `live-recorded`, and
+`working-tree-drift` keeps `live-edits`. `--merge-edited-drift` and
+`--set-aside-edited-drift` carry a checkout's edits onto a moved branch.
+`--release-unreadable-claims`, `--release-unreachable-claims` and
+`--release-unreadable-claims-on` release claims a dead holder left. New
+findings: `alignment`, `pin`, `unreadable-op-record`, `claim-owner-unreachable`,
+`claim-unreadable`, `claim-holder-unreachable`, `claim-unopenable`,
+`history-disagreement`, `lock-merge-driver-unreadable` and
+`missing-lock-merge-driver`. `--adopt-detached-checkouts`,
+`--reattach-checkouts` and the legacy-index and merge-driver-config findings
+are removed.
+
+### `rwv.lock` merges through its own driver
+
+`rwv.lock` merges by `rwv.lock merge=rwv-lock` in `.gitattributes` and
+`merge.rwv-lock.driver` in the clone's config, which `rwv init` and `rwv
+clone` write; `rwv lock --merge-driver` is the plumbing the config names. The
+`rwv-ours` setup an earlier release wrote is refused as
+`missing-lock-merge-driver`; `rwv doctor --fix` replaces it. `rwv lock --repo`
+records only the members a selector matches, never moving a pin backward.
+
+### Removed readers of older state
+
+The reader of the workweave index at `projects/<project>/.rwv-workweave-index`
+is removed: a file there refuses as `unreadable-workweave-index`, and `rwv
+doctor --fix` rebuilds the index into the project clone from the workweaves'
+markers (the recorded default basedir is not carried over; `rwv workweave
+set-default-create-basedir` records it again). The health floor file and its
+`health-floor-too-low` refusal are removed. `rwv.yaml` is still reported as `legacy-manifest-format` and still has no
+`--fix` arm.
+
+### `rwv workweave create` takes a branch and a place
+
+`--new-branch`, `--branch` and `--detach` say which branch the workweave opens;
+`--target`, `--declared`, `--set-branch`, `--set-new-branch`, `--pin` and `--at`
+shape a created one. `--dir` places the workweave at exactly a path and
+`--basedir` under a directory, in place of the default
+`rwv workweave set-default-create-basedir` records. With no branch flag the
+workweave is a feature under the minted name `<project>--<name>`. `--from`,
+`--replace-existing` and `--capture-dirty` are removed: what the invoking
+workspace holds uncommitted stays there and is reported.
+`rwv workweave delete` applies the deletion rule to the workweave's branch and
+takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
+
+### Git 2.36 or newer is required
+
+Every verb that reads or writes a repository checks the `git` on `PATH` first and
+refuses `unsupported-vcs-tool` below 2.36, or `missing-vcs-tool` with none.
+
 ## 0.25.0
 
 ### A workweave checkout whose pinned commits went with a deleted clone can be relinked
