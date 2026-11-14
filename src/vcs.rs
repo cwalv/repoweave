@@ -1507,6 +1507,8 @@ pub enum BackupMark {
     Rebased,
     /// The tip `rwv abort --abandon-foreign-tip` gave up.
     Abandoned,
+    /// The tip of a remote-tracking branch a fetch found rewritten.
+    Superseded,
 }
 
 /// What a backup backs up.
@@ -3382,8 +3384,9 @@ pub trait Vcs: Send + Sync {
     /// branch that moved. No local branch and no checkout moves.
     ///
     /// A branch that moved to a tip not descending from its old one keeps the
-    /// old tip as its superseded tip, recorded before this returns (git:
-    /// `refs/rwv/superseded/<remote>/<branch>/<old tip>`). `claim` is the
+    /// old tip as its superseded tip, a backup marked [`BackupMark::Superseded`]
+    /// recorded before this returns (git: `refs/rwv/backup/<remote>/<branch>/
+    /// superseded-<old tip>`). `claim` is the
     /// proof that no other rwv fetches into this store meanwhile.
     fn fetch_pruning(
         &self,
@@ -4192,7 +4195,7 @@ pub trait Vcs: Send + Sync {
     /// superseded tip reaches, newest first: its unpushed commits.
     ///
     /// For git: `git log refs/heads/<branch> --not --remotes
-    /// --glob=refs/rwv/superseded/*`.
+    /// --glob=refs/rwv/backup/*/superseded-*`.
     fn unpushed_commits(
         &self,
         repo: &Path,
@@ -4204,7 +4207,7 @@ pub trait Vcs: Send + Sync {
     /// first.
     ///
     /// For git: `git log <tip> --not <base> --remotes
-    /// --glob=refs/rwv/superseded/*`.
+    /// --glob=refs/rwv/backup/*/superseded-*`.
     fn unpushed_beyond(
         &self,
         repo: &Path,
@@ -4617,7 +4620,7 @@ pub trait Vcs: Send + Sync {
     /// The commits `tip` reaches that none of `excluding` reaches, newest
     /// first; with `superseded`, none that a superseded tip reaches either.
     ///
-    /// For git: `git log <tip> --not <excluding>... [--glob=refs/rwv/superseded/*]`.
+    /// For git: `git log <tip> --not <excluding>... [--glob=refs/rwv/backup/*/superseded-*]`.
     fn commits_excluding(
         &self,
         repo: &Path,

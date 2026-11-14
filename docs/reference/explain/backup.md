@@ -18,6 +18,9 @@ Backups are made by:
   ones not);
 - `rwv abort --abandon-foreign-tip <repo>`, which keeps the tip it moves the
   branch off, marked `abandoned`;
+- `rwv fetch`, which keeps the old tip of a remote-tracking branch the remote
+  rewrote, marked `superseded`, so work built on it stays reachable and is not
+  counted as unpushed;
 - `rwv doctor --fix`, which turns a savepoint no operation owns any more into
   one when the savepoint is the last thing reaching its commits.
 
@@ -31,7 +34,7 @@ own, and nothing but `rwv backup` does.
 
 For each repo of the project that holds a backup — the project repo as
 `projects/<name>`, a member by its path — one line per backup: its name, the
-commit it holds, `[abandoned]` for a tip `abort` gave up, `[rebased]` for a
+commit it holds, `[abandoned]` for a tip `abort` gave up, `[superseded]` for a tip a fetch found the remote had rewritten away, `[rebased]` for a
 branch a rebase rewrote, and `[redundant]` when a branch or remote-tracking
 branch reaches everything the backup holds, so dropping it loses nothing.
 Under each line, the commits it holds that no branch reaches, newest first.
@@ -130,6 +133,13 @@ Schema:
           "type": "string",
           "enum": [
             "abandoned"
+          ]
+        },
+        {
+          "description": "The tip of a remote-tracking branch a fetch found rewritten.",
+          "type": "string",
+          "enum": [
+            "superseded"
           ]
         }
       ]

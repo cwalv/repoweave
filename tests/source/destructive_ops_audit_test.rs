@@ -465,7 +465,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 11,
+        count: 10,
         callers: &[],
         justification: "(1)-(2) savepoint creates, a checkout's and a \
             branch's moved as a ref; (A)-(C) savepoint drops: every one \
@@ -473,14 +473,9 @@ const ALLOWLIST: &[Allowed] = &[
             only under refs/rwv/pre-op/<key>/ (relocated from sync.rs). (3) create_unpopulated_submodule(): \
             detaches HEAD, with --no-deref, in a submodule repository the \
             same call cloned an instant before and that nothing else has \
-            seen; its branches are left as the clone made them. (4) \
-            record_superseded_tip(): after a pruning fetch moved a \
-            remote-tracking branch to a tip that does not descend from its \
-            old one, names the old tip under refs/rwv/superseded/<remote>/ \
-            <branch>/<old tip>. The ref's name ends in the commit it points \
-            at, so the call only adds a name for a commit the fetch had \
-            just dropped one; it moves and deletes nothing. None of (1)-(4) or (A)-(C) \
-            touch user refs. (5) delete_branch: `update-ref -d <ref> \
+            seen; its branches are left as the clone made them. None of \
+            (1)-(3) or (A)-(C) \
+            touch user refs. (4) delete_branch: `update-ref -d <ref> \
             <tip>`, where the old value is a compare-and-swap, so a branch \
             that moved since the proof was made is left. Reachable only \
             through Vcs::delete_branch, whose single parameter is a \
@@ -491,11 +486,11 @@ const ALLOWLIST: &[Allowed] = &[
             minted only from --discard-unlanded). The proof names the \
             store, so it cannot authorize a delete in a different refdb. \
             It refuses a branch checked out in any worktree before it \
-            deletes. (6) the same command spelled in the argument list of \
-            the error that refusal returns; it is not a call. (7) the same command \
+            deletes. (5) the same command spelled in the argument list of \
+            the error that refusal returns; it is not a call. (6) the same command \
             spelled in the argument list of the error advance_branch_ref \
             returns when the move is not a fast-forward; it is not a call. \
-            (8) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
+            (7) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
             refresh read, by a compare-and-swap whose old and new values are \
             both that commit, so it moves no ref; a branch moved since makes \
             it fail rather than move back or record the newer tip.",

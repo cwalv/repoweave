@@ -387,6 +387,13 @@ Schema:
           "enum": [
             "abandoned"
           ]
+        },
+        {
+          "description": "The tip of a remote-tracking branch a fetch found rewritten.",
+          "type": "string",
+          "enum": [
+            "superseded"
+          ]
         }
       ]
     },

@@ -1,7 +1,8 @@
 //! The reference namespace rwv keeps its savepoints and backups under is
-//! spelled only in `git.rs`, the backend whose layout it is.
+//! spelled only in `git/rwv_ref.rs`, the registry of the backend whose layout
+//! it is.
 //!
-//! `savepoint_ref` and the backup namespace constant mint the names there, and
+//! The registry's `RwvRef` mints the names, and
 //! the `Vcs` trait relays them out: a `Backup` carries its operator-spellable
 //! `BackupName`, `savepoint_label` and `savepoint_namespace` do the same for
 //! the savepoint side. Callers hold an opaque op-id and an opaque label. The trait says so in as many words, and
@@ -12,10 +13,10 @@
 //!
 //! The needle is the namespace root, so it covers both the savepoint and the
 //! backup halves. What it asserts is a module boundary rather than a single
-//! site: within `git.rs` the layout is spelled by the mints and by the
-//! recognizer that filters rwv's own refs out of foreign tag names, which
-//! matches the `refs/`-less spelling too and reads worse derived than written.
-//! The prohibition is on composing the namespace outside its owner.
+//! site: the layout is spelled by the registry alone, and every other place in
+//! the backend, the recognizer of rwv's own refs among foreign tag names
+//! included, reads it from there. The prohibition is on composing the
+//! namespace outside its owner.
 //!
 //! Doc comments are exempt, and deliberately — `src_scan` drops them. That is
 //! a real hole and worth naming: the `--discard-local-commits` help text in
@@ -36,10 +37,11 @@ use crate::common;
 
 use common::src_scan::{production_lines, SourceLine};
 
-/// The namespace root, and the constants that declare its two halves.
+/// The namespace root, the file that owns it, and the spelling of each half.
 const NAMESPACE: &str = "refs/rwv";
-const DECLARED_AS: &str = "SAVEPOINT_NAMESPACE";
-const BACKUP_DECLARED_AS: &str = "BACKUP_NAMESPACE";
+const OWNER: &str = "git/rwv_ref.rs";
+const DECLARED_AS: &str = "\"refs/rwv/pre-op\"";
+const BACKUP_DECLARED_AS: &str = "\"refs/rwv/backup\"";
 
 fn sites<'a>(lines: &'a [SourceLine], needle: &str) -> Vec<&'a SourceLine> {
     lines.iter().filter(|l| l.text.contains(needle)).collect()
@@ -71,12 +73,12 @@ fn the_ref_namespace_is_spelled_only_in_its_backend() {
 
     let strays: Vec<String> = found
         .iter()
-        .filter(|l| l.file != "git.rs")
+        .filter(|l| l.file != OWNER)
         .map(|l| format!("{}: {}", l.site(), l.text.trim()))
         .collect();
     assert!(
         strays.is_empty(),
-        "`{NAMESPACE}` must be spelled only in git.rs, which owns the layout. \
+        "`{NAMESPACE}` must be spelled only in {OWNER}, which owns the layout. \
          A site elsewhere is a caller composing a name it should have taken \
          from `Vcs::savepoint_label`, `Vcs::savepoint_namespace` or a returned \
          `Backup`. Found: {strays:?}"
@@ -90,14 +92,9 @@ fn the_ref_namespace_is_spelled_only_in_its_backend() {
     assert_eq!(
         declarations.len(),
         1,
-        "the savepoint namespace must survive as `{DECLARED_AS}`'s \
-         declaration; without it this file's boundary check no longer says \
-         what it claims. Found: {declarations:?}"
-    );
-    assert!(
-        declarations[0].contains("const"),
-        "`{DECLARED_AS}` is no longer a constant: {}",
-        declarations[0]
+        "the savepoint namespace must be spelled once, as {DECLARED_AS}; \
+         without it this file's boundary check no longer says what it \
+         claims. Found: {declarations:?}"
     );
 
     let backup_declarations: Vec<&str> = found
@@ -108,13 +105,8 @@ fn the_ref_namespace_is_spelled_only_in_its_backend() {
     assert_eq!(
         backup_declarations.len(),
         1,
-        "the backup namespace must be declared at exactly one site, as \
-         `{BACKUP_DECLARED_AS}`. Found: {backup_declarations:?}"
-    );
-    assert!(
-        backup_declarations[0].contains("const"),
-        "`{BACKUP_DECLARED_AS}` is no longer a constant: {}",
-        backup_declarations[0]
+        "the backup namespace must be spelled at exactly one site, as \
+         {BACKUP_DECLARED_AS}. Found: {backup_declarations:?}"
     );
 }
 
@@ -127,8 +119,8 @@ fn a_namespace_composed_outside_the_backend_is_what_this_reports() {
     };
     let corpus = vec![
         planted(
-            "git.rs",
-            "const SAVEPOINT_NAMESPACE: &str = \"refs/rwv/pre-op\";",
+            "git/rwv_ref.rs",
+            "            Self::PreOp => \"refs/rwv/pre-op\",",
         ),
         planted(
             "sync.rs",

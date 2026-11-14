@@ -92,7 +92,7 @@ disk. It moves no local branch, checkout or lock.
 - *Cross-repo dependency ordering?* No — each repo's fetch is independent;
   fetches into one object store run one at a time.
 - *rwv-owned state?* A remote-tracking branch the remote rewrote keeps its
-  old tip under `refs/rwv/superseded/`.
+  old tip as a `superseded` backup.
 
 Pass. The "fetch all my repos" composition exists (`rwv status --json
 | jq -r '.repos[].absolute_path' | xargs ...`) but has to spell the remote name

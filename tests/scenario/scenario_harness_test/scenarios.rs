@@ -3044,10 +3044,10 @@ pub fn no_superseded_on_prune() -> Scenario {
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("pruned"))
             .claim(Claim::OutputLacks("rewritten")),
-        Step::git(&a(), Repo::App, &["for-each-ref", "refs/rwv/superseded"])
-            .claim(Claim::OutputLacks("refs/rwv/superseded")),
-        Step::git(&a(), Repo::Proj, &["for-each-ref", "refs/rwv/superseded"])
-            .claim(Claim::OutputLacks("refs/rwv/superseded")),
+        Step::git(&a(), Repo::App, &["for-each-ref", "refs/rwv/backup"])
+            .claim(Claim::OutputLacks("superseded-")),
+        Step::git(&a(), Repo::Proj, &["for-each-ref", "refs/rwv/backup"])
+            .claim(Claim::OutputLacks("superseded-")),
         Step::rwv(&a(), &["status"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains("push-branch gone"))

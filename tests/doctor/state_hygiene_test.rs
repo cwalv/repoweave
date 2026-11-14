@@ -1097,6 +1097,51 @@ fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
     }
 }
 
+/// A ref below `refs/rwv/` in a namespace rwv does not write is reported and
+/// kept, and the namespaces it does write are not mistaken for it.
+#[test]
+fn a_ref_below_the_rwv_root_in_no_namespace_is_reported_and_a_backup_is_not() {
+    let tmp = common::tempdir().unwrap();
+    let root = make_workspace(tmp.path(), "ws");
+    let repo_rel = "github/acme/server";
+    let repo_abs = root.join(repo_rel);
+    let head_sha = init_git_repo(&repo_abs);
+    write_manifest(
+        &root.join("projects").join("my-app"),
+        &[(repo_rel, "https://github.com/acme/server.git")],
+    );
+    for name in [
+        "refs/rwv/superseded/origin/main/abc",
+        "refs/rwv/pre-abort/x",
+        "refs/rwv/backup/main/abandoned-123456789abc",
+    ] {
+        common::git_in(&repo_abs, &["update-ref", name, &head_sha]);
+    }
+
+    let out = rwv_cmd()
+        .args(["doctor", "--json"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let mut unrecognized: Vec<&str> = json["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|v| v["kind"] == "unrecognized-savepoint-ref")
+        .map(|v| v["ref_name"].as_str().unwrap())
+        .collect();
+    unrecognized.sort_unstable();
+
+    assert_eq!(
+        unrecognized,
+        vec![
+            "refs/rwv/pre-abort/x",
+            "refs/rwv/superseded/origin/main/abc"
+        ]
+    );
+}
+
 /// The words of a command printed with POSIX single-quoting.
 fn shell_words(command: &str) -> Vec<String> {
     let mut words = Vec::new();

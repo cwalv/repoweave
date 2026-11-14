@@ -930,6 +930,9 @@ fn release_if_held(path: &StatePath, held: &dyn Fn(&Holder) -> bool) -> anyhow::
         }
     }
     let _ = std::fs::remove_dir(path.dir());
+    if let Some(claims) = path.dir().parent() {
+        let _ = std::fs::remove_dir(claims);
+    }
     Ok(true)
 }
 
@@ -978,6 +981,27 @@ mod tests {
         );
         first.release().unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn releasing_the_last_claim_removes_the_directory_that_held_it() {
+        let tmp = crate::tempdir().unwrap();
+        let owner = tmp.path().join("one");
+        std::fs::create_dir_all(owner.join("projects")).unwrap();
+        record(&owner, &op(1));
+        let path = claim_in(tmp.path());
+        let held = take_within(path.clone(), &p(), "t", &op(1), &owner, Duration::ZERO).unwrap();
+        let other = StateFile::LandingClaim.in_dir(&tmp.path().join("claims").join("u"));
+        let beside = take_within(other.clone(), &p(), "u", &op(2), &owner, Duration::ZERO).unwrap();
+
+        held.release().unwrap();
+        assert!(
+            tmp.path().join("claims").exists(),
+            "a claim stands beside it, so the directory stays"
+        );
+        beside.release().unwrap();
+
+        assert!(!tmp.path().join("claims").exists());
     }
 
     fn claims_on(tmp: &Path, target: &str) -> (std::path::PathBuf, StatePath) {

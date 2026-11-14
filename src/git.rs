@@ -37,9 +37,11 @@ mod records;
 mod replay;
 #[cfg(test)]
 mod restore_plan_tests;
+mod rwv_ref;
 mod scratch;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
+use rwv_ref::RwvRef;
 use scratch::Scratch;
 
 /// A `git` command with all inherited `GIT_*` environment variables
@@ -315,10 +317,6 @@ fn owner_segment(url: &str) -> Option<String> {
     let name = name.trim_matches(|c| c == '-' || c == '.').to_owned();
     (!name.is_empty() && !name.ends_with(".lock")).then_some(name)
 }
-
-/// Where the tip a remote-tracking branch was rewritten away from is kept:
-/// `<remote>/<branch>/<tip>` below it.
-const SUPERSEDED_NAMESPACE: &str = "refs/rwv/superseded/";
 
 const LOCAL_BRANCH_NAMESPACE: &str = "refs/heads/";
 
@@ -1871,12 +1869,23 @@ impl GitVcs {
         }
     }
 
-    /// Keep `tip`, which `branch` no longer reaches, under the superseded
-    /// namespace.
+    /// Keep `tip`, which `branch` no longer reaches, as a backup marked
+    /// superseded: the commits a rewrite dropped from the remote.
     fn record_superseded_tip(repo: &Path, branch: &str, tip: &str) -> Result<(), VcsError> {
-        let refname = format!("{SUPERSEDED_NAMESPACE}{branch}/{tip}");
-        Self::run(["update-ref", &refname, tip], repo)?;
-        Ok(())
+        let tip = ResolvedRevisionId::from_rev_parse_output(tip).ok_or_else(|| {
+            VcsError::CommandFailed {
+                args: vec!["rev-parse".to_owned()],
+                repo: repo.to_path_buf(),
+                stderr: format!("not a commit id: {tip}"),
+            }
+        })?;
+        Self::write_backup_ref(
+            repo,
+            &BackupSource::Branch(RawRefName::new(branch)),
+            &tip,
+            Some(BackupMark::Superseded),
+        )
+        .map(|_| ())
     }
 }
 
@@ -2530,18 +2539,13 @@ impl Absent {
     }
 }
 
-/// True for transient/internal tags that must not be chosen as a lock's
-/// symbolic name. Mirrors the ref-spaces rwv uses for its own bookkeeping —
-/// `savepoint/*` (operator/tool savepoints), `rwv/pre-op/*` (sync abort
-/// recovery refs under `refs/rwv/pre-op/*` when surfaced as tag names),
-/// and `rwv/backup/*` (backups under `refs/rwv/backup/*`).
+/// True for the ref-spaces rwv keeps its own bookkeeping in, when they surface
+/// as tag names: they must not be chosen as a lock's symbolic name.
 fn is_transient_tag(tag: &str) -> bool {
-    tag.starts_with("savepoint/")
-        || tag.starts_with("rwv/pre-op/")
-        || tag.starts_with("refs/rwv/pre-op/")
-        || tag.starts_with("rwv/backup/")
-        || tag.starts_with("refs/rwv/backup/")
-        || tag.starts_with("rwv-savepoint/")
+    let tag = tag.strip_prefix("refs/").unwrap_or(tag);
+    RwvRef::ALL
+        .iter()
+        .any(|namespace| tag.starts_with(namespace.prefix().trim_start_matches("refs/")))
 }
 
 /// True for release-shape tags (e.g., `v1.2.3`, `v0.3.4-rc1`). Used as a
@@ -3896,7 +3900,7 @@ impl Vcs for GitVcs {
     }
 
     fn savepoint_namespace(&self) -> String {
-        SAVEPOINT_NAMESPACE.to_owned()
+        RwvRef::PreOp.namespace().to_owned()
     }
 
     fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId> {
@@ -4048,7 +4052,7 @@ impl Vcs for GitVcs {
         branch: &RawRefName,
     ) -> Result<Vec<CommitSummary>, VcsError> {
         let tip = local_branch(branch.as_str());
-        let superseded = format!("--glob={SUPERSEDED_NAMESPACE}*");
+        let superseded = backup::superseded_glob();
         let args = [
             "log",
             "--pretty=format:%H%x00%s",
@@ -4077,7 +4081,7 @@ impl Vcs for GitVcs {
         tip: &ResolvedRevisionId,
         base: &ResolvedRevisionId,
     ) -> Result<Vec<CommitSummary>, VcsError> {
-        let superseded = format!("--glob={SUPERSEDED_NAMESPACE}*");
+        let superseded = backup::superseded_glob();
         let args = [
             "log",
             "--pretty=format:%H%x00%s",
@@ -4621,10 +4625,18 @@ impl Vcs for GitVcs {
     }
 
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError> {
-        let prefix = format!("{SAVEPOINT_NAMESPACE}/");
-        let output = Self::run_trimmed(["for-each-ref", "--format=%(refname)", &prefix], repo)?;
+        let prefix = RwvRef::PreOp.prefix();
+        let root = format!("{}/", rwv_ref::ROOT);
+        let output = Self::run_trimmed(["for-each-ref", "--format=%(refname)", &root], repo)?;
         let mut listing = SavepointListing::default();
         for refname in output.lines().map(str::trim).filter(|l| !l.is_empty()) {
+            if RwvRef::is_unclaimed(refname) {
+                listing.unrecognized.push(refname.to_owned());
+                continue;
+            }
+            if !refname.starts_with(&prefix) {
+                continue;
+            }
             let filed =
                 refname
                     .strip_prefix(&prefix)
@@ -4745,7 +4757,7 @@ impl Vcs for GitVcs {
         excluding: &[CommitId],
         superseded: bool,
     ) -> Result<Vec<CommitSummary>, VcsError> {
-        let glob = format!("--glob={SUPERSEDED_NAMESPACE}*");
+        let glob = backup::superseded_glob();
         let mut args = vec![
             "log",
             "--pretty=format:%H%x00%s",
@@ -5321,7 +5333,7 @@ impl Vcs for GitVcs {
         leaving: Option<&RawRefName>,
         onto: Option<&ResolvedRevisionId>,
     ) -> Result<Vec<CommitSummary>, VcsError> {
-        let backups = format!("--glob={BACKUP_NAMESPACE}/*");
+        let backups = RwvRef::Backup.glob();
         let mut args: Vec<String> = vec![
             "log".to_owned(),
             "--pretty=format:%H%x00%s".to_owned(),
@@ -5723,9 +5735,6 @@ impl Vcs for GitVcs {
     }
 }
 
-/// The ref namespace savepoints live under.
-const SAVEPOINT_NAMESPACE: &str = "refs/rwv/pre-op";
-
 /// The ref directory every savepoint filed under `key` lives below: the
 /// checkout's (`checkout/<branch>` or `detached`) and each branch's moved as
 /// a ref (`ref/<branch>`).
@@ -5736,11 +5745,8 @@ const SAVEPOINT_NAMESPACE: &str = "refs/rwv/pre-op";
 /// Centralizing the format here means create / resolve / drop / restore all
 /// agree on the layout.
 fn savepoint_ref(key: &SavepointKey) -> String {
-    format!("{SAVEPOINT_NAMESPACE}/{key}")
+    format!("{}/{key}", RwvRef::PreOp.namespace())
 }
-
-/// The ref namespace backups live under.
-const BACKUP_NAMESPACE: &str = "refs/rwv/backup";
 
 impl GitVcs {
     /// Reset `repo` to `savepoint` via `git reset --hard`, drop the savepoint
@@ -10915,7 +10921,10 @@ mod remote_role_tests {
             &repo,
             &[
                 "update-ref",
-                &format!("{SUPERSEDED_NAMESPACE}fork/feature/{}", own.id().as_str()),
+                &format!(
+                    "refs/rwv/backup/fork/feature/superseded-{}",
+                    &own.id().as_str()[..12]
+                ),
                 own.id().as_str(),
             ],
         );

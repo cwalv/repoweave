@@ -35,9 +35,10 @@ running.
 
 When a fetch moves a remote-tracking branch to a tip that does not descend from
 the old one, `fetch` reports the branch as `rewritten` and keeps the old tip
-under `refs/rwv/superseded/<remote>/<branch>/<old tip>`. Nothing deletes the
-commits a rewrite dropped from the remote, so work built on them stays
-reachable. A branch the remote deleted is `pruned`, and a prune supersedes
+as a backup marked `superseded`, named `<remote>/<branch>/superseded-<id>`.
+Nothing deletes the commits a rewrite dropped from the remote, so work built on
+them stays reachable; `rwv backup list` shows the backup and `rwv backup drop`
+drops it. A branch the remote deleted is `pruned`, and a prune supersedes
 nothing.
 
 ### A pin no remote-tracking branch reaches

@@ -1540,7 +1540,8 @@ as the operation's record exists.
 
 ### `unrecognized-savepoint-ref`
 
-**Warning. Report-only.** A ref under `refs/rwv/pre-op/` that no op id names.
+**Warning. Report-only.** A ref below `refs/rwv/` in no namespace rwv writes
+(`pre-op`, `backup`), or one under `refs/rwv/pre-op/` that no op id names.
 rwv did not file it: it is a hand-made ref, a damaged name, or one written by
 a different rwv. What it points at is unknown, so `--fix` never drops it. The
 finding carries the `ref_name` and the holding repo's `absolute_path`. Refs

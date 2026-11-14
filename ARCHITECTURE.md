@@ -118,7 +118,7 @@ the rest read it.
 | Module | Owns |
 |---|---|
 | `clone` (`src/clone.rs`) | `rwv clone`: clones the project repo, runs `bring_members` over its members, then activates the project when none is active. A member the lock gives no commit to be at is judged `pin` `none` or `pin` `unreachable` and listed, and the verb returns `CompletedWithRemainder`. |
-| `fetch` (`src/fetch.rs`) | `rwv fetch`, and `pruning_fetch`, the one function every pruning fetch goes through — `rwv pull` and `rwv update --remote` call it too. It moves no local branch, checkout or lock, and records the old tip of a rewritten remote-tracking branch as a superseded tip. |
+| `fetch` (`src/fetch.rs`) | `rwv fetch`, and `pruning_fetch`, the one function every pruning fetch goes through — `rwv pull` and `rwv update --remote` call it too. It moves no local branch, checkout or lock, and keeps the old tip of a rewritten remote-tracking branch as a `superseded` backup. |
 | `fetch_claim` (`src/fetch_claim.rs`) | `FetchClaim::hold`, the claim on an object store that lets one fetch into it run at a time. [`docs/internals/concurrency.md`](docs/internals/concurrency.md). |
 | `pull` (`src/pull.rs`) | `rwv pull`: the fetch, the fast-forward of the project branch (`take_in_project`), then `update_members`. |
 | `update` (`src/update.rs`) | `rwv update`, and `bring_members`, the clone-missing-and-align engine `rwv clone` shares: it clones each member not on disk, aligns each present one to its lock entry, and reports what became of every pin as a `PinOutcome`. The lock is read and never written. |

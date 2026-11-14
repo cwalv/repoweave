@@ -1,11 +1,11 @@
-//! Backups, as git keeps them: one ref per backup under [`BACKUP_NAMESPACE`],
+//! Backups, as git keeps them: one ref per backup under [`RwvRef::Backup`],
 //! named for the branch it backs up and an id.
 //!
 //! The id is the abbreviated id of the backed-up tip, behind the mark when
 //! there is one, so backing up the same tip twice names one ref. A tip whose
 //! abbreviation another commit already holds takes a longer one.
 
-use super::{git_command, Argv, GitVcs, Scratch, BACKUP_NAMESPACE, LOCAL_BRANCH_NAMESPACE};
+use super::{git_command, Argv, GitVcs, RwvRef, Scratch, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
     Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, ListedBackup,
     RemoteTracking, ResolvedRevisionId, VcsError,
@@ -17,6 +17,7 @@ const ID_WIDTH: usize = 12;
 const DETACHED_HEAD: &str = "HEAD";
 const REBASED_PREFIX: &str = "rebased-";
 const ABANDONED_PREFIX: &str = "abandoned-";
+const SUPERSEDED_PREFIX: &str = "superseded-";
 const EDITS_MESSAGE: &str = "rwv backup of uncommitted edits";
 /// The second parent of an edits backup whose index held content the
 /// working tree no longer does: the index as it stood.
@@ -34,6 +35,7 @@ fn id_text(mark: Option<BackupMark>, hex: &str) -> String {
         None => hex.to_owned(),
         Some(BackupMark::Rebased) => format!("{REBASED_PREFIX}{hex}"),
         Some(BackupMark::Abandoned) => format!("{ABANDONED_PREFIX}{hex}"),
+        Some(BackupMark::Superseded) => format!("{SUPERSEDED_PREFIX}{hex}"),
     }
 }
 
@@ -42,13 +44,24 @@ fn mark_of(id: &str) -> Option<BackupMark> {
         Some(BackupMark::Rebased)
     } else if id.starts_with(ABANDONED_PREFIX) {
         Some(BackupMark::Abandoned)
+    } else if id.starts_with(SUPERSEDED_PREFIX) {
+        Some(BackupMark::Superseded)
     } else {
         None
     }
 }
 
+/// The `--glob` argument that selects the backups of tips a fetch found
+/// rewritten away: the commits the remote once held.
+pub(super) fn superseded_glob() -> String {
+    format!(
+        "--glob={}/*/{SUPERSEDED_PREFIX}*",
+        RwvRef::Backup.namespace()
+    )
+}
+
 fn backup_ref(name: &BackupName) -> String {
-    format!("{BACKUP_NAMESPACE}/{name}")
+    format!("{}/{name}", RwvRef::Backup.namespace())
 }
 
 fn failed(args: &[&str], repo: &Path, stderr: String) -> VcsError {
@@ -120,7 +133,7 @@ impl GitVcs {
         remote_tracking: RemoteTracking,
     ) -> Result<Vec<ListedBackup>, VcsError> {
         let repo = Self::work_dir_for_store(repo);
-        let prefix = format!("{BACKUP_NAMESPACE}/");
+        let prefix = RwvRef::Backup.prefix();
         let out = Self::run_trimmed(
             ["for-each-ref", "--format=%(objectname) %(refname)", &prefix],
             &repo,

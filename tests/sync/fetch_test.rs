@@ -80,7 +80,7 @@ impl Weave {
         self.git_member(&[
             "for-each-ref",
             "--format=%(refname) %(objectname)",
-            "refs/rwv/superseded",
+            "refs/rwv/backup",
         ])
     }
 
@@ -255,9 +255,27 @@ fn fetch_keeps_the_old_tip_of_a_rewritten_branch_and_says_it_was_rewritten() {
     assert_eq!(rewritten[0]["to"], new.as_str());
     assert_eq!(
         weave.superseded(),
-        format!("refs/rwv/superseded/origin/feat/{old} {old}"),
-        "the old tip is kept under the superseded namespace"
+        format!(
+            "refs/rwv/backup/origin/feat/superseded-{} {old}",
+            &old[..12]
+        ),
+        "the old tip is kept as a backup marked superseded"
     );
+
+    let listed = String::from_utf8_lossy(&weave.rwv(&["backup", "list"]).stdout).into_owned();
+    assert!(
+        listed.contains(&format!("origin/feat/superseded-{}", &old[..12]))
+            && listed.contains("[superseded]"),
+        "{listed}"
+    );
+    let name = format!("origin/feat/superseded-{}", &old[..12]);
+    let dropped = weave.rwv(&["backup", "drop", MEMBER, &name]);
+    assert!(
+        dropped.status.success(),
+        "{}",
+        common::pause::describe("backup drop", &dropped)
+    );
+    assert_eq!(weave.superseded(), "", "the listed name drops it");
     assert_eq!(
         weave.git_member(&["rev-parse", "refs/remotes/origin/feat"]),
         new

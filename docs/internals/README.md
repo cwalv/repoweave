@@ -44,6 +44,9 @@ backstop unnecessary.
 - [testing](./testing.md) — what a test must evidence to enter the suite, when
   a structural pin is licensed, the mutation-evidence standard, and when
   deletion is the correct outcome.
+- [state](./state.md) — every piece of state rwv keeps: files, refs, trailers,
+  and what it leaves in the VCS's own structures, with each one's owner,
+  lifetime and what a kill leaves.
 - [op-state](./op-state.md) — field-level schemas of the `.rwv-op` owner record
   and the `.rwv-op-lease` pointer, for someone changing sync's resume logic.
   Consumers call back into `rwv` instead of parsing them.
