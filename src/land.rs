@@ -1295,21 +1295,19 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
     let ours = match vcs.staged_file(&dir, Manifest::FILE_NAME)? {
         Some(staged) => match Manifest::from_toml_str(&staged) {
             Ok(ours) => ours,
-            Err(_) if vcs.rebase_in_flight(&dir)?.is_some() => return Ok(Rejudged::Deferred),
-            Err(error) => {
-                let produced = if vcs.merge_in_flight(&dir)?.is_some() {
-                    crate::project_merge::Produced::Merge
-                } else {
-                    crate::project_merge::Produced::Replay
-                };
+            Err(error) if vcs.merge_in_flight(&dir)?.is_some() => {
                 return Err(crate::project_merge::unparseable_result(
                     vcs,
                     &label,
                     &dir,
-                    (&crate::op_state::resume_command(resumed.verb), produced),
+                    (
+                        &crate::op_state::resume_command(resumed.verb),
+                        crate::project_merge::Produced::Merge,
+                    ),
                     &error,
                 ));
             }
+            Err(_) => return Ok(Rejudged::Deferred),
         },
         None => return Ok(Rejudged::Deferred),
     };
@@ -1356,8 +1354,8 @@ pub enum Rejudged {
     /// The project repo still holds an unresolved conflict, which the resume
     /// itself stops on.
     Unresolved,
-    /// No `rwv.toml` is staged, or the replay is still in flight and the
-    /// `rwv.toml` it has replayed so far does not parse: the operation's
+    /// No `rwv.toml` is recorded, or outside a merge the one recorded does
+    /// not parse: the replay's own stop answers it, and the operation's
     /// result is judged once it is read.
     Deferred,
     /// Every change is consented to: those that land.

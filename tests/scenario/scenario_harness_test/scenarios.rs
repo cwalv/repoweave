@@ -20204,9 +20204,9 @@ pub enum TipSettle {
     /// The printed bare continue, then a conflict in a member the landing
     /// replays after the project, resolved and continued.
     ThenMemberConflict,
-    /// An `rwv.toml` that does not parse staged, then the printed bare
-    /// continue: it writes the merge of the values, the staged file kept in a
-    /// backup.
+    /// An `rwv.toml` that does not parse marked resolved: the printed bare
+    /// continue stops again; withdrawn, the bare continue writes the merge of
+    /// the values.
     StagedUnparseable,
     /// The same, then the printed `--keep text-merge`: the tip's own text.
     StagedUnparseableKeepTextMerge,
@@ -20443,20 +20443,29 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
             if matches!(settle, TipSettle::StagedUnparseable) {
                 steps.extend([
                     Step::rwv_printed_exactly(&ww("w"), bare)
+                        .expect(Exit::refuses(
+                            Repo::Proj,
+                            State::UnparseableProjectMidOperation,
+                        ))
+                        .claim(Claim::OutputContains(moved))
+                        .claim(Claim::OutputContains("--keep text-merge")),
+                    Step::git(
+                        &ww("w"),
+                        Repo::Proj,
+                        &["restore", "--staged", "--worktree", "--", "rwv.toml"],
+                    )
+                    .expect(Exit::Succeeds),
+                    Step::rwv_printed_exactly(&ww("w"), bare)
                         .expect(Exit::Succeeds)
                         .may_strand(&[Repo::Proj])
                         .claim(Claim::OutputContains(
-                            "the rwv.toml marked resolved does not parse",
-                        ))
-                        .claim(Claim::OutputContains(
                             "wrote the merge of both sides' values",
-                        ))
-                        .claim(Claim::OutputContains("is kept in backup")),
+                        )),
                     settled(&at),
                     once(&at),
                 ]);
-                "a staged rwv.toml that does not parse is not taken: the bare continue writes \
-                 the merge of the values"
+                "an rwv.toml marked resolved that does not parse leaves the stop standing, and \
+                 withdrawn, the bare continue writes the merge of the values"
             } else {
                 steps.extend([
                     Step::rwv_printed_holding(&ww("w"), bare, "--keep text-merge")

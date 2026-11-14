@@ -662,7 +662,6 @@ pub(crate) fn continue_at_stop(
         crate::durable_file::replace(&path, text_merge.as_bytes())
             .context("failed to write rwv.toml")?;
         vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
-        crate::op_state::journal_manifest_unmerged(workspace, None)?;
         eprintln!("{done}: kept the text merge of rwv.toml as the VCS made it, marked resolved");
         return Ok(());
     }
@@ -677,8 +676,8 @@ pub(crate) fn continue_at_stop(
         .and_then(|text| Manifest::from_toml_str(text).ok())
     {
         if working.declares_same(&merged) {
-            vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
             crate::op_state::journal_manifest_unmerged(workspace, None)?;
+            vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
             eprintln!("{done}: rwv.toml as it stands declares the merge of both sides; marked it resolved");
             return Ok(());
         }
@@ -699,9 +698,9 @@ pub(crate) fn continue_at_stop(
         ),
     };
     let kept = vcs.backup_edits(&dir)?;
+    crate::op_state::journal_manifest_unmerged(workspace, None)?;
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
     vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
-    crate::op_state::journal_manifest_unmerged(workspace, None)?;
     let took = match keep {
         Some(side) if conflicts == 0 => format!(
             "; no entry was in conflict, so `--keep {}` took nothing",
@@ -724,11 +723,13 @@ pub(crate) fn continue_at_stop(
 }
 
 /// At the stop where the replayed tip's `rwv.toml` in `dir` differs from the
-/// merge of the values: a staged `rwv.toml` that parses is the operator's and
-/// is taken whole; `--keep text-merge` keeps the tip as the VCS made it;
-/// otherwise the merge of the values is written and staged. Where either
-/// writes over a staged file, the file as it stood is kept in a backup first.
-/// Each settles the tip for the rest of the operation.
+/// merge of the values: an `rwv.toml` marked resolved that parses is the
+/// operator's and is taken whole; one that does not leaves the stop standing
+/// for the bare continue, as any unparseable `rwv.toml` does. `--keep
+/// text-merge` keeps the tip as the VCS made it, putting it back over a file
+/// marked resolved; otherwise the merge of the values is written. A write
+/// over the file keeps it in a backup first. Each settles the tip for the
+/// rest of the operation.
 fn settle_tip(
     vcs: &dyn Vcs,
     dir: &Path,
@@ -758,6 +759,7 @@ fn settle_tip(
             );
             return Ok(());
         }
+        None if unparsed.is_some() => return Ok(()),
         None => Some(differs.values),
     };
     if let Some(error) = &unparsed {
