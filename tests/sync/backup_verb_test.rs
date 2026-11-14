@@ -370,8 +370,20 @@ fn member_remove_delete_refuses_while_a_backup_holds_commits_only_the_clone_has(
         "the backup survived the refusal"
     );
 
-    succeed(&["backup", "drop", ALPHA, "--all"], &weave.ws);
-    succeed(&["member", "remove", ALPHA, "--delete"], &weave.ws);
+    let printed = stderr
+        .split("`rwv ")
+        .map(|span| span.split('`').next().unwrap_or(""))
+        .find(|command| command.starts_with("backup drop "))
+        .unwrap_or_else(|| panic!("no printed backup drop:\n{stderr}"));
+    let argv: Vec<&str> = printed.split(' ').collect();
+    succeed(&argv, &weave.ws);
+    let rerun = stderr
+        .split("re-run `rwv ")
+        .nth(1)
+        .and_then(|span| span.split('`').next())
+        .unwrap_or_else(|| panic!("no printed re-run:\n{stderr}"));
+    let argv: Vec<&str> = rerun.split(' ').collect();
+    succeed(&argv, &weave.ws);
     assert!(!weave.alpha().exists(), "with the backup dropped, it goes");
 }
 

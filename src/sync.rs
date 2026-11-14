@@ -2151,17 +2151,19 @@ impl RemovalCause {
     /// The last step of a remedy. A dropped checkout the op could not prune
     /// stays unpruned: the next op starts from a manifest that no longer names
     /// it, so re-running sync is not a way to remove it.
-    fn rerun(self) -> &'static str {
+    fn rerun(self, repo: &RepoPath) -> String {
         match self {
-            Self::DroppedFromLock => "remove the checkout with `rwv member remove --delete`",
-            Self::RemoveDelete => "re-run `rwv member remove --delete`",
+            Self::DroppedFromLock => {
+                format!("remove the checkout with `rwv member remove {repo} --delete`")
+            }
+            Self::RemoveDelete => format!("re-run `rwv member remove {repo} --delete`"),
         }
     }
 
-    fn then_rerun(self, first: &str) -> String {
+    fn then_rerun(self, first: &str, repo: &RepoPath) -> String {
         match self {
-            Self::DroppedFromLock => format!("{first}, then {}", self.rerun()),
-            Self::RemoveDelete => format!("{first} and {}", self.rerun()),
+            Self::DroppedFromLock => format!("{first}, then {}", self.rerun(repo)),
+            Self::RemoveDelete => format!("{first} and {}", self.rerun(repo)),
         }
     }
 }
@@ -2235,7 +2237,7 @@ pub(crate) fn plan_checkout_removal(
     }
     report.note(format!(
         "{repo_path}: {dropped}; once nothing above refuses it, {}",
-        cause.rerun()
+        cause.rerun(repo_path)
     ));
     report.into_result()?;
 
@@ -2257,7 +2259,7 @@ pub(crate) fn plan_checkout_removal(
                         if !is_ancestor && !on_a_branch {
                             crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
                                 "{repo_path}: {dropped} but worktree has commits not in canonical clone; {}",
-                                cause.then_rerun("push/merge them")
+                                cause.then_rerun("push/merge them", repo_path)
                             );
                         }
                     }
@@ -2348,7 +2350,7 @@ pub(crate) fn plan_checkout_removal(
                                      commits against its remote counterpart failed; refusing \
                                      to remove a clone whose unpushed work could not be \
                                      ruled out — {}",
-                                    cause.then_rerun("push")
+                                    cause.then_rerun("push", repo_path)
                                 )
                             })
                             .map_err(|e| {
@@ -2370,7 +2372,7 @@ pub(crate) fn plan_checkout_removal(
                 crate::refuse!(
                     RefusalKind::DroppedRepoHasUniqueCommits,
                     "{repo_path}: {dropped} but clone has local-only commits; {}",
-                    cause.then_rerun("push them")
+                    cause.then_rerun("push them", repo_path)
                 );
             }
             let kept_alone: Vec<String> = vcs
@@ -2392,10 +2394,13 @@ pub(crate) fn plan_checkout_removal(
                     "{repo_path}: {dropped} but clone holds backups with commits nothing else \
                      reaches ({}); `rwv backup list` shows them. {}",
                     kept_alone.join(", "),
-                    cause.then_rerun(&format!(
-                        "publish the work you keep (`rwv push`) or drop the backups \
-                         (`rwv backup drop {repo_path}`)"
-                    ))
+                    cause.then_rerun(
+                        &format!(
+                            "drop the backups (`rwv backup drop {repo_path} {}`)",
+                            kept_alone.join(" ")
+                        ),
+                        repo_path
+                    )
                 );
             }
             // DESTROY-STORE: `dest` in the primary IS the canonical

@@ -479,7 +479,10 @@ fn remove_delete_refuses_a_dirty_clone_in_the_primary() {
     std::fs::write(weave.ws.join(placed("alpha")).join("src/lib.rs"), "dirty\n").unwrap();
     let stderr = assert_delete_refused(&weave.ws, "edits");
     assert!(
-        stderr.contains("re-run `rwv member remove --delete`"),
+        stderr.contains(&format!(
+            "re-run `rwv member remove {} --delete`",
+            placed("alpha")
+        )),
         "{stderr}"
     );
     assert!(
@@ -502,7 +505,10 @@ fn remove_delete_refuses_a_dirty_worktree_in_a_workweave() {
     .unwrap();
     let stderr = assert_delete_refused(&workweave, "edits");
     assert!(
-        stderr.contains("re-run `rwv member remove --delete`"),
+        stderr.contains(&format!(
+            "re-run `rwv member remove {} --delete`",
+            placed("alpha")
+        )),
         "{stderr}"
     );
 }
@@ -513,7 +519,10 @@ fn remove_delete_refuses_a_clone_with_unpushed_commits_in_the_primary() {
     commit_in(&weave.ws.join(placed("alpha")));
     let stderr = assert_delete_refused(&weave.ws, "dropped-repo-has-unique-commits");
     assert!(
-        stderr.contains("re-run `rwv member remove --delete`"),
+        stderr.contains(&format!(
+            "re-run `rwv member remove {} --delete`",
+            placed("alpha")
+        )),
         "{stderr}"
     );
 }
@@ -529,7 +538,10 @@ fn remove_delete_refuses_a_worktree_with_unique_commits_in_a_workweave() {
     commit_in(&workweave.join(placed("alpha")));
     let stderr = assert_delete_refused(&workweave, "dropped-repo-has-unique-commits");
     assert!(
-        stderr.contains("re-run `rwv member remove --delete`"),
+        stderr.contains(&format!(
+            "re-run `rwv member remove {} --delete`",
+            placed("alpha")
+        )),
         "{stderr}"
     );
 }
