@@ -327,7 +327,7 @@ fn unregistered_workweave_lets_diagnostics_proceed_and_report() {
             verb.join(" ")
         );
         assert!(
-            combined.contains("no workweave index entry records this directory"),
+            combined.contains("the workweave index has no entry for this directory"),
             "`rwv {}` must report the absence: {combined}",
             verb.join(" ")
         );

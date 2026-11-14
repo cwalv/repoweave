@@ -582,7 +582,7 @@ pub(crate) fn remap_rebased_project(
         remapped: remap.remapped,
         emptied: remap.emptied.map(|tip| {
             format!(
-                "the replayed tip {} is dropped: with the staged rwv.toml it changes nothing",
+                "the replayed tip {} is dropped: with the resolved rwv.toml it changes nothing",
                 tip.short()
             )
         }),

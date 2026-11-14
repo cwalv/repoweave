@@ -1665,6 +1665,95 @@ fn run_env_input_check(root: &Path) -> anyhow::Result<Vec<String>> {
     Ok(check_env_input_reads(&src_dir, &allowlist))
 }
 
+/// Each string literal of Rust source `code` with the line it starts on,
+/// skipping comments, character literals and lifetimes.
+fn string_literals(code: &str) -> Vec<(usize, String)> {
+    let chars: Vec<char> = code.chars().collect();
+    let mut out = Vec::new();
+    let mut line = 1;
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\n' => {
+                line += 1;
+                i += 1;
+            }
+            '/' if chars.get(i + 1) == Some(&'/') => {
+                while i < chars.len() && chars[i] != '\n' {
+                    i += 1;
+                }
+            }
+            '\'' => {
+                let escaped = chars.get(i + 1) == Some(&'\\');
+                let close = if escaped { i + 3 } else { i + 2 };
+                if chars.get(close) == Some(&'\'') {
+                    i = close + 1;
+                } else if escaped {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+            }
+            'r' | 'b'
+                if {
+                    let mut j = i + 1;
+                    while chars.get(j) == Some(&'#') {
+                        j += 1;
+                    }
+                    chars[i] == 'r'
+                        && chars.get(j) == Some(&'"')
+                        && (i == 0 || !chars[i - 1].is_alphanumeric())
+                } =>
+            {
+                let mut hashes = 0;
+                let mut j = i + 1;
+                while chars[j] == '#' {
+                    hashes += 1;
+                    j += 1;
+                }
+                let start = j + 1;
+                let closing: String = std::iter::once('"')
+                    .chain(std::iter::repeat_n('#', hashes))
+                    .collect();
+                let closing: Vec<char> = closing.chars().collect();
+                let mut k = start;
+                while k + closing.len() <= chars.len() && chars[k..k + closing.len()] != closing[..]
+                {
+                    k += 1;
+                }
+                let end = k.min(chars.len());
+                let text: String = chars[start..end].iter().collect();
+                let start_line = line;
+                line += text.matches('\n').count();
+                out.push((start_line, text));
+                i = end + closing.len();
+            }
+            '"' => {
+                let start_line = line;
+                let mut text = String::new();
+                i += 1;
+                while i < chars.len() && chars[i] != '"' {
+                    if chars[i] == '\\' {
+                        text.push(chars[i]);
+                        i += 1;
+                    }
+                    if i < chars.len() {
+                        if chars[i] == '\n' {
+                            line += 1;
+                        }
+                        text.push(chars[i]);
+                        i += 1;
+                    }
+                }
+                i += 1;
+                out.push((start_line, text));
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
 /// Check that nothing outside `crate::git` reaches around the `Vcs` seam.
 ///
 /// The backend type itself is closed by the compiler — it is private to
@@ -1711,6 +1800,10 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
     let spawn = Regex::new(r#"Command::new\("git"\)"#).unwrap();
     let mint = Regex::new(r"git_vcs\(").unwrap();
     let layout = Regex::new(r#"(join|push)\("\.git["/]|[=!]= *"\.git"|"\.git" *[=!]="#).unwrap();
+    let words = Regex::new(
+        r"(?i)\b(stag(e|ed|es|ing)|unstag\w*|stash\w*|reflog|assume-unchanged|skip-worktree|unmerged (path|file)s?|index (entry|entries|lock)|(and|the) index (holds|is|are|kept)|and index)\b",
+    )
+    .unwrap();
 
     let mut errors: Vec<String> = Vec::new();
 
@@ -1730,7 +1823,25 @@ fn check_vcs_seam_bypasses(src_dir: &Path) -> Vec<String> {
             }
         };
 
-        for (n, line) in before_test_module(&content).lines().enumerate() {
+        let production = before_test_module(&content);
+        let own_staging =
+            rel.starts_with("bin/") || rel == "durable_file.rs" || rel == "vcs/testing.rs";
+        for (line_no, text) in string_literals(production)
+            .into_iter()
+            .filter(|_| !own_staging)
+        {
+            if let Some(word) = words.find(&text) {
+                errors.push(format!(
+                    "vcs-seam: src/{rel}:{line_no} says `{}` in text core prints; say what an \
+                     operator of any VCS can follow (\"mark it resolved\", \"set aside\", \
+                     \"what the VCS records for the path\"), and let the backend spell its \
+                     own word through `Vcs::hint`",
+                    word.as_str()
+                ));
+            }
+        }
+
+        for (n, line) in production.lines().enumerate() {
             if line.trim_start().starts_with("//") {
                 continue;
             }
@@ -6059,6 +6170,35 @@ mod tests {
             "resolver and backend module are the seam, got:\n{}",
             errors.join("\n")
         );
+    }
+
+    /// Text core prints that spells git's working-copy model fails the seam
+    /// check, whichever line of the literal carries the word; the same words
+    /// in a comment, an identifier or the backend's own module do not.
+    #[test]
+    fn vcs_seam_check_fails_on_git_words_in_printed_text() {
+        let tmp = crate::tempdir().expect("tempdir");
+        let src = tmp.path().join("src");
+        fs::create_dir_all(src.join("git")).unwrap();
+        fs::write(
+            src.join("verb.rs"),
+            "// the stash keeps it\n\
+             fn unstage_paths() {}\n\
+             const A: &str = \"clear it, then \\\n    stage it\";\n\
+             const B: &str = \"the VCS's own line\";\n\
+             const C: char = '\"';\n\
+             const D: &str = r#\"the reflog says\"#;\n",
+        )
+        .unwrap();
+        fs::write(
+            src.join("git/index.rs"),
+            "const A: &str = \"git stash push\";\n",
+        )
+        .unwrap();
+        let errors = check_vcs_seam_bypasses(&src);
+        assert_eq!(errors.len(), 2, "got:\n{}", errors.join("\n"));
+        assert!(errors[0].contains("verb.rs:3") && errors[0].contains("`stage`"));
+        assert!(errors[1].contains("verb.rs:7") && errors[1].contains("`reflog`"));
     }
 
     /// A test module may build a concrete backend — that is what `git_vcs` is

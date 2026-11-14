@@ -193,7 +193,9 @@ change, and `git restore` on that file returns it to HEAD. Only a refresh that l
 own reflog as standing at HEAD, so the refreshed checkout no longer reads as
 moved under: a staged deletion, return to the old content or mode, or revert
 made after the refresh is an edit like any other. Each refreshed file and each
-reset index entry is reported.
+reset index entry is reported: under `--json`, a path whose file and index entry were
+reset is in `files`, and one whose index entry alone was reset, its file already holding
+the content, is in `recorded_only`.
 
 A write rwv does not make leaves the stale paths as they stood, still drift,
 with nothing recorded, and names them as *drift left in place* with the
@@ -328,7 +330,7 @@ HEAD at the tip the files hold in the same way, has git stash the edits to
 the listed files, then checks the branch out with a plain `git checkout`.
 The stash is based on the tip your files held, so it holds your edits and
 nothing of the move, and its message names the branch it was set aside from.
-The `git stash apply <stash>` that merges them back onto the moved tip is
+The `git stash apply <set-aside>` that merges them back onto the moved tip is
 printed the moment the stash is made, before the checkout is tried, and again
 in the report; where an earlier run's stash is kept too, the report prints
 each, oldest first. Both hold edits of the same files, and git refuses to

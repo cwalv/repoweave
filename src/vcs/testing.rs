@@ -1274,10 +1274,6 @@ impl Vcs for FakeVcs {
         unsupported("set_back")
     }
 
-    fn set_back_from(&self, _repo: &Path) -> Result<Option<crate::vcs::SetBack>, VcsError> {
-        Ok(None)
-    }
-
     fn carry_edits_onto(
         &self,
         _repo: &Path,
@@ -1318,10 +1314,6 @@ impl Vcs for FakeVcs {
 
     fn staged_versions_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
         unsupported("staged_versions_against_head")
-    }
-
-    fn index_lock(&self, _repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError> {
-        Ok(None)
     }
 
     fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {

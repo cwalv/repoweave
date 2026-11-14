@@ -285,7 +285,8 @@ fn doctor_fix_withholds_while_another_file_is_staged() {
     let output = String::from_utf8_lossy(&assert.get_output().stdout).into_owned()
         + &String::from_utf8_lossy(&assert.get_output().stderr);
     assert!(
-        output.contains("rwv.toml not rewritten") && output.contains("staged changes"),
+        output.contains("rwv.toml not rewritten")
+            && output.contains("changes recorded for the next commit"),
         "{output}"
     );
     assert_eq!(commits(&weave), before, "nothing was committed");

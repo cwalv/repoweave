@@ -735,7 +735,7 @@ pub enum LandingReport {
     },
     /// Shared-ref drift refreshed in the checkout at `checkout` before its
     /// edits were judged: its branch moved from `moved_from` to `moved_to`
-    /// outside it, and `files` and `index_entries` still held `moved_from`'s
+    /// outside it, and `files` and `recorded_only` (what the VCS records alone) still held `moved_from`'s
     /// content.
     Refreshed {
         repo: RepoKey,
@@ -743,7 +743,7 @@ pub enum LandingReport {
         moved_from: CommitId,
         moved_to: CommitId,
         files: Vec<String>,
-        index_entries: Vec<String>,
+        recorded_only: Vec<String>,
     },
     /// The commits `repo`'s new pin holds beyond the pin `target` held, which
     /// the landing pins into `target` with the feature's work.

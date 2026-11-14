@@ -1418,7 +1418,7 @@ fn refresh_paths_if_left(
     let mut args = vec!["read-tree", "-m"];
     args.push(match scope {
         RefreshScope::FilesOnly => "-u",
-        RefreshScope::IndexOnly => "-i",
+        RefreshScope::RecordOnly => "-i",
     });
     args.extend([
         "--no-recurse-submodules",
@@ -1446,7 +1446,7 @@ fn refresh_paths_if_left(
             vcs_said: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
         });
     }
-    if scope == RefreshScope::IndexOnly {
+    if scope == RefreshScope::RecordOnly {
         refresh_stat_data(repo);
     }
     Ok(RefreshWrite::Written)
@@ -3346,7 +3346,7 @@ impl Vcs for GitVcs {
             VcsAction::ShowFromBackup => "git -C <checkout> show <tip>:<file>",
             VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
             VcsAction::Unstage => "git -C <checkout> restore --staged -- <paths>",
-            VcsAction::TakeBackSetAside => "git -C <checkout> stash apply <stash>",
+            VcsAction::TakeBackSetAside => "git -C <checkout> stash apply <set-aside>",
             VcsAction::CompareMarked => {
                 "git -C <checkout> update-index --no-assume-unchanged -- <assumed>"
             }
@@ -3370,6 +3370,9 @@ impl Vcs for GitVcs {
             VcsAction::AddRemote => "git -C <checkout> remote add <r> <url>",
             VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream",
             VcsAction::MarkResolved => "git -C <checkout> add -- <paths>",
+            VcsAction::TurnOnCheckoutRecording => {
+                "git -C <checkout> config core.logAllRefUpdates true"
+            }
             VcsAction::ShowKeptFile => "git -C <checkout> show <revision>:<paths>",
             VcsAction::SetCommitIdentity => {
                 "git config --global user.name <name> && git config --global user.email <email>"
@@ -11757,7 +11760,7 @@ mod name_reading_tests {
             }]
         );
         let head = tip(&worktree, "HEAD");
-        for scope in [RefreshScope::FilesOnly, RefreshScope::IndexOnly] {
+        for scope in [RefreshScope::FilesOnly, RefreshScope::RecordOnly] {
             assert_eq!(
                 refresh_paths_if_left(&worktree, &base, &head, &[AWKWARD.to_owned()], scope)
                     .unwrap(),
@@ -12130,7 +12133,7 @@ mod drift_tests {
             &left,
             &head,
             &["a.txt".to_owned()],
-            RefreshScope::IndexOnly,
+            RefreshScope::RecordOnly,
         )
         .unwrap();
 

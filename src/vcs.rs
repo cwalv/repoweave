@@ -443,10 +443,11 @@ pub enum VcsAction {
     UnsetUpstream,
     SetCommitIdentity,
     ShowKeptFile,
+    TurnOnCheckoutRecording,
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 30] = [
+    pub const ALL: [VcsAction; 31] = [
         Self::Commit,
         Self::Stash,
         Self::StashUntracked,
@@ -477,6 +478,7 @@ impl VcsAction {
         Self::UnsetUpstream,
         Self::SetCommitIdentity,
         Self::ShowKeptFile,
+        Self::TurnOnCheckoutRecording,
     ];
 }
 
@@ -809,7 +811,13 @@ pub enum VcsError {
     UntrackedCollision { repo: PathBuf, paths: Vec<String> },
     /// The checkout holds no record of where it last stood, so a move of its
     /// branch cannot be told from edits.
-    CheckoutUnrecorded { repo: PathBuf, recording_off: bool },
+    ///
+    /// `recording_off` is the line that turns the VCS's recording of it on,
+    /// when the VCS is set never to record it.
+    CheckoutUnrecorded {
+        repo: PathBuf,
+        recording_off: Option<String>,
+    },
     /// I/O failure spawning or reading process output.
     Io { ctx: String, source: io::Error },
     /// Underlying VCS command failed for a reason not modeled above.
@@ -972,7 +980,7 @@ impl From<&VcsError> for VcsErrorOutput {
                 recording_off,
             } => Self::CheckoutUnrecorded {
                 repo: crate::path_spelling::WirePath::of(repo),
-                recording_off: *recording_off,
+                recording_off: recording_off.is_some(),
             },
             VcsError::Io { ctx, source } => Self::Io {
                 ctx: ctx.clone(),
@@ -1030,23 +1038,23 @@ impl fmt::Display for VcsError {
             ),
             Self::CheckoutUnrecorded {
                 repo,
-                recording_off: false,
+                recording_off: None,
             } => write!(
                 f,
-                "the reflog of {} holds no entry for this checkout, so rwv cannot tell drift \
-                 from edits; where `git diff` shows every difference is yours, `git stash pop` \
-                 after the stash records where it stands and ends this",
+                "the VCS holds no record of where this checkout of {} last stood, so rwv \
+                 cannot tell drift from edits; where every difference is yours, taking back \
+                 what was set aside makes the VCS record where the checkout stands and ends \
+                 this",
                 repo.display()
             ),
             Self::CheckoutUnrecorded {
                 repo,
-                recording_off: true,
+                recording_off: Some(turn_on),
             } => write!(
                 f,
-                "the reflog of {} holds no entry for this checkout because \
-                 core.logAllRefUpdates is false, so rwv cannot tell drift from edits and git \
-                 never records one; `git config core.logAllRefUpdates true` lets git record it, \
-                 after which `git stash pop` following the stash ends this",
+                "the VCS is set never to record where this checkout of {} stands, so rwv \
+                 cannot tell drift from edits; run the {turn_on} to let it record it, after which \
+                 taking back what was set aside ends this",
                 repo.display()
             ),
             Self::Io { ctx, source } => write!(f, "{ctx}: {source}"),
@@ -2524,12 +2532,12 @@ pub enum Holds {
     Other,
 }
 
-/// What a drift refresh writes for a path: its file alone, or its index
+/// What a drift refresh writes for a path: its file alone, or its record
 /// entry alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefreshScope {
     FilesOnly,
-    IndexOnly,
+    RecordOnly,
 }
 
 /// What one drift refresh write did.
@@ -4155,7 +4163,9 @@ pub trait Vcs: Send + Sync {
     /// For git: the newest entry of the worktree's own `HEAD` reflog, which
     /// every move made in that worktree appends to and a move made from
     /// another worktree does not.
-    fn left_behind_at(&self, repo: &Path) -> Result<Option<CommitId>, VcsError>;
+    fn left_behind_at(&self, _repo: &Path) -> Result<Option<CommitId>, VcsError> {
+        Ok(None)
+    }
 
     /// Whether `repo` is on a branch and its checkout holds no record at all
     /// of where it last stood, so [`Vcs::left_behind_at`]'s `None` says
@@ -4164,7 +4174,9 @@ pub trait Vcs: Send + Sync {
     /// For git: the worktree's `HEAD` reflog has no entry, as after git's
     /// expiry of an idle checkout's log or a hand expiry, or because
     /// `core.logAllRefUpdates=false` has kept one from ever being written.
-    fn checkout_unrecorded(&self, repo: &Path) -> Result<Option<Unrecorded>, VcsError>;
+    fn checkout_unrecorded(&self, _repo: &Path) -> Result<Option<Unrecorded>, VcsError> {
+        Ok(None)
+    }
 
     /// Each path whose index entry or file differs from `HEAD`, with what
     /// each holds measured against `HEAD` and against `left` — where the
@@ -4172,9 +4184,11 @@ pub trait Vcs: Send + Sync {
     /// checkout.
     fn path_standings(
         &self,
-        repo: &Path,
-        left: Option<&CommitId>,
-    ) -> Result<Vec<PathStanding>, VcsError>;
+        _repo: &Path,
+        _left: Option<&CommitId>,
+    ) -> Result<Vec<PathStanding>, VcsError> {
+        Ok(Vec::new())
+    }
 
     /// Give each of `paths` `head`'s content in the index, or with
     /// [`RefreshScope::FilesOnly`] in the working tree alone, removing those
@@ -4185,20 +4199,26 @@ pub trait Vcs: Send + Sync {
     /// written. Nothing else in the checkout changes either way.
     fn refresh_paths_if_left(
         &self,
-        repo: &Path,
-        left: &CommitId,
-        head: &CommitId,
-        paths: &[String],
-        scope: RefreshScope,
-    ) -> Result<RefreshWrite, VcsError>;
+        _repo: &Path,
+        _left: &CommitId,
+        _head: &CommitId,
+        _paths: &[String],
+        _scope: RefreshScope,
+    ) -> Result<RefreshWrite, VcsError> {
+        Ok(RefreshWrite::Written)
+    }
 
     /// Point `repo`'s HEAD at `at`, the tip its files hold, off the branch it
     /// is on, recording which branch it left; index and files are untouched,
     /// so only the edits differ from HEAD afterwards.
-    fn set_back(&self, repo: &Path, at: &CommitId) -> Result<(), VcsError>;
+    fn set_back(&self, _repo: &Path, _at: &CommitId) -> Result<(), VcsError> {
+        Ok(())
+    }
 
     /// Where [`Vcs::set_back`] left `repo`, while HEAD is still there.
-    fn set_back_from(&self, repo: &Path) -> Result<Option<SetBack>, VcsError>;
+    fn set_back_from(&self, _repo: &Path) -> Result<Option<SetBack>, VcsError> {
+        Ok(None)
+    }
 
     /// Put `repo` on `branch`, merging every edit against HEAD onto the
     /// branch's tip as the VCS merges local changes on a checkout; a path
@@ -4235,19 +4255,27 @@ pub trait Vcs: Send + Sync {
 
     /// The paths whose index entry differs from HEAD's, an entry only
     /// intended for adding included.
-    fn staged_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+    fn staged_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        Ok(Vec::new())
+    }
 
     /// The paths whose index entry holds a version differing from HEAD's; an
     /// entry only intended for adding holds none.
-    fn staged_versions_against_head(&self, repo: &Path) -> Result<Vec<String>, VcsError>;
+    fn staged_versions_against_head(&self, _repo: &Path) -> Result<Vec<String>, VcsError> {
+        Ok(Vec::new())
+    }
 
     /// The lock a killed VCS process left on `repo`'s index, if any.
-    fn index_lock(&self, repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError>;
+    fn index_lock(&self, _repo: &Path) -> Result<Option<std::path::PathBuf>, VcsError> {
+        Ok(None)
+    }
 
     /// Record in the checkout's own history that it stands at `head`, so
     /// [`Vcs::left_behind_at`] answers `None` until the branch next moves
     /// under it. Fails, recording nothing, where HEAD no longer names `head`.
-    fn record_checkout_at_head(&self, repo: &Path, head: &CommitId) -> Result<(), VcsError>;
+    fn record_checkout_at_head(&self, _repo: &Path, _head: &CommitId) -> Result<(), VcsError> {
+        Ok(())
+    }
 
     /// Return `true` when `id` names a commit object that exists in
     /// `repo`'s object store.
@@ -5404,9 +5432,11 @@ pub trait Vcs: Send + Sync {
     /// records, so a backup of the working copy would not keep them.
     fn uncompared_paths(
         &self,
-        checkout: &Path,
-        paths: &[String],
-    ) -> Result<UncomparedPaths, VcsError>;
+        _checkout: &Path,
+        _paths: &[String],
+    ) -> Result<UncomparedPaths, VcsError> {
+        Ok(UncomparedPaths::default())
+    }
 
     /// The three sides a merge recorded for `path`, left conflicted in
     /// `checkout`; `None` when `path` is not conflicted there.

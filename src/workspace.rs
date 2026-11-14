@@ -264,7 +264,7 @@ impl WorkweaveNameRecord {
 /// One home so that every verb which reports the state rather than refusing on
 /// it reports the same state in the same words.
 pub const UNREGISTERED_WORKWEAVE_NOTICE: &str =
-    "Warning: no workweave index entry records this directory, so it has no recorded \
+    "Warning: the workweave index has no entry for this directory, so it has no recorded \
      name and verbs that act on the workweave's identity will refuse. Run \
      `rwv doctor --fix` to register it.";
 

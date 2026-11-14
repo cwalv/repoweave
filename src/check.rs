@@ -1420,7 +1420,7 @@ impl MissingLockMergeDriverKind {
                  **What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the \
                  line to the working file and to the checked-out commit's file and commits only \
                  that line; any other edit to `.gitattributes` stays uncommitted, and anything \
-                 else staged stays staged. It declines, changing nothing, while a merge, rebase or \
+                 else marked for the next commit stays marked. It declines, changing nothing, while a merge, rebase or \
                  cherry-pick is in progress in the project repo. Another branch carries its own \
                  file and is migrated where it is checked out."
             }
@@ -3284,20 +3284,23 @@ pub(crate) fn fix_pre_schema_manifest(
                 op.operation()
             )));
         }
-        let staged = vcs
-            .staged_paths(project_dir)
-            .with_context(|| format!("failed to read staged paths in {}", project_dir.display()))?;
+        let staged = vcs.staged_paths(project_dir).with_context(|| {
+            format!(
+                "failed to read the paths marked for commit in {}",
+                project_dir.display()
+            )
+        })?;
         if staged.iter().any(|path| path != Manifest::FILE_NAME) {
             return Ok(PreSchemaFix::Withheld(
-                "the project repo has staged changes to other files, which the commit would \
-                 carry; commit or unstage them first"
+                "the project repo has changes recorded for the next commit in other files, which the commit would \
+                 carry; commit them or take them out of the VCS's record first"
                     .to_owned(),
             ));
         }
         vcs.stage_content(project_dir, file, committed_rewritten.as_bytes())
             .with_context(|| {
                 format!(
-                    "failed to stage {} in {}",
+                    "failed to mark {} for the commit in {}",
                     file.display(),
                     project_dir.display()
                 )
@@ -6525,11 +6528,11 @@ impl CheckViolation {
                     None => format!("{repo}"),
                 };
                 let detail = match kind {
-                    IndexDriftKind::SafeToFix => "index stale (run `rwv doctor --fix` to reset)",
+                    IndexDriftKind::SafeToFix => "recorded state stale (run `rwv doctor --fix` to reset)",
                     IndexDriftKind::LiveStaged => {
-                        "index has live staged changes (once `rwv doctor --fix` has \
+                        "live changes are marked for commit (once `rwv doctor --fix` has \
                              refreshed what beside them is stale, commit them if they are yours, \
-                             or stash them; not auto-fixed)"
+                             or set them aside; not auto-fixed)"
                     }
                 };
                 format!("{location}: {detail}")
@@ -6660,7 +6663,7 @@ impl CheckViolation {
                     WorkingTreeDriftKind::LiveEdits => {
                         "working tree has live edits (once `rwv doctor --fix` has \
                              refreshed what beside them is stale, commit them if they are yours, \
-                             or stash them; not auto-fixed)"
+                             or set them aside; not auto-fixed)"
                     }
                 };
                 format!("{location}: {detail}")
@@ -6882,7 +6885,7 @@ impl CheckViolation {
                     } else {
                         format!(
                             "first land and retire each workweave holding a worktree of it, \
-                             which the move would strand ({}): commit or stash its edits and \
+                             which the move would strand ({}): commit or set aside its edits and \
                              run `rwv land --retire` from it; then ",
                             retire_first
                                 .iter()
@@ -7271,7 +7274,7 @@ pub enum PathDrift {
     Stale,
     /// As [`PathDrift::Stale`], but the file already holds HEAD's content:
     /// only the index entry takes HEAD's.
-    StaleIndexEntry,
+    StaleRecord,
     /// The move changed this path and so did something else. Left as it
     /// stands.
     MovedAndEdited,
@@ -7305,8 +7308,8 @@ impl DriftReading {
     }
 
     /// The paths whose index entry alone a refresh replaces.
-    pub fn stale_index_entries(&self) -> Vec<String> {
-        self.named(PathDrift::StaleIndexEntry)
+    pub fn stale_records(&self) -> Vec<String> {
+        self.named(PathDrift::StaleRecord)
     }
 
     /// The paths both the move and an edit here changed, of those the VCS
@@ -7346,7 +7349,7 @@ impl DriftReading {
     pub fn is_refreshable(&self) -> bool {
         self.paths
             .iter()
-            .any(|(_, d)| matches!(d, PathDrift::Stale | PathDrift::StaleIndexEntry))
+            .any(|(_, d)| matches!(d, PathDrift::Stale | PathDrift::StaleRecord))
     }
 
     /// The paths a refresh leaves differing from HEAD.
@@ -7359,9 +7362,9 @@ impl DriftReading {
 
     /// Whether a refresh replaces `path` in index or working tree.
     pub fn refreshes(&self, path: &str) -> bool {
-        self.paths.iter().any(|(p, d)| {
-            p.path == path && matches!(d, PathDrift::Stale | PathDrift::StaleIndexEntry)
-        })
+        self.paths
+            .iter()
+            .any(|(p, d)| p.path == path && matches!(d, PathDrift::Stale | PathDrift::StaleRecord))
     }
 }
 
@@ -7395,7 +7398,14 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
         if let Some(why) = vcs.checkout_unrecorded(repo)? {
             return Err(VcsError::CheckoutUnrecorded {
                 repo: repo.to_path_buf(),
-                recording_off: why == crate::vcs::Unrecorded::RecordingOff,
+                recording_off: (why == crate::vcs::Unrecorded::RecordingOff).then(|| {
+                    format!(
+                        "VCS action ({}: `{}`)",
+                        vcs.name(),
+                        vcs.hint(crate::vcs::VcsAction::TurnOnCheckoutRecording)
+                            .replace("<checkout>", &repo.display().to_string())
+                    )
+                }),
             });
         }
     }
@@ -7416,7 +7426,7 @@ pub fn read_drift(vcs: &dyn crate::vcs::Vcs, repo: &Path) -> Result<DriftReading
                 standing.file,
             ) {
                 (false, _, _) => PathDrift::Edited,
-                (true, Holds::LeftTip, Holds::Head) => PathDrift::StaleIndexEntry,
+                (true, Holds::LeftTip, Holds::Head) => PathDrift::StaleRecord,
                 (true, _, _) if partial_take => PathDrift::Edited,
                 (true, Holds::LeftTip, Holds::LeftTip) => PathDrift::Stale,
                 (true, _, _) => PathDrift::MovedAndEdited,
@@ -7433,7 +7443,7 @@ pub struct Refreshed {
     pub moved_from: CommitId,
     pub moved_to: CommitId,
     pub files: Vec<String>,
-    pub index_entries: Vec<String>,
+    pub recorded_only: Vec<String>,
 }
 
 impl Refreshed {
@@ -7446,17 +7456,17 @@ impl Refreshed {
         );
         if !self.files.is_empty() {
             said.push_str(&format!(
-                "; these files and their index entries held {}'s content and now hold {}'s: {}",
+                "; these files, and what the VCS records for them, held {}'s content and now hold {}'s: {}",
                 self.moved_from.short(),
                 self.moved_to.short(),
                 self.files.join(", ")
             ));
         }
-        if !self.index_entries.is_empty() {
+        if !self.recorded_only.is_empty() {
             said.push_str(&format!(
-                "; these index entries were reset to {}'s, whose content the files already held: {}",
+                "; what the VCS records for these paths was reset to {}'s, whose content the files already held: {}",
                 self.moved_to.short(),
-                self.index_entries.join(", ")
+                self.recorded_only.join(", ")
             ));
         }
         said
@@ -7466,7 +7476,7 @@ impl Refreshed {
     pub fn replaced(&self, path: &str) -> bool {
         self.files
             .iter()
-            .chain(&self.index_entries)
+            .chain(&self.recorded_only)
             .any(|p| p == path)
     }
 }
@@ -7492,7 +7502,7 @@ impl LeftWhy {
                               in the way of the write"
                 .to_owned(),
             Self::MovedAgain => "the branch moved again after the checkout was read".to_owned(),
-            Self::Unresolved => "the index holds unresolved conflicts".to_owned(),
+            Self::Unresolved => "the checkout holds unresolved conflicts".to_owned(),
             Self::Failed(said) => format!(
                 "the write failed: {}",
                 said.lines()
@@ -7617,7 +7627,7 @@ pub fn refresh_drift(
     let read_stale = |r: &DriftReading| -> BTreeSet<String> {
         r.stale_files()
             .into_iter()
-            .chain(r.stale_index_entries())
+            .chain(r.stale_records())
             .collect()
     };
     let first = read_stale(reading);
@@ -7641,10 +7651,10 @@ pub fn refresh_drift(
             .collect()
     };
     let files = agreed(DriftReading::stale_files);
-    let index_entries = agreed(DriftReading::stale_index_entries);
+    let recorded_only = agreed(DriftReading::stale_records);
     let disagreed: BTreeSet<String> = first
         .union(&read_stale(&now))
-        .filter(|p| !files.contains(p) && !index_entries.contains(p))
+        .filter(|p| !files.contains(p) && !recorded_only.contains(p))
         .cloned()
         .collect();
     if !disagreed.is_empty() {
@@ -7678,14 +7688,14 @@ pub fn refresh_drift(
     if let Some(why) = declined(written, &files)? {
         return Ok(left_in_place(first, why));
     }
-    crate::test_pause::point("drift-write-index");
-    let entries: Vec<String> = files.iter().chain(&index_entries).cloned().collect();
+    crate::test_pause::point("drift-write-records");
+    let entries: Vec<String> = files.iter().chain(&recorded_only).cloned().collect();
     let written = vcs.refresh_paths_if_left(
         repo,
         moved_from,
         moved_to,
         &entries,
-        RefreshScope::IndexOnly,
+        RefreshScope::RecordOnly,
     )?;
     if let Some(why) = declined(written, &entries)? {
         return Ok(left_in_place(first, why));
@@ -7695,7 +7705,7 @@ pub fn refresh_drift(
             moved_from: moved_from.clone(),
             moved_to: moved_to.clone(),
             files,
-            index_entries,
+            recorded_only,
         }),
         left_in_place: None,
         unrecorded: vcs
@@ -7786,12 +7796,13 @@ impl EditedDriftMerge {
                 .replace("<file>", file)
         };
         let take_back = |stash: &CommitId| {
-            spelled(crate::vcs::VcsAction::TakeBackSetAside, "").replace("<stash>", stash.as_str())
+            spelled(crate::vcs::VcsAction::TakeBackSetAside, "")
+                .replace("<set-aside>", stash.as_str())
         };
         let mut said = String::new();
         if let Some(backup) = backup {
             said.push_str(&format!(
-                "its working copy and index are kept as backup {backup} (`rwv backup list`); "
+                "its working copy and the VCS's record of it are kept as backup {backup} (`rwv backup list`); "
             ));
         }
         said.push_str(&format!(
@@ -7830,7 +7841,7 @@ impl EditedDriftMerge {
         let heading = match earlier.is_empty() {
             true => "\nthe set-aside edits merge back onto the checkout with:",
             false => {
-                "\nthe set-aside edits merge back onto the checkout with, oldest first; stage or \
+                "\nthe set-aside edits merge back onto the checkout with, oldest first; record or \
                  commit what each brings back before the next:"
             }
         };
@@ -7970,7 +7981,7 @@ fn carry(
                     stash.short(),
                     vcs.hint(crate::vcs::VcsAction::TakeBackSetAside)
                         .replace("<checkout>", &repo.display().to_string())
-                        .replace("<stash>", stash.as_str())
+                        .replace("<set-aside>", stash.as_str())
                 );
                 set_aside = Some(stash)
             }
@@ -8474,7 +8485,7 @@ fn settle_held_drift(
                         .unwrap_or_default();
                     if !staged.is_empty() {
                         outln!(
-                            "rwv doctor: {location}: each staged version is kept in {}, shown by:",
+                            "rwv doctor: {location}: each recorded version is kept in {}, shown by:",
                             backup_named(Some(&kept.name))
                         );
                         for file in &staged {

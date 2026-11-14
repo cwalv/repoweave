@@ -70,7 +70,7 @@ fn assert_edits_left(w: &PushWorkspace, before: &str, verb: &str, out: &std::pro
     assert!(unstaged.contains("NOTES.md"), "{verb}:\n{unstaged}");
     assert_eq!(staged, "STAGED.md", "{verb}");
     assert!(
-        text.contains("projects/proj: uncommitted files left as they are: NOTES.md (edited), STAGED.md (staged)"),
+        text.contains("projects/proj: uncommitted files left as they are: NOTES.md (edited), STAGED.md (marked for commit)"),
         "{verb}:\n{text}"
     );
 }

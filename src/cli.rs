@@ -218,7 +218,7 @@ pub enum Commands {
         /// Zero exit iff every repo's tip matches its rwv.lock entry (scriptable precondition for rwv sync)
         #[arg(long)]
         locked: bool,
-        /// Repair every finding marked Auto-fixable in docs/reference/doctor-findings.md, which carries that mark on each finding it documents. Never touches live staged content or live edits. Idempotent. Active-project scoped; use --all to widen.
+        /// Repair every finding marked Auto-fixable in docs/reference/doctor-findings.md, which carries that mark on each finding it documents. Never touches live changes marked for commit or live edits. Idempotent. Active-project scoped; use --all to widen.
         #[arg(long, conflicts_with = "locked")]
         fix: bool,
         /// Emit violations as JSON (array-of-records with stable per-variant `kind`). See `rwv explain doctor`.
@@ -255,7 +255,7 @@ pub enum Commands {
         release_unreadable_claims_on: Option<String>,
         /// With `--fix`, in each checkout of this workspace whose branch
         /// moved under it and that holds files both that move and an edit
-        /// here changed, keep the working copy and index as a backup, point
+        /// here changed, keep the working copy and the VCS's record of it as a backup, point
         /// HEAD at the tip the files hold, and have the VCS merge the edits
         /// onto the branch; a file the merge does not resolve is left
         /// conflicted. Without this flag, `--fix` writes nothing to such a
@@ -408,7 +408,7 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// With `--continue`, where `rwv.toml` is unmerged: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write and stage the merge of both sides; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` keeps that text merge as the VCS made it
+        /// With `--continue`, where `rwv.toml` is conflicted: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` keeps that text merge as the VCS made it
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
         /// Resume a sync a conflict stopped, after resolving it; every parameter comes from the op record
@@ -462,7 +462,7 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// With `--continue`, where `rwv.toml` is unmerged: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write and stage the merge of both sides; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` keeps that text merge as the VCS made it
+        /// With `--continue`, where `rwv.toml` is conflicted: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` keeps that text merge as the VCS made it
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
         /// Resume a landing a conflict stopped, after resolving it; every parameter comes
@@ -515,7 +515,7 @@ pub enum Commands {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
-        /// Resume a port a conflict stopped, after resolving and staging it; every parameter comes from the op record
+        /// Resume a port a conflict stopped, after resolving it; every parameter comes from the op record
         #[arg(long = "continue")]
         do_continue: bool,
     },
@@ -546,7 +546,7 @@ pub enum Commands {
         /// Move the project branch to its upstream, keeping the tip it leaves in a backup. The repo is `projects/<name>`; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
         #[arg(long, value_name = "REPO", conflicts_with = "do_continue")]
         reset_to_upstream: Vec<crate::manifest::ResetOperand>,
-        /// With `--continue`, where `rwv.toml` is unmerged: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write and stage the merge of both sides; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` keeps that text merge as the VCS made it
+        /// With `--continue`, where `rwv.toml` is conflicted: take this side's value for every entry both sides changed differently, `yours` (the branch checked out) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` keeps that text merge as the VCS made it
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
         /// Resume the pull a conflict stopped, from the workspace it runs in

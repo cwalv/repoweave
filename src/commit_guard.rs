@@ -13,7 +13,7 @@ use std::path::Path;
 pub(crate) struct ConcludingCopy<'a>(pub(crate) &'a CommitId);
 
 /// Refuse while the project repo at `dir` is in the middle of a merge,
-/// rebase, cherry-pick or revert, or holds an unmerged path. `workspace` is
+/// rebase, cherry-pick or revert, or holds a conflicted path. `workspace` is
 /// where an rwv operation that stopped there is recorded, for the refusal to
 /// name its continue and abort.
 pub(crate) fn refuse_commit_mid_operation(
@@ -65,7 +65,7 @@ fn judge(
     });
     let subject = match op {
         Some(op) => format!("a {op} in progress"),
-        None => "unmerged paths".to_owned(),
+        None => "conflicted paths".to_owned(),
     };
     let mut without = Vec::new();
     if unmerged.is_empty() {

@@ -256,7 +256,7 @@ fn stage_and_commit(
     extra: Vec<crate::vcs::Annotation>,
 ) -> anyhow::Result<bool> {
     vcs.stage_paths(project_dir, paths)
-        .context("failed to stage paths for the lock commit")?;
+        .context("failed to record the paths for the lock commit")?;
     let staged = LockFile::from_state(&LockFile::path_in(project_dir)).ok();
 
     match crate::repin::commit_annotated(
@@ -274,7 +274,7 @@ fn stage_and_commit(
             Err(match vcs.unstage_paths(project_dir, paths) {
                 Ok(()) => refused,
                 Err(e) => refused.context(format!(
-                    "{} left staged: unstaging after the refused commit failed ({e:#})",
+                    "{} left marked for commit: taking them back out after the refused commit failed ({e:#})",
                     paths.join(", ")
                 )),
             })
@@ -335,8 +335,8 @@ pub(crate) fn report_left_edits(
         .iter()
         .map(|path| {
             let how = match (staged.contains(path), edited.contains(path)) {
-                (true, true) => "staged and edited",
-                (true, false) => "staged",
+                (true, true) => "marked for commit and edited",
+                (true, false) => "marked for commit",
                 _ => "edited",
             };
             format!("{path} ({how})")

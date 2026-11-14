@@ -1922,7 +1922,7 @@ fn commit_project(
             let listed: String = differs.iter().map(|line| format!("{line}\n")).collect();
             format!(
                 "{listed}rwv.toml holds this branch's tables, and {} changed on both sides; set \
-                 them as wanted there ({}), then stage it:\n  {}\n",
+                 them as wanted there ({}), then mark it resolved:\n  {}\n",
                 ported.conflicted.join(", "),
                 shown.join("; "),
                 crate::manifest_conflict::mark_resolved(vcs, dir),

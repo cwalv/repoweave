@@ -894,7 +894,7 @@ fn read_manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Mani
 }
 
 /// Why a merge or replay whose `rwv.toml` was removed stops.
-pub(crate) const NO_MANIFEST_STAGED: &str = "no rwv.toml is staged";
+pub(crate) const NO_MANIFEST_STAGED: &str = "no rwv.toml is marked resolved";
 
 /// What left the project repo's unparseable `rwv.toml`.
 #[derive(Clone, Copy)]
@@ -902,7 +902,7 @@ pub(crate) enum Produced {
     Merge,
     Replay,
     ReplayDiffers,
-    /// An edit of the working file over a staged one that parses.
+    /// An edit of the working file over a resolved one that parses.
     WorkingEdit,
 }
 
@@ -910,11 +910,11 @@ impl Produced {
     fn says(self) -> &'static str {
         match self {
             Self::Merge => {
-                "the merge is in progress and stages no rwv.toml that parses; a staged \
+                "the merge is in progress and no resolved rwv.toml parses; a resolved \
                  rwv.toml that parses is committed in the merge"
             }
             Self::Replay => {
-                "the replay finished and the replayed tip's rwv.toml does not parse; a staged \
+                "the replay finished and the replayed tip's rwv.toml does not parse; a resolved \
                  rwv.toml that parses becomes part of that commit"
             }
             Self::ReplayDiffers => {
@@ -923,7 +923,7 @@ impl Produced {
                  branch's tip before the replay"
             }
             Self::WorkingEdit => {
-                "the staged rwv.toml parses, but the working rwv.toml differs from the staged \
+                "the resolved rwv.toml parses, but the working rwv.toml differs from the resolved \
                  one and does not parse; nothing is committed while it does not"
             }
         }
@@ -1099,7 +1099,7 @@ pub(crate) fn settle_replayed_manifest(
     if earlier > 0 {
         lines.push(format!(
             "{earlier} earlier replayed {} the rwv.toml that does not parse, as the replay \
-             wrote it: only the tip takes the staged fix, and rwv's verbs that read a commit \
+             wrote it: only the tip takes the resolved fix, and rwv's verbs that read a commit \
              by name refuse {}",
             if earlier == 1 {
                 "commit keeps"
@@ -1142,12 +1142,12 @@ pub(crate) fn settle_replayed_manifest(
         Some(tip) if tip == head.id() => None,
         Some(tip) => Some(format!(
             "{} stands on the replayed tip {}, a commit made after the replay; only the \
-             replayed tip takes the staged rwv.toml, so move that commit off it to go on",
+             replayed tip takes the resolved rwv.toml, so move that commit off it to go on",
             head.id().short(),
             tip.short()
         )),
         None => Some(format!(
-            "{} is not the tip the replay wrote; only that tip takes the staged rwv.toml",
+            "{} is not the tip the replay wrote; only that tip takes the resolved rwv.toml",
             head.id().short()
         )),
     });
@@ -1159,7 +1159,7 @@ pub(crate) fn settle_replayed_manifest(
             .any(|path| path == LockFile::FILE_NAME)
             .then(|| {
                 "rwv.lock has uncommitted edits, which the copy of the replayed tip that \
-                 takes the staged rwv.toml rewrites"
+                 takes the resolved rwv.toml rewrites"
                     .to_owned()
             }),
     };

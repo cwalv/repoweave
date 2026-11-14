@@ -8051,7 +8051,7 @@ pub fn moved_and_edited(end: MovedAndEditedEnd) -> Scenario {
             merge()
                 .expect(Exit::refuses(Repo::Lib, State::EditsSetBack))
                 .claim(Claim::OutputContains(
-                    "each staged version is kept in backup",
+                    "each recorded version is kept in backup",
                 )),
             Step::rwv_printed_holding(&at, "git -C", "^2:edited.txt")
                 .expect(Exit::Succeeds)
@@ -8287,7 +8287,7 @@ pub fn plain_drift_judged_by(verb: HeldVerb) -> Scenario {
             Step::rwv(&at, args)
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("working tree stale"))
-                .claim(Claim::OutputContains("index stale"))
+                .claim(Claim::OutputContains("recorded state stale"))
                 .claim(Claim::OutputLacks("edits dirty"))
                 .claim(Claim::OutputContains(
                     "once `rwv doctor --fix` has refreshed what beside them is stale",
@@ -18705,7 +18705,7 @@ pub enum ManifestSettle {
     /// keeping yours keeps the field only incoming changed.
     MemberFields(ManifestStopHistory),
     /// Each side adds a different member: no entry is in conflict, and the
-    /// continue writes and stages the merge of both sides.
+    /// continue writes the merge of both sides, marked resolved.
     LinesOnly(ManifestStopHistory),
     /// [`ManifestSettle::LinesOnly`] at a landing's stop.
     LinesOnlyLand(ManifestStopHistory),
@@ -19030,7 +19030,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 stop(H::Merge).claim(Claim::OutputContains("NOTES.txt, rwv.toml")),
                 Step::rwv(&ww("w"), &["sync", "--continue", "--keep", "incoming"])
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
-                    .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains("wrote the merge"))
                     .claim(Claim::OutputContains("NOTES.txt")),
                 Step::git(
                     &ww("w"),
@@ -19120,9 +19120,9 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 (false, H::Linear) => (&["sync", "--history", "linear"], &["sync", "--continue"]),
             };
             let resume_line = if land {
-                "`rwv land --continue` writes and stages the merge of both sides"
+                "`rwv land --continue` writes the merge of both sides, marked resolved"
             } else {
-                "`rwv sync --continue` writes and stages the merge of both sides"
+                "`rwv sync --continue` writes the merge of both sides, marked resolved"
             };
             let landed_at = if land { a() } else { ww("w") };
             steps = lines_only();
@@ -19148,7 +19148,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 replayed(
                     Step::rwv(&ww("w"), resume)
                         .expect(Exit::Succeeds)
-                        .claim(Claim::OutputContains("wrote and staged the merge")),
+                        .claim(Claim::OutputContains("wrote the merge")),
                     history,
                 ),
                 Step::git(&landed_at, Repo::Proj, &["show", "HEAD:rwv.toml"])
@@ -19189,7 +19189,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 ),
                 Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", ">>>>>>> ", "# "),
                 continues().claim(Claim::OutputContains(
-                    "rwv.toml as it stands declares the merge of both sides; staged it",
+                    "rwv.toml as it stands declares the merge of both sides; marked it resolved",
                 )),
                 both_members(),
                 Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
@@ -19210,7 +19210,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     "[integrations.vscode-workspace]\nenabled = false\n# half-way through\n",
                 ),
                 continues()
-                    .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains("wrote the merge"))
                     .claim(Claim::OutputContains(
                         "comments and layout the incoming side changed in rwv.toml are not carried",
                     ))
@@ -19233,7 +19233,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains(
                         "reads as a manifest other than the merge",
                     ))
-                    .claim(Claim::OutputLacks("wrote and staged")),
+                    .claim(Claim::OutputLacks("wrote the merge")),
                 Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),
@@ -19274,11 +19274,11 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                 Step::rwv(&ww("w"), &["sync", "--continue"])
                     .expect(Exit::refuses_kind(RefusalKind::OpParked))
                     .may_strand(&[Repo::Proj])
-                    .claim(Claim::OutputContains("wrote and staged the merge"))
+                    .claim(Claim::OutputContains("wrote the merge"))
                     .claim(Claim::OutputContains("rwv.toml: no entry is in conflict"))
                     .claim(Claim::OutputLacks("recurse-submodules")),
                 replayed(
-                    continues().claim(Claim::OutputContains("wrote and staged the merge")),
+                    continues().claim(Claim::OutputContains("wrote the merge")),
                     H::Linear,
                 ),
                 head_manifest()
@@ -19541,7 +19541,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                     .claim(Claim::OutputContains(
                         "not the one the stopped operation started",
                     ))
-                    .claim(Claim::OutputLacks("wrote and staged")),
+                    .claim(Claim::OutputLacks("wrote the merge")),
                 Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),
@@ -19630,14 +19630,14 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                         "to keep the text merge as the VCS made it:",
                     ))
                     .claim(Claim::OutputContains(
-                        "or edit rwv.toml into what you mean and stage it, then continue:",
+                        "or edit rwv.toml into what you mean and mark it resolved, then continue:",
                     )),
                 Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),
                 Step::rwv(&ww("w"), &["sync", "--continue"])
                     .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("wrote and staged the merge")),
+                    .claim(Claim::OutputContains("wrote the merge")),
                 one(&ww("w"), "history"),
                 app_history(&ww("w")),
             ]);
@@ -19716,7 +19716,7 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .claim(Claim::OutputContains(differs)),
                 Step::rwv_printed_holding(&ww("w"), "rwv ", "--keep text-merge")
                     .expect(Exit::Succeeds)
-                    .claim(Claim::OutputContains("kept and staged the text merge")),
+                    .claim(Claim::OutputContains("kept the text merge")),
                 Step::git(&ww("w"), Repo::Proj, &["show", "HEAD:rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("role = \"fork\"\n\n"))
@@ -19945,7 +19945,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
                     .expect(Exit::Succeeds)
                     .may_strand(&[Repo::Proj])
                     .claim(Claim::OutputContains(
-                        "wrote and staged the merge of both sides' values",
+                        "wrote the merge of both sides' values",
                     )),
                 settled(&at),
                 once(&at),
@@ -19996,7 +19996,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
                     .expect(Exit::Succeeds)
                     .may_strand(&[Repo::Proj])
                     .claim(Claim::OutputContains(
-                        "wrote and staged the merge of both sides' values",
+                        "wrote the merge of both sides' values",
                     )),
                 settled(&at),
             ]);
@@ -24211,7 +24211,7 @@ fn working_file_breaks_a_staged_fix(at: &Place, verb: &'static str) -> Vec<Step>
                 State::UnparseableProjectMidOperation,
             ))
             .claim(Claim::OutputContains(
-                "the working rwv.toml differs from the staged one",
+                "the working rwv.toml differs from the resolved one",
             ))
             .claim(Claim::OutputContains("[[["))
             .claim(Claim::LocalStateUnchanged(at.clone())),
@@ -24726,7 +24726,7 @@ pub fn a_carried_fix_killed_part_way(
                         "uncommitted edits are kept as backup",
                     )),
                     "remap-moved" => abort.claim(Claim::OutputContains(
-                        "the replayed tip with your staged rwv.toml is kept as backup",
+                        "the replayed tip with your resolved rwv.toml is kept as backup",
                     )),
                     _ => abort,
                 },
@@ -24971,7 +24971,7 @@ pub fn a_fix_that_empties_the_replayed_tip_drops_it(taking_in: TakingIn) -> Scen
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj])
             .claim(Claim::OutputContains(
-                "is dropped: with the staged rwv.toml it changes nothing",
+                "is dropped: with the resolved rwv.toml it changes nothing",
             )),
         Step::git(&ww("w"), Repo::Proj, &["log", "--format=%s", "-3"])
             .claim(Claim::OutputLacks("copy w.txt"))

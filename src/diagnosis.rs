@@ -435,7 +435,7 @@ this kind, and `rwv explain unparseable-project` is its route line.
 file's comments and key order. It writes the rename into the working file and into the project's \
 HEAD commit and commits only that, in one commit: any other edit to `rwv.toml`, and any edit to \
 another file, stays uncommitted where it was. It declines, changing nothing, while another file \
-is staged or a rebase, merge or cherry-pick is in progress in the project repo, and says so; run \
+is marked for the next commit or a rebase, merge or cherry-pick is in progress in the project repo, and says so; run \
 it again once that is dealt with. A value of `submodules` other than `\"local\"` or \
 `\"skip\"`, or an entry that names both a key and its replacement, is not guessed at: the repair \
 names it and leaves the file.
@@ -744,7 +744,7 @@ impl State {
                 means: "the checkout's branch moved under it from another checkout, and the \
                         refresh that brings it to its HEAD wrote none of these paths, listed, \
                         for the reason named: a path changed after it was read or something \
-                        on disk was in the way, the branch moved again, the index holds \
+                        on disk was in the way, the branch moved again, the checkout holds \
                         unresolved conflicts, or the write failed. They still hold the old \
                         tip's content, so committing them would record the move's reverse. \
                         The checkout's other edits are judged once the drift is refreshed; a \
@@ -802,8 +802,8 @@ impl State {
                         checkout at the tip its files hold, named in the subject with the branch \
                         it left, and did not finish: the VCS refused the next step, its reason \
                         quoted, or the run was stopped. HEAD names what the files hold, so the \
-                        listed edits are the only difference from it and a commit or stash \
-                        made here records them and nothing of the move. Running the merge or \
+                        listed edits are the only difference from it and a commit or a \
+                        set-aside made here records them and nothing of the move. Running the merge or \
                         the set-aside again carries them onto wherever the branch is then",
                 refused_by: "every verb that judges a checkout's edits, `rwv doctor --fix` \
                              included",
@@ -842,11 +842,11 @@ impl State {
             Self::EditsLockUnresolved => &StateRow {
                 axis: Axis::Edits,
                 name: "lock unresolved",
-                means: "the project repo's `rwv.lock` is unmerged: a merge, rebase or copy \
+                means: "the project repo's `rwv.lock` is conflicted: a merge, rebase or copy \
                         the lock merge driver could not settle left it conflicted with both \
                         pins marked, or a driver that could not run left one side in the \
                         working file with the conflict recorded only by the VCS. Resolve it \
-                        to the pins you mean and stage it",
+                        to the pins you mean and mark it resolved",
                 refused_by: "every verb resolved for a project, until it is resolved; `rwv \
                              doctor` and `rwv abort` run",
                 offers: &[Form::C32],
@@ -856,10 +856,10 @@ impl State {
                 axis: Axis::Edits,
                 name: "commit mid-operation",
                 means: "the project repo is in the middle of a merge, rebase, cherry-pick or \
-                        revert, named, with each path still unmerged listed. A commit made \
+                        revert, named, with each path still conflicted listed. A commit made \
                         there now would become that operation's commit, concluding it with \
                         only what the commit carries. The operation ends by its own continue, \
-                        which commits what is staged, or by its abort",
+                        which commits what you marked resolved, or by its abort",
                 refused_by: "every verb that commits the project repo: the `rwv member` and \
                              `rwv branch` setters, `rwv lock --commit`, `rwv doctor --fix`, and \
                              `rwv sync`, `rwv land`, `rwv pull`, `rwv cherry-pick` and \
@@ -1241,10 +1241,10 @@ impl State {
                         produced does not parse, listed with the parser's error: the two sides \
                         merged as text without a conflict into a file that is not a manifest, \
                         or a conflict in it was resolved into one. Under merge history the merge is in progress and the merged file is \
-                        staged in the working tree; continuing commits the staged file in the \
+                        in the working tree, marked resolved; continuing commits it in the \
                         merge. Under linear history the replay finished and the replayed tip \
-                        holds the file; continuing makes the staged file part of that \
-                        commit, which the replay wrote and nothing has published. A staged \
+                        holds the file; continuing makes the resolved file part of that \
+                        commit, which the replay wrote and nothing has published. A resolved \
                         file that parses under a working file that differs and does not parse \
                         stops here too, before anything is committed. Under linear history the \
                         replayed tip whose `rwv.toml` parses stops here too where it differs \
@@ -1253,7 +1253,7 @@ impl State {
                         listed; an entry both sides changed differently keeps the tip's value",
                 refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
                              first read what the merge or replay produced, and their \
-                             `--continue` while the staged `rwv.toml` does not parse; `rwv \
+                             `--continue` while the resolved `rwv.toml` does not parse; `rwv \
                              abort` runs",
                 offers: &[
                     Form::WriteValueMerge,
@@ -2258,22 +2258,22 @@ impl ChoiceId {
             },
             Self::MarkResolved => &ChoiceRow {
                 id: None,
-                phrase: "mark each unmerged path resolved once it holds what you mean",
-                keeps_work: "stages the working files as they stand; the operation is still \
+                phrase: "mark each conflicted path resolved once it holds what you mean",
+                keeps_work: "marks the working files resolved as they stand; the operation is still \
                              in progress",
             },
             Self::KeepSide => &ChoiceRow {
                 id: None,
                 phrase: "take one side for every `rwv.toml` entry both sides changed \
-                         differently, and write and stage the merge of both sides",
+                         differently, and write the merge of both sides, marked resolved",
                 keeps_work: "the checkout's edits are kept in a backup first; a working \
                              `rwv.toml` that reads as another manifest is refused, not \
                              replaced",
             },
             Self::ResumeOperation => &ChoiceRow {
                 id: None,
-                phrase: "let the operation that stopped go on, committing what is staged",
-                keeps_work: "it stops again while any path is unmerged",
+                phrase: "let the operation that stopped go on, committing what you marked resolved",
+                keeps_work: "it stops again while any path is conflicted",
             },
             Self::AbortOperation => &ChoiceRow {
                 id: None,
@@ -2283,15 +2283,15 @@ impl ChoiceId {
             },
             Self::StageParsingManifest => &ChoiceRow {
                 id: None,
-                phrase: "edit rwv.toml until it parses, then stage it",
-                keeps_work: "stages the working file as it stands; the operation is still in \
+                phrase: "edit rwv.toml until it parses, then mark it resolved",
+                keeps_work: "marks the working file resolved as it stands; the operation is still in \
                              progress",
             },
             Self::ResumeWithManifest => &ChoiceRow {
                 id: None,
-                phrase: "let the operation go on with the staged rwv.toml",
+                phrase: "let the operation go on with the resolved rwv.toml",
                 keeps_work: "a merge commits it in the merge; a replay makes it part of the \
-                             replayed tip; it stops again while the staged file does not parse",
+                             replayed tip; it stops again while the resolved file does not parse",
             },
             Self::WriteValueMerge => &ChoiceRow {
                 id: None,
@@ -2308,13 +2308,13 @@ impl ChoiceId {
             Self::StageOwnManifest => &ChoiceRow {
                 id: None,
                 phrase: crate::manifest_conflict::STAGE_OWN,
-                keeps_work: "the staged file is taken whole and not judged again",
+                keeps_work: "the resolved file is taken whole and not judged again",
             },
             Self::MergeEditedDrift => &ChoiceRow {
                 id: None,
                 phrase: "merge each listed file's edit onto the moved tip, refreshing the \
                          move's other files",
-                keeps_work: "the working copy and index are kept as a backup before anything \
+                keeps_work: "the working copy and the VCS's record of it are kept as a backup before anything \
                              is written; the VCS merges the edits as it merges local changes on \
                              a checkout, leaving a file it does not resolve conflicted",
             },
@@ -2322,7 +2322,7 @@ impl ChoiceId {
                 id: None,
                 phrase: "set the listed files' edits aside with the VCS, each taking the moved \
                          tip's content, refreshing the move's other files",
-                keeps_work: "the VCS keeps the edits, staged versions included, against the tip \
+                keeps_work: "the VCS keeps the edits, each version it records included, against the tip \
                              the files held; the report prints the command that merges them \
                              back onto the moved tip",
             },
@@ -2333,17 +2333,17 @@ impl ChoiceId {
             },
             Self::CompareMarked => &ChoiceRow {
                 id: None,
-                phrase: "clear the assume-unchanged mark on each file listed in the command, so \
-                         the VCS compares it and a backup keeps it, then merge or set aside \
+                phrase: "clear the mark that tells the VCS to treat each file listed in the command \
+                         as unchanged, so the VCS compares it and a backup keeps it, then merge or set aside \
                          again; the mark stays cleared",
-                keeps_work: "nothing is written but the index entry's mark",
+                keeps_work: "nothing is written but the VCS's mark on each file",
             },
             Self::CompareSkipped => &ChoiceRow {
                 id: None,
-                phrase: "clear the skip-worktree mark on each file listed in the command, so \
-                         the VCS compares it and a backup keeps it, then merge or set aside \
+                phrase: "clear the mark that tells the VCS to treat each file listed in the command \
+                         as outside the working copy, so the VCS compares it and a backup keeps it, then merge or set aside \
                          again; the mark stays cleared",
-                keeps_work: "nothing is written but the index entry's mark",
+                keeps_work: "nothing is written but the VCS's mark on each file",
             },
             Self::ReplaceThenMerge => &ChoiceRow {
                 id: None,
@@ -2351,22 +2351,22 @@ impl ChoiceId {
                          path: a link or file where its directory goes, a directory or an \
                          untracked file, ignored or not, where its file goes; then merge each \
                          edit onto the moved tip",
-                keeps_work: "the working copy and index are kept as a backup before the \
+                keeps_work: "the working copy and the VCS's record of it are kept as a backup before the \
                              merge writes anything",
             },
             Self::UnstageThenMerge => &ChoiceRow {
                 id: None,
-                phrase: "unstage the listed staged changes, each staying in the working copy, \
-                         then merge again",
-                keeps_work: "the backup taken before the merge holds each staged version; \
-                             unstaging writes only the index",
+                phrase: "drop what the VCS records for each listed path, each staying in the \
+                         working copy, then merge again",
+                keeps_work: "the backup taken before the merge holds each recorded version; \
+                             dropping the record writes nothing to the working copy",
             },
             Self::TakeBackSetAside => &ChoiceRow {
                 id: None,
                 phrase: "merge back the edits the newest set-aside kept, named last in the \
                          subject, once the checkout stands on its branch; any earlier one named \
                          there is taken back the same way, with its own id, once what the one \
-                         taken back before it brought back is staged",
+                         taken back before it brought back is recorded",
                 keeps_work: "the set-aside record stays until you drop it",
             },
             Self::FreeBranchThenMerge => &ChoiceRow {
@@ -2385,19 +2385,19 @@ impl ChoiceId {
                 id: None,
                 phrase: "clear what the VCS says stopped it, quoted in the subject, then merge \
                          again",
-                keeps_work: "the working copy and index are kept as a backup before the merge \
+                keeps_work: "the working copy and the VCS's record of it are kept as a backup before the merge \
                              writes anything",
             },
             Self::StashUnreadDrift => &ChoiceRow {
                 id: None,
-                phrase: "stash every difference from HEAD, the edits with the move's reverse, \
+                phrase: "set aside every difference from HEAD, the edits with the move's reverse, \
                          so the checkout stands at HEAD; take back only your own files from \
-                         the stash afterwards",
-                keeps_work: "the stash keeps every difference, edits included",
+                         what was set aside afterwards",
+                keeps_work: "what is set aside keeps every difference, edits included",
             },
             Self::RemoveLockThenMerge => &ChoiceRow {
                 id: None,
-                phrase: "once no VCS process is running in the checkout, remove the index lock \
+                phrase: "once no VCS process is running in the checkout, remove the lock on the VCS's record of the checkout \
                          a killed one left, named in the subject, then merge again",
                 keeps_work: "the lock holds no work; the backup taken before the merge holds \
                              every edit",
@@ -4442,7 +4442,7 @@ pub fn dirty_beside_drift(
                 paths: reading
                     .stale_files()
                     .into_iter()
-                    .chain(reading.stale_index_entries())
+                    .chain(reading.stale_records())
                     .collect(),
                 why: crate::check::LeftWhy::Failed(format!("{e:#}")),
             }),
@@ -4512,7 +4512,7 @@ pub fn settle_project_drift(
 
 /// A checkout whose drift could not be read: nothing it holds is judged an
 /// edit, since any of it may be the move's reverse, so the one choice is a
-/// stash, which keeps every difference without recording any.
+/// set-aside, which keeps every difference without recording any.
 pub fn drift_unread(repo: impl fmt::Display, e: &crate::vcs::VcsError) -> Judging {
     State::EditsDriftLeftInPlace
         .of(repo)
@@ -4689,7 +4689,10 @@ pub fn set_back(
     let lock = vcs.index_lock(dir).ok().flatten();
     if let Some(lock) = &lock {
         if refused.is_none() {
-            subject.push_str(&format!("; the index is locked by {}", lock.display()));
+            subject.push_str(&format!(
+                "; the VCS's record of the checkout is locked by {}",
+                lock.display()
+            ));
         }
     }
     let mut edits: Vec<String> = vcs.staged_paths(dir).unwrap_or_default();
@@ -4737,7 +4740,7 @@ pub fn set_back(
         .subject(subject)
         .listing(&edits)
         .bind(
-            "<stash>",
+            "<set-aside>",
             kept.map(crate::vcs::CommitId::as_str).unwrap_or_default(),
         );
     let forms = |first: &[Form]| -> Vec<Form> {

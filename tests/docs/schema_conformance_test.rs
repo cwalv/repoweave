@@ -1975,7 +1975,7 @@ fn landing_reports() -> Vec<LandingReportOutput> {
             moved_from: id('a'),
             moved_to: id('b'),
             files: vec!["notes.txt".to_owned()],
-            index_entries: vec!["README.md".to_owned()],
+            recorded_only: vec!["README.md".to_owned()],
         },
     ]
 }

@@ -668,7 +668,7 @@ fn update_commit_leaves_out_a_renames_removal_onto_an_authored_path() {
         .assert()
         .success()
         .stderr(predicates::str::contains(
-            "projects/alpha: uncommitted files left as they are: notes.md (staged)",
+            "projects/alpha: uncommitted files left as they are: notes.md (marked for commit)",
         ));
     common::git_in(&project_dir, &["cat-file", "-e", "HEAD:notes.md"]);
 }

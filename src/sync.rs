@@ -772,9 +772,10 @@ pub enum LandingReportOutput {
     },
     /// A checkout, in either workspace, whose branch something outside it
     /// moved forward from `moved_from` to `moved_to`: before judging its
-    /// edits the landing gave `files` (content and index entry) and
-    /// `index_entries` (index entry alone) `moved_to`'s content, since they
-    /// still held `moved_from`'s. A refused landing refreshes only a checkout
+    /// edits the landing gave `files` (the file and what the VCS records for it)
+    /// and `recorded_only` (what the VCS records alone, the file already
+    /// holding it) `moved_to`'s content, since they still held
+    /// `moved_from`'s. A refused landing refreshes only a checkout
     /// whose own edits it refused.
     Refreshed {
         path: String,
@@ -782,7 +783,7 @@ pub enum LandingReportOutput {
         moved_from: CommitId,
         moved_to: CommitId,
         files: Vec<String>,
-        index_entries: Vec<String>,
+        recorded_only: Vec<String>,
     },
     /// The commits `path`'s new pin in the branch `into` holds beyond the pin
     /// `into` held, pinned there with the feature's work.
@@ -925,14 +926,14 @@ impl LandingReportOutput {
                 moved_from,
                 moved_to,
                 files,
-                index_entries,
+                recorded_only,
             } => Self::Refreshed {
                 path: repo.to_string(),
                 absolute_path: crate::path_spelling::WirePath::of(checkout),
                 moved_from: moved_from.clone(),
                 moved_to: moved_to.clone(),
                 files: files.clone(),
-                index_entries: index_entries.clone(),
+                recorded_only: recorded_only.clone(),
             },
             op_state::LandingReport::HistoryPinAbsent { repo, lock, pin } => {
                 Self::HistoryPinAbsent {
@@ -1092,13 +1093,13 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                 moved_from,
                 moved_to,
                 files,
-                index_entries,
+                recorded_only,
             } => {
                 let refreshed = crate::check::Refreshed {
                     moved_from: moved_from.clone(),
                     moved_to: moved_to.clone(),
                     files: files.clone(),
-                    index_entries: index_entries.clone(),
+                    recorded_only: recorded_only.clone(),
                 };
                 eprintln!(
                     "rwv land: {repo} at {}: {}",
@@ -5336,7 +5337,7 @@ fn settle_drift(
                 moved_from: refreshed.moved_from,
                 moved_to: refreshed.moved_to,
                 files: refreshed.files,
-                index_entries: refreshed.index_entries,
+                recorded_only: refreshed.recorded_only,
             });
         }
         let elsewhere = |judging: crate::diagnosis::Judging| match &at.elsewhere {
@@ -12049,7 +12050,7 @@ fn report_abort_outcome(
                         backup.backup().name
                     ),
                     crate::vcs::KeptWork::FinishedByHand(backup) if at.replay_holds_fix => outln!(
-                        "  {label}: the replayed tip with your staged rwv.toml is kept as backup \
+                        "  {label}: the replayed tip with your resolved rwv.toml is kept as backup \
                          {} (`rwv backup list`)",
                         backup.backup().name
                     ),

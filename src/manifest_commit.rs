@@ -109,7 +109,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
 
     let mut paths: Vec<String> = Vec::new();
     vcs.stage_content(dir, manifest_file, edited_text.as_bytes())
-        .context("failed to stage rwv.toml")?;
+        .context("failed to record rwv.toml for the commit")?;
     paths.push(Manifest::FILE_NAME.to_owned());
 
     let mut staged_lock = None;
@@ -119,7 +119,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         });
         edit_lock(&mut lock);
         vcs.stage_content(dir, Path::new(LockFile::FILE_NAME), &lock_bytes(&lock)?)
-            .context("failed to stage rwv.lock")?;
+            .context("failed to record rwv.lock for the commit")?;
         paths.push(LockFile::FILE_NAME.to_owned());
         staged_lock = Some(lock);
     }
@@ -135,7 +135,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         if !carried.is_empty() {
             let refs: Vec<&str> = carried.iter().map(String::as_str).collect();
             vcs.stage_paths(dir, &refs)
-                .context("failed to stage the regenerated files")?;
+                .context("failed to record the regenerated files for the commit")?;
             paths.extend(carried);
         }
     }
@@ -155,7 +155,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
             return Err(match vcs.unstage_paths(dir, &refs) {
                 Ok(()) => refused,
                 Err(e) => refused.context(format!(
-                    "{} left staged: unstaging after the refused commit failed ({e:#})",
+                    "{} left marked for commit: taking them back out after the refused commit failed ({e:#})",
                     paths.join(", ")
                 )),
             });

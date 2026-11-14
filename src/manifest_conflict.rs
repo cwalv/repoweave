@@ -40,12 +40,13 @@ impl Side {
 /// Top-level tables whose keys are each one entry.
 const KEYED_TABLES: [&str; 2] = ["repositories", "integrations"];
 
-const BY_HAND: &str = "edit rwv.toml into what you mean, then stage it";
+const BY_HAND: &str = "edit rwv.toml into what you mean, then mark it resolved";
 
 pub(crate) const WRITE_VALUES: &str =
     "write the merge of both sides' values in place of the text merge";
 pub(crate) const KEEP_TEXT_MERGE: &str = "keep the text merge as the VCS made it";
-pub(crate) const STAGE_OWN: &str = "edit rwv.toml into what you mean and stage it, then continue";
+pub(crate) const STAGE_OWN: &str =
+    "edit rwv.toml into what you mean and mark it resolved, then continue";
 
 const TEXT_MERGE_MARK: &str = "<<<<<<< the VCS's text merge of rwv.toml";
 const VALUES_MARK: &str = ">>>>>>> the merge of both sides' values";
@@ -572,7 +573,7 @@ pub(crate) fn continue_at_stop(
                 ))
             }
             Some(side) => eprintln!(
-                "{done}: rwv.toml is not unmerged, so `--keep {}` takes nothing",
+                "{done}: rwv.toml is not conflicted, so `--keep {}` takes nothing",
                 side.word()
             ),
             None => {}
@@ -625,7 +626,7 @@ pub(crate) fn continue_at_stop(
         crate::durable_file::replace(&path, text_merge.as_bytes())
             .context("failed to write rwv.toml")?;
         vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
-        eprintln!("{done}: kept and staged the text merge of rwv.toml as the VCS made it");
+        eprintln!("{done}: kept the text merge of rwv.toml as the VCS made it, marked resolved");
         return Ok(());
     }
     let replaying = vcs.rebase_in_flight(&dir)?.is_some();
@@ -636,13 +637,14 @@ pub(crate) fn continue_at_stop(
     {
         if working.declares_same(&merged) {
             vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
-            eprintln!("{done}: rwv.toml as it stands declares the merge of both sides; staged it");
+            eprintln!("{done}: rwv.toml as it stands declares the merge of both sides; marked it resolved");
             return Ok(());
         }
         return Err(refused(
             "rwv.toml as it stands reads as a manifest other than the merge of both sides",
             vec![
-                "to keep it as it stands, stage it, then run the continue again:".to_owned(),
+                "to keep it as it stands, mark it resolved, then run the continue again:"
+                    .to_owned(),
                 format!("  {}", mark_resolved(vcs, &dir)),
             ],
         ));
@@ -665,7 +667,7 @@ pub(crate) fn continue_at_stop(
         Some(side) => format!(", taking {} for each entry in conflict", side.word()),
         None => String::new(),
     };
-    eprintln!("{done}: wrote and staged the merge of both sides of rwv.toml{took}");
+    eprintln!("{done}: wrote the merge of both sides of rwv.toml{took}, marked resolved");
     if let Some(dropped) = dropped {
         eprintln!(
             "comments and layout the {dropped} side changed in rwv.toml are not carried; the \
@@ -714,8 +716,8 @@ fn settle_tip(
                 .context("failed to write rwv.toml")?;
             vcs.stage_paths(dir, &[Manifest::FILE_NAME])?;
             eprintln!(
-                "{done}: wrote and staged the merge of both sides' values in place of the text \
-                 merge of rwv.toml"
+                "{done}: wrote the merge of both sides' values in place of the text \
+                 merge of rwv.toml, marked resolved"
             );
             for line in kept.iter().flat_map(|kept| kept_lines(vcs, dir, kept)) {
                 eprintln!("{line}");
@@ -876,15 +878,15 @@ pub(crate) fn reading_lines(
                 ]),
                 Some(resume) if conflicts.is_empty() => lines.extend([
                     format!(
-                        "rwv.toml: no entry is in conflict; `{resume}` writes and stages the \
-                         merge of both sides"
+                        "rwv.toml: no entry is in conflict; `{resume}` writes the \
+                         merge of both sides, marked resolved"
                     ),
                     format!("or {by_hand}:"),
                 ]),
                 Some(resume) => {
                     lines.push(
-                        "to take one side for every entry in conflict, and write and stage the \
-                         merge of both sides:"
+                        "to take one side for every entry in conflict, and write the \
+                         merge of both sides, marked resolved:"
                             .to_owned(),
                     );
                     for side in [Side::Yours, Side::Incoming] {

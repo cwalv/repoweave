@@ -1293,28 +1293,22 @@ Schema:
           }
         },
         {
-          "description": "A checkout, in either workspace, whose branch something outside it moved forward from `moved_from` to `moved_to`: before judging its edits the landing gave `files` (content and index entry) and `index_entries` (index entry alone) `moved_to`'s content, since they still held `moved_from`'s. A refused landing refreshes only a checkout whose own edits it refused.",
+          "description": "A checkout, in either workspace, whose branch something outside it moved forward from `moved_from` to `moved_to`: before judging its edits the landing gave `files` (the file and what the VCS records for it) and `recorded_only` (what the VCS records alone, the file already holding it) `moved_to`'s content, since they still held `moved_from`'s. A refused landing refreshes only a checkout whose own edits it refused.",
           "type": "object",
           "required": [
             "absolute_path",
             "files",
-            "index_entries",
             "kind",
             "moved_from",
             "moved_to",
-            "path"
+            "path",
+            "recorded_only"
           ],
           "properties": {
             "absolute_path": {
               "$ref": "#/definitions/WirePath"
             },
             "files": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            },
-            "index_entries": {
               "type": "array",
               "items": {
                 "type": "string"
@@ -1334,6 +1328,12 @@ Schema:
             },
             "path": {
               "type": "string"
+            },
+            "recorded_only": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             }
           }
         },

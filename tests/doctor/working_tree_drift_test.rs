@@ -690,7 +690,7 @@ fn doctor_fix_leaves_edits_that_hold_committed_content() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("live staged") && stdout.contains("live edits"),
+        stdout.contains("marked for commit") && stdout.contains("live edits"),
         "{stdout}"
     );
     assert!(

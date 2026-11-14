@@ -50,21 +50,24 @@ to which page holds it, so the split costs a reader nothing.
 ### `checkout-unrecorded`
 
 **Condition.** A checkout on a branch differs from its HEAD and the VCS holds no
-record of where the checkout last stood. For git, the checkout's HEAD reflog has
+record of where the checkout last stood. (For git, the checkout's HEAD reflog has
 no entry: git expired it from an idle checkout, it was expired by hand, or
-`core.logAllRefUpdates` is `false`.
+`core.logAllRefUpdates` is `false`.)
 
 **What it means.** Without that record rwv cannot tell the branch having moved
 under the checkout from edits made in it, since both leave files that differ from
-HEAD. It judges neither. `recording_off` is `true` when
-`core.logAllRefUpdates` is `false`, which is why git never wrote one.
+HEAD. It judges neither. `recording_off` is `true` when the VCS is set never to
+record it, which is why it holds none. (For git, `core.logAllRefUpdates` is
+`false`.)
 
-**Exits.** `git stash push` sets every difference aside without recording any of
-it. Where `git diff` shows the differences are all yours, `git stash pop`
-afterwards makes git write an entry at the current tip and the next verb judges
-them as edits. With `recording_off`, `git config core.logAllRefUpdates true`
-first. Differences that are only the branch's move are taken back with the
-recipe on [Shared-refs drift](../explanation/joints/shared-refs-drift.md).
+**Exits.** Set every difference aside without recording any of it. Where the
+differences are all yours, taking them back afterwards makes the VCS record the
+checkout at the current tip and the next verb judges them as edits. With
+`recording_off`, turn recording on first; the message prints the VCS action that
+does. (For git, `git stash push` sets the differences aside, `git stash pop`
+takes them back, and `git config core.logAllRefUpdates true` turns recording
+on.) Differences that are only the branch's move are taken back with the recipe
+on [Shared-refs drift](../explanation/joints/shared-refs-drift.md).
 
 ### `command-failed`
 
@@ -87,19 +90,20 @@ this set grows at `command-failed`'s expense.
 
 ### `hook-rejected`
 
-**Condition.** A `git worktree add` registered its destination and then failed,
-which is the shape a `post-checkout` hook rejection takes.
+**Condition.** Adding a worktree registered its destination and then failed,
+which is the shape a hook rejection takes. (For git, `git worktree add` fails
+after registering, the shape a `post-checkout` hook rejection takes.)
 
 **What it means.** The registration is written before the hook runs, so the
 destination is a registered worktree even though the command failed. Because
-rwv detects this state by observing that `git worktree add` wrote the worktree
-admin entry before failing, check `stderr` (which holds the hook's or git's own
+rwv detects this state by observing that the VCS wrote the worktree's record
+before failing, check `stderr` (which holds the hook's or the VCS's own
 output) to confirm the cause.
 
 **Exits.** Read `stderr` for the hook's own reason and satisfy it. The
-destination is registered, so clear it with `git -C <repo> worktree remove
-<path>` (or `git -C <repo> worktree prune` if the directory is already gone)
-before re-running.
+destination is registered, so remove the worktree with the VCS, or prune the record if the directory is
+already gone, before re-running. (For git, `git -C <repo> worktree remove
+<path>`, or `git -C <repo> worktree prune`.)
 
 ### `io`
 
@@ -133,11 +137,11 @@ finish, not why.
 
 **What it means.** The why is in `cause`. A conflict arrives as
 `rebase-conflict` (its `op` says a merge stopped) and leaves the repo with the
-merge in progress for the operator to resolve and stage; anything else is a
+merge in progress for the operator to resolve and mark resolved; anything else is a
 VCS failure that changed nothing.
 
 **Exits.** Branch on `cause.kind` and follow that entry. After a conflict,
-resolve and stage it, then `rwv land --continue`, which commits the merge with
+resolve it and mark it resolved, then `rwv land --continue`, which commits the merge with
 the receiving tip as its first parent, or `rwv abort`.
 
 ### `mid-operation`
@@ -151,7 +155,7 @@ cherry-pick or revert waiting on its conflict or its commit, or a bisect. `opera
 result, or a bisect's marks — that moving HEAD would lose. rwv stopped before
 moving anything.
 
-**Exits.** Finish or abandon that operation with the VCS (`git -C <repo>
+**Exits.** Finish or abandon that operation with the VCS (for git, `git -C <repo>
 status` names its own continue and abort), then re-run. A verb that judges a
 repo before acting refuses this state up front, as the `edits` kind's
 `mid-operation`; this kind is the same state met by a VCS call partway through.
@@ -185,7 +189,7 @@ purpose: conflict markers in the working tree and the replay's own state
 directory. Nothing was rolled back, because rolling back would discard the part
 of the replay that already applied.
 
-**Exits.** Resolve the conflicted files and stage them, then resume with the rwv
+**Exits.** Resolve the conflicted files and mark them resolved, then resume with the rwv
 verb that started the replay — `rwv sync --continue` or `rwv land
 --continue`. Resume through rwv rather than through git directly: rwv has
 remaining phases after the replay, and a replay finished behind its back leaves

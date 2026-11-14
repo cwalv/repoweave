@@ -1,6 +1,6 @@
 # Recover from a sync conflict
 
-When `rwv sync` or `rwv land` pauses on a merge or rebase conflict, resolve the conflicted files in the named repository, stage them, and resume from the weave root with `--continue` (or roll back with `rwv abort`):
+When `rwv sync` or `rwv land` pauses on a merge or rebase conflict, resolve the conflicted files in the named repository, mark them resolved (for git, `git add`), and resume from the weave root with `--continue` (or roll back with `rwv abort`):
 
 ```bash
 # 1. Edit conflicted files and stage them in the named repository
@@ -54,10 +54,10 @@ If you step through a multi-commit rebase manually with `git rebase --continue`,
   rwv.toml entry github/chatly/server is in conflict:
     branch: "feat-a" in yours, "feat-b" incoming
   (yours: the side of the branch checked out in …; incoming: the side it takes in)
-  to take one side for every entry in conflict, and write and stage the merge of both sides:
+  to take one side for every entry in conflict, and write the merge of both sides, marked resolved:
     rwv sync --continue --keep yours
     rwv sync --continue --keep incoming
-  or edit rwv.toml into what you mean, then stage it:
+  or edit rwv.toml into what you mean, then mark it resolved:
     git -C … add -- rwv.toml
   ```
 
@@ -69,7 +69,7 @@ If you step through a multi-commit rebase manually with `git rebase --continue`,
 
   `rwv sync`, `rwv land` and `rwv pull` also check `rwv.toml` where git merged its text with no conflict: a line merge of a file whose tables repeat the same lines can succeed with a wrong result, such as a setting moved to another member or a removed member back. Under `merge` history the merge is checked before it is committed: where git's text parses and declares something other than the merge of both sides' values, the operation stops with `rwv.toml` unmerged, listing each entry that differs, and the working file shows git's text above the merge of the values between conflict markers. Under `linear` history the replay runs as `git rebase` runs it, and once it has finished, the replayed tip's `rwv.toml` is compared with the merge of the values of the merge base, the commit replayed onto and your branch's tip before the replay; where they differ the operation stops as `unparseable-project` `mid-operation`, listing each entry. A dependent branch `rwv sync` or `rwv land` carries along gets the same comparison of its replayed tip: where it differs the dependent is not moved, and a line names it and the `rwv workweave create` that opens it, where `rwv sync` stops on its own tip.
 
-  What is not checked: the commits a replay writes before its tip keep git's text, as `git rebase` leaves them; once a replay has stopped with `rwv.toml` unmerged, it is yours to settle at that stop, so neither that replay's tip nor a later commit's clean text merge in it is checked; a text that does not parse stops as `unparseable-project` `mid-operation` with no merge of the values offered; and a merge made by `git merge` by hand, or on a forge, is not checked.
+  What is not checked: the commits a replay writes before its tip keep git's text, as `git rebase` leaves them; once a replay has stopped with `rwv.toml` conflicted, it is yours to settle at that stop, so neither that replay's tip nor a later commit's clean text merge in it is checked; a text that does not parse stops as `unparseable-project` `mid-operation` with no merge of the values offered; and a merge made by `git merge` by hand, or on a forge, is not checked.
 
   At either check stop there are three ways on:
 
@@ -78,7 +78,7 @@ If you step through a multi-commit rebase manually with `git rebase --continue`,
       rwv sync --continue
     keep the text merge as the VCS made it
       rwv sync --continue --keep text-merge
-    edit rwv.toml into what you mean and stage it, then continue
+    edit rwv.toml into what you mean and mark it resolved, then continue
       git -C … add -- rwv.toml
       rwv sync --continue
   ```

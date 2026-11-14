@@ -553,7 +553,7 @@ fn every_vcs_error() -> Vec<VcsError> {
         },
         VcsError::CheckoutUnrecorded {
             repo: repo(),
-            recording_off: false,
+            recording_off: None,
         },
         VcsError::Io {
             ctx: "spawn".into(),

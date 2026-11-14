@@ -556,7 +556,7 @@ fn json_carries_what_was_refreshed() {
     );
     assert_eq!(entry["moved_to"], moved.as_str(), "{json:#}");
     assert_eq!(entry["files"], serde_json::json!(["notes.txt"]), "{json:#}");
-    assert_eq!(entry["index_entries"], serde_json::json!([]), "{json:#}");
+    assert_eq!(entry["recorded_only"], serde_json::json!([]), "{json:#}");
 }
 
 // ---------------------------------------------------------------------------
@@ -1216,7 +1216,8 @@ fn a_file_already_holding_heads_content_has_its_index_entry_reset() {
 
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
     assert!(
-        stderr.contains("these index entries were reset") && stderr.contains("notes.txt"),
+        stderr.contains("what the VCS records for these paths was reset")
+            && stderr.contains("notes.txt"),
         "{stderr}"
     );
     assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
@@ -1698,7 +1699,7 @@ fn holds_every_shape(f: &Fixture) -> bool {
 fn a_refresh_killed_between_its_writes_still_reads_as_drift() {
     let f = fixture();
     move_of_every_shape(&f);
-    let held = held_landing(&f, "drift-write-index");
+    let held = held_landing(&f, "drift-write-records");
     drop(held);
     assert!(holds_every_shape(&f), "the files were written first");
     assert_eq!(
@@ -1834,7 +1835,7 @@ fn an_index_lock_taken_between_the_writes_reads_as_drift() {
             "index.lock",
         ],
     );
-    let held = held_landing(&f, "drift-write-index");
+    let held = held_landing(&f, "drift-write-records");
     std::fs::write(&lock, "").unwrap();
 
     let out = held.release();
@@ -1861,7 +1862,7 @@ fn an_index_lock_taken_between_the_writes_reads_as_drift() {
 fn an_edit_staged_between_the_writes_is_the_only_one_held() {
     let f = fixture();
     move_of_every_shape(&f);
-    let held = held_landing(&f, "drift-write-index");
+    let held = held_landing(&f, "drift-write-records");
     std::fs::write(f.ww_lib.join("notes.txt"), "operator staged this\n").unwrap();
     common::git_in(&f.ww_lib, &["add", "notes.txt"]);
 
@@ -1889,7 +1890,7 @@ fn an_edit_staged_between_the_writes_is_the_only_one_held() {
 fn a_verb_run_between_another_refreshs_writes_finishes_it() {
     let f = fixture();
     move_of_every_shape(&f);
-    let held = held_landing(&f, "drift-write-index");
+    let held = held_landing(&f, "drift-write-records");
 
     let out = common::cli::run(&["doctor", "--fix"], &f.ww);
 
@@ -2230,7 +2231,10 @@ fn a_set_back_checkout_with_a_left_index_lock_names_it_and_offers_no_choice_that
 
     let stderr = common::cli::refused(&out, State::EditsSetBack);
     assert!(stderr.contains(&lock.display().to_string()), "{stderr}");
-    assert!(stderr.contains("remove the index lock"), "{stderr}");
+    assert!(
+        stderr.contains("remove the lock on the VCS's record of the checkout"),
+        "{stderr}"
+    );
     assert!(!stderr.contains("set-aside-edited-drift"), "{stderr}");
     let out = common::cli::run(&MERGE, &f.ww);
     let stderr = common::cli::refused(&out, State::EditsSetBack);
@@ -2944,7 +2948,7 @@ fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
         std::fs::write(elsewhere.join("u.txt"), "a2\nm\nm\nm\nb\n").unwrap();
     });
-    drop(held_landing(&f, "drift-write-index"));
+    drop(held_landing(&f, "drift-write-records"));
     assert_eq!(
         read(&f.ww_lib.join("u.txt")).as_deref(),
         Some("a2\nm\nm\nm\nb\n")
@@ -2989,7 +2993,7 @@ fn a_file_the_second_move_puts_back_after_a_killed_refresh_reads_as_an_edit() {
         std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
         std::fs::write(elsewhere.join("z.txt"), "z2\n").unwrap();
     });
-    drop(held_landing(&f, "drift-write-index"));
+    drop(held_landing(&f, "drift-write-records"));
     assert_eq!(read(&f.ww_lib.join("z.txt")).as_deref(), Some("z2\n"));
     f.move_with("ww/project", |elsewhere| {
         std::fs::write(elsewhere.join("z.txt"), "z\n").unwrap();
@@ -3151,7 +3155,7 @@ fn two_set_asides_from_one_set_back_print_both_take_back_lines_oldest_first() {
         "ww/project"
     );
     assert!(
-        said.contains("stage or commit what each brings back before the next"),
+        said.contains("record or commit what each brings back before the next"),
         "{said}"
     );
 
@@ -3605,7 +3609,7 @@ fn a_move_under_a_checkout_with_no_reflog_entry_is_held_with_no_commit_offered()
             let out = common::cli::run(verb, &f.ww);
             let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
             assert!(
-                stderr.contains("holds no entry for this checkout"),
+                stderr.contains("where this checkout of"),
                 "{how:?} {verb:?}:\n{stderr}"
             );
             assert!(!stderr.contains("commit"), "{how:?} {verb:?}:\n{stderr}");
@@ -3616,7 +3620,7 @@ fn a_move_under_a_checkout_with_no_reflog_entry_is_held_with_no_commit_offered()
             );
         }
         let said = common::cli::describe(&common::cli::run(&["doctor"], &f.ww));
-        assert!(said.contains("holds no entry"), "{how:?}:\n{said}");
+        assert!(said.contains("where this checkout of"), "{how:?}:\n{said}");
         assert!(
             !said.contains("commit them if they are yours"),
             "{how:?}:\n{said}"
@@ -3644,7 +3648,7 @@ fn a_clean_checkout_with_no_reflog_entry_is_not_held() {
         for verb in [&["lock"][..], &["land"], &["doctor"]] {
             let out = common::cli::run(verb, &f.ww);
             assert!(
-                !common::cli::describe(&out).contains("holds no entry"),
+                !common::cli::describe(&out).contains("where this checkout of"),
                 "{how:?} {verb:?}:\n{}",
                 common::cli::describe(&out)
             );
@@ -3663,10 +3667,7 @@ fn an_edit_in_a_checkout_with_no_reflog_entry_is_held_with_the_stash_alone() {
     let out = common::cli::run(&["lock"], &f.ww);
 
     let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
-    assert!(
-        stderr.contains("holds no entry for this checkout"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("where this checkout of"), "{stderr}");
     assert_eq!(printed_commands(&stderr).len(), 1, "{stderr}");
     run_every_choice(&stderr, &f.ww);
     assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
@@ -3696,7 +3697,7 @@ fn index_entry(repo: &Path, path: &str) -> String {
 fn a_hand_add_of_one_file_after_a_refresh_killed_between_its_writes_is_finished_by_the_next_verb() {
     let f = fixture();
     move_changing_two_and_adding_one(&f);
-    drop(held_landing(&f, "drift-write-index"));
+    drop(held_landing(&f, "drift-write-records"));
     common::git_in(&f.ww_lib, &["add", "notes.txt"]);
     assert_eq!(
         read(&f.ww_lib.join("spare.txt")).as_deref(),
@@ -3741,7 +3742,10 @@ fn a_staged_only_return_of_one_file_after_a_hand_refresh_has_its_entry_reset() {
 
     let said = common::cli::describe(&out);
     assert!(out.status.success(), "{said}");
-    assert!(said.contains("these index entries were reset"), "{said}");
+    assert!(
+        said.contains("what the VCS records for these paths was reset"),
+        "{said}"
+    );
     assert_eq!(common::git_in(&f.ww_lib, &["status", "--porcelain"]), "");
     assert_eq!(
         read(&f.ww_lib.join("spare.txt")).as_deref(),
@@ -3787,7 +3791,10 @@ fn the_printed_stash_and_its_pop_end_the_hold_unless_the_setting_forbids_an_entr
             off,
             "{how:?}:\n{stderr}"
         );
-        assert!(stderr.contains("git stash pop"), "{how:?}:\n{stderr}");
+        assert!(
+            stderr.contains("taking back what was set aside"),
+            "{how:?}:\n{stderr}"
+        );
         run_every_choice(&stderr, &f.ww);
         common::git_in(&f.ww_lib, &["stash", "pop", "-q"]);
 
@@ -3796,8 +3803,21 @@ fn the_printed_stash_and_its_pop_end_the_hold_unless_the_setting_forbids_an_entr
         if off {
             let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
             assert!(stderr.contains("core.logAllRefUpdates"), "{stderr}");
-            let enable = "core.logAllRefUpdates";
-            common::git_in(&f.ww_lib, &["config", enable, "true"]);
+            let printed = stderr
+                .split("VCS action (git: `")
+                .nth(1)
+                .and_then(|rest| rest.split('`').next())
+                .unwrap_or_else(|| panic!("no VCS action printed:\n{stderr}"));
+            let words: Vec<&str> = printed.split_whitespace().collect();
+            let ran = std::process::Command::new(words[0])
+                .args(&words[1..])
+                .output()
+                .unwrap();
+            assert!(
+                ran.status.success(),
+                "{printed}:\n{}",
+                common::cli::describe(&ran)
+            );
             common::git_in(&f.ww_lib, &["stash", "push", "-q"]);
             common::git_in(&f.ww_lib, &["stash", "pop", "-q"]);
             let out = common::cli::run(&["lock"], &f.ww);
