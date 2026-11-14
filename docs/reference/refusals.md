@@ -153,7 +153,7 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `in another workspace` | C16: free the other checkout | `rwv switch <other>` | the other checkout | removal refuses over edits |
+| `in another workspace` | C16: free the other checkout | `rwv member remove <repo> --delete` | the other checkout | removal refuses over edits |
 | `in another workspace` | C16: free the other checkout | `rwv workweave delete <ww> --project <project>` | the primary | removal refuses over edits |
 | `in another workspace`, for `rwv switch` | C16: free the other checkout | `rwv workweave create <new> --detach <W>` | here | removal refuses over edits |
 | `in another workspace`, for `rwv workweave create` | C16: free the other checkout | `rwv workweave create <new> --detach <W>` | here | removal refuses over edits |

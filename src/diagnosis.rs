@@ -856,7 +856,7 @@ impl State {
                              of a dropped member there; `rwv branch delete`, `rwv switch` and \
                              `rwv workweave create --branch`, for a project branch checked out \
                              in another workspace",
-                offers: &[Form::C16Switch, Form::C16WorkweaveDelete],
+                offers: &[Form::C16MemberRemove, Form::C16WorkweaveDelete],
                 verb_offers: &[
                     ("switch", Form::C16Detach),
                     ("workweave create", Form::C16Detach),
@@ -2427,7 +2427,6 @@ impl Where {
     fn at(self, places: &BTreeMap<&'static str, PathBuf>) -> Option<PathBuf> {
         let placeholder = match self {
             Self::Primary => "<primary>",
-            Self::OtherCheckout => "<other>",
             Self::WhereBranchCheckedOut => "<b-checkout>",
             _ => return None,
         };
@@ -2510,7 +2509,7 @@ pub enum Form {
     C15,
     C15AtCherryPick,
     C15OntoCheckedOut,
-    C16Switch,
+    C16MemberRemove,
     C16WorkweaveDelete,
     C16Raw,
     C16Detach,
@@ -2656,7 +2655,7 @@ impl Form {
         Self::C15,
         Self::C15AtCherryPick,
         Self::C15OntoCheckedOut,
-        Self::C16Switch,
+        Self::C16MemberRemove,
         Self::C16WorkweaveDelete,
         Self::C16Raw,
         Self::C16Detach,
@@ -3008,9 +3007,9 @@ impl Form {
                 at: W::WhereBranchCheckedOut,
                 shipped: true,
             },
-            Self::C16Switch => &FormRow {
+            Self::C16MemberRemove => &FormRow {
                 choice: C::C16,
-                steps: &[Rwv("rwv switch <other>")],
+                steps: &[Rwv("rwv member remove <repo> --delete")],
                 at: W::OtherCheckout,
                 shipped: true,
             },
@@ -3850,6 +3849,7 @@ impl Judging {
             return self.dependents_workspace.as_deref();
         }
         match form.row().at {
+            Where::OtherCheckout => self.places.get("<other>").map(PathBuf::as_path),
             Where::Here | Where::CheckoutsWorkspace | Where::WithBranch => {
                 self.workspace.as_deref()
             }

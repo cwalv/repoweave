@@ -2016,8 +2016,8 @@ fn judge_store_checkouts(
     }
     let recorded = recorded_workweaves(primary_root)?;
     for checkout in live {
-        report.add(judge_checkout(
-            vcs, repo_path, checkout, store, &recorded, None,
+        report.add(judge_checkout_of_removed(
+            vcs, repo_path, checkout, store, &recorded,
         ));
     }
     Ok(())
@@ -2034,8 +2034,36 @@ pub(crate) fn judge_checkout(
     recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
     opening: Option<(&'static str, &str)>,
 ) -> crate::diagnosis::Judged {
+    let judging = checkout_judging(repo, checkout, store, recorded);
+    match opening {
+        Some((verb, branch)) => judging.by_verb(verb).bind("<W>", branch),
+        None => judging,
+    }
+    .judge(vcs)
+}
+
+/// [`judge_checkout`] for a checkout whose member is being removed: the
+/// removal runs in the workspace holding it.
+fn judge_checkout_of_removed(
+    vcs: &dyn Vcs,
+    repo: &RepoPath,
+    checkout: &Path,
+    store: &Path,
+    recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
+) -> crate::diagnosis::Judged {
+    checkout_judging(repo, checkout, store, recorded)
+        .bind("<repo>", repo)
+        .judge(vcs)
+}
+
+fn checkout_judging(
+    repo: impl std::fmt::Display,
+    checkout: &Path,
+    store: &Path,
+    recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
+) -> crate::diagnosis::Judging {
     let at = CanonicalPath::of(checkout);
-    let judging = match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
+    match recorded.iter().find(|(_, dir)| dir.contains(&at)) {
         Some((workweave, dir)) => State::CheckoutInAnotherWorkspace
             .of(repo)
             .subject(workweave.flat())
@@ -2048,12 +2076,7 @@ pub(crate) fn judge_checkout(
             .listing([checkout.display()])
             .checkout(store)
             .bind("<worktree>", checkout.display()),
-    };
-    match opening {
-        Some((verb, branch)) => judging.by_verb(verb).bind("<W>", branch),
-        None => judging,
     }
-    .judge(vcs)
 }
 
 /// Every workweave the primary's projects record, with its directory.

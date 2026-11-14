@@ -5643,6 +5643,28 @@ pub fn a_landings_unpinned_target_member_offers_only_what_runs() -> Scenario {
     )
 }
 
+/// A seat removes `app` without deleting its checkout and lands the removal:
+/// the landing cannot prune the primary's clone while the seat's own worktree
+/// derives from it. The printed choice removes the checkout there, as printed,
+/// and the landing then prunes the clone.
+pub fn a_landing_that_cannot_prune_the_target_prints_the_removal_there() -> Scenario {
+    scenario(
+        "a landing that cannot prune the target prints the removal there",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "remove", APP]).expect(Exit::Succeeds),
+            Step::rwv(
+                &ww("w"),
+                &["land", "--history", "merge", "--allow-member-change", APP],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("checkout in another workspace"))
+            .claim(Claim::OutputLacks("rwv switch")),
+            Step::rwv_printed_holding(&a(), "rwv -C", " member remove").expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the
