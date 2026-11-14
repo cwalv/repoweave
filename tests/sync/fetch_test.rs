@@ -465,4 +465,92 @@ mod claim {
         let status = waiting.wait().expect("the prune ends");
         assert!(status.success(), "the prune proceeds once released");
     }
+
+    const NO_LOCKS: &str = "advisory-lock";
+
+    fn fetch_under_claim(weave: &Weave, no_locks: bool) -> common::pause::Paused {
+        let mut fetch = common::rwv_std();
+        fetch
+            .args(["fetch", "--repo", MEMBER])
+            .current_dir(&weave.primary);
+        if no_locks {
+            fetch.env("RWV_TEST_WITHHOLD", NO_LOCKS);
+        }
+        common::pause::Paused::spawn(fetch, "fetch-under-claim", &weave.parent.join("pause"))
+            .expect("the fetch is held under the claim")
+    }
+
+    fn claim_file(weave: &Weave) -> PathBuf {
+        weave.member().join(".git/.rwv-fetch.lock")
+    }
+
+    fn next_fetch(weave: &Weave, no_locks: bool) -> (std::process::Output, Duration) {
+        let mut next = common::rwv_std();
+        next.args(["fetch", "--repo", MEMBER])
+            .current_dir(&weave.primary);
+        if no_locks {
+            next.env("RWV_TEST_WITHHOLD", NO_LOCKS);
+        }
+        let started = Instant::now();
+        let out = next.output().expect("rwv runs");
+        (out, started.elapsed())
+    }
+
+    /// A fetch killed under the claim leaves its file, and the next fetch
+    /// takes it over at once rather than waiting out the budget.
+    #[test]
+    fn a_killed_fetchs_claim_is_taken_over_by_the_next_fetch() {
+        let weave = weave();
+        fetch_under_claim(&weave, false).kill();
+        assert!(claim_file(&weave).exists(), "the kill leaves the claim");
+
+        let (out, took) = next_fetch(&weave, false);
+
+        assert!(
+            out.status.success(),
+            "{}",
+            common::pause::describe("fetch", &out)
+        );
+        assert!(took < Duration::from_secs(5), "waited {took:?}");
+        assert!(!claim_file(&weave).exists());
+    }
+
+    /// Where the filesystem has no advisory locks, a claim naming a process on
+    /// this host that no longer runs is taken over all the same.
+    #[test]
+    fn without_file_locks_a_killed_fetchs_claim_is_taken_over_by_the_next_fetch() {
+        let weave = weave();
+        fetch_under_claim(&weave, true).kill();
+        assert!(claim_file(&weave).exists(), "the kill leaves the claim");
+
+        let (out, took) = next_fetch(&weave, true);
+
+        assert!(
+            out.status.success(),
+            "{}",
+            common::pause::describe("fetch", &out)
+        );
+        assert!(took < Duration::from_secs(5), "waited {took:?}");
+        assert!(!claim_file(&weave).exists());
+    }
+
+    /// Where the filesystem has no advisory locks, a claim held by a process
+    /// on another host cannot be shown gone from here: the fetch refuses,
+    /// names the holder and the host to rerun on, and no file is to be deleted.
+    #[test]
+    fn without_file_locks_a_claim_from_another_host_is_waited_on_and_refused() {
+        let weave = weave();
+        std::fs::write(claim_file(&weave), "pid 1 host another-host.invalid\n").unwrap();
+
+        let (out, _) = next_fetch(&weave, true);
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(1), "{stderr}");
+        assert!(
+            stderr.contains("pid 1 host another-host.invalid"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("delete"), "{stderr}");
+        assert!(claim_file(&weave).exists());
+    }
 }

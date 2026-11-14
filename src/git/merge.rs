@@ -4,7 +4,7 @@
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
 use super::{
     derived_content_git_args, git_command, git_reads_attributes_from_a_commit, local_branch,
-    lock_driver_held_args, nul_terminated_fields, GitVcs,
+    lock_driver_held_args, nul_terminated_fields, GitVcs, Scratch,
 };
 use crate::vcs::{
     BackupWitness, CommitId, DerivedContentPolicy, DerivedContentResolution, RawRefName, RefMerge,
@@ -257,15 +257,8 @@ impl GitVcs {
                 },
             );
         }
-        let scratch = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-merge-scratch-{}", std::process::id()),
-            ],
-            repo,
-        )?;
+        let owner = Scratch::take(repo)?;
+        let scratch = owner.path("merge");
         let scratch = Path::new(&scratch);
         Self::run(
             [

@@ -145,6 +145,35 @@ SMB mounts), the sweep takes no temp it cannot lock, or removes one a writer
 on another host still holds, which that writer then stages again: temps may
 be left, and nothing else changes.
 
+**One liveness primitive tells a live holder from a dead one.**
+`src/liveness.rs` is the only place that asks whether a process still holds a
+file. A holder takes an advisory lock on the file and keeps it while it runs;
+the kernel drops it when the process dies. A temp's sweep, a short claim's
+waiters and a scratch owner's sweep all ask `try_hold`, which answers `Taken`
+(the file has no holder), `Busy` (a live holder) or `Unavailable` (the
+filesystem has no advisory locks, tested under `RWV_TEST_WITHHOLD=advisory-lock`).
+`Unavailable` never refuses the call that asked: the file's body names the
+holder's pid and host, and a process on the same host reads the pid
+(`holder_is_gone`); a holder on another host is never shown gone from here.
+What is then left, and only then, is a temp or scratch file whose owner
+cannot be shown dead, and for a short claim the refusal that names its holder
+and says to rerun from that host, where the pid check takes the claim over.
+A short claim is a file at a published name (`.rwv-fetch.lock`,
+`rwv-workweave-index.lock`, `.rwv-owned-digests.lock`) created with
+`create_new`, then locked; its holder removes it before it lets go of the
+lock, and a waiter that locked the removed file checks the path still names
+the file it locked (`is_current`) before it counts itself the holder. A file
+left by a killed holder is locked by the next claimant, with no wait.
+
+**Scratch files a call makes in a git dir go through one owner.** Every
+private index and detached checkout a call makes (`rwv-scratch-<pid>-<name>`:
+the drift refresh's two indexes, the commit, records, backup and replay
+indexes, the merge checkout) is named for the process beside an owner file
+`rwv-scratch-<pid>` that the process holds locked (`Scratch`,
+`src/git/scratch.rs`). Each call first removes every other owner's files whose
+lock it can take, runs `git worktree prune` when one was a checkout, and
+removes its own when it drops. A call is never refused for want of the lock.
+
 **A fetch into an object store is claimed: one at a time per store.** Two
 fetches into one store race on the refs they update, and the loser dies on a
 ref lock. A canonical clone's store is shared by its workweaves' worktrees, so
@@ -156,8 +185,7 @@ the held claim as a witness, so a fetch without one is not expressible. It is
 the same state-claim mechanism as the workweave index's claim
 (`StateFile::FetchClaim` beside `StateFile::IndexClaim` in
 `src/state_file.rs`): a peer is waited for within the shared claim budget, then
-the verb refuses as `state-claim-held`, naming the file to delete when no rwv is
-running. The claim orders rwv's own fetches; a `git fetch` typed by hand into
+the verb refuses as `state-claim-held`, naming the holder. The claim orders rwv's own fetches; a `git fetch` typed by hand into
 the same store takes no `.rwv-fetch.lock`.
 
 The claim also covers the one record a fetch keeps: `FetchClaim::fetch_pruning`

@@ -1307,8 +1307,11 @@ it there.
 interleave writes. The budget exists so a hung peer surfaces as a refusal
 rather than an indefinite hang.
 
-**Exits.** Wait for the other process and re-run. If no rwv is running, the
-claim is stale: delete the claim file the refusal names, then re-run. A
+**Exits.** Wait for the other process and re-run. A claim whose process has
+ended is taken over by the next run, so a killed rwv never needs its claim
+cleared by hand. Where the filesystem has no file locks, a claim held by a
+process on another host cannot be checked from here: the refusal names the
+holder, and rerunning from that host takes the claim over once it is gone. A
 landing's claim on its target is the exception: it is held by an operation,
 not a process, for as long as the operation stands, and the refusal names
 that operation's workspace and the command that continues it. The holder is

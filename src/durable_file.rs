@@ -86,42 +86,77 @@ pub(crate) enum ClaimError {
     NoExclusivePublish(anyhow::Error),
 }
 
-/// A claim file this process created, removed by [`ClaimFile::release`].
+/// A claim file this process holds, removed by [`ClaimFile::release`]. Where
+/// the filesystem has advisory locks the claim is the lock on the file, which
+/// the kernel drops with the process; elsewhere it is the file's existence.
 #[derive(Debug)]
 pub(crate) struct ClaimFile {
     path: PathBuf,
     released: bool,
+    _lock: Option<std::fs::File>,
 }
 
-/// Create the claim file at `path`, waiting up to [`CLAIM_WAIT`] for a peer's
-/// to go.
+/// Take the claim at `path`, waiting up to [`CLAIM_WAIT`] for a live peer's to
+/// go. A claim file whose holder has died is taken over at once: the lock is
+/// free, or, where the filesystem has no locks, the file names a process on
+/// this host that no longer runs.
 pub(crate) fn claim(path: &Path) -> Result<ClaimFile, ClaimError> {
-    let holder = format!("pid {}\n", std::process::id());
+    let holder = crate::liveness::holder_body();
     let deadline = std::time::Instant::now() + CLAIM_WAIT;
     loop {
-        match create_new(path, holder.as_bytes()) {
-            Ok(()) => {
-                return Ok(ClaimFile {
-                    path: path.to_path_buf(),
-                    released: false,
-                })
-            }
-            Err(CreateNewError::AlreadyExists) if std::time::Instant::now() >= deadline => {
-                let held_by = std::fs::read_to_string(path)
-                    .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|_| "an unreadable holder".to_string());
-                return Err(ClaimError::Held(held_by));
-            }
-            Err(CreateNewError::AlreadyExists) => {
-                crate::test_pause::point("claim-held");
-                std::thread::sleep(CLAIM_POLL);
-            }
+        let created = match create_new(path, holder.as_bytes()) {
+            Ok(()) => true,
+            Err(CreateNewError::AlreadyExists) => false,
             Err(CreateNewError::Io(e)) => return Err(ClaimError::Io(e)),
             Err(CreateNewError::NoExclusivePublish(e)) => {
                 return Err(ClaimError::NoExclusivePublish(e))
             }
+        };
+        match std::fs::OpenOptions::new().write(true).open(path) {
+            Ok(file) => match crate::liveness::try_hold(&file, path) {
+                crate::liveness::Hold::Taken if crate::liveness::is_current(&file, path) => {
+                    if !created {
+                        let _ = rewrite_holder(&file, &holder);
+                    }
+                    return Ok(ClaimFile {
+                        path: path.to_path_buf(),
+                        released: false,
+                        _lock: Some(file),
+                    });
+                }
+                crate::liveness::Hold::Unavailable if created => {
+                    return Ok(ClaimFile {
+                        path: path.to_path_buf(),
+                        released: false,
+                        _lock: None,
+                    });
+                }
+                crate::liveness::Hold::Unavailable
+                    if std::fs::read_to_string(path)
+                        .is_ok_and(|body| crate::liveness::holder_is_gone(&body)) =>
+                {
+                    let _ = std::fs::remove_file(path);
+                    continue;
+                }
+                _ => {}
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(ClaimError::Io(e)),
         }
+        if std::time::Instant::now() >= deadline {
+            let held_by = std::fs::read_to_string(path)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|_| "an unreadable holder".to_string());
+            return Err(ClaimError::Held(held_by));
+        }
+        crate::test_pause::point("claim-held");
+        std::thread::sleep(CLAIM_POLL);
     }
+}
+
+fn rewrite_holder(mut file: &std::fs::File, holder: &str) -> std::io::Result<()> {
+    file.set_len(0)?;
+    file.write_all(holder.as_bytes())
 }
 
 impl ClaimFile {
@@ -845,16 +880,11 @@ fn sweep_abandoned_temps(path: &Path) {
     }
 }
 
-/// Opened for writing: an NFS client grants an exclusive `flock` only on a
-/// file open for writing.
 #[cfg(unix)]
 fn remove_if_abandoned(tmp: &Path) {
-    let Ok(f) = std::fs::OpenOptions::new().write(true).open(tmp) else {
-        return;
-    };
-    if f.try_lock().is_ok() {
+    crate::liveness::with_abandoned(tmp, || {
         let _ = std::fs::remove_file(tmp);
-    }
+    });
 }
 
 /// A delete fails with a sharing violation while the writer holds the temp

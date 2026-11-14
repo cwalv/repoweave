@@ -294,13 +294,12 @@ pub fn write(claim: &IndexClaim, index: &WorkweaveIndex) -> anyhow::Result<()> {
 ///
 /// Two concurrent `rwv` processes creating workweaves in the same project
 /// each read the index and write it back whole, so without this claim the
-/// second write drops the first's entry. `link(2)` onto an already-written
-/// inode is the exclusion, and it holds one winner across threads as well as
-/// across processes.
+/// second write drops the first's entry. The lock on the claim file is
+/// the exclusion, and it holds one winner across threads as well as across
+/// processes.
 ///
-/// A crash between acquisition and release leaves the claim behind and every
-/// later write to this index refuses until someone removes it — the cost of
-/// an exclusion with no daemon to expire it, paid in full view.
+/// A crash between acquisition and release leaves a file that the next
+/// claimant takes over: the claim is a lock the kernel drops with the process.
 #[derive(Debug)]
 pub struct IndexClaim {
     primary_root: PathBuf,
@@ -336,9 +335,9 @@ impl IndexClaim {
         let claim_file = claim_path(&claim.store);
         let released = claim.file.release().with_context(|| {
             format!(
-                "failed to release the claim on the workweave index of project \
-                 {project} at {root}. Every later write to it refuses until {claim_file} \
-                 is deleted",
+                "failed to remove the claim on the workweave index of project \
+                 {project} at {root} at {claim_file}; the next write to it takes it over \
+                 once this process has ended",
                 root = primary_root.display(),
             )
         });
@@ -361,10 +360,9 @@ impl IndexClaim {
                 crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another rwv still holds the workweave index of project \
-                     {project} at {root} ({held_by}). If no rwv is running, \
-                     delete {claim} and rerun.",
+                     {project} at {root} ({held_by}). Rerun once it finishes, or from \
+                     the host it runs on if that is not this one.",
                     root = primary_root.display(),
-                    claim = path,
                 );
             }
             Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),
@@ -1178,7 +1176,7 @@ mod tests {
     /// edit itself succeeded.
     #[test]
     #[cfg(unix)]
-    fn a_release_that_keeps_failing_is_reported_with_the_file_to_delete() {
+    fn a_release_that_keeps_failing_is_reported_with_the_file_left_behind() {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = crate::tempdir().unwrap();
@@ -1198,8 +1196,8 @@ mod tests {
             result.expect_err("a release that failed must not be reported as success")
         );
         assert!(
-            message.contains("rwv-workweave-index.lock") && message.contains("deleted"),
-            "the error must name the claim left behind and the exit: {message}"
+            message.contains("rwv-workweave-index.lock") && message.contains("takes it over"),
+            "the error must name the claim left behind and what clears it: {message}"
         );
         assert!(
             claim_file(&primary, &project).exists(),
@@ -1207,19 +1205,42 @@ mod tests {
         );
     }
 
-    /// The decided behavior for a claim whose holder died: later writes
-    /// refuse, after a bounded wait, naming the file to remove. Waiting
-    /// forever hangs the verb; treating an old claim as abandoned publishes
-    /// over a holder that is merely slow, which is the lost entry this claim
-    /// exists to prevent; failing instantly makes ordinary contention look
-    /// like a fault.
+    /// A claim file whose holder died is taken over by the next write at once.
     #[test]
-    fn an_abandoned_claim_refuses_later_writes_and_names_what_to_remove() {
+    fn an_abandoned_claim_is_taken_over_by_the_next_write() {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
         let claim = claim_file(&primary, &project);
-        claim.create(b"pid 999999\n").unwrap();
+        claim.create(b"pid 999999 host elsewhere\n").unwrap();
+
+        let started = std::time::Instant::now();
+        record_workweave(
+            &primary,
+            &project,
+            &name("hotfix"),
+            at("/c/web-app--hotfix"),
+            CanonicalPath::of(&primary),
+        )
+        .expect("a claim nobody holds must not refuse the write");
+
+        assert!(started.elapsed() < crate::durable_file::CLAIM_WAIT);
+        assert!(!claim.exists());
+        assert!(read(&primary, &project).unwrap().is_some());
+    }
+
+    /// A claim a live process holds refuses later writes after a bounded
+    /// wait, naming its holder and never a file to delete. Waiting forever
+    /// hangs the verb; writing over a holder that is merely slow is the lost
+    /// entry this claim exists to prevent; failing instantly makes ordinary
+    /// contention look like a fault.
+    #[test]
+    fn a_held_claim_refuses_later_writes_after_the_wait() {
+        let tmp = crate::tempdir().unwrap();
+        let primary = tmp.path().join("ws");
+        let project = make_project(&primary, "web-app");
+        let claim = claim_file(&primary, &project);
+        let held = crate::durable_file::claim(&claim.reported()).unwrap();
 
         let started = std::time::Instant::now();
         let err = record_workweave(
@@ -1238,28 +1259,17 @@ mod tests {
             "the refusal must come after the full wait, so ordinary contention \
              is not reported as a fault: waited {waited:?}"
         );
-        assert!(
-            message.contains("rwv-workweave-index.lock"),
-            "the refusal must name the file to remove: {message}"
-        );
-        assert!(
-            message.contains("delete") && message.contains("rerun"),
-            "the refusal must carry the operator's exit: {message}"
-        );
-        assert!(
-            message.contains("pid 999999"),
-            "the refusal must carry what the claim records about its holder, \
-             which is how an operator decides whether it is abandoned: {message}"
-        );
+        assert!(message.contains("pid "), "{message}");
+        assert!(!message.contains("delete"), "{message}");
         assert!(
             claim.exists(),
-            "a refused write must leave the holder's claim alone — clearing it \
-             would make the exclusion a suggestion"
+            "a refused write must leave the holder's claim alone"
         );
         assert!(
             read(&primary, &project).unwrap().is_none(),
             "and must not have written the entry it refused to record"
         );
+        held.release().unwrap();
     }
 
     #[test]

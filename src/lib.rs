@@ -158,6 +158,7 @@ pub mod integrations;
 pub mod land;
 pub mod landing_claim;
 pub(crate) mod lineage;
+pub(crate) mod liveness;
 pub mod lock;
 pub mod lock_commit;
 pub mod lock_driver;

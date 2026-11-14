@@ -40,8 +40,8 @@ pub struct FetchClaim {
 
 impl FetchClaim {
     /// Run `fetch` holding the claim on the store `repo` draws from, waiting
-    /// the shared claim budget (`durable_file::CLAIM_WAIT`) for a peer
-    /// holding it, then refusing with the path to remove.
+    /// the shared claim budget (`durable_file::CLAIM_WAIT`) for a live peer
+    /// holding it, then refusing.
     ///
     /// The claim is released before this returns, and a release that fails is
     /// an error naming the file left behind, whatever `fetch` returned.
@@ -55,8 +55,8 @@ impl FetchClaim {
         let outcome = fetch(&claim);
         let released = claim.file.release().with_context(|| {
             format!(
-                "failed to release the fetch claim on the object store of {repo}. \
-                 Every later fetch into it refuses until {path} is deleted",
+                "failed to remove the fetch claim on the object store of {repo} at {path}; \
+                 the next fetch into it takes it over once this process has ended",
                 repo = repo.display(),
                 path = StateFile::FetchClaim.in_dir(&claim.store),
             )
@@ -104,9 +104,9 @@ impl FetchClaim {
                 crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another rwv is still fetching into the object store of {repo} \
-                     ({held_by}). If no rwv is running, delete {claim} and rerun.",
+                     ({held_by}). Rerun once it finishes, or from the host it runs on \
+                     if that is not this one.",
                     repo = repo.display(),
-                    claim = path,
                 );
             }
             Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),

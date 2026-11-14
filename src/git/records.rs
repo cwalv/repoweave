@@ -2,7 +2,7 @@
 //! written with object plumbing, never checked out, advanced by a
 //! compare-and-swap of its ref.
 
-use super::{git_command, remote_tracking, Absent, Argv, GitVcs, LOCAL_BRANCH_NAMESPACE};
+use super::{git_command, remote_tracking, Absent, Argv, GitVcs, Scratch, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
     CommitId, CommittedFile, FileChange, NamedBranch, RecordsAdvance, RecordsPublish, RecordsSite,
     RemoteHandle, VcsError,
@@ -300,18 +300,14 @@ impl GitVcs {
         changes: &[FileChange],
         message: &str,
     ) -> Result<CommitId, VcsError> {
-        let index = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-records-index-{}", std::process::id()),
-            ],
+        let scratch = Scratch::take(repo)?;
+        Self::commit_through_index(
             repo,
-        )?;
-        let outcome = Self::commit_through_index(repo, &index, parents, changes, message);
-        let _ = std::fs::remove_file(&index);
-        outcome
+            &scratch.path("records-index"),
+            parents,
+            changes,
+            message,
+        )
     }
 
     fn commit_through_index(

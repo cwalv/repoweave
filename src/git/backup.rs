@@ -5,7 +5,7 @@
 //! there is one, so backing up the same tip twice names one ref. A tip whose
 //! abbreviation another commit already holds takes a longer one.
 
-use super::{git_command, Argv, GitVcs, BACKUP_NAMESPACE, LOCAL_BRANCH_NAMESPACE};
+use super::{git_command, Argv, GitVcs, Scratch, BACKUP_NAMESPACE, LOCAL_BRANCH_NAMESPACE};
 use crate::vcs::{
     Backup, BackupMark, BackupName, BackupSource, BranchTip, CommitId, CommitSummary, ListedBackup,
     RemoteTracking, ResolvedRevisionId, VcsError,
@@ -202,19 +202,9 @@ impl GitVcs {
         repo: &Path,
         forced: &[String],
     ) -> Result<Option<ResolvedRevisionId>, VcsError> {
-        let index_path = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-backup-index-{}", std::process::id()),
-            ],
-            repo,
-        )?;
+        let scratch = Scratch::take(repo)?;
         let head = Self::ref_tip(repo, "HEAD")?;
-        let outcome = Self::snapshot_into(repo, &index_path, head.as_ref(), forced);
-        let _ = std::fs::remove_file(&index_path);
-        outcome
+        Self::snapshot_into(repo, &scratch.path("backup-index"), head.as_ref(), forced)
     }
 
     fn snapshot_into(

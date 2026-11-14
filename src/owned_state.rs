@@ -181,15 +181,12 @@ pub fn unreadable_ledger(dir: &Path) -> Option<String> {
 /// Atomic publication settles what a reader sees; it does nothing for what a
 /// writer loses. Two rwv processes that each read the ledger, insert their own
 /// entry and publish the whole map leave only the later one's entry behind,
-/// and the earlier stamp is gone with no error anywhere. `link(2)` onto an
-/// already-written inode is the exclusion: exactly one caller creates the
-/// claim, and the loser waits for it to go rather than proceeding.
+/// and the earlier stamp is gone with no error anywhere. The lock on
+/// the claim file is the exclusion: exactly one caller holds it, and the loser
+/// waits for it to go rather than proceeding.
 ///
-/// A crash between acquisition and release leaves the claim behind and every
-/// later stamp in that directory refuses until someone removes it. That is
-/// the cost of an exclusion with no daemon to expire it, and it is paid in
-/// full view — the alternative, treating an old claim as abandoned, is a
-/// second writer stamping over a first that is merely slow.
+/// A crash between acquisition and release leaves a file that the next
+/// claimant takes over: the claim is a lock the kernel drops with the process.
 #[derive(Debug)]
 pub struct LedgerClaim {
     dir: std::path::PathBuf,
@@ -208,8 +205,8 @@ impl LedgerClaim {
         let outcome = edit(&claim);
         let released = claim.file.release().with_context(|| {
             format!(
-                "failed to release the claim on the owned-digest ledger of {dir}. \
-                 Every later stamp there refuses until {claim} is deleted",
+                "failed to remove the claim on the owned-digest ledger of {dir} at {claim}; \
+                 the next stamp there takes it over once this process has ended",
                 dir = dir.display(),
                 claim = claim_path(dir),
             )
@@ -228,9 +225,9 @@ impl LedgerClaim {
                 crate::refuse!(
                     RefusalKind::StateClaimHeld,
                     "another rwv still holds the owned-digest ledger of {dir} \
-                     ({held_by}). If no rwv is running, delete {claim} and rerun.",
+                     ({held_by}). Rerun once it finishes, or from the host it runs on \
+                     if that is not this one.",
                     dir = dir.display(),
-                    claim = path,
                 );
             }
             Err(crate::durable_file::ClaimError::NoExclusivePublish(e)) => Err(e),
@@ -1286,7 +1283,7 @@ mod tests {
     /// the edit itself succeeded.
     #[test]
     #[cfg(unix)]
-    fn a_release_that_keeps_failing_is_reported_with_the_file_to_delete() {
+    fn a_release_that_keeps_failing_is_reported_with_the_file_left_behind() {
         use std::os::unix::fs::PermissionsExt;
 
         let tmp = crate::tempdir().unwrap();
@@ -1305,8 +1302,8 @@ mod tests {
             result.expect_err("a release that failed must not be reported as success")
         );
         assert!(
-            message.contains(OWNED_DIGESTS_CLAIM_FILE) && message.contains("deleted"),
-            "the error must name the claim left behind and the exit: {message}"
+            message.contains(OWNED_DIGESTS_CLAIM_FILE) && message.contains("takes it over"),
+            "the error must name the claim left behind and what clears it: {message}"
         );
         assert!(
             dir.join(OWNED_DIGESTS_CLAIM_FILE).exists(),
@@ -1314,16 +1311,33 @@ mod tests {
         );
     }
 
-    /// The decided behavior for a claim whose holder died: later stamps
-    /// refuse, after a bounded wait, naming the file to remove. Waiting
-    /// forever hangs the verb; treating an old claim as abandoned stamps over
-    /// a holder that is merely slow; failing instantly makes ordinary
-    /// contention look like a fault.
+    /// A claim file whose holder died is taken over by the next stamp at once.
     #[test]
-    fn an_abandoned_claim_refuses_later_stamps_and_names_what_to_remove() {
+    fn an_abandoned_claim_is_taken_over_by_the_next_stamp() {
         let tmp = crate::tempdir().unwrap();
         let claim = tmp.path().join(OWNED_DIGESTS_CLAIM_FILE);
-        std::fs::write(&claim, "pid 999999\n").unwrap();
+        std::fs::write(&claim, "pid 999999 host elsewhere\n").unwrap();
+
+        let started = std::time::Instant::now();
+        stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1")
+            .expect("a claim nobody holds must not refuse the stamp");
+
+        assert!(started.elapsed() < crate::durable_file::CLAIM_WAIT);
+        assert!(!claim.exists());
+        assert_eq!(
+            check_owned_digest(tmp.path(), "Cargo.lock", b"v1"),
+            OwnedDigestCheck::Matches
+        );
+    }
+
+    /// A claim a live process holds refuses later stamps after a bounded
+    /// wait, naming its holder and never a file to delete. Waiting forever
+    /// hangs the verb; stamping over a holder that is merely slow loses its
+    /// entry; failing instantly makes ordinary contention look like a fault.
+    #[test]
+    fn a_held_claim_refuses_later_stamps_after_the_wait() {
+        let tmp = crate::tempdir().unwrap();
+        let held = crate::durable_file::claim(&tmp.path().join(OWNED_DIGESTS_CLAIM_FILE)).unwrap();
 
         let started = std::time::Instant::now();
         let err = stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1")
@@ -1336,29 +1350,18 @@ mod tests {
             "the refusal must come after the full wait, so ordinary contention \
              is not reported as a fault: waited {waited:?}"
         );
+        assert!(message.contains("pid "), "{message}");
+        assert!(!message.contains("delete"), "{message}");
         assert!(
-            message.contains(OWNED_DIGESTS_CLAIM_FILE),
-            "the refusal must name the file to remove: {message}"
-        );
-        assert!(
-            message.contains("delete") && message.contains("rerun"),
-            "the refusal must carry the operator's exit: {message}"
-        );
-        assert!(
-            message.contains("pid 999999"),
-            "the refusal must carry what the claim records about its holder, \
-             which is how an operator decides whether it is abandoned: {message}"
-        );
-        assert!(
-            claim.exists(),
-            "a refused stamp must leave the holder's claim alone — clearing it \
-             would make the exclusion a suggestion"
+            tmp.path().join(OWNED_DIGESTS_CLAIM_FILE).exists(),
+            "a refused stamp must leave the holder's claim alone"
         );
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"v1"),
             OwnedDigestCheck::NotRecorded,
             "and must not have written the entry it refused to stamp"
         );
+        held.release().unwrap();
     }
 
     /// A closure that decides mid-edit not to write must be able to say so

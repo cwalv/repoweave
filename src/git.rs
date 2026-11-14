@@ -37,8 +37,10 @@ mod records;
 mod replay;
 #[cfg(test)]
 mod restore_plan_tests;
+mod scratch;
 
 use argv::{Argv, GitArg, GitCommand, NotUtf8};
+use scratch::Scratch;
 
 /// A `git` command with all inherited `GIT_*` environment variables
 /// stripped.
@@ -1456,84 +1458,6 @@ fn refresh_paths_if_left(
         refresh_stat_data(repo);
     }
     Ok(RefreshWrite::Written)
-}
-
-/// The scratch files of one refresh in the checkout's git dir, each named
-/// for the process beside an owner file the process holds locked while it
-/// runs. The lock ends with the process, so what a killed refresh left is
-/// removed by the next one to start.
-struct Scratch {
-    dir: PathBuf,
-    stem: String,
-    _owner: std::fs::File,
-}
-
-impl Scratch {
-    fn take(repo: &Path) -> Result<Self, VcsError> {
-        let stem = format!("rwv-drift-{}", std::process::id());
-        let owner = PathBuf::from(GitVcs::run_trimmed(
-            ["rev-parse", "--path-format=absolute", "--git-path", &stem],
-            repo,
-        )?);
-        let dir = owner.parent().map(Path::to_path_buf).unwrap_or_default();
-        let io = |e: std::io::Error| VcsError::Io {
-            ctx: format!("failed to hold {}", owner.display()),
-            source: e,
-        };
-        for entry in std::fs::read_dir(&dir).map_err(io)?.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name == stem
-                || name
-                    .strip_prefix("rwv-drift-")
-                    .is_none_or(|p| p.contains('-'))
-            {
-                continue;
-            }
-            let held = std::fs::OpenOptions::new().write(true).open(entry.path());
-            if held.is_ok_and(|f| f.try_lock().is_ok()) {
-                remove_scratch(&dir, &name);
-            }
-        }
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(&owner)
-            .map_err(io)?;
-        file.try_lock().map_err(|e| io(e.into()))?;
-        Ok(Self {
-            dir,
-            stem,
-            _owner: file,
-        })
-    }
-
-    fn path(&self, name: &str) -> String {
-        self.dir
-            .join(format!("{}-{name}", self.stem))
-            .display()
-            .to_string()
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        remove_scratch(&self.dir, &self.stem);
-    }
-}
-
-/// Remove the owner file `stem` in `dir` and every scratch file named for it.
-fn remove_scratch(dir: &Path, stem: &str) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    let named = format!("{stem}-");
-    for entry in entries.flatten() {
-        if entry.file_name().to_string_lossy().starts_with(&named) {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-    let _ = std::fs::remove_file(dir.join(stem));
 }
 
 /// The merge target [`tree_with_paths_from`] builds, with which of the
@@ -3229,24 +3153,14 @@ impl Vcs for GitVcs {
         annotations: &[Annotation],
     ) -> Result<bool, VcsError> {
         let message = with_trailers(message, annotations);
-        let index = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-commit-index-{}", std::process::id()),
-            ],
-            repo,
-        )?;
+        let scratch = Scratch::take(repo)?;
         let born = Self::run_or_absent(
             ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
             repo,
             Absent::Revision,
         )?
         .is_some();
-        let outcome = Self::commit_through_own_index(repo, &index, born, paths, &message);
-        let _ = std::fs::remove_file(&index);
-        outcome
+        Self::commit_through_own_index(repo, &scratch.path("commit-index"), born, paths, &message)
     }
     fn has_commit_identity(&self, dir: &Path) -> Result<bool, VcsError> {
         Self::has_identity(dir)

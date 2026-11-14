@@ -1736,7 +1736,7 @@ fn drift_scratch(repo: &Path) -> Vec<String> {
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("rwv-drift-"))
+        .filter(|name| name.starts_with("rwv-scratch-"))
         .collect()
 }
 
@@ -1758,6 +1758,62 @@ fn a_refresh_killed_with_its_index_copy_written_leaves_nothing_after_the_next() 
         "",
         "{said}"
     );
+}
+
+/// Every kind of scratch file a verb makes in the git dir goes through one
+/// owner: a verb killed holding one leaves only what the next verb's call
+/// sweeps, and a verb still running keeps its own.
+#[test]
+fn a_killed_verbs_scratch_is_swept_by_the_next_call_and_a_running_ones_is_left() {
+    let f = fixture();
+    let project = f.ww.join("projects").join(PROJECT);
+    std::fs::create_dir_all(&f.scratch).unwrap();
+    commit_file(&f.ww_lib, "extra.txt", "extra\n", "extra");
+    let held_lock = |name: &str| {
+        let mut lock = common::rwv_std();
+        lock.args(["lock", "--commit"]).current_dir(&f.ww);
+        common::pause::Paused::spawn(lock, "scratch-taken", &f.scratch.join(name))
+            .expect("the verb reaches its scratch")
+    };
+    held_lock("killed").kill();
+    let killed = drift_scratch(&project);
+    assert!(!killed.is_empty(), "the kill leaves its owner file");
+
+    let running = held_lock("running");
+    let mut seen = drift_scratch(&project);
+    seen.retain(|name| !killed.contains(name));
+    assert!(!seen.is_empty(), "the second verb holds its own owner file");
+    let third = held_lock("third");
+    let left = drift_scratch(&project);
+    assert!(
+        killed.iter().all(|name| !left.contains(name)),
+        "{killed:?} {left:?}"
+    );
+    assert!(
+        seen.iter().all(|name| left.contains(name)),
+        "{seen:?} {left:?}"
+    );
+    drop((running, third));
+}
+
+/// Where the filesystem has no advisory locks the refresh still runs: the
+/// lock only tells a sweep a file is not abandoned.
+#[test]
+fn a_refresh_runs_on_a_filesystem_with_no_file_locks() {
+    let f = fixture();
+    move_of_every_shape(&f);
+
+    let out = common::rwv_std()
+        .args(["doctor", "--fix"])
+        .current_dir(&f.ww)
+        .env("RWV_TEST_WITHHOLD", "advisory-lock")
+        .output()
+        .expect("rwv runs");
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("refreshed drift"), "{said}");
+    assert!(holds_every_shape(&f), "{said}");
+    assert_eq!(drift_scratch(&f.ww_lib), Vec::<String>::new(), "{said}");
 }
 
 /// A second refresh while the first stands with its index copy written

@@ -2,7 +2,7 @@
 //! commits with a file rewritten.
 
 use super::records::{commit_id, failed};
-use super::{git_command, GitVcs};
+use super::{git_command, GitVcs, Scratch};
 use crate::vcs::{AttachedRef, CommitId, FileChange, Replayed, VcsError};
 use std::path::{Path, PathBuf};
 
@@ -391,18 +391,10 @@ impl GitVcs {
             .rsplit_once(" <")
             .map(|(name, email)| (name.to_owned(), email.trim_end_matches('>').to_owned()))
             .unwrap_or_default();
-        let index = Self::run_trimmed(
-            [
-                "rev-parse",
-                "--path-format=absolute",
-                "--git-path",
-                &format!("rwv-replay-index-{}", std::process::id()),
-            ],
+        let scratch = Scratch::take(repo)?;
+        Self::copy_through_index(
             repo,
-        )?;
-        let outcome = Self::copy_through_index(
-            repo,
-            &index,
+            &scratch.path("replay-index"),
             commit,
             parent,
             changes,
@@ -413,9 +405,7 @@ impl GitVcs {
                 ("GIT_AUTHOR_EMAIL", email.as_str()),
                 ("GIT_AUTHOR_DATE", date.as_str()),
             ],
-        );
-        let _ = std::fs::remove_file(&index);
-        outcome
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -108,7 +108,7 @@ ctrlc = { version = "3.5", features = ["termination"] }
 # rwv-each hands the terminal to a `-j 1` child's process group and takes it
 # back, as a job-control shell does, so interactive commands are not stopped
 # by SIGTTIN/SIGTTOU.
-nix = { version = "0.31", default-features = false, features = ["process", "signal", "term"] }
+nix = { version = "0.31", default-features = false, features = ["hostname", "process", "signal", "term"] }
 
 [target.'cfg(windows)'.dependencies]
 # rwv-each joins a kill-on-close job object so its children die with it if it

@@ -240,7 +240,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "remove_file",
-        count: 6,
+        count: 3,
         callers: &[],
         justification: "register_worktree_in_place: removes the checkout's \
             `.git` link file, which names a git directory that is not there \
@@ -255,16 +255,31 @@ const ALLOWLIST: &[Allowed] = &[
             untracked, or added with nothing staged its working file does \
             not show. Any other state returns an outcome and touches nothing, \
             so what is deleted is always a byte-for-byte copy of what the \
-            caller holds. commit_only: removes the private index file it \
-            wrote under the git directory, named for this process, once the \
-            commit through it is made or refused; the repo's own index and \
-            working files are never it. refresh_paths_if_left: removes the \
-            scratch index it built the merge's target tree in. remove_scratch: \
-            removes a refresh's owner file and the scratch files named for it \
-            (that index, and the copy of the checkout's index its file write \
-            ran through), under the checkout's private git directory, when the \
-            refresh ends or, for one a killed process left, when no process \
-            holds the owner file's lock.",
+            caller holds. refresh_paths_if_left: removes the scratch index it \
+            built the merge's target tree in.",
+    },
+    Allowed {
+        file: "git/scratch.rs",
+        pattern: "remove_file",
+        count: 2,
+        callers: &[],
+        justification: "remove_scratch_files: removes a call's owner file and \
+            the scratch files named for it, under the checkout's private git \
+            directory, when the call ends or, for one a killed process left, \
+            when no process holds the owner file's lock. Only names rwv gives \
+            its own scratch are matched; the checkout's index and working \
+            files are never opened for writing.",
+    },
+    Allowed {
+        file: "git/scratch.rs",
+        pattern: "remove_dir_all",
+        count: 1,
+        callers: &[],
+        justification: "remove_scratch_files: removes the detached checkout a \
+            merge made inside a scratch name in the private git directory. \
+            That checkout holds no work of anyone's: it is a copy of a \
+            commit, made and merged by the call that owns the name, and \
+            a killed call's is swept only once its owner lock is free.",
     },
     Allowed {
         file: "git.rs",
@@ -565,16 +580,6 @@ const ALLOWLIST: &[Allowed] = &[
             which drops only backups a branch already reaches in full.",
     },
     Allowed {
-        file: "git/backup.rs",
-        pattern: "remove_file",
-        count: 1,
-        callers: &[],
-        justification: "snapshot_working_tree_forcing: removes the temporary index \
-            file it named under the checkout's private git directory for \
-            this process, after the snapshot commit is built. The checkout's \
-            real index and working tree are never opened for writing.",
-    },
-    Allowed {
         file: "git/pick.rs",
         pattern: "\"update-ref\"",
         count: 1,
@@ -647,25 +652,11 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git/replay.rs",
         pattern: "remove_file",
-        count: 2,
-        callers: &[],
-        justification: "copy_with_changes: removes the temporary index file \
-            it named under the checkout's private git directory for this \
-            process, after the copy is built. The checkout's real index and \
-            working tree are never opened for writing. remove_replay_records: \
-            removes the files named `rwv-replayed-*` in the checkout's private \
-            git directory, which only rwv's own rebases write, once the op \
-            that reads them has ended; no ref, index or working-tree file.",
-    },
-    Allowed {
-        file: "git/records.rs",
-        pattern: "remove_file",
         count: 1,
         callers: &[],
-        justification: "write_tree_commit: removes the temporary index file \
-            it named under the checkout's private git directory for this \
-            process, after the commit is built. The checkout's real index \
-            and working tree are never opened for writing.",
+        justification: "remove_replay_records: removes the files named `rwv-replayed-*` in the checkout's private \
+            git directory, which only rwv's own rebases write, once the op \
+            that reads them has ended; no ref, index or working-tree file.",
     },
     Allowed {
         file: "activate.rs",
@@ -833,7 +824,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "durable_file.rs",
         pattern: "remove_file",
-        count: 9,
+        count: 10,
         callers: &[],
         justification: "Temp-file cleanup for the two publish modes, never \
             able to name the published file itself, plus the claim release. \
@@ -845,11 +836,13 @@ const ALLOWLIST: &[Allowed] = &[
             (.rwv-workweave-index.lock, .rwv-owned-digests.lock), which is \
             rwv-internal bookkeeping and never user data. The path is the \
             value's own, not a parameter, and claim() is the type's only \
-            constructor and builds one only after create_new won that path, \
-            so a ClaimFile that exists names a file this process created. \
-            Unlinking is the whole release: left behind, the claim is the \
-            wedge every later writer refuses on, so release reports a \
-            removal that keeps failing rather than dropping it. (5) \
+            constructor and builds one only after it held that path, so a \
+            ClaimFile that exists names a file this process held. \
+            Unlinking is the whole release, and release reports a removal \
+            that keeps failing rather than dropping it. (10) claim, taking \
+            over a claim file on a filesystem with no advisory locks: removed \
+            only once the file names a process on this host that no longer \
+            runs. (5) \
             remove_named, the landing claim's takeover lock: called only on \
             a lock its own op created with create_new, or one `rwv abort` \
             of that op finds naming it, so it removes rwv-internal \
