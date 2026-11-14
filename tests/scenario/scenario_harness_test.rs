@@ -1336,6 +1336,7 @@ every_scenario!(
     continue_after_another_seat_moves(scenarios::StoppedMoved::LandMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::PullProject),
     pull_continue_pins_a_member_merge_committed_by_hand,
+    cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit,
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncProjectKeepYours),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::LandMember),
@@ -4147,6 +4148,12 @@ fn cherry_pick_continue_refuses_a_member_moved_mid_copy() {
         scenarios::StoppedMidMerge::CherryPickMember,
     ))
     .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit() {
+    runner::run(scenarios::cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit())
+        .assert_fully_decided_green();
 }
 
 #[test]

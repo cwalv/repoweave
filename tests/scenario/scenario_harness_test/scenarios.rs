@@ -24221,6 +24221,44 @@ fn abort_keeps_another_seats_commit(
     steps
 }
 
+/// A port stopped on `app`'s copy, which the operator finishes with the
+/// VCS and then commits on: `--continue` finds the finished copy below the
+/// hand commit, takes both in, and copies nothing again.
+pub fn cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit() -> Scenario {
+    let mut steps = app_conflicting_port();
+    steps.extend([
+        Step::git(&ww("p"), Repo::App, &["checkout", "--theirs", "README"]),
+        Step::hand_edit(&ww("p"), Repo::App, "README", "app on main", "app resolved"),
+        Step::git(&ww("p"), Repo::App, &["add", "README"]),
+        Step::git(
+            &ww("p"),
+            Repo::App,
+            &["-c", "core.editor=true", "cherry-pick", "--continue"],
+        ),
+        Step::commit(&ww("p"), Repo::App, "hand-at-stop"),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("stopped on a conflict"))
+            .claim(Claim::Contains {
+                at: ww("p"),
+                repo: Repo::App,
+                rev: "proj--p",
+                mark: "hand-at-stop",
+            }),
+        Step::git(
+            &ww("p"),
+            Repo::App,
+            &["log", "-1", "--format=%s", "proj--p"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLine("hand-at-stop")),
+    ]);
+    scenario(
+        "cherry-pick --continue takes in a finished copy under a hand commit",
+        steps,
+    )
+}
+
 /// `pull --merge-upstream` stopped on `app`'s merge, which the operator
 /// resolves and commits by hand: `--continue` takes that commit in, and the
 /// project's merge pins `app` at it rather than at one side's tip.

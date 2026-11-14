@@ -1395,21 +1395,30 @@ fn off_branch(
     )
 }
 
-/// The member's checkout holds the copy of `next` the port started, made
-/// and not yet recorded: one commit on the tip the port left, recording
-/// `next` as its source.
-fn holds_started_copy(
+/// The copy of `next` the port started, made and not yet recorded: the
+/// commit on `head`'s first-parent chain right after the tip the port left,
+/// recording `next` as its source, whatever was committed on it since.
+fn started_copy(
     vcs: &dyn Vcs,
     dir: &Path,
     pick: &MemberPick,
     head: &CommitId,
-) -> anyhow::Result<bool> {
-    let Some(next) = pick.remaining().first() else {
-        return Ok(false);
+) -> anyhow::Result<Option<CommitId>> {
+    let (true, Some(next)) = (pick.copying, pick.remaining().first()) else {
+        return Ok(None);
     };
-    Ok(pick.copying
-        && vcs.parents(dir, head)? == [pick.expected().clone()]
-        && vcs.copied_from(dir, head)?.as_ref() == Some(next))
+    let chain = vcs.first_parent_chain(dir, head)?;
+    let Some(after) = chain
+        .iter()
+        .position(|commit| commit == pick.expected())
+        .and_then(|at| at.checked_sub(1))
+    else {
+        return Ok(None);
+    };
+    let copy = &chain[after];
+    Ok((vcs.parents(dir, copy)? == [pick.expected().clone()]
+        && vcs.copied_from(dir, copy)?.as_ref() == Some(next))
+    .then(|| copy.clone()))
 }
 
 /// The project repo holds the project commit the port started, made and
@@ -1674,14 +1683,15 @@ fn copy_members(
             let expected = pick.expected().clone();
             let head = vcs.head_revision(&dir)?.id().clone();
             let in_flight = vcs.copy_in_flight(&dir)?;
+            let finished = match in_flight {
+                None if head != expected => started_copy(vcs, &dir, pick, &head)?,
+                _ => None,
+            };
             let copied = if pick.copying && head == expected && in_flight.as_ref() == Some(&next) {
                 vcs.continue_copy(&dir)
                     .map_err(|e| held(path.as_str(), next.short(), &e))?
-            } else if in_flight.is_none()
-                && head != expected
-                && holds_started_copy(vcs, &dir, pick, &head)?
-            {
-                Copied::Commit(head)
+            } else if let Some(copy) = finished {
+                Copied::Commit(copy)
             } else if vcs.mid_operation(&dir).is_none() {
                 record.members[i].copying = true;
                 save(op, record)?;
