@@ -1054,6 +1054,9 @@ every_scenario!(
         scenarios::TakingIn::LandLinear
     ),
     two_merge_bases_leave_the_text_merge_unchecked,
+    a_replay_rwv_settled_still_checks_its_tip(scenarios::TipVerb::Sync),
+    a_replay_rwv_settled_still_checks_its_tip(scenarios::TipVerb::Land),
+    a_hand_settled_replay_lands_a_target_change_only_by_consent,
     check_a_text_merge(scenarios::TextMerge::SettingMoved),
     check_a_text_merge(scenarios::TextMerge::SettingMovedLand),
     check_a_text_merge(scenarios::TextMerge::SettingMovedPull),
@@ -7521,6 +7524,20 @@ fn an_element_each_side_added_to_one_list_is_kept() {
 #[test]
 fn a_change_again_of_an_entry_already_changed_upstream_is_kept() {
     each_taking_in(scenarios::BothChanged::AlreadyUpstream);
+}
+
+#[test]
+fn a_replay_rwv_settled_still_checks_its_tip() {
+    for verb in [scenarios::TipVerb::Sync, scenarios::TipVerb::Land] {
+        runner::run(scenarios::a_replay_rwv_settled_still_checks_its_tip(verb))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn a_hand_settled_replay_lands_a_target_change_only_by_consent() {
+    runner::run(scenarios::a_hand_settled_replay_lands_a_target_change_only_by_consent())
+        .assert_fully_decided_green();
 }
 
 #[test]

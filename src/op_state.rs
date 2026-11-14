@@ -597,6 +597,11 @@ pub struct TakeInRecord {
     /// that tip is not judged again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tip_settled: Option<Rebasing>,
+    /// The project rebase that stopped with `rwv.toml` unmerged, until the
+    /// continue reads how it was resolved: by the operator's own staged file,
+    /// which settles its tip, or by rwv's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_unmerged: Option<Rebasing>,
     /// Each dependent's branch the op carries onto its target's new tip,
     /// written before its replay starts, with the tip the replay composed
     /// once it ends; the branch itself moves only once every carry composed.
@@ -1979,6 +1984,26 @@ pub fn journal_tip_settled(workspace_dir: &Path, rebasing: Rebasing) -> anyhow::
     })?;
     if let Some(take_in) = record.take_in.as_mut() {
         take_in.tip_settled = Some(rebasing);
+    }
+    write_owner(workspace_dir, &record)
+}
+
+/// Journal that the project rebase `rebasing` stopped with `rwv.toml`
+/// unmerged, or with `None` that the stop was answered, on the op at
+/// `workspace_dir`.
+pub fn journal_manifest_unmerged(
+    workspace_dir: &Path,
+    rebasing: Option<Rebasing>,
+) -> anyhow::Result<()> {
+    let mut record = read_owner(workspace_dir)?.ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "no owner record at {} to journal in",
+            workspace_dir.display()
+        )
+    })?;
+    if let Some(take_in) = record.take_in.as_mut() {
+        take_in.manifest_unmerged = rebasing;
     }
     write_owner(workspace_dir, &record)
 }

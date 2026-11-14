@@ -1200,16 +1200,35 @@ pub(crate) fn replayed_tip_differs(
 }
 
 /// Where the project replay journaled in `workspace` stopped in `dir` with
-/// `rwv.toml` unmerged, journal its tip settled: the operator resolves
-/// `rwv.toml` there, and what they make of it is not judged again.
-pub(crate) fn settled_by_hand(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<()> {
+/// `rwv.toml` unmerged, journal so: the continue then reads whether the
+/// operator's own resolution settled it.
+pub(crate) fn stopped_unmerged(vcs: &dyn Vcs, dir: &Path, workspace: &Path) -> anyhow::Result<()> {
     let unmerged = vcs.rebase_in_flight(dir)?.is_some()
         && vcs
             .unmerged_paths(dir)?
             .iter()
             .any(|path| path == Manifest::FILE_NAME);
     match project_rebase(workspace)? {
-        Some((rebase, _)) if unmerged => op_state::journal_tip_settled(workspace, rebase),
+        Some((rebase, _)) if unmerged => {
+            op_state::journal_manifest_unmerged(workspace, Some(rebase))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// At a continue where `rwv.toml` is no longer unmerged in the project
+/// replay that stopped with it unmerged: the operator resolved it, and what
+/// they made of it settles the replayed tip.
+pub(crate) fn take_hand_resolution(workspace: &Path) -> anyhow::Result<()> {
+    let Some(take_in) = op_state::read_owner(workspace)?.and_then(|owner| owner.take_in) else {
+        return Ok(());
+    };
+    let Some(stopped) = take_in.manifest_unmerged else {
+        return Ok(());
+    };
+    op_state::journal_manifest_unmerged(workspace, None)?;
+    match project_rebase(workspace)? {
+        Some((rebase, _)) if rebase == stopped => op_state::journal_tip_settled(workspace, rebase),
         _ => Ok(()),
     }
 }

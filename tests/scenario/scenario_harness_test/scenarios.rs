@@ -10259,7 +10259,7 @@ fn stop_resolved_to_the_features_manifest() -> Vec<Step> {
             .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
             .claim(Claim::OutputContains("removed"))
             .claim(Claim::OutputInOrder(&[
-                "rerun with --allow-member-change local/remotes/docs",
+                "rwv land --continue --allow-member-change local/remotes/docs",
                 "rwv abort",
             ]))
             .claim(Claim::LocalStateUnchanged(a())),
@@ -20653,6 +20653,115 @@ pub fn two_merge_bases_leave_the_text_merge_unchecked() -> Scenario {
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("recurse-submodules")),
         ],
+    )
+}
+
+/// `main` sets `app`'s role, adds `docs` and sets `lib`'s
+/// `recurse-submodules`; the workweave sets `lib`'s role, then `app`'s
+/// `recurse-submodules`. Replayed onto `main`, the first commit stops with
+/// `rwv.toml` unmerged on lines alone, and the second merges its text with no
+/// conflict and puts the setting under `docs`.
+fn a_later_commit_moves_a_setting(verb: TipVerb) -> Vec<Step> {
+    let mut start = vec!["land", "--history", "linear"];
+    if matches!(verb, TipVerb::Land) {
+        start.extend(["--allow-member-change", APP, "--allow-member-change", LIB]);
+    } else {
+        start[0] = "sync";
+    }
+    vec![
+        Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+        create("w"),
+        Step::rwv(&a(), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "set-recurse-submodules", LIB, "false"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("w"),
+            &["member", "set-recurse-submodules", APP, "false"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &start)
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("rwv.toml: no entry is in conflict")),
+    ]
+}
+
+/// The text a wrong merge of [`a_later_commit_moves_a_setting`] leaves.
+const MOVED_UNDER_DOCS: &str = "role = \"owned\"\nrecurse-submodules = false";
+
+/// [`a_later_commit_moves_a_setting`] answered by rwv's own continue: the
+/// replay's tip is still checked, stops on the moved setting, and its bare
+/// continue writes the merge of the values.
+pub fn a_replay_rwv_settled_still_checks_its_tip(verb: TipVerb) -> Scenario {
+    let (resume, at) = match verb {
+        TipVerb::Sync => ("sync", ww("w")),
+        TipVerb::Land => ("land", a()),
+    };
+    let mut steps = a_later_commit_moves_a_setting(verb);
+    steps.extend([
+        Step::rwv(&ww("w"), &[resume, "--continue"])
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains(
+                "wrote and staged the merge of both sides",
+            ))
+            .claim(Claim::OutputContains(
+                "local/remotes/docs recurse-submodules",
+            )),
+        Step::rwv(&ww("w"), &[resume, "--continue"])
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&at, Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks(MOVED_UNDER_DOCS))
+            .claim(Claim::OutputContains(
+                "role = \"fork\"\nrecurse-submodules = false",
+            )),
+    ]);
+    scenario(
+        "a replay whose rwv.toml stop rwv's continue settled still checks its tip",
+        steps,
+    )
+}
+
+/// [`a_later_commit_moves_a_setting`] at a landing, the stop resolved by
+/// hand: the tip is the operator's and is not checked, but the setting the
+/// later commit moved changes `main`'s `docs` entry, which lands only once
+/// named.
+pub fn a_hand_settled_replay_lands_a_target_change_only_by_consent() -> Scenario {
+    let mut steps = a_later_commit_moves_a_setting(TipVerb::Land);
+    steps.extend([
+        Step::hand_edit(
+            &ww("w"),
+            Repo::Proj,
+            "rwv.toml",
+            "<<<<<<< HEAD\nrole = \"owned\"\nrecurse-submodules = false\n=======\nrole = \"fork\"\n",
+            "role = \"fork\"\nrecurse-submodules = false\n",
+        ),
+        Step::hand_edit(&ww("w"), Repo::Proj, "rwv.toml", ">>>>>>> ", "# "),
+        Step::git(&ww("w"), Repo::Proj, &["add", "--", "rwv.toml"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
+            .claim(Claim::OutputContains("recurse-submodules")),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["grep", "-c", "recurse-submodules", "main", "--", "rwv.toml"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains("rwv.toml:1")),
+        Step::rwv_printed_holding(&ww("w"), "rwv land --continue", "--allow-member-change")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Proj]),
+        Step::git(&a(), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(MOVED_UNDER_DOCS)),
+    ]);
+    scenario(
+        "a hand-settled replay lands a target change only by consent",
+        steps,
     )
 }
 

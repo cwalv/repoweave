@@ -587,6 +587,7 @@ pub(crate) fn continue_at_stop(
         if record.verb != typed {
             return Ok(());
         }
+        crate::project_merge::take_hand_resolution(workspace)?;
         if let Some((rebase, differs)) =
             crate::project_merge::replayed_tip_differs(vcs, &dir, workspace)?
         {
@@ -656,6 +657,7 @@ pub(crate) fn continue_at_stop(
         crate::durable_file::replace(&path, text_merge.as_bytes())
             .context("failed to write rwv.toml")?;
         vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+        crate::op_state::journal_manifest_unmerged(workspace, None)?;
         eprintln!("{done}: kept the text merge of rwv.toml as the VCS made it, marked resolved");
         return Ok(());
     }
@@ -671,6 +673,7 @@ pub(crate) fn continue_at_stop(
     {
         if working.declares_same(&merged) {
             vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+            crate::op_state::journal_manifest_unmerged(workspace, None)?;
             eprintln!("{done}: rwv.toml as it stands declares the merge of both sides; marked it resolved");
             return Ok(());
         }
@@ -693,6 +696,7 @@ pub(crate) fn continue_at_stop(
     let kept = vcs.backup_edits(&dir)?;
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
     vcs.stage_paths(&dir, &[Manifest::FILE_NAME])?;
+    crate::op_state::journal_manifest_unmerged(workspace, None)?;
     let took = match keep {
         Some(side) if conflicts == 0 => format!(
             "; no entry was in conflict, so `--keep {}` took nothing",

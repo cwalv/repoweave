@@ -4850,6 +4850,18 @@ fn put_back_continue(
 /// adds; record the added consent once it is judged. A landing that already
 /// moved `T` has nothing left to judge, and a consent named then names
 /// nothing.
+/// Judge the `rwv.toml` the landing's replay left against the target, as its
+/// start judged the source's: whatever the replay made of it, a target entry
+/// it changes lands only by consent.
+fn rejudge_replayed(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let record = op_state::read_owner(&ctx.owner_workspace_dir)?
+        .context("the op record vanished as the landing judged its replay")?;
+    let Some(mut take_in) = record.take_in.clone() else {
+        return Ok(());
+    };
+    rejudge_entries(&record, &mut take_in, &ctx.owner_workspace_dir, &[])
+}
+
 fn rejudge_entries(
     record: &op_state::OwnerRecord,
     take_in: &mut op_state::TakeInRecord,
@@ -5784,6 +5796,9 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // after every manifest repo replayed, so an op that parks leaves every
     // checkout in place for `rwv abort`, which restores refs and nothing else.
     let (replayed, fix) = reload_replayed_project(ctx)?;
+    if ctx.verb == op_state::OpVerb::Land {
+        rejudge_replayed(ctx)?;
+    }
     let pre_op_manifest = pre_op_manifest(ctx)?;
 
     let mut materialize_failures: Vec<crate::manifest::RepoPath> = Vec::new();
@@ -8256,7 +8271,7 @@ fn apply_project_strategy(
     owner: &Path,
 ) -> anyhow::Result<()> {
     let conflict = |repo: &Path, op: ConflictOp| -> anyhow::Error {
-        if let Err(error) = crate::project_merge::settled_by_hand(vcs, repo, owner) {
+        if let Err(error) = crate::project_merge::stopped_unmerged(vcs, repo, owner) {
             return error;
         }
         let detail = match op {
