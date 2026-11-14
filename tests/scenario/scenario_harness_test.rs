@@ -1353,6 +1353,7 @@ every_scenario!(
     continue_reads_drift_a_stop_left("linear", Repo::Proj, scenarios::SeatMove::Commits),
     continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::CommitsUnrecorded),
     continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::MovesBack),
+    continue_reads_drift_a_stop_left("linear", Repo::Lib, scenarios::SeatMove::TakenInPart),
     sync_abort_keeps_another_seats_project_commit,
     land_abort_keeps_another_seats_commit,
     pull_abort_keeps_another_seats_commit,
@@ -4090,6 +4091,11 @@ fn linear_sync_continue_refreshes_the_project_another_seat_moved() {
 #[test]
 fn linear_sync_continue_holds_a_member_moved_with_no_record() {
     continue_reads_drift("linear", Repo::Lib, scenarios::SeatMove::CommitsUnrecorded);
+}
+
+#[test]
+fn linear_sync_continue_holds_a_member_whose_move_was_taken_in_part() {
+    continue_reads_drift("linear", Repo::Lib, scenarios::SeatMove::TakenInPart);
 }
 
 #[test]

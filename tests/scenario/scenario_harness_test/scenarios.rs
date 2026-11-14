@@ -18589,6 +18589,9 @@ pub enum SeatMove {
     CommitsUnrecorded,
     /// Moves it back one commit.
     MovesBack,
+    /// Commits two files on it, one of which the checkout then takes from
+    /// the moved tip by hand.
+    TakenInPart,
 }
 
 /// A sync of `w` under `history` stopped on `app`, resolved; during the
@@ -18608,6 +18611,15 @@ pub fn continue_reads_drift_a_stop_left(
         SeatMove::CommitsUnrecorded => steps.extend([
             another_seat_commits(&a(), repo, "proj--w"),
             Step::git(&at, repo, &["reflog", "expire", "--expire=now", "--all"]),
+        ]),
+        SeatMove::TakenInPart => steps.extend([
+            Step::hand_commit(
+                &a(),
+                repo,
+                "proj--w",
+                &[("other-seat.txt", "other seat\n"), ("taken.txt", "taken\n")],
+            ),
+            Step::git(&at, repo, &["checkout", "HEAD", "--", "taken.txt"]),
         ]),
         SeatMove::MovesBack => steps.push(
             Step::git(
@@ -18632,14 +18644,21 @@ pub fn continue_reads_drift_a_stop_left(
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("other-seat.txt")),
         ]),
-        SeatMove::CommitsUnrecorded | SeatMove::MovesBack => steps.extend([
-            Step::rwv(&at, &["sync", "--continue"])
-                .expect(Exit::refuses(repo, State::EditsDriftLeftInPlace))
-                .claim(Claim::OutputContains("rwv sync --continue"))
-                .claim(Claim::OutputContains("rwv abort")),
-            Step::rwv_printed_holding(&at, "git -C ", "stash push").expect(Exit::Succeeds),
-            continues(),
-        ]),
+        SeatMove::CommitsUnrecorded | SeatMove::MovesBack | SeatMove::TakenInPart => {
+            steps.extend([
+                Step::rwv(&at, &["sync", "--continue"])
+                    .expect(Exit::refuses(repo, State::EditsDriftLeftInPlace))
+                    .claim(Claim::OutputContains(match how {
+                        SeatMove::TakenInPart => "took part of its branch's move",
+                        SeatMove::MovesBack => "a commit that does not contain",
+                        _ => "no record of where",
+                    }))
+                    .claim(Claim::OutputContains("rwv sync --continue"))
+                    .claim(Claim::OutputContains("rwv abort")),
+                Step::rwv_printed_holding(&at, "git -C ", "stash push").expect(Exit::Succeeds),
+                continues(),
+            ])
+        }
     }
     scenario(
         match (history, repo, how) {
@@ -18657,6 +18676,9 @@ pub fn continue_reads_drift_a_stop_left(
             }
             ("linear", Repo::Lib, SeatMove::MovesBack) => {
                 "linear sync --continue holds a member moved back"
+            }
+            ("linear", Repo::Lib, SeatMove::TakenInPart) => {
+                "linear sync --continue holds a member whose move was taken in part"
             }
             _ => "sync --continue reads drift a stop left",
         },
