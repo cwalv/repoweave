@@ -603,26 +603,10 @@ pub(crate) fn check_merge_in_flight(
     Ok(true)
 }
 
-fn kept_lines(vcs: &dyn Vcs, dir: &Path, kept: &crate::vcs::BackupWitness) -> [String; 2] {
-    [
-        format!(
-            "rwv.toml as it stood before is kept in backup {}; to read it:",
-            kept.backup().name
-        ),
-        format!(
-            "  {}",
-            vcs.hint(VcsAction::ShowKeptFile)
-                .replace("<checkout>", &crate::workspace::quoted(dir))
-                .replace("<revision>", kept.backup().tip.id().as_str())
-                .replace("<paths>", Manifest::FILE_NAME)
-        ),
-    ]
-}
-
 /// At the `typed` continue of the operation stopped in the active project,
 /// `keep` naming what to take. Where `rwv.toml` is unmerged with regions in
 /// conflict, write the file taking `keep`'s side in them and mark it
-/// resolved, keeping the checkout's edits as a backup first; where the check
+/// resolved, rwv.toml holding nothing but what the stop wrote; where the check
 /// stopped a text merge, `--keep text-merge` marks the working file resolved
 /// while it holds that text merge, and nothing is written. Where the replayed
 /// tip's `rwv.toml` differs from the merge of the values, `--keep text-merge`
@@ -815,18 +799,6 @@ pub(crate) fn continue_at_stop(
             ],
         ));
     }
-    let kept = match &carried {
-        Some(branch) => match vcs.snapshot_edits(&dir)? {
-            Some(snapshot) => Some(vcs.create_backup(
-                &dir,
-                &crate::vcs::BackupSource::Branch(crate::vcs::RawRefName::new(branch.clone())),
-                &snapshot,
-                None,
-            )?),
-            None => None,
-        },
-        None => vcs.backup_edits(&dir)?,
-    };
     crate::durable_file::replace(&path, text.as_bytes()).context("failed to write rwv.toml")?;
     resolved()?;
     let took = match keep {
@@ -838,9 +810,6 @@ pub(crate) fn continue_at_stop(
         None => String::new(),
     };
     eprintln!("{done}: wrote the merge of both sides of rwv.toml{took}, marked resolved");
-    for line in kept.iter().flat_map(|kept| kept_lines(vcs, &dir, kept)) {
-        eprintln!("{line}");
-    }
     Ok(())
 }
 

@@ -443,12 +443,11 @@ pub enum VcsAction {
     AddRemote,
     UnsetUpstream,
     SetCommitIdentity,
-    ShowKeptFile,
     TurnOnCheckoutRecording,
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 32] = [
+    pub const ALL: [VcsAction; 31] = [
         Self::AddAll,
         Self::Commit,
         Self::Stash,
@@ -479,7 +478,6 @@ impl VcsAction {
         Self::AddRemote,
         Self::UnsetUpstream,
         Self::SetCommitIdentity,
-        Self::ShowKeptFile,
         Self::TurnOnCheckoutRecording,
     ];
 }

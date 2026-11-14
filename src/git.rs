@@ -3280,7 +3280,6 @@ impl Vcs for GitVcs {
             VcsAction::TurnOnCheckoutRecording => {
                 "git -C <checkout> config core.logAllRefUpdates true"
             }
-            VcsAction::ShowKeptFile => "git -C <checkout> show <revision>:<paths>",
             VcsAction::SetCommitIdentity => {
                 "git config --global user.name <name> && git config --global user.email <email>"
             }

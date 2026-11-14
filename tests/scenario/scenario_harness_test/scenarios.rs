@@ -19523,8 +19523,7 @@ pub fn settle_a_manifest_stop(how: ManifestSettle) -> Scenario {
                         "rwv.toml entry history is in conflict: \"merge\" in yours, \"linear\" incoming"
                     }
                 })),
-                keeps("--keep incoming", history)
-                    .claim(Claim::OutputContains("kept in backup proj--w/")),
+                keeps("--keep incoming", history).claim(Claim::OutputLacks("kept in backup")),
                 head_manifest().claim(Claim::OutputContains(match history {
                     H::Merge => "history = \"merge\"",
                     H::Linear => "history = \"linear\"",
