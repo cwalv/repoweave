@@ -1482,6 +1482,7 @@ every_scenario!(
     in_place_fast_forward(scenarios::InPlaceEnd::Drifted),
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlan),
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlanContinued),
+    abort_of_a_carried_landing_killed_once_landed,
     a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards,
     a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(false),
     a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(true),
@@ -8450,5 +8451,14 @@ holding_rwv! {
             scenarios::InPlaceEnd::KilledBeforeThePlanContinued,
         ))
         .assert_fully_decided_green();
+    }
+}
+
+holding_rwv! {
+    /// A landing that carried a dependent, killed once landed, is put back by
+    /// plain abort, its carry's pin included.
+    fn abort_of_a_carried_landing_killed_once_landed() {
+        runner::run(scenarios::abort_of_a_carried_landing_killed_once_landed())
+            .assert_fully_decided_green();
     }
 }

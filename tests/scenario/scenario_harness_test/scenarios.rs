@@ -25173,6 +25173,34 @@ pub fn abort_over_a_carry_left_by_a_quit() -> Scenario {
     scenario("stack: an abort over a carry left by a quit", steps)
 }
 
+/// `stack-carried-by-a-landing` killed once it landed: plain abort puts the
+/// target, the source and the carried `w2` back, the pin `w2`'s carried
+/// lock holds being one the abort itself puts back.
+pub fn abort_of_a_carried_landing_killed_once_landed() -> Scenario {
+    let mut steps = stack_on_a_seat();
+    steps.extend(main_moves_app("main-app"));
+    steps.extend([
+        Step::rwv_paused(&ww("w1"), &["land"], "landed", "landing"),
+        Step::kill("landing"),
+        Step::rwv(&ww("w1"), &["abort"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .may_strand(&[Repo::App, Repo::Proj]),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("w1-app")),
+        Step::git(&ww("w1"), Repo::App, &["log", "--format=%s", "w2"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("main-app")),
+        Step::rwv(&ww("w1"), &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
+    ]);
+    scenario(
+        "stack: a carried landing killed once landed is aborted",
+        steps,
+    )
+}
+
 /// How a dependent that moved as its carry was moving it is taken up.
 #[derive(Debug, Clone, Copy)]
 pub enum MovedAsCarried {

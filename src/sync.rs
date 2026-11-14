@@ -10275,8 +10275,8 @@ fn judge_target(
 /// Each member branch of `as_left` whose restore, made with the source's
 /// checkouts and the op's ref moves put back, leaves a commit some live lock
 /// pins reached by no branch or backup, by index, with a line per pin. The
-/// locks abort itself puts back, the target's project branch and the
-/// source's, are exempt.
+/// locks abort itself puts back, the target's project branch, the source's
+/// and each dependent's the op carried, are exempt.
 fn pins_a_restore_strands(
     record: &op_state::OwnerRecord,
     take_in: &op_state::TakeInRecord,
@@ -10313,12 +10313,20 @@ fn pins_a_restore_strands(
             Ok(crate::vcs::HeadObservation::Attached { name }) => Some(name.as_str().to_owned()),
             _ => None,
         };
+    let carried: Vec<&str> = take_in
+        .carries
+        .iter()
+        .filter(|carry| carry.repo == RepoKey::Project)
+        .map(|carry| carry.branch.as_str())
+        .collect();
     let exempt = |pin: &crate::pins::LivePin| {
         pin.project == record.project
             && matches!(&pin.branch, BranchRef::Local(name)
                 if [&target_branch, &source_branch]
                     .into_iter()
                     .flatten()
+                    .map(String::as_str)
+                    .chain(carried.iter().copied())
                     .any(|own| own == name.as_str()))
     };
     let tip = |dir: &Path, branch: &crate::vcs::RawRefName| {
