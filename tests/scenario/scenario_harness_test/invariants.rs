@@ -765,7 +765,7 @@ fn git_dir_of(checkout: &Path) -> Option<PathBuf> {
 }
 
 /// The branch each standing landing moves in each repo: the receiving
-/// branches its record names.
+/// branches its record names, and the branch its source has checked out.
 fn standing_landings(sandbox: &Sandbox) -> BTreeSet<(Repo, String)> {
     let mut standing = BTreeSet::new();
     for place in sandbox.live_places() {
@@ -777,6 +777,19 @@ fn standing_landings(sandbox: &Sandbox) -> BTreeSet<(Repo, String)> {
         };
         if record["verb"] != "land" {
             continue;
+        }
+        if let Some(source) = record["source"].as_str().map(PathBuf::from) {
+            for repo in Repo::ALL {
+                let checkout = source.join(repo.rel_path());
+                if !checkout.is_dir() {
+                    continue;
+                }
+                let head = sandbox.git(&checkout, &["symbolic-ref", "--short", "-q", "HEAD"]);
+                let branch = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+                if head.status.success() && !branch.is_empty() {
+                    standing.insert((repo, branch));
+                }
+            }
         }
         let Some(receiving) = record["take_in"]["receiving"].as_object() else {
             continue;
