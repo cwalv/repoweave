@@ -1122,6 +1122,9 @@ struct Run<'a> {
     sandbox: &'a Sandbox,
     last_code: Option<i32>,
     last_rwv_output: String,
+    /// Whether the step just performed ran a printed VCS action, which
+    /// leaves the rwv output it was printed in to be read again.
+    ran_printed_vcs_action: bool,
     marks: BTreeMap<&'static str, String>,
     held: BTreeMap<&'static str, Paused>,
     offline: BTreeMap<Remote, Unreachable<'a>>,
@@ -1141,6 +1144,7 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         sandbox,
         last_code: None,
         last_rwv_output: String::new(),
+        ran_printed_vcs_action: false,
         marks: BTreeMap::new(),
         held: BTreeMap::new(),
         offline: BTreeMap::new(),
@@ -1167,8 +1171,9 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
             })
             .collect();
         run.last_code = None;
+        run.ran_printed_vcs_action = false;
         let (succeeded, output) = run.perform(&step.action);
-        if step.action.runs_rwv() {
+        if step.action.runs_rwv() && !run.ran_printed_vcs_action {
             run.last_rwv_output = output.clone();
         }
         let after = invariants::snapshot(sandbox);
@@ -1405,7 +1410,10 @@ impl Run<'_> {
                 let program = words.next();
                 let args: Vec<&str> = words.collect();
                 let out = match program {
-                    Some("git") => sb.git(&sb.place_root(at), &args),
+                    Some("git") => {
+                        self.ran_printed_vcs_action = true;
+                        sb.git(&sb.place_root(at), &args)
+                    }
                     _ => sb.rwv(&sb.place_root(at), &args),
                 };
                 self.last_code = out.status.code();

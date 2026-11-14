@@ -12951,103 +12951,77 @@ fn abort_refused_whole(step: Step, landing: bool, unchanged: &[Place]) -> Step {
     )
 }
 
+/// The show line the last rwv step printed for a backup it kept, the one
+/// holding `holding`, run as printed: what it shows holds `shows`.
+fn kept_backup_shown(at: &Place, holding: &'static str, shows: &'static str) -> Step {
+    Step::rwv_printed_holding(at, "git -C ", holding)
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains(shows))
+}
+
 /// `rwv abort` over the merge [`own_merge_on_a_commit`] started in `repo`,
-/// whose operand is `operand`: refused, the merge and its commit left as
-/// they are; the printed abandon keeps the merge's edits and the commit as
-/// backups, then puts the repo back, and the op is gone.
-fn abort_refuses_then_abandons_the_operators_merge(
+/// whose checkout `named` names: the merge's working copy and the tip holding
+/// the commit are kept as backups, the merge canceled and the repo put back,
+/// and each printed show line returns what it kept; the op is gone.
+fn abort_keeps_the_operators_merge_and_commit(
     at: &Place,
     repo: Repo,
-    operand: &'static str,
+    named: &'static str,
     may_strand: &[Repo],
 ) -> Vec<Step> {
     vec![
-        abort_refused_whole(
-            Step::rwv(at, &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputContains("stopped in a merge begun at"))
-                .claim(Claim::OutputContains(operand)),
-            false,
-            std::slice::from_ref(at),
-        ),
-        Step::git(at, repo, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]),
-        Step::git(at, repo, &["log", "-1", "--format=%s"]).claim(Claim::OutputLine("own-x")),
-        Step::rwv_printed(at, "rwv abort --abandon-foreign-tip")
+        Step::rwv(at, &["abort"])
             .expect(Exit::Succeeds)
             .may_strand(may_strand)
             .may_restore(&[repo])
             .claim(Claim::OutputContains(
                 "its uncommitted edits are kept as backup",
             ))
-            .claim(Claim::OutputContains("abandoned foreign tip")),
+            .claim(Claim::OutputContains(
+                "its tip, holding commits this operation did not make, is kept as backup",
+            )),
+        Step::rwv_printed_holding(at, "git -C ", named)
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("own-x")),
         Step::git(at, repo, &["rev-parse", "-q", "--verify", "MERGE_HEAD"]).expect(Exit::Code(1)),
-        Step::git(
-            at,
-            repo,
-            &["log", "--all", "--format=%s", "--", "own-x.txt"],
-        )
-        .claim(Claim::OutputLine("own-x")),
         Step::rwv(at, &["abort"]).expect(Exit::refuses_kind(RefusalKind::NoOpRecorded)),
     ]
 }
 
 /// `pull --merge-upstream` stopped on its conflict in `app`; the operator
 /// gives up that merge and, at the savepoint, starts one of their own. The
-/// pull integrates `app`, and canceling returns to the savepoint, but the
-/// merge takes in a commit the pull never journaled: abort refuses it, and
-/// the printed abandon keeps its staged content as a backup before
-/// canceling it.
-pub fn pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint() -> Scenario {
+/// pull integrates `app`, so abort cancels the merge whoever began it,
+/// keeping its staged content as a backup first, and the printed show line
+/// returns it.
+pub fn pull_abort_cancels_a_merge_the_operator_began_at_the_savepoint() -> Scenario {
     let mut steps = both_sides_move_app_conflictingly();
     steps.push(Step::git(&b(), Repo::App, &["merge", "--abort"]));
     steps.extend(own_merge_at_the_savepoint(&b(), Repo::App));
     steps.extend([
-        abort_refused_whole(
-            Step::rwv(&b(), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputContains(
-                    "local/remotes/app: stopped in a merge begun at the savepoint",
-                )),
-            false,
-            &[b()],
-        ),
-        Step::git(
-            &b(),
-            Repo::App,
-            &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
-        ),
-        Step::git(&b(), Repo::App, &["diff", "--cached", "--name-only"])
-            .claim(Claim::OutputLine("own-side.txt")),
-        Step::rwv_printed(&b(), "rwv abort --abandon-foreign-tip")
+        Step::rwv(&b(), &["abort"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
-                "its uncommitted edits are kept as backup",
+                "local/remotes/app: its uncommitted edits are kept as backup",
             )),
+        kept_backup_shown(&b(), "remotes/app diff ", "own-side.txt"),
         Step::git(
             &b(),
             Repo::App,
             &["rev-parse", "-q", "--verify", "MERGE_HEAD"],
         )
         .expect(Exit::Code(1)),
-        Step::git(
-            &b(),
-            Repo::App,
-            &["log", "--all", "--format=kept %s", "--", "own-side.txt"],
-        )
-        .claim(Claim::OutputContains("kept")),
     ]);
     scenario(
-        "pull abort refuses a merge the operator began at the savepoint",
+        "pull abort cancels a merge the operator began at the savepoint",
         steps,
     )
 }
 
 /// A landing stopped in `app`'s rebase; the operator gives that rebase up
 /// and starts an interactive one of their own, stopped after its first
-/// pick, and commits there. Canceling it returns to the savepoint, but it replays
-/// onto a commit the landing never journaled: abort refuses, and the printed
-/// abandon keeps the commit made inside it before canceling.
-pub fn abort_refuses_an_interactive_rebase_the_operator_began() -> Scenario {
+/// pick, and commits there. Abort cancels it, keeping first the commit made
+/// inside it, which the printed show line returns.
+pub fn abort_cancels_an_interactive_rebase_the_operator_began() -> Scenario {
     let (mut steps, _) = landing_stopped_mid_rebase(MidRebase::Member);
     steps.extend([
         Step::git(&ww("w"), Repo::App, &["rebase", "--abort"]),
@@ -13058,77 +13032,70 @@ pub fn abort_refuses_an_interactive_rebase_the_operator_began() -> Scenario {
         )
         .expect(Exit::Code(1)),
         Step::commit(&ww("w"), Repo::App, "inside-edit"),
-        abort_refused_whole(
-            Step::rwv(&ww("w"), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputContains(
-                    "local/remotes/app: stopped in a rebase",
-                )),
-            true,
-            &[ww("w")],
-        ),
-        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+        Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputContains("kept as backup")),
-        Step::git(&ww("w"), Repo::App, &["log", "--all", "--format=%s"])
-            .claim(Claim::OutputContains("inside-edit")),
+            .claim(Claim::OutputContains(
+                "local/remotes/app: the commits its detached HEAD held, which no branch reaches, are kept as backup",
+            )),
+        kept_backup_shown(&ww("w"), "remotes/app log ", "inside-edit"),
     ]);
     scenario(
-        "abort refuses an interactive rebase the operator began",
+        "abort cancels an interactive rebase the operator began",
         steps,
     )
 }
 
 /// `pull --merge-upstream` stopped on its conflict in `app`; the operator
 /// gives up that merge, commits, and starts a merge of their own there. The
-/// pull integrates `app`, but abort cancels only its own merge: the
-/// operator's is refused, and their commit stays on its branch.
-pub fn pull_abort_refuses_a_merge_begun_on_the_operators_commit() -> Scenario {
+/// pull integrates `app`: abort cancels the operator's merge and puts `app`
+/// back, keeping the merge's edits and their commit as backups.
+pub fn pull_abort_keeps_a_merge_begun_on_the_operators_commit() -> Scenario {
     let mut steps = both_sides_move_app_conflictingly();
     steps.push(Step::git(&b(), Repo::App, &["merge", "--abort"]));
     steps.extend(own_merge_on_a_commit(&b(), Repo::App));
-    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+    steps.extend(abort_keeps_the_operators_merge_and_commit(
         &b(),
         Repo::App,
-        "local/remotes/app: stopped in a merge",
+        "remotes/app log ",
         &[],
     ));
     scenario(
-        "pull abort refuses a merge begun on the operator's commit",
+        "pull abort keeps a merge begun on the operator's commit",
         steps,
     )
 }
 
 /// `cherry-pick` copied onto `app`, then stopped on its conflict in `lib`;
 /// the operator commits on the copy in `app` and starts a merge of their
-/// own there: abort refuses it, keeping their commit.
-pub fn cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit() -> Scenario {
+/// own there: abort cancels it and puts `app` back, keeping their commit.
+pub fn cherry_pick_abort_keeps_a_merge_begun_on_the_operators_commit() -> Scenario {
     let mut steps = conflicting_port();
     steps.extend(own_merge_on_a_commit(&ww("p"), Repo::App));
-    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+    steps.extend(abort_keeps_the_operators_merge_and_commit(
         &ww("p"),
         Repo::App,
-        "local/remotes/app: stopped in a merge",
+        "remotes/app log ",
         &[Repo::App],
     ));
     scenario(
-        "cherry-pick abort refuses a merge begun on the operator's commit",
+        "cherry-pick abort keeps a merge begun on the operator's commit",
         steps,
     )
 }
 
 /// `pull --merge-upstream` stopped on its conflict in `app`; in `docs`,
 /// which the pull never merges, the operator commits and starts a merge of
-/// their own: abort leaves it and the commit, and restores the rest.
-pub fn pull_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scenario {
+/// their own on a commit the pull never wrote: abort cancels it, keeping the
+/// merge's edits and the commit as backups, and restores the rest.
+pub fn pull_abort_keeps_a_merge_in_a_member_it_never_merges() -> Scenario {
     let mut steps = both_sides_move_app_conflictingly();
     steps.extend(own_merge_on_a_commit(&b(), Repo::Docs));
-    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+    steps.extend(abort_keeps_the_operators_merge_and_commit(
         &b(),
         Repo::Docs,
-        "local/remotes/docs: stopped in a merge",
+        "remotes/docs log ",
         &[],
     ));
     steps.push(
@@ -13140,7 +13107,7 @@ pub fn pull_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scenario {
         .expect(Exit::Code(1)),
     );
     scenario(
-        "pull abort refuses a merge in a member it never merges",
+        "pull abort keeps a merge in a member it never merges",
         steps,
     )
 }
@@ -13242,9 +13209,9 @@ pub fn update_remote_reset_killed_after_the_move(detached: bool) -> Scenario {
 
 /// `update --remote --merge-upstream --reset-to-upstream lib` resets
 /// `lib`'s `main` to its upstream as a ref, `lib` being detached on machine
-/// A, and stops on its conflict in `app`; someone then commits onto `lib`'s `main`. Abort
-/// refuses to put that branch back and keeps the op; the printed
-/// `--abandon-foreign-tip` keeps the new tip as a backup and restores it.
+/// A, and stops on its conflict in `app`; someone then commits onto `lib`'s
+/// `main`. Abort puts that branch back, keeping the new tip as a backup whose
+/// printed show line returns the commit.
 pub fn update_remote_abort_over_a_ref_moved_since() -> Scenario {
     scenario(
         "update --remote abort over a ref moved since",
@@ -13277,21 +13244,14 @@ pub fn update_remote_abort_over_a_ref_moved_since() -> Scenario {
                 .claim(Claim::OutputContains("beta-lib"))
                 .claim(Claim::OutputLacks("alpha-lib")),
             Step::hand_commit(&a(), Repo::Lib, "main", &[("raced.txt", "raced\n")]),
-            abort_refused_whole(
-                Step::rwv(&a(), &["abort"])
-                    .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                    .claim(Claim::OutputContains("moved since the op wrote it")),
-                false,
-                &[a()],
-            ),
-            Step::rwv_printed(&a(), "rwv abort --abandon-foreign-tip")
+            Step::rwv(&a(), &["abort"])
                 .expect(Exit::Succeeds)
-                .may_restore(&[Repo::Lib]),
+                .may_restore(&[Repo::Lib])
+                .claim(Claim::OutputContains("kept as backup")),
+            kept_backup_shown(&a(), "remotes/lib log ", "hand commit"),
             Step::git(&a(), Repo::Lib, &["log", "--format=%s", "main"])
                 .claim(Claim::OutputLacks("beta-lib"))
                 .claim(Claim::OutputContains("alpha-lib")),
-            Step::git(&a(), Repo::Lib, &["log", "--all", "--format=kept %s"])
-                .claim(Claim::OutputContains("kept hand commit")),
         ],
     )
 }
@@ -13311,14 +13271,15 @@ pub fn update_remote_abort_leaves_a_merge_in_a_member_it_never_merges() -> Scena
 
 /// `update --remote --merge-upstream` stopped on its conflict in `app`; in
 /// `docs`, which it never merges, the operator commits and starts a merge
-/// of their own: abort leaves it and the commit.
-pub fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scenario {
+/// of their own: abort cancels it, keeping the merge's edits and the commit
+/// as backups.
+pub fn update_remote_abort_keeps_a_merge_in_a_member_it_never_merges() -> Scenario {
     let mut steps = update_remote_stopped_on_a_conflict();
     steps.extend(own_merge_on_a_commit(&a(), Repo::Docs));
-    steps.extend(abort_refuses_then_abandons_the_operators_merge(
+    steps.extend(abort_keeps_the_operators_merge_and_commit(
         &a(),
         Repo::Docs,
-        "local/remotes/docs: stopped in a merge",
+        "remotes/docs log ",
         &[],
     ));
     steps.push(
@@ -13330,7 +13291,7 @@ pub fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() -> Scen
         .expect(Exit::Code(1)),
     );
     scenario(
-        "update --remote abort refuses a merge in a member it never merges",
+        "update --remote abort keeps a merge in a member it never merges",
         steps,
     )
 }
@@ -14275,24 +14236,15 @@ pub fn abort_refuses_a_switch_back_over_colliding_edits(stop: LandedStop) -> Sce
     scenario("abort refuses a switch-back over colliding edits", steps)
 }
 
-/// The edits keep abort from switching the checkout back
-/// ([`abort_refused_over_colliding_edits`]); run in the target, abort
-/// refuses with its own choices there, and the printed
-/// `--abandon-foreign-tip` keeps them as a backup, then restores. Stopped in
-/// its retire, the retire refused, so abort in the target takes it up.
-pub fn abort_abandons_colliding_edits_keeping_them(stop: LandedStop) -> Scenario {
+/// The edits keep abort run in the source from switching the target's
+/// checkout back ([`abort_refused_over_colliding_edits`]); run in the
+/// target, abort keeps them as a backup, then restores, and the printed show
+/// line returns them. Stopped in its retire, the retire refused, so abort in
+/// the target takes it up.
+pub fn abort_in_the_target_keeps_colliding_edits(stop: LandedStop) -> Scenario {
     let mut steps = abort_refused_over_colliding_edits(stop, true);
     steps.extend([
-        abort_refused_whole(
-            Step::rwv(&a(), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputContains(
-                    "local/remotes/lib: is off where its savepoint",
-                )),
-            true,
-            &[a(), ww("w")],
-        ),
-        Step::rwv_printed(&a(), "rwv abort --abandon-foreign-tip")
+        Step::rwv(&a(), &["abort"])
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj, Repo::Lib])
             .may_rewind(&[Repo::Lib])
@@ -14305,14 +14257,9 @@ pub fn abort_abandons_colliding_edits_keeping_them(stop: LandedStop) -> Scenario
                 repo: Repo::Lib,
                 branch: "main",
             }),
-        Step::git(
-            &a(),
-            Repo::Lib,
-            &["log", "--all", "--format=kept %s", "-Sedited in the target"],
-        )
-        .claim(Claim::OutputContains("kept ")),
+        kept_backup_shown(&a(), "remotes/lib diff ", "edited in the target"),
     ]);
-    scenario("abort abandons colliding edits keeping them", steps)
+    scenario("abort in the target keeps colliding edits", steps)
 }
 
 /// A landing killed right after it fast-forwarded `app` in the target's
@@ -14356,9 +14303,9 @@ pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario 
 /// A landing killed right after it fast-forwarded `app` in the target's
 /// workspace is continued; between the continued landing's read of the
 /// target and its fast-forward of `app`, already done, someone commits onto
-/// `app`. The landing stops, `app` stays on its journal, so abort refuses to
-/// leave the landing's commits under the new one as someone else's work, and
-/// the printed `--abandon-foreign-tip` keeps that commit as a backup.
+/// `app`. The landing stops, `app` stays on its journal, so abort puts `app`
+/// back, keeping the tip holding the new commit as a backup whose printed
+/// show line returns it.
 pub fn a_continued_landing_racing_a_commit_on_a_repo_it_moved() -> Scenario {
     scenario(
         "a continued landing racing a commit on a repo it moved",
@@ -14376,23 +14323,17 @@ pub fn a_continued_landing_racing_a_commit_on_a_repo_it_moved() -> Scenario {
             Step::commit(&a(), Repo::App, "again"),
             Step::release("continued")
                 .expect(Exit::refuses(Repo::App, State::TargetMovedMidOperation)),
-            abort_refused_whole(
-                Step::rwv(&ww("w"), &["abort"])
-                    .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                    .claim(Claim::OutputContains("[target] local/remotes/app")),
-                true,
-                &[a(), ww("w")],
-            ),
-            Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::App])
                 .may_restore(&[Repo::App])
-                .claim(Claim::OutputContains("abandoned foreign tip")),
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                )),
+            kept_backup_shown(&ww("w"), "remotes/app log ", "again"),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
                 .claim(Claim::OutputLacks("w-app"))
                 .claim(Claim::OutputLacks("again")),
-            Step::git(&a(), Repo::App, &["log", "--all", "--format=kept %s"])
-                .claim(Claim::OutputContains("kept again")),
             Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
         ],
     )
@@ -22040,9 +21981,10 @@ pub enum LandStopCommit {
 
 /// A landing under `history` stops on `app`, the operator types a commit in
 /// the project repo as `typed` says, `rwv land --continue` stops on `app`
-/// again, and `rwv abort` refuses that commit as a foreign tip; the printed
-/// abandon keeps it as a backup. Where only the resolution was made, abort restores the
-/// project repo's tip as the operation's own, with no refusal.
+/// again, and `rwv abort` puts the project repo back, keeping that commit as
+/// a backup it names, whose printed show line returns it. Where only the
+/// resolution was made, abort restores the project repo's tip as the
+/// operation's own, keeping no tip.
 pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
     history: &'static str,
     typed: LandStopCommit,
@@ -22106,26 +22048,20 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App])
-                .claim(Claim::OutputLacks("foreign")),
+                .claim(Claim::OutputLacks("its tip, holding commits")),
         );
         return scenario("a land stop resolved by hand and continued, aborted", steps);
     }
     steps.extend([
-        abort_refused_whole(
-            Step::rwv(&ww("w"), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputContains("projects/")),
-            true,
-            &[ww("w")],
-        ),
-        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+        Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::App, Repo::Proj])
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputContains("abandoned foreign tip")),
-        Step::git(&ww("w"), Repo::Proj, &["log", "--all", "--format=kept %s"])
-            .claim(Claim::OutputContains("kept operator-own")),
+            .claim(Claim::OutputContains(
+                "projects/proj: its tip, holding commits this operation did not make, is kept as backup",
+            )),
+        kept_backup_shown(&ww("w"), "projects/proj log ", "operator-own"),
     ]);
     scenario(
         "a commit typed at a land stop is not the operation's own",
@@ -22134,32 +22070,21 @@ pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
 }
 
 /// A landing stopped in `app`'s rebase, finished by the VCS's own continue,
-/// and then the operator commits on top: abort cannot read that commit as a
-/// replay of the operation's, so it refuses rather than resetting it onto no
-/// ref, and the printed `--abandon-foreign-tip` keeps it as a backup.
+/// and then the operator commits on top: abort puts `app` back to its
+/// savepoint, keeping that tip as a backup first, whose printed show line
+/// returns the commit.
 pub fn vcs_continue_mid_rebase_then_an_own_commit() -> Scenario {
     let (mut steps, conflicted) = landing_finished_mid_rebase_by_hand(MidRebase::Member);
     steps.extend([
         Step::commit(&ww("w"), conflicted, "operator-own"),
-        abort_refused_whole(
-            Step::rwv(&ww("w"), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::Contains {
-                    at: ww("w"),
-                    repo: conflicted,
-                    rev: "HEAD",
-                    mark: "operator-own",
-                }),
-            true,
-            &[ww("w")],
-        ),
-        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+        Step::rwv(&ww("w"), &["abort"])
             .expect(Exit::Succeeds)
             .may_rewind(&[Repo::App])
             .may_restore(&[Repo::App, Repo::Proj])
-            .claim(Claim::OutputContains("abandoned foreign tip")),
-        Step::git(&ww("w"), conflicted, &["log", "--all", "--format=kept %s"])
-            .claim(Claim::OutputContains("kept operator-own")),
+            .claim(Claim::OutputContains(
+                "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+            )),
+        kept_backup_shown(&ww("w"), "remotes/app log ", "operator-own"),
         Step::git(
             &ww("w"),
             conflicted,
@@ -23434,7 +23359,7 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     let abort = match before {
         BeforeTheCarry::FinishedByHand => {
             Step::rwv(&ww("w1"), &["abort"]).claim(Claim::OutputContains(
-                "local/remotes/app: the commits its detached HEAD held are kept as backup",
+                "local/remotes/app: the commits its detached HEAD held, which no branch reaches, are kept as backup",
             ))
         }
         _ => Step::rwv(&ww("w1"), &["abort"]),

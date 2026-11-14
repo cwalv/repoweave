@@ -1215,13 +1215,13 @@ every_scenario!(
     abort_after_the_target_aligned_rerun_after_a_kill(scenarios::ReceivingCase::Created),
     abort_after_the_target_aligned_rerun_after_a_kill(scenarios::ReceivingCase::CreatedWithoutWork),
     cherry_pick_abort_leaves_an_untouched_members_merge,
-    pull_abort_refuses_a_merge_begun_on_the_operators_commit,
-    pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint,
+    pull_abort_keeps_a_merge_begun_on_the_operators_commit,
+    pull_abort_cancels_a_merge_the_operator_began_at_the_savepoint,
     pull_abort_over_a_cancel_the_vcs_refuses,
-    abort_refuses_an_interactive_rebase_the_operator_began,
-    cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit,
-    pull_abort_refuses_a_merge_in_a_member_it_never_merges,
-    update_remote_abort_refuses_a_merge_in_a_member_it_never_merges,
+    abort_cancels_an_interactive_rebase_the_operator_began,
+    cherry_pick_abort_keeps_a_merge_begun_on_the_operators_commit,
+    pull_abort_keeps_a_merge_in_a_member_it_never_merges,
+    update_remote_abort_keeps_a_merge_in_a_member_it_never_merges,
     pull_abort_leaves_a_merge_in_a_member_it_never_merges,
     update_remote_abort_leaves_a_merge_in_a_member_it_never_merges,
     update_remote_abort_over_a_ref_moved_since,
@@ -1285,8 +1285,8 @@ every_scenario!(
         "merge",
         scenarios::LandStopCommit::ResolutionOnly
     ),
-    abort_abandons_colliding_edits_keeping_them(scenarios::LandedStop::Landed),
-    abort_abandons_colliding_edits_keeping_them(scenarios::LandedStop::Retire),
+    abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Landed),
+    abort_in_the_target_keeps_colliding_edits(scenarios::LandedStop::Retire),
     cherry_pick_abort_keeps_edits_made_after_the_stop,
     cherry_pick_abort_names_how_to_put_back_a_deleted_branch,
     abort_after_the_landing_released_its_target,
@@ -3437,10 +3437,10 @@ holding_rwv! {
         }
     }
 
-    /// The printed abandon keeps the colliding edits as a backup first.
-    fn abort_abandons_colliding_edits_keeping_them() {
+    /// Abort in the target keeps the colliding edits as a backup first.
+    fn abort_in_the_target_keeps_colliding_edits() {
         for stop in scenarios::LandedStop::ALL {
-            runner::run(scenarios::abort_abandons_colliding_edits_keeping_them(stop)).assert_fully_decided_green();
+            runner::run(scenarios::abort_in_the_target_keeps_colliding_edits(stop)).assert_fully_decided_green();
         }
     }
 
@@ -3859,20 +3859,20 @@ fn a_cherry_pick_abort_leaves_a_merge_in_a_member_it_never_touches() {
 }
 
 #[test]
-fn pull_abort_refuses_a_merge_begun_on_the_operators_commit() {
-    runner::run(scenarios::pull_abort_refuses_a_merge_begun_on_the_operators_commit())
+fn pull_abort_keeps_a_merge_begun_on_the_operators_commit() {
+    runner::run(scenarios::pull_abort_keeps_a_merge_begun_on_the_operators_commit())
         .assert_fully_decided_green();
 }
 
 #[test]
-fn cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit() {
-    runner::run(scenarios::cherry_pick_abort_refuses_a_merge_begun_on_the_operators_commit())
+fn cherry_pick_abort_keeps_a_merge_begun_on_the_operators_commit() {
+    runner::run(scenarios::cherry_pick_abort_keeps_a_merge_begun_on_the_operators_commit())
         .assert_fully_decided_green();
 }
 
 #[test]
-fn pull_abort_refuses_a_merge_in_a_member_it_never_merges() {
-    runner::run(scenarios::pull_abort_refuses_a_merge_in_a_member_it_never_merges())
+fn pull_abort_keeps_a_merge_in_a_member_it_never_merges() {
+    runner::run(scenarios::pull_abort_keeps_a_merge_in_a_member_it_never_merges())
         .assert_fully_decided_green();
 }
 
@@ -3889,8 +3889,8 @@ fn update_remote_abort_leaves_a_merge_in_a_member_it_never_merges() {
 }
 
 #[test]
-fn update_remote_abort_refuses_a_merge_in_a_member_it_never_merges() {
-    runner::run(scenarios::update_remote_abort_refuses_a_merge_in_a_member_it_never_merges())
+fn update_remote_abort_keeps_a_merge_in_a_member_it_never_merges() {
+    runner::run(scenarios::update_remote_abort_keeps_a_merge_in_a_member_it_never_merges())
         .assert_fully_decided_green();
 }
 
@@ -3900,16 +3900,16 @@ fn cherry_pick_abort_names_how_to_put_back_a_deleted_branch() {
         .assert_fully_decided_green();
 }
 
-/// A branch `update --remote` merged as a ref, moved again before abort,
-/// is refused with the `--abandon-foreign-tip` choice that, run, restores it.
+/// A branch `update --remote` merged as a ref, moved again before abort, is
+/// put back by abort, its new tip kept as a backup.
 #[test]
-fn update_remote_abort_over_a_ref_moved_since_prints_the_choice_that_clears_it() {
+fn update_remote_abort_over_a_ref_moved_since_keeps_the_new_tip() {
     runner::run(scenarios::update_remote_abort_over_a_ref_moved_since())
         .assert_fully_decided_green();
 }
 
 /// A commit the operator adds on top of a rebase they finished by hand is
-/// not read as the operation's: abort refuses, then abandons it into a backup.
+/// kept as a backup by abort, which puts the repo back.
 #[test]
 fn abort_keeps_an_own_commit_on_a_rebase_finished_by_hand() {
     runner::run(scenarios::vcs_continue_mid_rebase_then_an_own_commit())
@@ -3924,18 +3924,18 @@ fn pull_abort_over_a_cancel_the_vcs_refuses() {
 }
 
 /// An operator's merge begun at the savepoint, in a repo the pull merges,
-/// is refused as theirs: it takes in nothing the pull journaled.
+/// is canceled by abort, its staged content kept as a backup.
 #[test]
-fn pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint() {
-    runner::run(scenarios::pull_abort_refuses_a_merge_the_operator_began_at_the_savepoint())
+fn pull_abort_cancels_a_merge_the_operator_began_at_the_savepoint() {
+    runner::run(scenarios::pull_abort_cancels_a_merge_the_operator_began_at_the_savepoint())
         .assert_fully_decided_green();
 }
 
-/// An operator's interactive rebase, stopped at an `edit` with a commit made
-/// in it, is refused as theirs, and the abandon keeps that commit.
+/// An operator's interactive rebase, stopped with a commit made in it, is
+/// canceled by abort, which keeps that commit as a backup.
 #[test]
-fn abort_refuses_an_interactive_rebase_the_operator_began() {
-    runner::run(scenarios::abort_refuses_an_interactive_rebase_the_operator_began())
+fn abort_cancels_an_interactive_rebase_the_operator_began() {
+    runner::run(scenarios::abort_cancels_an_interactive_rebase_the_operator_began())
         .assert_fully_decided_green();
 }
 
@@ -3965,7 +3965,7 @@ holding_rwv! {
 holding_rwv! {
     /// A commit onto a target repo the landing already moved, made while a
     /// continued landing is about to fast-forward it again, keeps the repo on
-    /// the journal: abort refuses rather than leaving the landing's commits.
+    /// the journal: abort puts it back, the new commit kept as a backup.
     fn a_continued_landing_racing_a_commit_keeps_the_repo_journaled() {
         runner::run(scenarios::a_continued_landing_racing_a_commit_on_a_repo_it_moved())
             .assert_fully_decided_green();
@@ -7808,7 +7808,7 @@ fn replayed_tip_keep_yours() {
 }
 
 #[test]
-fn a_land_stop_linear_at_a_member_stop_aborts_as_the_operation_s_own_or_foreign() {
+fn a_land_stop_linear_at_a_member_stop_aborts_keeping_what_the_operation_did_not_make() {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "linear",
@@ -7819,7 +7819,7 @@ fn a_land_stop_linear_at_a_member_stop_aborts_as_the_operation_s_own_or_foreign(
 }
 
 #[test]
-fn a_land_stop_linear_after_resolving_the_project_stop_aborts_as_the_operation_s_own_or_foreign() {
+fn a_land_stop_linear_after_resolving_the_project_stop_aborts_keeping_what_the_operation_did_not_make() {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "linear",
@@ -7830,7 +7830,7 @@ fn a_land_stop_linear_after_resolving_the_project_stop_aborts_as_the_operation_s
 }
 
 #[test]
-fn a_land_stop_linear_resolution_only_aborts_as_the_operation_s_own_or_foreign() {
+fn a_land_stop_linear_resolution_only_aborts_keeping_what_the_operation_did_not_make() {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "linear",
@@ -7841,7 +7841,7 @@ fn a_land_stop_linear_resolution_only_aborts_as_the_operation_s_own_or_foreign()
 }
 
 #[test]
-fn a_land_stop_merge_at_a_member_stop_aborts_as_the_operation_s_own_or_foreign() {
+fn a_land_stop_merge_at_a_member_stop_aborts_keeping_what_the_operation_did_not_make() {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "merge",
@@ -7852,7 +7852,7 @@ fn a_land_stop_merge_at_a_member_stop_aborts_as_the_operation_s_own_or_foreign()
 }
 
 #[test]
-fn a_land_stop_merge_after_resolving_the_project_stop_aborts_as_the_operation_s_own_or_foreign() {
+fn a_land_stop_merge_after_resolving_the_project_stop_aborts_keeping_what_the_operation_did_not_make() {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "merge",
@@ -7863,7 +7863,7 @@ fn a_land_stop_merge_after_resolving_the_project_stop_aborts_as_the_operation_s_
 }
 
 #[test]
-fn a_land_stop_merge_resolution_only_aborts_as_the_operation_s_own_or_foreign() {
+fn a_land_stop_merge_resolution_only_aborts_keeping_what_the_operation_did_not_make() {
     runner::run(
         scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
             "merge",
