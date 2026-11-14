@@ -1122,7 +1122,6 @@ fn op_status(verb: OpVerb, phase: OpPhase) -> OpStatus {
         owner: wire("/ws"),
         source: wire("/ws/.workweaves/proj--feat-a"),
         target: Some(wire("/ws")),
-        overrides: Vec::new(),
     }
 }
 

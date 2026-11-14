@@ -111,9 +111,9 @@ pub struct UnreadableProject {
 ///
 /// The record minus the tip tables (`advanced_tips`/`converged_tips`): those
 /// are replay bookkeeping an operator deciding `--continue` vs `abort`
-/// doesn't need. `verb`, `phase` and `overrides` are the op-state crate's own
-/// types, not a re-encoding of them — a second vocabulary for the same three
-/// facts is the thing this disclosure must not become.
+/// doesn't need. `verb` and `phase` are the op-state crate's own types, not a
+/// re-encoding of them — a second vocabulary for the same facts is the thing
+/// this disclosure must not become.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub struct OpStatus {
     pub id: String,
@@ -128,7 +128,6 @@ pub struct OpStatus {
     /// The workspace that has the landing's target checked out; absent where
     /// it is checked out nowhere and the landing moves it as refs.
     pub target: Option<WirePath>,
-    pub overrides: Vec<op_state::Override>,
 }
 
 impl From<&op_state::ResolvedOwner> for OpStatus {
@@ -145,7 +144,6 @@ impl From<&op_state::ResolvedOwner> for OpStatus {
                 .target
                 .as_ref()
                 .map(|target| WirePath::of(target.as_path())),
-            overrides: resolved.record.overrides.iter().collect(),
         }
     }
 }
@@ -1023,7 +1021,7 @@ mod tests {
     }
 
     /// An in-flight op discloses the record minus the tip tables, keyed by
-    /// the op-state crate's own `verb`/`phase`/`overrides` types.
+    /// the op-state crate's own `verb`/`phase` types.
     #[test]
     fn status_json_op_field_round_trips() {
         let envelope = StatusJsonOutput {
@@ -1046,7 +1044,6 @@ mod tests {
                 target: Some(crate::path_spelling::WirePath::of(std::path::Path::new(
                     "/abs/ws/target",
                 ))),
-                overrides: Vec::new(),
             }),
             unreadable_op: None,
         };
@@ -1058,7 +1055,7 @@ mod tests {
         assert_eq!(v["op"]["phase"], "replay");
         assert_eq!(v["op"]["owner"], "/abs/ws/target");
         assert_eq!(v["op"]["source"], "/abs/ws/source");
-        assert_eq!(v["op"]["overrides"], serde_json::json!([]));
+        assert!(v["op"].get("overrides").is_none());
         // The record minus the tip tables: neither key exists on the wire.
         assert!(v["op"].get("advanced_tips").is_none());
         assert!(v["op"].get("converged_tips").is_none());
@@ -1067,7 +1064,6 @@ mod tests {
         let op = decoded.op.expect("op present after round-trip");
         assert_eq!(op.verb, op_state::OpVerb::Sync);
         assert_eq!(op.phase, op_state::OpPhase::Replay);
-        assert!(op.overrides.is_empty());
     }
 
     /// The `parent` field carries both the recorded path and the per-repo

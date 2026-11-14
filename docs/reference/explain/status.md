@@ -797,11 +797,10 @@ Schema:
       ]
     },
     "OpStatus": {
-      "description": "The in-flight op recorded at this workspace (owner) or the workspace this one leases to (owner elsewhere), disclosed read-only on `rwv status`.\n\nThe record minus the tip tables (`advanced_tips`/`converged_tips`): those are replay bookkeeping an operator deciding `--continue` vs `abort` doesn't need. `verb`, `phase` and `overrides` are the op-state crate's own types, not a re-encoding of them — a second vocabulary for the same three facts is the thing this disclosure must not become.",
+      "description": "The in-flight op recorded at this workspace (owner) or the workspace this one leases to (owner elsewhere), disclosed read-only on `rwv status`.\n\nThe record minus the tip tables (`advanced_tips`/`converged_tips`): those are replay bookkeeping an operator deciding `--continue` vs `abort` doesn't need. `verb` and `phase` are the op-state crate's own types, not a re-encoding of them — a second vocabulary for the same facts is the thing this disclosure must not become.",
       "type": "object",
       "required": [
         "id",
-        "overrides",
         "owner",
         "phase",
         "source",
@@ -811,12 +810,6 @@ Schema:
       "properties": {
         "id": {
           "type": "string"
-        },
-        "overrides": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Override"
-          }
         },
         "owner": {
           "description": "Workspace holding the full op record (`.rwv-op`) — the workspace `--continue`/`abort` must run from. Equal to the reporting workspace unless this workspace only holds a lease.",
@@ -926,11 +919,6 @@ Schema:
           "minimum": 0.0
         }
       }
-    },
-    "Override": {
-      "description": "A named consent supplied at invocation and recorded on the owner record.\n\nEach variant is one CLI flag, and serializes to that flag's name without the leading dashes — the spelling already on disk in every `.rwv-op` written so far. `--continue` re-derives the op's consent from this list and `cleanup` reads it to decide whether the project savepoint survives as the only remaining pointer to discarded commits, so mint and read must be the same value rather than the same text.",
-      "type": "string",
-      "enum": []
     },
     "ParentInfo": {
       "description": "Recorded-parent exposure for a per-repo status entry.\n\nParent identity comes from the workweave's `.rwv-workweave` marker (`parent:`), never from the branch name: a workweave's branch is the flat `<project>--<name>`, which names no parent, and adoption can re-point the parent to primary. Consumers that need the parent must read this field.\n\n`path` is the recorded parent workspace path (identical for every repo in the workweave). `tip` is this specific repo's parent tip — the SHA that `git rev-parse HEAD` yields in the parent's checkout of the SAME repo — or `None` when the parent has no checkout of this repo (or HEAD is unreadable). The tip is what `git log <parent-tip>..HEAD` needs to compute the workweave's unique commits without re-deriving branch layout.",

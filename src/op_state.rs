@@ -23,7 +23,6 @@
 //!   "phase": "replay",
 //!   "advanced_tips": {},
 //!   "converged_tips": {},
-//!   "overrides": [],
 //!   "started_at": "2026-06-10T21:14:03Z"
 //! }
 //! ```
@@ -273,7 +272,7 @@ impl FromStr for SavepointKey {
 /// The operator-facing resume command for a mid-op verb.
 ///
 /// A failed op is resumed with `--continue` from the OWNING workspace, which
-/// reads every parameter (source, `--history`, target, retire, overrides) back
+/// reads every parameter (source, `--history`, target, retire) back
 /// out of op-state — so the resume text is `rwv {verb} --continue`, NEVER a
 /// hardcoded `rwv sync {source}`. Hardcoding `rwv sync` was wrong two ways:
 /// it named the PULL verb for a `land` (landing) op, and it re-supplied
@@ -440,52 +439,6 @@ impl PhaseTips {
     /// `--continue` re-running relock) simply replaces the converged table.
     pub fn converge(&mut self, converged: BTreeMap<RepoKey, CommitId>) {
         *self = Self::Converged(converged);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Override — a named consent the operator supplied at invocation
-// ---------------------------------------------------------------------------
-
-/// A named consent supplied at invocation and recorded on the owner record.
-///
-/// Each variant is one CLI flag, and serializes to that flag's name without
-/// the leading dashes — the spelling already on disk in every `.rwv-op`
-/// written so far. `--continue` re-derives the op's consent from this list
-/// and `cleanup` reads it to decide whether the project savepoint survives as
-/// the only remaining pointer to discarded commits, so mint and read must be
-/// the same value rather than the same text.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "kebab-case")]
-pub enum Override {}
-
-/// The overrides an op runs under, each at most once.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Overrides(std::collections::BTreeSet<Override>);
-
-impl Overrides {
-    pub fn contains(&self, o: Override) -> bool {
-        self.0.contains(&o)
-    }
-
-    pub fn insert(&mut self, o: Override) {
-        self.0.insert(o);
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = Override> + '_ {
-        self.0.iter().copied()
-    }
-}
-
-impl FromIterator<Override> for Overrides {
-    fn from_iter<I: IntoIterator<Item = Override>>(iter: I) -> Self {
-        Self(iter.into_iter().collect())
     }
 }
 
@@ -1034,8 +987,6 @@ pub struct RefMove {
 /// persisted `.rwv-op` JSON keeps the historical flat shape — two independent
 /// top-level keys `advanced_tips` / `converged_tips` — via a serde shim
 /// (`WireOwnerRecord`), so on-disk op-state round-trips unchanged.
-/// `overrides` records named overrides supplied at invocation for audit
-/// fidelity on `--continue`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "WireOwnerRecord", into = "WireOwnerRecord")]
 pub struct OwnerRecord {
@@ -1067,8 +1018,6 @@ pub struct OwnerRecord {
     /// time (see [`PhaseTips`]). Replay-phase intent during replay; converged
     /// tips after the atomic [`PhaseTips::converge`] swap at relock completion.
     pub tips: PhaseTips,
-    /// Named overrides supplied at invocation.
-    pub overrides: Overrides,
     /// RFC3339 UTC timestamp when the op started.
     pub started_at: String,
     /// What a `pull` or `update --remote` op was asked to do.
@@ -1108,7 +1057,6 @@ struct WireOwnerRecord {
     phase: OpPhase,
     advanced_tips: BTreeMap<RepoKey, CommitId>,
     converged_tips: BTreeMap<RepoKey, CommitId>,
-    overrides: Vec<Override>,
     started_at: String,
     take_in: Option<TakeInRecord>,
 }
@@ -1134,7 +1082,6 @@ impl From<WireOwnerRecord> for OwnerRecord {
             retire: w.retire,
             phase: w.phase,
             tips,
-            overrides: w.overrides.into_iter().collect(),
             started_at: w.started_at,
             take_in: w.take_in,
         }
@@ -1161,7 +1108,6 @@ impl From<OwnerRecord> for WireOwnerRecord {
             phase: r.phase,
             advanced_tips,
             converged_tips,
-            overrides: r.overrides.iter().collect(),
             started_at: r.started_at,
             take_in: r.take_in,
         }
@@ -1189,7 +1135,6 @@ impl OwnerRecord {
             retire: false,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
-            overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
             take_in: None,
         }
@@ -1253,7 +1198,6 @@ impl OwnerRecord {
             retire,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
-            overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
             take_in: None,
         }
@@ -1278,7 +1222,6 @@ impl OwnerRecord {
             retire: false,
             phase: OpPhase::Replay,
             tips: PhaseTips::default(),
-            overrides: Overrides::default(),
             started_at: utc_now_rfc3339(),
             take_in: Some(take_in),
         }
@@ -1612,8 +1555,8 @@ fn dead_lease_sentence(lease_dir: &Path, lease: &LeaseRecord) -> String {
 /// Write `record` to the `.rwv-op` file in `workspace_dir`.
 ///
 /// This is the **phase-persistence write path**: [`set_phase`] and any
-/// caller updating fields on an *already-acquired* owner record (overrides,
-/// converged tips, `--continue` restarts) call it. It overwrites any existing
+/// caller updating fields on an *already-acquired* owner record (converged
+/// tips, `--continue` restarts) call it. It overwrites any existing
 /// file.
 ///
 /// **The first write of a fresh op must go through [`acquire_op`]**, not this
@@ -2390,7 +2333,7 @@ pub fn acquire_lease(
 ///   exits). This preserves the cleanup-table row that says a refusal leaves
 ///   no trace.
 /// - A crash between successful acquisition and the caller's next persistent
-///   write (Mark's overrides update, savepoints) leaves records with no
+///   write (savepoints) leaves records with no
 ///   savepoints. That partial state is what the dead-lease doctor check
 ///   diagnoses (a lease whose recorded owner workspace has no matching
 ///   `.rwv-op` with the same op id is structurally dead).
@@ -2814,7 +2757,7 @@ mod tests {
             "{{{schema_fields}\"id\": \"1\", \"verb\": \"sync\", \"history\": null, \
              \"project\": \"p\", \"source\": \"{d}\", \"target\": \"{d}\", \
              \"retire\": false, \"phase\": \"replay\", \"advanced_tips\": {{}}, \
-             \"converged_tips\": {{}}, \"overrides\": [], \"started_at\": \"2026-01-01T00:00:00Z\", \
+             \"converged_tips\": {{}}, \"started_at\": \"2026-01-01T00:00:00Z\", \
              \"take_in\": null}}",
             d = dir.display()
         );
@@ -3031,7 +2974,6 @@ mod tests {
     "github/acme/web": "{b}"
   }},
   "converged_tips": {{}},
-  "overrides": [],
   "started_at": "2026-06-10T21:14:03Z",
   "take_in": null
 }}"#,
@@ -3202,7 +3144,6 @@ mod tests {
         assert_eq!(read_back.tips, PhaseTips::Replay(BTreeMap::new()));
         assert!(read_back.tips.advanced().unwrap().is_empty());
         assert!(read_back.tips.converged().is_none());
-        assert!(read_back.overrides.is_empty());
     }
 
     // -----------------------------------------------------------------------
@@ -3257,7 +3198,6 @@ mod tests {
   "retire": false,
   "phase": "replay",
   "converged_tips": {},
-  "overrides": [],
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
@@ -3286,7 +3226,6 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "converged_tips": {},
-  "overrides": [],
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
@@ -3317,7 +3256,6 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {},
   "converged_tips": {},
-  "overrides": [],
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
@@ -3342,7 +3280,6 @@ mod tests {
   "phase": "replay",
   "advanced_tips": {{}},
   "converged_tips": {{}},
-  "overrides": [],
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }}
 "#
@@ -3397,7 +3334,6 @@ mod tests {
   "retire": false,
   "phase": "replay",
   "advanced_tips": {},
-  "overrides": [],
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
@@ -3406,32 +3342,6 @@ mod tests {
         assert!(
             err.to_string().contains("failed to parse owner record"),
             "a record missing converged_tips must fail to parse; got: {err}"
-        );
-    }
-
-    #[test]
-    fn wire_record_missing_overrides_key_is_rejected() {
-        let tmp = crate::tempdir().unwrap();
-        let dir = tmp.path();
-        let json = r#"{
-  "id": "9999999999999999999",
-  "verb": "sync",
-  "history": null,
-  "project": "web-app",
-  "source": "/src/ws",
-  "target": "/cwd/ws",
-  "retire": false,
-  "phase": "replay",
-  "advanced_tips": {},
-  "converged_tips": {},
-  "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
-}
-"#;
-        std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
-        let err = read_owner(dir).unwrap_err();
-        assert!(
-            err.to_string().contains("failed to parse owner record"),
-            "a record missing overrides must fail to parse; got: {err}"
         );
     }
 
@@ -3545,7 +3455,6 @@ mod tests {
   "phase": "relock",
   "advanced_tips": {},
   "converged_tips": {},
-  "overrides": [],
   "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null
 }
 "#;
@@ -3564,7 +3473,7 @@ mod tests {
                 r#"{{"id": "1", "verb": "sync", "history": null, "project": "web-app",
                 "source": "/src/ws", "target": "/cwd/ws", "retire": false, "phase": "replay",
                 "advanced_tips": {advanced}, "converged_tips": {converged},
-                "overrides": [], "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null}}"#
+                "started_at": "2026-06-01T00:00:00Z", "schema": 7, "release": "0.0.0", "take_in": null}}"#
             );
             std::fs::write(dir.join(OP_STATE_FILE), json).unwrap();
             let err = read_owner(dir).expect_err("a tag name is not a commit id");
