@@ -2242,9 +2242,8 @@ impl ChoiceId {
                 id: None,
                 phrase: "take one side for every `rwv.toml` entry both sides changed \
                          differently, and write the merge of both sides, marked resolved",
-                keeps_work: "the checkout's edits are kept in a backup first; a working \
-                             `rwv.toml` that reads as another manifest is refused, not \
-                             replaced",
+                keeps_work: "it writes only over `rwv.toml` as the stop left it; one edited \
+                             since, or reading as another manifest, is refused, not replaced",
             },
             Self::ResumeOperation => &ChoiceRow {
                 id: None,

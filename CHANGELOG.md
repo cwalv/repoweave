@@ -194,8 +194,7 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   not create. A checkout a prune or a delete removes goes with its ignored
   files.
 - At a stop while a dependent branch is carried along, the conflict legend
-  names the carried branch as yours, and edits a `--keep` writes over are kept
-  in a backup filed under that branch. A carry whose replay drops a commit
+  names the carried branch as yours. A carry whose replay drops a commit
   keeps the branch's `rebased` backup past the operation; the line naming any
   other `rebased` backup says it is kept while the operation runs.
 

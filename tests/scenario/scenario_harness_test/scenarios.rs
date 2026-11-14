@@ -23539,7 +23539,7 @@ pub fn a_carry_stopped_on_rwv_toml_keeps_the_dependents_side() -> Scenario {
 
 /// [`a_carry_stopped_on_rwv_toml_keeps_the_dependents_side`] taking the
 /// incoming side: the stop's legend names the carried branch as yours, the
-/// edits kept at the continue are filed under it, and the replay that drops
+/// continue keeps no backup of the `rwv.toml` it writes over, and the replay that drops
 /// `w2`'s one commit leaves its old tip in the rebased backup the line names.
 pub fn a_carry_that_drops_a_commit_keeps_its_rebased_backup() -> Scenario {
     let table = |at: &Place, mark: &str, file: &str| {
@@ -23577,7 +23577,7 @@ pub fn a_carry_that_drops_a_commit_keeps_its_rebased_backup() -> Scenario {
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj])
             .claim(Claim::OutputLacks("backup HEAD/"))
-            .claim(Claim::OutputContains("kept in backup w2/"))
+            .claim(Claim::OutputLacks("kept in backup"))
             .claim(Claim::OutputContains(
                 "the tip it left kept in the rebased backup w2/rebased-",
             )),
