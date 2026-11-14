@@ -20796,6 +20796,115 @@ pub fn vcs_continue_mid_rebase(stop: MidRebase, then: AfterHandContinue) -> Scen
     )
 }
 
+/// Where the operator types a commit in the project repo of a landing whose
+/// `app` stops it, before `rwv land --continue` stops it on `app` again.
+#[derive(Debug, Clone, Copy)]
+pub enum LandStopCommit {
+    /// The landing stopped on `app`'s conflict after its project repo composed.
+    AtMemberStop,
+    /// The landing stopped on the project repo's conflict, which the operator
+    /// resolved and concluded, and then committed on top.
+    AfterProjectResolution,
+    /// The same resolution, nothing committed on top: the project tip is the
+    /// operation's own.
+    ResolutionOnly,
+}
+
+/// A landing under `history` stops on `app`, the operator types a commit in
+/// the project repo as `typed` says, `rwv land --continue` stops on `app`
+/// again, and `rwv abort` refuses that commit as a foreign tip; the printed
+/// abandon keeps it as a backup. Where only the resolution was made, abort restores the
+/// project repo's tip as the operation's own, with no refusal.
+pub fn a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+    history: &'static str,
+    typed: LandStopCommit,
+) -> Scenario {
+    let mut steps = vec![
+        Step::rwv(&a(), &["branch", "set-history", history]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Proj, "shared"),
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("w"), Repo::App, &["commit", "-qam", "w-app-1"]),
+    ];
+    if !matches!(typed, LandStopCommit::AtMemberStop) {
+        steps.extend([
+            Step::hand_edit(&ww("w"), Repo::Proj, "shared.txt", "shared", "beta"),
+            Step::git(&ww("w"), Repo::Proj, &["commit", "-qam", "w-proj"]),
+            Step::hand_edit(&a(), Repo::Proj, "shared.txt", "shared", "alpha"),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "main-proj"]),
+        ]);
+    }
+    steps.extend([
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "main-app"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App]),
+    ]);
+    if !matches!(typed, LandStopCommit::AtMemberStop) {
+        steps.extend([
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["checkout", "--theirs", "shared.txt"],
+            ),
+            Step::git(&ww("w"), Repo::Proj, &["add", "shared.txt"]),
+        ]);
+        let concluded = if history == "merge" {
+            Step::git(&ww("w"), Repo::Proj, &["commit", "-q", "--no-edit"])
+        } else {
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["-c", "core.editor=true", "rebase", "--continue"],
+            )
+        };
+        steps.push(concluded.may_strand(&[Repo::Proj]).may_rewind(&[Repo::App]));
+    }
+    if !matches!(typed, LandStopCommit::ResolutionOnly) {
+        steps.push(Step::commit(&ww("w"), Repo::Proj, "operator-own"));
+    }
+    steps.push(
+        Step::rwv(&ww("w"), &["land", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App]),
+    );
+    if let LandStopCommit::ResolutionOnly = typed {
+        steps.push(
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputLacks("foreign")),
+        );
+        return scenario("a land stop resolved by hand and continued, aborted", steps);
+    }
+    steps.extend([
+        abort_refused_whole(
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputContains("projects/")),
+            true,
+            &[ww("w")],
+        ),
+        Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::App, Repo::Proj])
+            .may_rewind(&[Repo::App])
+            .may_restore(&[Repo::App, Repo::Proj])
+            .claim(Claim::OutputContains("abandoned foreign tip")),
+        Step::git(&ww("w"), Repo::Proj, &["log", "--all", "--format=kept %s"])
+            .claim(Claim::OutputContains("kept operator-own")),
+    ]);
+    scenario(
+        "a commit typed at a land stop is not the operation's own",
+        steps,
+    )
+}
+
 /// A landing stopped in `app`'s rebase, finished by the VCS's own continue,
 /// and then the operator commits on top: abort cannot read that commit as a
 /// replay of the operation's, so it refuses rather than resetting it onto no

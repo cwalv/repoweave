@@ -1170,6 +1170,30 @@ every_scenario!(
     abort_restores_a_target_fast_forward_killed_after_the_move,
     a_continued_landing_racing_a_commit_on_a_repo_it_moved,
     vcs_continue_mid_rebase_then_an_own_commit,
+    a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+        "linear",
+        scenarios::LandStopCommit::AtMemberStop
+    ),
+    a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+        "linear",
+        scenarios::LandStopCommit::AfterProjectResolution
+    ),
+    a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+        "linear",
+        scenarios::LandStopCommit::ResolutionOnly
+    ),
+    a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+        "merge",
+        scenarios::LandStopCommit::AtMemberStop
+    ),
+    a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+        "merge",
+        scenarios::LandStopCommit::AfterProjectResolution
+    ),
+    a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+        "merge",
+        scenarios::LandStopCommit::ResolutionOnly
+    ),
     abort_abandons_colliding_edits_keeping_them(scenarios::LandedStop::Landed),
     abort_abandons_colliding_edits_keeping_them(scenarios::LandedStop::Retire),
     cherry_pick_abort_keeps_edits_made_after_the_stop,
@@ -7465,5 +7489,71 @@ fn replayed_tip_keep_yours() {
         scenarios::TipVerb::Sync,
         scenarios::TipSettle::KeepYours,
     ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_stop_linear_at_a_member_stop_aborts_as_the_operation_s_own_or_foreign() {
+    runner::run(
+        scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+            "linear",
+            scenarios::LandStopCommit::AtMemberStop,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_stop_linear_after_resolving_the_project_stop_aborts_as_the_operation_s_own_or_foreign() {
+    runner::run(
+        scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+            "linear",
+            scenarios::LandStopCommit::AfterProjectResolution,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_stop_linear_resolution_only_aborts_as_the_operation_s_own_or_foreign() {
+    runner::run(
+        scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+            "linear",
+            scenarios::LandStopCommit::ResolutionOnly,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_stop_merge_at_a_member_stop_aborts_as_the_operation_s_own_or_foreign() {
+    runner::run(
+        scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+            "merge",
+            scenarios::LandStopCommit::AtMemberStop,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_stop_merge_after_resolving_the_project_stop_aborts_as_the_operation_s_own_or_foreign() {
+    runner::run(
+        scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+            "merge",
+            scenarios::LandStopCommit::AfterProjectResolution,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_land_stop_merge_resolution_only_aborts_as_the_operation_s_own_or_foreign() {
+    runner::run(
+        scenarios::a_commit_typed_at_a_land_stop_is_not_the_operations_own(
+            "merge",
+            scenarios::LandStopCommit::ResolutionOnly,
+        ),
+    )
     .assert_fully_decided_green();
 }

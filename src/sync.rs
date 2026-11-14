@@ -5742,13 +5742,7 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         );
     }
 
-    // === advanced_tips write 2: capture actual post-Phase-1' project repo tip ===
-    //
-    // Phase 1' may rebase CWD's project commits onto source_project_tip, landing
-    // at a fresh SHA T1 that was not knowable at replay entry.  Overwrite the
-    // project repo's advanced_tips entry with the actual post-rebase HEAD.
-    // This also covers the fast-forward case (tip == source tip, idempotent
-    // overwrite).
+    // === advanced_tips write 2: the project repo tip this replay made ===
     {
         let project_tip = ctx
             .project_vcs
@@ -5760,18 +5754,25 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
                 "internal: owner record missing after Phase 1'"
             )
         })?;
-        owner
-            .tips
-            .advanced_mut()
-            .ok_or_else(|| {
-                crate::untokened!(
-                    InternalInvariant,
-                    "internal: advanced_tips write after convergence post Phase 1'"
-                )
-            })?
-            .insert(RepoKey::Project, project_tip.id().clone());
-        op_state::write_owner(&ctx.owner_workspace_dir, &owner)
-            .context("failed to write advanced_tips after Phase 1'")?;
+        let rebases = owner
+            .take_in
+            .as_ref()
+            .map(|take_in| take_in.rebases.as_slice())
+            .unwrap_or_default();
+        if project_tip_is_this_ops(ctx, rebases, project_tip.id()) {
+            owner
+                .tips
+                .advanced_mut()
+                .ok_or_else(|| {
+                    crate::untokened!(
+                        InternalInvariant,
+                        "internal: advanced_tips write after convergence post Phase 1'"
+                    )
+                })?
+                .insert(RepoKey::Project, project_tip.id().clone());
+            op_state::write_owner(&ctx.owner_workspace_dir, &owner)
+                .context("failed to write advanced_tips after Phase 1'")?;
+        }
     }
 
     // === Member set: decided against the manifest Phase 1' produced ===
@@ -11742,6 +11743,30 @@ fn execute_ref_step(
             tally.any_failure = true;
         }
     }
+}
+
+/// Whether `head`, the project repo's tip once its composition ran, is a
+/// commit this op made or was handed: its savepoint, the source tip, the
+/// replay of the commits the op rebased (as it ran or as the operator
+/// finished it), or the merge of the source tip into the savepoint.
+fn project_tip_is_this_ops(
+    ctx: &OpContext<'_>,
+    rebases: &[op_state::Rebasing],
+    head: &CommitId,
+) -> bool {
+    let vcs = ctx.project_vcs.as_ref();
+    let dir = &ctx.cwd_project_dir;
+    let source = ctx.snapshot.source_project_tip.id();
+    let saved = vcs
+        .resolve_savepoint(dir, &ctx.savepoint_key())
+        .map(|saved| saved.id().clone());
+    head == source
+        || saved.as_ref() == Some(head)
+        || replay_of(vcs, dir, rebases, &RepoKey::Project, head).is_some()
+        || saved.is_some_and(|saved| {
+            vcs.parents(dir, head)
+                .is_ok_and(|parents| parents == [saved, source.clone()])
+        })
 }
 
 /// `head` where it is the tip of a rebase the op journaled in `repo`, as the
