@@ -1945,6 +1945,7 @@ impl State {
             listed: Vec::new(),
             facts: Vec::new(),
             workspace: None,
+            dependents_workspace: None,
             verb: None,
             only: None,
             only_forms: None,
@@ -3696,6 +3697,7 @@ pub struct Judging {
     listed: Vec<String>,
     facts: Vec<Fact>,
     workspace: Option<PathBuf>,
+    dependents_workspace: Option<PathBuf>,
     verb: Option<&'static str>,
     only: Option<Vec<ChoiceId>>,
     only_forms: Option<Vec<Form>>,
@@ -3822,6 +3824,33 @@ impl Judging {
         self.bind(placeholder, dir.display())
     }
 
+    /// A branch whose record lands into the judged one: its bindings, and the
+    /// workspace holding it where its choices run. One checked out nowhere has
+    /// no workspace for them to run in, so they are left out.
+    pub fn dependent(
+        mut self,
+        vcs: &dyn Vcs,
+        project_dir: &Path,
+        dependent: &str,
+        target: Option<&str>,
+    ) -> Self {
+        self = self.bind("<dep>", dependent).bind("<W>", dependent);
+        match target {
+            Some(target) => self = self.bind("<T>", target),
+            None => self.without.push(ChoiceId::C12),
+        }
+        let workspace = vcs
+            .checkouts_of_branch(project_dir, &crate::vcs::RawRefName::new(dependent))
+            .ok()
+            .and_then(|held| held.into_iter().next())
+            .and_then(|checkout| Some(checkout.parent()?.parent()?.to_path_buf()));
+        match workspace {
+            Some(workspace) => self.dependents_workspace = Some(workspace),
+            None => self.without.push(ChoiceId::C35),
+        }
+        self
+    }
+
     /// The repo was judged in `workspace`, not the one the verb runs in.
     pub fn elsewhere(mut self, workspace: &Path) -> Self {
         self.workspace = Some(workspace.to_path_buf());
@@ -3885,11 +3914,18 @@ impl Judging {
                     .lines(vcs, self.verb)
                     .iter()
                     .map(|line| for_spelled_project(fill(line, &self.bindings)))
-                    .map(|line| match (&self.workspace, form.row().at) {
-                        (Some(workspace), Where::CheckoutsWorkspace) => {
-                            in_workspace(&line, workspace)
+                    .map(|line| {
+                        match (&self.workspace, &self.dependents_workspace, form.row().at) {
+                            (
+                                Some(workspace),
+                                _,
+                                Where::CheckoutsWorkspace | Where::WithBranch | Where::OnTarget,
+                            ) => in_workspace(&line, workspace),
+                            (_, Some(workspace), Where::DependentsWorkspace) => {
+                                in_workspace(&line, workspace)
+                            }
+                            _ => line,
                         }
-                        _ => line,
                     })
                     .collect(),
             })

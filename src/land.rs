@@ -444,9 +444,7 @@ fn judge_source_members(
                     .of(&label)
                     .project_repo()
                     .subject(format!("{dependent} lands into {feature}"))
-                    .bind("<dep>", &dependent)
-                    .bind("<W>", &dependent)
-                    .bind("<T>", target)
+                    .dependent(vcs, &dir, &dependent, Some(target.as_str()))
                     .checkout(&dir)
                     .by_verb("land")
                     .judge(vcs),

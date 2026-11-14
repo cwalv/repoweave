@@ -544,12 +544,15 @@ fn reset_project(
     let branch = RawRefName::new(attached.to_string());
     let tracked = vcs.tracked_dirty_file_names(dir)?;
     let mut report = Report::default();
+    crate::merge_upstream::judge_dependents(
+        vcs.as_ref(),
+        dir,
+        attached.to_string().as_str(),
+        &mut report,
+    )?;
     crate::merge_upstream::judge_reset(
         &path,
-        dir,
-        vcs.as_ref(),
         Some(upstream),
-        &crate::merge_upstream::dependents_of(vcs.as_ref(), dir, attached.to_string().as_str())?,
         judge_edits(vcs.as_ref(), &path, dir, tracked, None),
         &mut report,
     );

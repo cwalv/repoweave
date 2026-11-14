@@ -1507,16 +1507,15 @@ fn settle_diverged(
                 Site::Checkout(_) => vcs.tracked_dirty_file_names(dir).unwrap_or_default(),
                 Site::Refs(_) => Vec::new(),
             };
+            crate::merge_upstream::judge_dependents(
+                project_vcs.as_ref(),
+                &project_dir,
+                branch.as_str(),
+                &mut report,
+            )?;
             crate::merge_upstream::judge_reset(
                 item.repo_path.as_str(),
-                dir,
-                vcs,
                 Some(tip),
-                &crate::merge_upstream::dependents_of(
-                    project_vcs.as_ref(),
-                    &project_dir,
-                    branch.as_str(),
-                )?,
                 crate::diagnosis::judge_edits(vcs, &item.repo_path, dir, tracked, None),
                 &mut report,
             );
@@ -1583,10 +1582,7 @@ fn settle_diverged(
         if reset {
             crate::merge_upstream::judge_reset(
                 item.repo_path.as_str(),
-                dir,
-                vcs,
                 Some(&e.upstream),
-                &[],
                 None,
                 &mut report,
             );

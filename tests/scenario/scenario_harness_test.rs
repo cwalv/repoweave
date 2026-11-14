@@ -867,6 +867,8 @@ every_scenario!(
     history_rebase_pin_remap,
     stack_carried,
     stack_cycle,
+    a_choice_for_a_state_in_the_targets_workspace_runs_there,
+    a_reset_refused_for_a_dependent_prints_choices_that_clear_it,
     stack_remote_dependent,
     stack_remote_dependent_landed(scenarios::RemoteDependentLanded::Wholly),
     stack_remote_dependent_landed(scenarios::RemoteDependentLanded::ButOneCommit),
@@ -6600,6 +6602,18 @@ fn git_below_2_38_is_green() {
 #[test]
 fn stack_carried_by_a_landing_is_green() {
     runner::run(scenarios::stack_carried_by_a_landing()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_reset_refused_for_a_dependent_prints_choices_that_clear_it_is_green() {
+    runner::run(scenarios::a_reset_refused_for_a_dependent_prints_choices_that_clear_it())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_choice_for_a_state_in_the_targets_workspace_runs_there_is_green() {
+    runner::run(scenarios::a_choice_for_a_state_in_the_targets_workspace_runs_there())
+        .assert_fully_decided_green();
 }
 
 #[test]

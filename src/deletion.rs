@@ -277,8 +277,12 @@ impl<'a> Rule<'a> {
                         .project_repo()
                         .subject(&dependent)
                         .listing([format!("{dependent} lands into {}", request.branch)])
-                        .bind("<W>", &dependent)
-                        .bind("<T>", &request.target)
+                        .dependent(
+                            project_vcs.as_ref(),
+                            &project_path,
+                            dependent.as_str(),
+                            Some(request.target.as_str()),
+                        )
                         .judge(project_vcs.as_ref()),
                 );
             }

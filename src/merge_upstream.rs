@@ -190,10 +190,7 @@ pub(crate) fn dependents_of(
 /// checkout holding it has no edits.
 pub(crate) fn judge_reset(
     repo: &str,
-    dir: &Path,
-    vcs: &dyn Vcs,
     upstream_tip: Option<&ResolvedRevisionId>,
-    dependents: &[String],
     edits: Option<crate::diagnosis::Judged>,
     report: &mut Report,
 ) {
@@ -203,20 +200,48 @@ pub(crate) fn judge_reset(
              to reset to"
         ));
     }
-    if !dependents.is_empty() {
+    report.extend(edits);
+}
+
+/// One `dependents` state per branch recorded as landing into `branch`, its
+/// choices addressed to the workspace holding that branch.
+pub(crate) fn judge_dependents(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    branch: &str,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    let dependents = dependents_of(vcs, project_dir, branch)?;
+    if dependents.is_empty() {
+        return Ok(());
+    }
+    let label = format!(
+        "{}/{}",
+        crate::workspace::PROJECTS_DIR,
+        project_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+    );
+    let store = crate::records::Store::open(vcs, project_dir)?;
+    let target = crate::records::BranchName::parse(vcs, branch)
+        .ok()
+        .and_then(|name| match store.view().ok()?.lookup(&name) {
+            crate::records::Lookup::Value(record) => record.target().map(|t| t.to_string()),
+            _ => None,
+        });
+    for dependent in dependents {
         report.add(
             State::TargetDependents
-                .of(repo)
-                .checkout(dir)
-                .listing(
-                    dependents
-                        .iter()
-                        .map(|d| format!("{d} lands into this branch")),
-                )
+                .of(&label)
+                .project_repo()
+                .subject(&dependent)
+                .listing([format!("{dependent} lands into this branch")])
+                .dependent(vcs, project_dir, &dependent, target.as_deref())
                 .judge(vcs),
         );
     }
-    report.extend(edits);
+    Ok(())
 }
 
 /// Move `branch`, which the checkout `on` holds or nothing holds, to

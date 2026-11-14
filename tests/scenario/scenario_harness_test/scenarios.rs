@@ -21635,6 +21635,68 @@ pub fn stack_checked_out(choice: CheckedOutChoice) -> Scenario {
     scenario("stack: a dependent checked out elsewhere", steps)
 }
 
+/// `w1`'s `sync --reset-to-target` on the project with `w2`, a dependent
+/// checked out in a workspace of its own, refuses `dependents`: every printed
+/// choice is bound, the landing is addressed to `w2`'s workspace, and run as
+/// printed from `w1` it lands `w2` and clears the refusal.
+pub fn a_reset_refused_for_a_dependent_prints_choices_that_clear_it() -> Scenario {
+    scenario(
+        "a reset refused for a dependent prints bound choices addressed to the dependent",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w1"),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &ww("w1"),
+                &["workweave", "create", "w2", "--new-branch", "w2"],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w2"), Repo::App, "w2-app"),
+            Step::rwv(&ww("w2"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w1"), &["sync", "--reset-to-target", "projects/proj"])
+                .expect(Exit::refuses(Repo::Proj, State::TargetDependents))
+                .claim(Claim::JudgedOnly(Repo::Proj, State::TargetDependents))
+                .claim(Claim::OutputLacks("<dep>"))
+                .claim(Claim::OutputLacks("<W>"))
+                .claim(Claim::OutputLacks("<T>"))
+                .claim(Claim::OutputContains("-C")),
+            Step::rwv_printed_holding(&ww("w1"), "rwv -C", " land --retire")
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w2"))),
+            Step::rwv(&ww("w1"), &["sync", "--reset-to-target", "projects/proj"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_strand(&[Repo::App, Repo::Proj]),
+        ],
+    )
+}
+
+/// A landing refused for the target's own unpinned commit, judged in the
+/// primary: the printed record-it choice names the primary, and run as
+/// printed from the feature's workspace it clears the refusal.
+pub fn a_choice_for_a_state_in_the_targets_workspace_runs_there() -> Scenario {
+    scenario(
+        "a choice for a state judged in the target's workspace is addressed to it",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::commit(&a(), Repo::App, "main-unlocked"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::refuses(Repo::App, State::PinUnpinned))
+                .claim(Claim::OutputContains("rwv -C "))
+                .claim(Claim::LocalStateUnchanged(ww("w"))),
+            Step::rwv_printed_holding(&ww("w"), "rwv -C", " lock --commit").expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App, Repo::Proj]),
+        ],
+    )
+}
+
 /// `stack-not-containing`: `w2`, in a workweave of its own, was cut from an
 /// older commit of `w1`; `w1`'s `sync` prints `w2` as lacking `w1`'s tip,
 /// with C35, C12 and C36; C36, run in `w2`'s workspace, takes `w1` in, and

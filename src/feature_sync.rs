@@ -864,7 +864,7 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
         report.add(judged);
         Act::Nothing
     } else if resets_project {
-        report.add_opt(judge_reset_site(sync, vcs, dir, &label, &dependents));
+        judge_reset_site(vcs, dir, &label, &sync.branch, &mut report)?;
         Act::Reset(source.clone())
     } else if vcs.is_ancestor(dir, &rev(&source), &rev(&head))? {
         Act::Nothing
@@ -969,33 +969,21 @@ impl ReportExt for Report {
 }
 
 fn judge_reset_site(
-    _sync: &Sync<'_>,
     vcs: &dyn Vcs,
     dir: &Path,
     label: &str,
-    dependents: &[String],
-) -> Option<Judged> {
-    if !dependents.is_empty() {
-        return Some(
-            State::TargetDependents
-                .of(label)
-                .project_repo()
-                .checkout(dir)
-                .listing(
-                    dependents
-                        .iter()
-                        .map(|d| format!("{d} lands into this branch")),
-                )
-                .judge(vcs),
-        );
-    }
-    crate::diagnosis::judge_edits(
+    branch: &str,
+    report: &mut Report,
+) -> anyhow::Result<()> {
+    crate::merge_upstream::judge_dependents(vcs, dir, branch, report)?;
+    report.add_opt(crate::diagnosis::judge_edits(
         vcs,
         label,
         dir,
         vcs.dirty_file_names(dir).unwrap_or_default(),
         None,
-    )
+    ));
+    Ok(())
 }
 
 struct PlanInputs<'a> {
