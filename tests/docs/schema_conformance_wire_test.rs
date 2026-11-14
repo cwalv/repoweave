@@ -519,7 +519,7 @@ fn update_remote_json_wire_output_conforms_on_failure() {
 
     // Point the manifest's member at a remote that is gone, so its fetch fails
     // per-repo.
-    let member_url = common::file_url(&weave.member_origin().join("gone"));
+    let member_url = common::file_url(weave.member_origin().join("gone"));
     std::fs::write(
         weave.project().join("rwv.toml"),
         format!(
