@@ -5640,8 +5640,10 @@ fn classify_lock_relations(
 }
 
 /// Refresh the drift a branch's move left in `dir` before an operation's
-/// `verb` takes it in, refusing where the drift holds it, the op left parked;
-/// a checkout stopped in an operation is that operation's to finish.
+/// `verb` takes it in, refusing where the drift holds it, the op left parked.
+/// A checkout stopped in an operation cannot be refreshed: where its branch
+/// moved under it, concluding that operation would commit the move's
+/// reverse, so it is refused with abandoning the operation as the way out.
 pub(crate) fn hold_on_drift(
     vcs: &dyn Vcs,
     repo: impl std::fmt::Display,
@@ -5649,16 +5651,65 @@ pub(crate) fn hold_on_drift(
     role: fn(crate::diagnosis::Judging) -> crate::diagnosis::Judging,
     verb: op_state::OpVerb,
 ) -> anyhow::Result<()> {
-    if vcs.mid_op(dir).is_some() || !vcs.is_repo(dir) {
+    if !vcs.is_repo(dir) {
         return Ok(());
+    }
+    let mut report = Report::default();
+    if let Some(stopped) = vcs.mid_op(dir) {
+        let (crate::vcs::LeftBehind::At(from) | crate::vcs::LeftBehind::Rewritten(from)) =
+            vcs.left_behind_at(dir)?
+        else {
+            return Ok(());
+        };
+        let held = State::EditsDriftLeftInPlace
+            .of(repo)
+            .subject(format!(
+                "its branch moved from {} to {} outside this checkout while the {stopped} \
+                 here was in progress, and concluding the {stopped} would record that move's \
+                 reverse",
+                from.short(),
+                vcs.head_revision(dir)?.id().short()
+            ))
+            .bind_list("<abort>", ["rwv", "abort"])
+            .only_forms(&[crate::diagnosis::Form::AbortOperation]);
+        report.add(role(held).checkout(dir).judge(vcs));
+        return report.into_result();
     }
     let Some(held) = crate::diagnosis::drift_held(vcs, repo, dir) else {
         return Ok(());
     };
-    let mut report = Report::default();
     report.add(role(held).checkout(dir).judge(vcs));
     report.note(parked_note(verb));
     report.into_result()
+}
+
+/// [`hold_on_drift`] for each member of `workspace` the manifest named
+/// when the op `key` began.
+pub(crate) fn hold_on_member_drift(
+    workspace: &Path,
+    project: &ProjectName,
+    key: &SavepointKey,
+    verb: op_state::OpVerb,
+) -> anyhow::Result<()> {
+    let vcs = project_vcs();
+    let dir = crate::workspace::project_dir(workspace, project);
+    let savepoint = vcs.resolve_savepoint(&dir, key).ok_or_else(|| {
+        crate::untokened!(
+            InternalInvariant,
+            "internal: no savepoint under op {key} in {}",
+            dir.display(),
+        )
+    })?;
+    for (path, entry) in manifest_at_revision(vcs.as_ref(), &dir, &savepoint)?.iter_entries() {
+        hold_on_drift(
+            vcs_for(entry.vcs_type).as_ref(),
+            path,
+            &workspace.join(path.as_path()),
+            crate::diagnosis::Judging::member,
+            verb,
+        )?;
+    }
+    Ok(())
 }
 
 /// What is true of a refused resume and of no fresh refusal: the op is still
@@ -5749,22 +5800,12 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     // converged repos no-op via `sync_one_repo`'s head-equals-target check.
     let snapshot = &ctx.snapshot;
 
-    hold_on_drift(
-        ctx.project_vcs.as_ref(),
-        crate::workspace::project_rel_path(&ctx.cwd_project_name),
-        &ctx.cwd_project_dir,
-        crate::diagnosis::Judging::project_repo,
+    hold_on_member_drift(
+        &ctx.cwd_workspace_dir,
+        &ctx.cwd_project_name,
+        &ctx.savepoint_key(),
         ctx.verb,
     )?;
-    for (path, entry) in pre_op_manifest(ctx)?.iter_entries() {
-        hold_on_drift(
-            vcs_for(entry.vcs_type).as_ref(),
-            path,
-            &ctx.cwd_workspace_dir.join(path.as_path()),
-            crate::diagnosis::Judging::member,
-            ctx.verb,
-        )?;
-    }
 
     // CWD project tip — read before any side effects so Phase 1' has the
     // pre-op starting state for its `cwd_tip == source_tip` short-circuit.

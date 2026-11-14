@@ -1473,15 +1473,15 @@ fn recheck(here: &Here<'_>, ours: &Manifest, record: &mut PickRecord) -> anyhow:
             continue;
         }
     }
+    crate::sync::hold_on_drift(
+        here.vcs.as_ref(),
+        here.label(),
+        &here.dir,
+        Judging::project_repo,
+        OpVerb::CherryPick,
+    )?;
     if !record.project_started {
         let vcs = here.vcs.as_ref();
-        crate::sync::hold_on_drift(
-            vcs,
-            here.label(),
-            &here.dir,
-            Judging::project_repo,
-            OpVerb::CherryPick,
-        )?;
         if let Some(busy) =
             crate::diagnosis::judge_edits(vcs, here.label(), &here.dir, Vec::new(), None)
         {

@@ -208,6 +208,14 @@ pub fn run_pull(
         Checkout::Workweave { project, .. } => project.clone(),
     };
     crate::branch::require_recorded(ctx)?;
+    if let Some((op, _, _)) = &resumed {
+        crate::sync::hold_on_member_drift(
+            ctx.active_path(),
+            &project_name,
+            &crate::op_state::SavepointKey::Op(op.id.clone()),
+            OpVerb::Pull,
+        )?;
+    }
     if resumed.is_none() {
         crate::diagnosis::settle_project_drift(
             &project_name,

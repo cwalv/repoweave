@@ -1565,13 +1565,6 @@ fn act(
 
     let resets_project = resets.iter().any(|r| matches!(r, RepoOperand::Project(_)));
     let vcs = sync.vcs.as_ref();
-    crate::sync::hold_on_drift(
-        vcs,
-        sync.label(),
-        &sync.dir,
-        Judging::project_repo,
-        OpVerb::Sync,
-    )?;
     let head = vcs.head_revision(&sync.dir)?.id().clone();
     let project_merges = sync.merging()
         || take_in.merged.contains(&RepoKey::Project)

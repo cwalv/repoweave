@@ -24319,6 +24319,141 @@ pub fn continue_after_another_seat_moves(which: StoppedMoved) -> Scenario {
     )
 }
 
+/// Which operation [`continue_refuses_a_stopped_repo_moved`] stops in a
+/// merge or copy, and how it is resumed.
+#[derive(Debug, Clone, Copy)]
+pub enum StoppedMidMerge {
+    /// A `merge` sync's member merge, resolved, resumed bare.
+    SyncMember,
+    /// A `merge` sync's project merge on `rwv.toml`, resumed with
+    /// `--keep yours`.
+    SyncProjectKeepYours,
+    /// A `merge` landing's member merge, resolved.
+    LandMember,
+    /// `pull --merge-upstream`'s member merge, resolved.
+    PullMember,
+    /// A port's copy into a member, resolved.
+    CherryPickMember,
+}
+
+/// An operation stopped in a merge or copy; during the stop another seat
+/// commits on the stopped repo's branch. Concluding the merge or copy would
+/// record that commit's reverse, so the continue refuses, naming abandoning
+/// the operation, and changes nothing; that choice, run as printed, keeps
+/// the commit in the branch's slot.
+pub fn continue_refuses_a_stopped_repo_moved(which: StoppedMidMerge) -> Scenario {
+    use StoppedMidMerge as S;
+    let (mut steps, from, at, repo, branch, resume): (
+        Vec<Step>,
+        Place,
+        Place,
+        Repo,
+        &'static str,
+        &[&str],
+    ) = match which {
+        S::SyncMember => (
+            sync_stopped_on_app_resolved("merge"),
+            a(),
+            ww("w"),
+            Repo::App,
+            "proj--w",
+            &["sync", "--continue"],
+        ),
+        S::SyncProjectKeepYours => (
+            sync_stopped_on_the_manifest("merge"),
+            a(),
+            ww("w"),
+            Repo::Proj,
+            "proj--w",
+            &["sync", "--continue", "--keep", "yours"],
+        ),
+        S::LandMember => {
+            let mut stopped = landing_merge_stopped();
+            stopped.extend([
+                Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+                Step::git(&ww("w"), Repo::App, &["add", "README"]),
+            ]);
+            (
+                stopped,
+                a(),
+                ww("w"),
+                Repo::App,
+                "proj--w",
+                &["land", "--continue"],
+            )
+        }
+        S::PullMember => {
+            let mut stopped = both_sides_move_app_conflictingly();
+            stopped.splice(
+                1..1,
+                [
+                    Step::rwv(&b(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+                    Step::rwv(&b(), &["workweave", "create", "--project", "proj", "o"])
+                        .expect(Exit::Succeeds),
+                ],
+            );
+            stopped.extend([
+                Step::git(&b(), Repo::App, &["checkout", "--ours", "README"]),
+                Step::git(&b(), Repo::App, &["add", "README"]),
+            ]);
+            (
+                stopped,
+                Place::ww(Machine::B, "o"),
+                b(),
+                Repo::App,
+                "main",
+                &["pull", "--continue"],
+            )
+        }
+        S::CherryPickMember => {
+            let mut stopped = app_conflicting_port();
+            stopped.extend([
+                Step::git(&ww("p"), Repo::App, &["checkout", "--theirs", "README"]),
+                Step::git(&ww("p"), Repo::App, &["add", "README"]),
+            ]);
+            (
+                stopped,
+                a(),
+                ww("p"),
+                Repo::App,
+                "proj--p",
+                &["cherry-pick", "--continue"],
+            )
+        }
+    };
+    let slot = format!("refs/rwv/backup/{branch}/aborted");
+    steps.extend([
+        another_seat_commits(&from, repo, branch),
+        Step::rwv(&at, resume)
+            .expect(Exit::refuses(repo, State::EditsDriftLeftInPlace))
+            .claim(Claim::OutputContains("outside this checkout while the"))
+            .claim(Claim::LocalStateUnchanged(at.clone())),
+        Step::rwv_printed_exactly(&at, "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+        Step::git(
+            &at,
+            repo,
+            &["log", "--format=%s", &slot, "--", "other-seat.txt"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLine("hand commit")),
+    ]);
+    scenario(
+        match which {
+            S::SyncMember => "sync --continue refuses a member moved mid-merge",
+            S::SyncProjectKeepYours => {
+                "sync --continue --keep yours refuses the project moved mid-merge"
+            }
+            S::LandMember => "land --continue refuses a member moved mid-merge",
+            S::PullMember => "pull --continue refuses a member moved mid-merge",
+            S::CherryPickMember => "cherry-pick --continue refuses a member moved mid-copy",
+        },
+        steps,
+    )
+}
+
 /// A `linear` sync stopped mid-rebase of `lib`, a commit of another seat's
 /// on `lib`'s branch, aborted.
 pub fn sync_abort_keeps_another_seats_commit() -> Scenario {
@@ -24338,12 +24473,22 @@ pub fn sync_abort_keeps_another_seats_commit() -> Scenario {
 /// A `linear` sync of `w` stopped on its project repo's `rwv.toml`, where
 /// both sides set `lib`'s `history`.
 fn sync_linear_stopped_on_the_manifest() -> Vec<Step> {
+    sync_stopped_on_the_manifest("linear")
+}
+
+/// A sync of `w` under `history` stopped on its project repo's `rwv.toml`,
+/// where `main` sets `lib`'s `history` to `history` and `w` to the other.
+fn sync_stopped_on_the_manifest(history: &'static str) -> Vec<Step> {
+    let other = match history {
+        "linear" => "merge",
+        _ => "linear",
+    };
     vec![
         create("w"),
-        Step::rwv(&a(), &["branch", "set-history", "linear", "--repo", LIB]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w"), &["branch", "set-history", "merge", "--repo", LIB])
+        Step::rwv(&a(), &["branch", "set-history", history, "--repo", LIB]).expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["branch", "set-history", other, "--repo", LIB])
             .expect(Exit::Succeeds),
-        Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+        Step::rwv(&ww("w"), &["sync", "--history", history])
             .expect(Exit::refuses_kind(RefusalKind::OpParked))
             .claim(Claim::OutputContains(
                 "rwv.toml entry local/remotes/lib is in conflict:",

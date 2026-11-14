@@ -648,6 +648,13 @@ pub(crate) fn continue_at_stop(
         return Ok(());
     };
     let workspace = ctx.active_path();
+    crate::sync::hold_on_drift(
+        vcs,
+        crate::workspace::project_rel_path(project),
+        &dir,
+        crate::diagnosis::Judging::project_repo,
+        record.verb,
+    )?;
     let resume = crate::op_state::resume_command_at(record.verb, workspace);
     let refused = |head: &str, lines: Vec<String>| {
         let mut text = format!(

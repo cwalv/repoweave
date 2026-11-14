@@ -1335,6 +1335,11 @@ every_scenario!(
     continue_after_another_seat_moves(scenarios::StoppedMoved::LandProject),
     continue_after_another_seat_moves(scenarios::StoppedMoved::LandMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::PullProject),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncMember),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncProjectKeepYours),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::LandMember),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::PullMember),
+    continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::CherryPickMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::PullMember),
     continue_after_another_seat_moves(scenarios::StoppedMoved::CherryPickProject),
     continue_after_another_seat_moves(scenarios::StoppedMoved::CherryPickMember),
@@ -4099,6 +4104,46 @@ fn land_continue_after_another_seat_moved_the_project() {
 fn land_continue_after_another_seat_moved_a_member() {
     runner::run(scenarios::continue_after_another_seat_moves(
         scenarios::StoppedMoved::LandMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_refuses_a_member_moved_mid_merge() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::SyncMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_keep_yours_refuses_the_project_moved_mid_merge() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::SyncProjectKeepYours,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn land_continue_refuses_a_member_moved_mid_merge() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::LandMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn pull_continue_refuses_a_member_moved_mid_merge() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::PullMember,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_continue_refuses_a_member_moved_mid_copy() {
+    runner::run(scenarios::continue_refuses_a_stopped_repo_moved(
+        scenarios::StoppedMidMerge::CherryPickMember,
     ))
     .assert_fully_decided_green();
 }

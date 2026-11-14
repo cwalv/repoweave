@@ -704,7 +704,9 @@ impl State {
                         stood, its branch moved to a commit that does not contain where it \
                         stood, or part of the move taken in a way its history does not show), \
                         nothing it holds is judged an edit and the one choice sets aside every \
-                        difference",
+                        difference. Where the checkout is stopped in a merge or copy, nothing \
+                        is refreshed, since concluding it would record the move's reverse, and \
+                        the one choice abandons the operation",
                 refused_by: "`rwv land`, for a checkout whose edits it judges, in either \
                              workspace, and every other verb that judges a checkout's edits",
                 offers: &[
@@ -713,6 +715,7 @@ impl State {
                     Form::DriftRefreshAgain,
                     Form::StashUnreadDrift,
                     Form::UnmarkThenStashUnreadDrift,
+                    Form::AbortOperation,
                 ],
                 verb_offers: &[],
             },
