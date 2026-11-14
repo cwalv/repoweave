@@ -19119,8 +19119,7 @@ pub enum ManifestSettle {
     /// one it prints, run as printed, settles the stop.
     SetterRefused,
     /// A `git merge` the operator ran left `rwv.toml` between markers: a
-    /// cherry-pick reads this branch's manifest from its commit and refuses
-    /// the merge in progress, not the markers.
+    /// cherry-pick refuses the merge in progress before it reads `rwv.toml`.
     CherryPickAtARawGitMerge,
     /// A comment and hand layout in the workweave's `rwv.toml` come through
     /// the continue's write of the merge.

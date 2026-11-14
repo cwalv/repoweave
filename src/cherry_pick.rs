@@ -658,13 +658,7 @@ fn plan(here: &Here<'_>, args: &Args) -> anyhow::Result<Plan> {
     let p1s = pins_of(lock_at(vcs, dir, &commit).as_ref());
 
     let head = vcs.head_revision(dir)?.id().clone();
-    let ours = match vcs.mid_operation(dir) {
-        Some(_) => vcs
-            .read_file_at_revision(dir, &rev(&head), Path::new(Manifest::FILE_NAME))
-            .map_err(anyhow::Error::from)
-            .and_then(|text| Manifest::from_toml_str(&text))?,
-        None => Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
-    };
+    let ours = Manifest::from_path(&dir.join(Manifest::FILE_NAME))?;
     let our_lock = lock_at(vcs, dir, &head);
     let our_pins = pins_of(our_lock.as_ref());
 
