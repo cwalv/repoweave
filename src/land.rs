@@ -1003,7 +1003,8 @@ enum Route<'a> {
         candidates: &'a [String],
         consent: &'a [String],
     },
-    Resumed,
+    /// `resume`: the stopped landing's continue, spelled for its workspace.
+    Resumed { resume: &'a str },
 }
 
 /// Each field of `ours` that differs from `theirs`.
@@ -1268,6 +1269,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
     let vcs = vcs.as_ref();
     let dir = project_dir(source_root, resumed.project);
     let label = project_rel_path(resumed.project);
+    let resume = crate::op_state::resume_command_at(resumed.verb, source_root);
     if !vcs.unmerged_paths(&dir)?.is_empty() {
         return Ok(Rejudged::Unresolved);
     }
@@ -1330,7 +1332,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
     for change in changes.iter().filter(|c| !consented(c)) {
         report.add(judge_change(
             resumed.target,
-            Route::Resumed,
+            Route::Resumed { resume: &resume },
             change,
             &label,
             &dir,
@@ -1445,16 +1447,19 @@ fn judge_change(
         .bind("<m>", &change.repo)
         .checkout(dir)
         .by_verb("land");
-    let Route::Fresh {
-        feature,
-        candidates,
-        consent,
-    } = route
-    else {
-        return judging
-            .listing(lines)
-            .only_forms(&[Form::C31Continue, Form::LostRace])
-            .judge(vcs);
+    let (feature, candidates, consent) = match route {
+        Route::Fresh {
+            feature,
+            candidates,
+            consent,
+        } => (feature, candidates, consent),
+        Route::Resumed { resume } => {
+            return judging
+                .bind_list("<resume>", resume.split_whitespace())
+                .listing(lines)
+                .only_forms(&[Form::C31Continue, Form::LostRace])
+                .judge(vcs);
+        }
     };
     let mut forms: Vec<Form> = Vec::new();
     let mut judging = judging.bind("<W>", feature).bind_each("<changed>", consent);

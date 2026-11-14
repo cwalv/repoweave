@@ -3216,7 +3216,7 @@ impl Form {
             },
             Self::C31Continue => &FormRow {
                 choice: C::C31,
-                steps: &[Rwv("rwv land --continue --allow-member-change <m>")],
+                steps: &[Step::Recorded("<resume> --allow-member-change <m>")],
                 at: W::WithFeature,
                 shipped: true,
             },
