@@ -795,7 +795,7 @@ fn mid_op_materialize_refuses_and_clears_with_the_record() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
     assert_in_flight_op_refusal(&stderr, "land");
 
-    std::fs::remove_file(ww.root.join(".rwv-op")).unwrap();
+    rwv().args(["abort"]).current_dir(&ww.root).assert().success();
     rwv()
         .args(["materialize"])
         .current_dir(&ww.root)
@@ -819,7 +819,7 @@ fn mid_op_activate_refuses_and_clears_with_the_record() {
     let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
     assert_in_flight_op_refusal(&stderr, "sync");
 
-    std::fs::remove_file(primary.root.join(".rwv-op")).unwrap();
+    rwv().args(["abort"]).current_dir(&primary.root).assert().success();
     rwv()
         .args(["activate", "web-app"])
         .current_dir(&primary.root)

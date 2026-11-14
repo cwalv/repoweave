@@ -193,7 +193,8 @@ fn an_op_landing_after_the_check_does_not_stop_the_verb() {
         "and it refuses by naming that op:\n{refused}"
     );
 
-    std::fs::remove_file(ws.join(".rwv-op")).unwrap();
+    let (aborted_ok, aborted) = rwv(&["abort"], &ws);
+    assert!(aborted_ok, "{aborted}");
     let (ok, cleared) = rwv(&["materialize"], &ws);
     assert!(ok, "{cleared}");
 }
