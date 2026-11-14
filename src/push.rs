@@ -344,6 +344,24 @@ pub fn run_push(ctx: &WorkspaceContext, request: PushRequest<'_>) -> anyhow::Res
     .map_err(|(reported, e)| json_refusal(&reported, e))?;
 
     if request.mode == PushMode::DryRun {
+        if plan.project.as_ref().is_some_and(|p| p.push_branch) && push_project {
+            let pending = plan
+                .items
+                .iter()
+                .map(|item| (item.repo_path.clone(), item.publish_ref.commit().clone()))
+                .collect();
+            let mut gate = Report::default();
+            gate_reachability(
+                &pushed,
+                &members,
+                &fetched,
+                &plan.in_target,
+                &pending,
+                &mut gate,
+            );
+            gate.into_result()
+                .map_err(|e| json_refusal(&nothing_reported, e))?;
+        }
         plan.print_dry_run(&pushed, push_project);
         return Ok(());
     }
@@ -2036,7 +2054,14 @@ fn publish(
 
     if project_plan.push_branch {
         let mut gate = Report::default();
-        gate_reachability(pushed, members, fetched, &plan.in_target, &mut gate);
+        gate_reachability(
+            pushed,
+            members,
+            fetched,
+            &plan.in_target,
+            &BTreeMap::new(),
+            &mut gate,
+        );
         if let Err(refusal) = gate.into_result() {
             if output.is_json() {
                 print_envelope(json_outcomes, &refusal, reported, ctx);
@@ -2202,6 +2227,7 @@ fn gate_reachability(
     members: &[Member],
     fetched: &Fetched,
     in_target: &BTreeSet<RepoPath>,
+    pending: &BTreeMap<RepoPath, ResolvedRevisionId>,
     gate: &mut Report,
 ) {
     for member in members {
@@ -2264,6 +2290,10 @@ fn gate_reachability(
             }
             Role::Dependency | Role::Reference => reached_by(url_remote),
         };
+        let reached = reached
+            || pending
+                .get(path)
+                .is_some_and(|tip| vcs.is_ancestor(&member.dir, &pin, tip).unwrap_or(false));
         if reached {
             continue;
         }

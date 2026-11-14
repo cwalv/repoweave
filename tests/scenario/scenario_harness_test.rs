@@ -867,6 +867,7 @@ every_scenario!(
     history_rebase_pin_remap,
     stack_carried,
     stack_cycle,
+    a_dry_run_after_a_landing_refuses_what_the_real_push_refuses,
     a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names,
     a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work,
     update_remote_after_a_new_declared_branch_advances_nothing,
@@ -6648,6 +6649,12 @@ fn a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names_is_green()
 #[test]
 fn a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work_is_green() {
     runner::run(scenarios::a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_dry_run_after_a_landing_refuses_what_the_real_push_refuses_is_green() {
+    runner::run(scenarios::a_dry_run_after_a_landing_refuses_what_the_real_push_refuses())
         .assert_fully_decided_green();
 }
 

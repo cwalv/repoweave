@@ -21828,6 +21828,37 @@ pub fn a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names() -> S
     )
 }
 
+/// A feature landed without `--retire`, then pushed from its workspace: the
+/// dry run refuses what the real push refuses, a pin no remote-tracking
+/// branch reaches.
+pub fn a_dry_run_after_a_landing_refuses_what_the_real_push_refuses() -> Scenario {
+    scenario(
+        "a dry run after a landing refuses what the real push refuses",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "w",
+                    "--new-branch",
+                    "feat",
+                ],
+            )
+            .expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["push", "--dry-run"])
+                .expect(Exit::refuses(Repo::App, State::PublishWithheld)),
+            Step::rwv(&ww("w"), &["push"]).expect(Exit::refuses(Repo::App, State::PublishWithheld)),
+        ],
+    )
+}
+
 /// `stack-not-containing`: `w2`, in a workweave of its own, was cut from an
 /// older commit of `w1`; `w1`'s `sync` prints `w2` as lacking `w1`'s tip,
 /// with C35, C12 and C36; C36, run in `w2`'s workspace, takes `w1` in, and
