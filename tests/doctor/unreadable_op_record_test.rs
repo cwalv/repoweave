@@ -371,12 +371,15 @@ fn a_record_that_names_no_op_is_ended_by_the_verb_its_error_names() {
         .map(|line| line.split_whitespace().next().unwrap().to_owned())
         .collect();
     assert_eq!(marked, vec![LIB.to_owned()], "{}", transcript(&status));
-    for repo in &marked {
-        common::git_in(
-            common::under(&parked.seat.root, repo),
-            &["rebase", "--abort"],
-        );
-    }
+    let ending = stderr
+        .lines()
+        .find(|line| line.contains("left stopped in a rebase"))
+        .and_then(|line| line.split('`').nth(1))
+        .unwrap_or_else(|| panic!("the stopped rebase names what ends it:\n{stderr}"));
+    let args: Vec<&str> = ending.split_whitespace().collect();
+    assert_eq!(args.first(), Some(&"git"), "{ending}");
+    common::git_in(&target, &args[1..]);
+    assert!(!mid_op(&parked.seat.lib), "{ending}");
 
     let out = succeed(&target, &["doctor", "--fix"]);
     assert!(

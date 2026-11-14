@@ -8786,9 +8786,10 @@ pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<(
                 }
                 if let Some(stopped) = vcs.mid_operation(&repo) {
                     left.push(format!(
-                        "  {}: left stopped in a {}",
+                        "  {}: left stopped in a {}; `{}` ends it",
                         repo.display(),
-                        stopped.operation()
+                        stopped.operation(),
+                        vcs.ending_stopped(&repo, stopped)
                     ));
                 }
                 let store = vcs.store_of(&repo).unwrap_or_else(|| repo.clone());

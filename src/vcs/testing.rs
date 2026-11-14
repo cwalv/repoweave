@@ -1105,6 +1105,10 @@ impl Vcs for FakeVcs {
         unsupported("held_by_no_remote")
     }
 
+    fn ending_stopped(&self, _repo: &Path, _stopped: crate::vcs::MidOperation) -> String {
+        unsupported("ending_stopped")
+    }
+
     fn branch_left(&self, _checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
         unsupported("branch_left")
     }

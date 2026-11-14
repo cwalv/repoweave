@@ -4721,6 +4721,12 @@ pub trait Vcs: Send + Sync {
     /// [`mid_op`]: Vcs::mid_op
     fn mid_operation(&self, repo: &Path) -> Option<MidOperation>;
 
+    /// The line that ends `stopped`, the operation `repo` is stopped in,
+    /// leaving the checkout where the operation began.
+    ///
+    /// For git: `git -C <repo> <op> --abort`, `git -C <repo> bisect reset`.
+    fn ending_stopped(&self, repo: &Path, stopped: MidOperation) -> String;
+
     /// The directory the VCS keeps `checkout`'s own state in, apart from
     /// what it shares with every other checkout of its store (git: the
     /// worktree's private dir; `.git` itself for a clone).

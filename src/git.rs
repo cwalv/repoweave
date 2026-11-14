@@ -4005,6 +4005,14 @@ impl Vcs for GitVcs {
         Self::held_by_no_remote_tracking(&Self::work_dir_for_store(repo))
     }
 
+    fn ending_stopped(&self, repo: &Path, stopped: crate::vcs::MidOperation) -> String {
+        let ending = match stopped {
+            crate::vcs::MidOperation::Bisect => "bisect reset".to_owned(),
+            crate::vcs::MidOperation::Conflict(_) => format!("{} --abort", stopped.operation()),
+        };
+        format!("git -C {} {ending}", crate::workspace::quoted(repo))
+    }
+
     fn branch_left(&self, checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
         let left = Self::run_trimmed(["rev-parse", "--symbolic-full-name", "@{-1}"], checkout)
             .unwrap_or_default();
