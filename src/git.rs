@@ -5511,6 +5511,10 @@ impl Vcs for GitVcs {
         Self::merge_head(checkout)
     }
 
+    fn branch_under_rebase(&self, checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
+        Self::rebasing(checkout)
+    }
+
     fn rebase_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError> {
         for state in ["rebase-merge/onto", "rebase-apply/onto"] {
             let path = Self::run_trimmed(

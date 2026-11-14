@@ -5354,6 +5354,10 @@ pub trait Vcs: Send + Sync {
     /// The commit a rebase stopped in `checkout` replays onto, if one is.
     fn rebase_in_flight(&self, checkout: &Path) -> Result<Option<CommitId>, VcsError>;
 
+    /// The branch a rebase stopped in `checkout` moves when it finishes, if
+    /// one is stopped there.
+    fn branch_under_rebase(&self, checkout: &Path) -> Result<Option<RawRefName>, VcsError>;
+
     /// Forget a merge in flight in `checkout`, leaving its HEAD, index and
     /// working tree as they are.
     ///

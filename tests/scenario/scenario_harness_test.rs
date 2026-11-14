@@ -1485,6 +1485,7 @@ every_scenario!(
     in_place_fast_forward(scenarios::InPlaceEnd::KilledBeforeThePlanContinued),
     abort_of_a_carried_landing_killed_once_landed,
     status_reports_a_checkout_whose_drift_cannot_be_read,
+    sync_continue_names_abort_for_a_branch_deleted_under_its_rebase,
     a_landing_judges_the_pin_of_a_shared_member_it_fast_forwards,
     a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(false),
     a_branch_named_by_an_update_operand_is_refused_under_a_landing_claim(true),
@@ -8476,5 +8477,11 @@ holding_rwv! {
 #[test]
 fn status_reports_a_checkout_whose_drift_cannot_be_read() {
     runner::run(scenarios::status_reports_a_checkout_whose_drift_cannot_be_read())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn sync_continue_names_abort_for_a_branch_deleted_under_its_rebase() {
+    runner::run(scenarios::sync_continue_names_abort_for_a_branch_deleted_under_its_rebase())
         .assert_fully_decided_green();
 }

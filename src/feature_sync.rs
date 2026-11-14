@@ -1764,6 +1764,22 @@ fn rebase_refusal(
     if matches!(error, VcsError::RebaseConflict { .. }) {
         return conflict_refusal(sync, repo, dir, vcs, ConflictOp::Rebase);
     }
+    let gone = vcs
+        .branch_under_rebase(dir)
+        .ok()
+        .flatten()
+        .filter(|branch| matches!(vcs.resolve_local_branch_tip(dir, branch), Ok(None)));
+    if let Some(branch) = gone {
+        return crate::refusal::refusal(
+            RefusalKind::OpParked,
+            format!(
+                "rwv sync: the rebase of {repo} onto {} cannot finish at {}: the branch it moves,                  '{branch}', is gone. Abort puts everything back as it was, '{branch}' included:\n                   {}",
+                sync.source_name(),
+                dir.display(),
+                crate::op_state::abort_command_at(sync.ctx.active_path()),
+            ),
+        );
+    }
     crate::refusal::refusal(
         RefusalKind::OpParked,
         format!(

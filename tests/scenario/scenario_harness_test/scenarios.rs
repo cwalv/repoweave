@@ -25243,6 +25243,35 @@ pub fn status_reports_a_checkout_whose_drift_cannot_be_read() -> Scenario {
     )
 }
 
+/// A `linear` sync stopped on `app`, resolved, whose branch another seat
+/// deletes: the continue cannot finish the rebase and names abort alone,
+/// which, run as printed, puts the branch back.
+pub fn sync_continue_names_abort_for_a_branch_deleted_under_its_rebase() -> Scenario {
+    let mut steps = sync_stopped_on_app_resolved("linear");
+    steps.extend([
+        Step::git(&a(), Repo::App, &["update-ref", "-d", "refs/heads/proj--w"]),
+        Step::rwv(&ww("w"), &["sync", "--continue"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("is gone"))
+            .claim(Claim::OutputLacks("rwv sync --continue")),
+        Step::rwv_printed_exactly(&ww("w"), "rwv abort")
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::App, Repo::Lib, Repo::Proj])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj]),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["log", "--format=%s", "-1", "proj--w"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLine("readme-w")),
+    ]);
+    scenario(
+        "sync --continue names abort for a branch deleted under its rebase",
+        steps,
+    )
+}
+
 /// How a dependent that moved as its carry was moving it is taken up.
 #[derive(Debug, Clone, Copy)]
 pub enum MovedAsCarried {

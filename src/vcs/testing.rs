@@ -910,6 +910,10 @@ impl Vcs for FakeVcs {
         unsupported("rebase_in_flight")
     }
 
+    fn branch_under_rebase(&self, _checkout: &Path) -> Result<Option<RawRefName>, VcsError> {
+        unsupported("branch_under_rebase")
+    }
+
     fn end_merge(&self, _checkout: &Path) -> Result<(), VcsError> {
         unsupported("end_merge")
     }
