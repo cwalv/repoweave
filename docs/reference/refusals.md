@@ -950,7 +950,7 @@ at all is a different refusal, `unresolvable-repo-source`.
 **Condition.** `--continue` or `abort` was invoked where no operation is
 recorded.
 
-**Why.** Both act on op-state. With none present there is nothing to resume or
+**Why.** Both act on the op record. With none present there is nothing to resume or
 roll back, and inventing a starting point would replay from a state no
 operation ever established.
 
@@ -1070,7 +1070,7 @@ in the primary weave.
 
 ### `op-acquisition-raced`
 
-**Condition.** The atomic op-state create lost to a peer whose record then
+**Condition.** The atomic create of the op record lost to a peer whose record then
 vanished.
 
 **Why.** Two processes tried to start an operation at once. One won and then
@@ -1092,7 +1092,7 @@ operation's own `--continue`, and `rwv abort`. Every other verb refuses before
 it reads or writes anything.
 
 **Why.** An operation in flight is rewriting the very repos another verb would
-read or move, and saved where each of them stood. Op-state persists across a crash — there is no
+read or move, and saved where each of them stood. The op record persists across a crash — there is no
 auto-expiry, because a stale record and a live one are indistinguishable from
 outside.
 
@@ -1106,7 +1106,7 @@ running.
 
 ### `op-parked`
 
-**Condition.** A phase stopped and op-state is held at that phase.
+**Condition.** A phase stopped and the op record is held at that phase.
 
 **Why.** The refusal that stopped the phase changed nothing, and the operation
 is still recorded. Both ways out of it remain open, which is what a fresh
@@ -1114,7 +1114,7 @@ refusal cannot tell you.
 
 **Exits.** Fix the cause the message names, then `--continue`; or `rwv abort`
 to roll the whole operation back. The route line for a parked operation names
-the *gate* that fired where that gate has its own token, so you may be sent to
+the refusal that stopped the phase where that refusal has its own token, so you may be sent to
 a more specific entry than this one.
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
