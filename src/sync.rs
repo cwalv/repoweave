@@ -2149,7 +2149,7 @@ impl RemovalCause {
     /// it, so re-running sync is not a way to remove it.
     fn rerun(self) -> &'static str {
         match self {
-            Self::DroppedFromLock => "remove the checkout by hand",
+            Self::DroppedFromLock => "remove the checkout with `rwv member remove --delete`",
             Self::RemoveDelete => "re-run `rwv member remove --delete`",
         }
     }
@@ -2157,7 +2157,7 @@ impl RemovalCause {
     fn then_rerun(self, first: &str) -> String {
         match self {
             Self::DroppedFromLock => format!("{first}, then {}", self.rerun()),
-            Self::RemoveDelete => format!("{first} and {}, or remove manually", self.rerun()),
+            Self::RemoveDelete => format!("{first} and {}", self.rerun()),
         }
     }
 }
@@ -2248,7 +2248,9 @@ pub(crate) fn plan_checkout_removal(
                     if w != c {
                         // Allow when w is ancestor of c (no unique commits in workweave).
                         let is_ancestor = vcs.is_ancestor(&dest, &w, &c).unwrap_or(false);
-                        if !is_ancestor {
+                        let on_a_branch =
+                            matches!(vcs.head_attachment(&dest), Ok(HeadAttachment::Attached(_)));
+                        if !is_ancestor && !on_a_branch {
                             crate::refuse!(RefusalKind::DroppedRepoHasUniqueCommits,
                                 "{repo_path}: {dropped} but worktree has commits not in canonical clone; {}",
                                 cause.then_rerun("push/merge them")
@@ -3279,8 +3281,8 @@ fn fail_on_stranded_checkouts(verb: op_state::OpVerb, stranded: &[&str]) -> anyh
         "{verb} completed: replay and relock finished and the op record is cleared, so `rwv abort` \
          does not apply. Pruning was refused for {n} member checkout{s} the manifest no longer \
          names, and {them} {are} still on disk:\n  {list}\n\
-         Re-running {verb} will not prune {them}. Once nothing in {them} is needed, remove {them} \
-         by hand.",
+         Re-running {verb} will not prune {them}. Once nothing in {them} is needed, \
+         `rwv member remove <path> --delete` removes {them}.",
         list = stranded.join("\n  "),
     ))
 }

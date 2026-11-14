@@ -867,6 +867,8 @@ every_scenario!(
     history_rebase_pin_remap,
     stack_carried,
     stack_cycle,
+    a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names,
+    a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work,
     update_remote_after_a_new_declared_branch_advances_nothing,
     a_push_after_an_amend_of_a_published_commit_offers_what_clears_it,
     status_and_doctor_at_a_parked_sync_offer_no_choice_that_cannot_run,
@@ -6634,6 +6636,18 @@ fn a_push_after_an_amend_of_a_published_commit_offers_what_clears_it_is_green() 
 #[test]
 fn update_remote_after_a_new_declared_branch_advances_nothing_is_green() {
     runner::run(scenarios::update_remote_after_a_new_declared_branch_advances_nothing())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names_is_green() {
+    runner::run(scenarios::a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names())
+        .assert_green();
+}
+
+#[test]
+fn a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work_is_green() {
+    runner::run(scenarios::a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work())
         .assert_fully_decided_green();
 }
 

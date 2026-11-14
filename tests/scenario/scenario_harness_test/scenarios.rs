@@ -21792,6 +21792,44 @@ pub fn update_remote_after_a_new_declared_branch_advances_nothing() -> Scenario 
     )
 }
 
+/// A member the target dropped, whose checkout in a feature sits on a branch:
+/// `sync` prunes the checkout, the branch keeping the work.
+pub fn a_sync_prunes_a_dropped_checkout_whose_branch_keeps_its_work() -> Scenario {
+    scenario(
+        "a sync prunes a dropped checkout whose branch keeps its work",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::commit(&ww("w"), Repo::Docs, "w-docs"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("Pruning was refused")),
+        ],
+    )
+}
+
+/// A member the target dropped, whose checkout in a feature holds an edit:
+/// `sync` finishes but refuses to prune it, naming the verb that removes it;
+/// once the edit is committed that verb removes it.
+pub fn a_checkout_a_sync_refused_to_prune_is_removed_by_the_verb_it_names() -> Scenario {
+    scenario(
+        "a checkout a sync refused to prune is removed by the verb it names",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
+            Step::hand_edit(&ww("w"), Repo::Docs, "README", "docs", "docs edited"),
+            Step::rwv(&ww("w"), &["sync"])
+                .claim(Claim::OutputContains("rwv member remove <path> --delete"))
+                .claim(Claim::OutputLacks("by hand")),
+            Step::git(&ww("w"), Repo::Docs, &["commit", "-qam", "keep"]),
+            Step::rwv(&ww("w"), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// `stack-not-containing`: `w2`, in a workweave of its own, was cut from an
 /// older commit of `w1`; `w1`'s `sync` prints `w2` as lacking `w1`'s tip,
 /// with C35, C12 and C36; C36, run in `w2`'s workspace, takes `w1` in, and
