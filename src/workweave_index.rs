@@ -97,6 +97,27 @@ pub fn old_path_file(primary_root: &Path, project: &ProjectName) -> StatePath {
     StateFile::OldPathWorkweaveIndex.in_dir(&project_dir(primary_root, project))
 }
 
+/// The name the index an earlier release kept at the old path records for
+/// the workweave at `dir`, for the migration that rewrites that release's
+/// markers. That release recorded each workweave as `name: path`.
+pub(crate) fn old_path_name_at(
+    primary_root: &Path,
+    project: &ProjectName,
+    dir: &Path,
+) -> Option<WorkweaveName> {
+    let content = old_path_file(primary_root, project).read_to_string().ok()?;
+    let index: serde_json::Value = serde_json::from_str(&content).ok()?;
+    index
+        .get("workweaves")?
+        .as_object()?
+        .iter()
+        .find(|(_, path)| {
+            path.as_str()
+                .is_some_and(|path| CanonicalPath::of(Path::new(path)).same_directory(dir))
+        })
+        .and_then(|(name, _)| WorkweaveName::new(name.as_str()).ok())
+}
+
 /// The directory the project's clone shares with its worktrees, when
 /// `projects/<project>` is a clone in its own right.
 ///

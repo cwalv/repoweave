@@ -10,6 +10,7 @@ use predicates::prelude::*;
 use std::path::{Path, PathBuf};
 
 use crate::common;
+use repoweave::refusal::RefusalKind;
 
 fn rwv() -> Command {
     common::rwv()
@@ -737,6 +738,146 @@ fn a_marker_without_a_name_takes_the_one_its_index_records() {
         .assert()
         .success();
     assert_eq!(name().as_deref(), Some("far"));
+}
+
+/// The weave an earlier release left: markers with no `name`, and the index
+/// at the project checkout's `.rwv-workweave-index` as `name: path`, holding
+/// the workweaves `listed` names. Returns the directories of `ww` (default
+/// container), `far` (`--dir` outside it) and `nest` (made from `ww`).
+fn weave_an_earlier_release_left(ws: &Path, tmp: &Path, listed: &[&str]) -> [PathBuf; 3] {
+    let far = tmp.join("elsewhere").join("far");
+    let create = |name: &str, from: &Path, dir: Option<&Path>| {
+        let mut cmd = rwv();
+        cmd.args(["workweave", "create", "--project", "web-app", name]);
+        if let Some(dir) = dir {
+            cmd.arg("--dir").arg(dir);
+        }
+        cmd.current_dir(from).assert().success();
+    };
+    create("ww", ws, None);
+    let ww = tmp.join(".workweaves").join("web-app--ww");
+    create("far", ws, Some(&far));
+    create("nest", &ww, None);
+    let nest = tmp.join(".workweaves").join("web-app--nest");
+    let dirs = [ww, far, nest];
+    let mut old = serde_json::Map::new();
+    for (name, dir) in ["ww", "far", "nest"].iter().zip(&dirs) {
+        let marker = dir.join(".rwv-workweave");
+        let mut json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&marker).unwrap()).unwrap();
+        json.as_object_mut().unwrap().remove("name").unwrap();
+        std::fs::write(&marker, serde_json::to_string_pretty(&json).unwrap()).unwrap();
+        if listed.contains(name) {
+            old.insert((*name).to_owned(), serde_json::json!(dir.to_string_lossy()));
+        }
+    }
+    std::fs::remove_file(index_path(ws, "web-app")).unwrap();
+    std::fs::write(
+        ws.join("projects/web-app/.rwv-workweave-index"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "container": tmp.join(".workweaves").to_string_lossy(),
+            "workweaves": old,
+            "receipts": {},
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    dirs
+}
+
+fn marker_name(dir: &Path) -> Option<String> {
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join(".rwv-workweave")).unwrap())
+            .unwrap();
+    json["name"].as_str().map(str::to_owned)
+}
+
+fn listed_workweaves(ws: &Path) -> Vec<String> {
+    let out = rwv()
+        .args(["workweave", "list", "--project", "web-app"])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|line| !line.starts_with("target:"))
+        .map(|line| line.trim().to_owned())
+        .collect()
+}
+
+/// One `rwv doctor --fix` in the primary names every workweave an earlier
+/// release left from the index that release kept, `--dir` ones included,
+/// before it removes that index.
+#[test]
+fn one_doctor_fix_names_every_workweave_from_the_index_an_earlier_release_kept() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let dirs = weave_an_earlier_release_left(&ws, tmp.path(), &["ww", "far", "nest"]);
+
+    let out = rwv()
+        .args(["status"])
+        .current_dir(&dirs[1])
+        .output()
+        .unwrap();
+    common::cli::refused(&out, RefusalKind::LegacyWorkweaveMarker);
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    for (dir, name) in dirs.iter().zip(["ww", "far", "nest"]) {
+        assert_eq!(marker_name(dir).as_deref(), Some(name), "{}", dir.display());
+        let out = rwv().args(["status"]).current_dir(dir).output().unwrap();
+        assert!(out.status.success(), "{}", common::cli::describe(&out));
+    }
+    assert_eq!(listed_workweaves(&ws), ["far", "nest", "ww"]);
+    assert!(!ws.join("projects/web-app/.rwv-workweave-index").exists());
+}
+
+/// A workweave an earlier release left that no index records and whose
+/// directory's name renders none is reported with the verb that names it,
+/// which runs as printed.
+#[test]
+fn a_workweave_no_record_names_is_reported_with_the_verb_that_names_it() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let dirs = weave_an_earlier_release_left(&ws, tmp.path(), &["ww", "nest"]);
+    let far = &dirs[1];
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "{}", common::cli::describe(&out));
+    assert_eq!(marker_name(far), None);
+    let text = String::from_utf8_lossy(&out.stdout);
+    let line = text
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv ") && line.contains("workweave create"))
+        .unwrap_or_else(|| panic!("no naming verb printed:\n{text}"));
+    let words = shell_words(line);
+    let out = rwv().args(&words[1..]).current_dir(far).output().unwrap();
+    assert!(
+        out.status.success(),
+        "{line}:\n{}",
+        common::cli::describe(&out)
+    );
+
+    assert_eq!(marker_name(far).as_deref(), Some("far"));
+    assert_eq!(listed_workweaves(&ws), ["far", "nest", "ww"]);
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let out = rwv().args(["status"]).current_dir(far).output().unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
 
 fn shell_words(line: &str) -> Vec<String> {

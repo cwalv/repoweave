@@ -3016,8 +3016,9 @@ pub struct LegacyWorkweaveMarkerFile {
     pub primary: PathBuf,
 }
 
-/// Walk the workweave parent directory and collect `.rwv-workweave` files
-/// this build cannot use as-is.
+/// Collect the `.rwv-workweave` files this build cannot use as-is, in the
+/// workweave containers and in every workspace a linked checkout of a
+/// project clone sits in, wherever it is.
 ///
 /// A marker is "legacy" if it parses as YAML but not as the current JSON
 /// shape — with or without `parent:` present. A directory whose marker fails
@@ -3026,29 +3027,28 @@ pub struct LegacyWorkweaveMarkerFile {
 /// `crate::workspace::legacy_marker_primary`'s call, the single parse of
 /// `.rwv-workweave` behind this scan.
 pub fn scan_for_legacy_workweave_markers(ws_root: &Path) -> Vec<LegacyWorkweaveMarkerFile> {
+    let in_containers = workweave_containers_for_scan(ws_root)
+        .into_iter()
+        .filter_map(|container| std::fs::read_dir(container.as_path()).ok())
+        .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
+        .filter(|dir| dir.is_dir());
+    let linked = crate::workspace::discover_projects(ws_root)
+        .into_iter()
+        .flat_map(|project| linked_roots(ws_root, &project));
     let mut found = Vec::new();
-    for container in workweave_containers_for_scan(ws_root) {
-        let entries = match std::fs::read_dir(container.as_path()) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        for entry in entries.flatten() {
-            let dir = entry.path();
-            if !dir.is_dir() {
-                continue;
-            }
-            if let Some(primary) = crate::workspace::legacy_marker_primary(&dir) {
-                found.push(LegacyWorkweaveMarkerFile {
-                    marker_path: crate::workspace::WorkweaveMarker::path_in(&dir).reported(),
-                    primary,
-                });
-            }
+    let mut seen = BTreeSet::new();
+    for dir in in_containers.chain(linked) {
+        if !seen.insert(CanonicalPath::of(&dir)) {
+            continue;
+        }
+        if let Some(primary) = crate::workspace::legacy_marker_primary(&dir) {
+            found.push(LegacyWorkweaveMarkerFile {
+                marker_path: crate::workspace::WorkweaveMarker::path_in(&dir).reported(),
+                primary,
+            });
         }
     }
     found.sort_by(|a, b| a.marker_path.cmp(&b.marker_path));
-    // De-duplicate: the same container may appear under multiple projects
-    // (default container is shared), so the same marker can be visited twice.
-    found.dedup_by(|a, b| a.marker_path == b.marker_path);
     found
 }
 
@@ -3303,14 +3303,10 @@ pub(crate) fn fix_pre_schema_manifest(
 ///   excluded from pass 2 rather than having every workweave on disk
 ///   reported as `unregistered-workweave`, whose repair reads this same file.
 ///
-/// The scan iterates every project's recorded container, so a project that
-/// moved its container keeps reconciliation coverage. A workweave placed
-/// outside every recorded container — what `create --dir` does — keeps none:
-/// pass 2 enumerates containers, and nothing walks the host behind it, so
-/// such a directory is reported by no finding here and adopted by no `--fix`.
-/// That limit is what
-/// [`crate::workspace::WorkweaveNameRecord::require`]'s refusal states
-/// instead of promising around. Bootstrapping workspaces (no index
+/// The scan iterates every project's recorded container and every workspace
+/// a linked checkout of a project clone sits in, so a workweave `create
+/// --dir` placed outside every container keeps coverage. Bootstrapping
+/// workspaces (no index
 /// yet, live workweaves at the compiled-in default) surface every
 /// marker-bearing directory as `unregistered-workweave` — the intended
 /// self-heal path is `rwv doctor --fix` on first run after upgrade.
@@ -3495,21 +3491,30 @@ fn linked_workweaves(
     project: &crate::manifest::ProjectName,
 ) -> Vec<(crate::workspace::WorkweaveMarker, PathBuf)> {
     let primary = CanonicalPath::of(ws_root);
+    linked_roots(ws_root, project)
+        .into_iter()
+        .filter_map(|root| {
+            let marker = crate::workspace::WorkweaveMarker::read(&root).ok()??;
+            (marker.names_primary(&primary) && marker.project() == project)
+                .then_some((marker, root))
+        })
+        .collect()
+}
+
+/// The workspace roots, other than `ws_root`, that the project clone's linked
+/// checkouts sit in.
+fn linked_roots(ws_root: &Path, project: &crate::manifest::ProjectName) -> Vec<PathBuf> {
+    let primary = CanonicalPath::of(ws_root);
     let depth = crate::workspace::project_rel_dir(project)
         .components()
         .count();
-    let checkouts = crate::vcs::project_vcs()
+    crate::vcs::project_vcs()
         .list_worktrees(&project_dir(ws_root, project))
-        .unwrap_or_default();
-    checkouts
+        .unwrap_or_default()
         .iter()
         .filter_map(|checkout| checkout.ancestors().nth(depth))
         .filter(|root| CanonicalPath::of(root) != primary)
-        .filter_map(|root| {
-            let marker = crate::workspace::WorkweaveMarker::read(root).ok()??;
-            (marker.names_primary(&primary) && marker.project() == project)
-                .then(|| (marker, root.to_path_buf()))
-        })
+        .map(Path::to_path_buf)
         .collect()
 }
 
@@ -6627,8 +6632,8 @@ impl CheckViolation {
                 Manifest::legacy_format_refusal(legacy_path.as_path())
             ),
             CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
-                "{} is a legacy (YAML) workweave marker; \
-                     run `rwv doctor --fix` to migrate",
+                "{} is a workweave marker an earlier release wrote, in YAML or with no \
+                     `parent` or `name`; run `rwv doctor --fix` to migrate it",
                 marker_path.display()
             ),
             CheckViolation::UnreadableOwnedState {
@@ -6670,10 +6675,9 @@ impl CheckViolation {
             } => format!(
                 "{}: workweave index does not parse ({error}); the recorded \
                      workweaves for project `{project}` are unevaluated. `rwv doctor \
-                     --fix` rebuilds it from the markers of the workweaves in its \
-                     containers; it cannot rebuild the basedir the index recorded, \
-                     and a workweave outside those containers is listed again by the \
-                     next rwv run inside it",
+                     --fix` rebuilds it from the markers of the workweaves the project \
+                     clone's checkouts sit in, wherever they are; it cannot rebuild the \
+                     basedir the index recorded",
                 index_path.display()
             ),
             // Relayed, not narrated: the loader states which file failed
@@ -8286,7 +8290,7 @@ fn apply_prelude_repairs(ctx: &crate::workspace::WorkspaceContext, fix_errors: &
     for finding in scan_for_legacy_workweave_markers(ctx.primary_path()) {
         match fix_legacy_workweave_marker(&finding) {
             Ok(true) => outln!(
-                "[fixed] core: migrated legacy workweave marker {} to JSON",
+                "[fixed] core: migrated legacy workweave marker {}",
                 finding.marker_path.display()
             ),
             Ok(false) => {}

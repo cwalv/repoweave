@@ -2092,8 +2092,16 @@ impl WorkweaveMarker {
     /// that precondition rather than handed us a data problem.
     ///
     /// MIGRATORY arm: repairs markers written by rwv <= v0.16.0 (YAML
-    /// shape) and < v0.10.0 (missing `parent:`).
+    /// shape), < v0.10.0 (missing `parent:`) and v0.25.0 (missing `name`).
     pub fn migrate_legacy(dir: &Path) -> anyhow::Result<bool> {
+        Self::migrate_legacy_as(dir, None)
+    }
+
+    /// [`Self::migrate_legacy`], under `name` where one is given.
+    pub fn migrate_legacy_as(
+        dir: &Path,
+        name: Option<&crate::manifest::WorkweaveName>,
+    ) -> anyhow::Result<bool> {
         let path = Self::path_in(dir);
         let content = path
             .read_to_string()
@@ -2117,38 +2125,72 @@ impl WorkweaveMarker {
                  Legacy, which requires a valid `project:`",
             );
         let parent = field("parent").unwrap_or(primary);
-        let name = Self::name_for_migration(Path::new(primary), &project, dir)?;
+        let name = match name {
+            Some(name) => name.clone(),
+            None => Self::name_for_migration(Path::new(primary), &project, dir, Path::new(parent))?,
+        };
         Self::new(Path::new(primary), project, name, Path::new(parent)).write(dir)?;
         Ok(true)
     }
 
     /// The name a legacy marker at `dir` is migrated with: the one `primary`'s
-    /// index records at `dir`, else the one the directory's name renders.
+    /// index records at `dir`, read at the path an earlier release kept it
+    /// while that file stands, else the one the directory's name renders.
     fn name_for_migration(
         primary: &Path,
         project: &ProjectName,
         dir: &Path,
+        parent: &Path,
     ) -> anyhow::Result<crate::manifest::WorkweaveName> {
-        let recorded = crate::workweave_index::read(primary, project)?
-            .and_then(|index| index.entry_at(dir).map(|(name, _)| name.clone()));
-        recorded
-            .or_else(|| {
-                dir.file_name()
-                    .and_then(|base| base.to_str())
-                    .and_then(|base| workweave_name_in(project, base))
-            })
-            .ok_or_else(|| {
-                crate::refusal::refusal(
-                    RefusalKind::UnreadableMarker,
-                    format!(
-                        "{} names no workweave, the index of project `{project}` lists none at \
-                         {}, and the directory's name is not `<project>--<name>`, so no name \
-                         migrates it. Delete it to adopt this tree as a standalone weave.",
-                        Self::path_in(dir),
-                        dir.display()
-                    ),
-                )
-            })
+        let recorded = if crate::workweave_index::old_path_file(primary, project).exists() {
+            crate::workweave_index::old_path_name_at(primary, project, dir)
+        } else {
+            crate::workweave_index::read(primary, project)
+                .ok()
+                .flatten()
+                .and_then(|index| index.entry_at(dir).map(|(name, _)| name.clone()))
+        };
+        let base = dir.file_name().and_then(|base| base.to_str());
+        if let Some(name) = recorded.or_else(|| base.and_then(|b| workweave_name_in(project, b))) {
+            return Ok(name);
+        }
+        let named = base
+            .filter(|b| crate::manifest::WorkweaveName::new(*b).is_ok())
+            .unwrap_or("<name>");
+        Err(crate::refusal::refusal(
+            RefusalKind::LegacyWorkweaveMarker,
+            format!(
+                "{} names no workweave, no index of project `{project}` records one at {}, and \
+                 the directory's name is not `<project>--<name>`. This names it `{named}` and \
+                 keeps what it holds:\n  rwv -C {} workweave create {named} --project {project} \
+                 --dir {}",
+                Self::path_in(dir),
+                dir.display(),
+                parent.display(),
+                dir.display(),
+            ),
+        ))
+    }
+
+    /// Write `name` into the marker at `dir` where an earlier release wrote it
+    /// for `project` of `primary` without one: what `workweave create <name>
+    /// --dir <dir>` does before it judges the workweave there.
+    pub fn name_legacy_at(
+        dir: &Path,
+        primary: &CanonicalPath,
+        project: &ProjectName,
+        name: &crate::manifest::WorkweaveName,
+    ) -> anyhow::Result<bool> {
+        match observe_marker(&Self::path_in(dir)) {
+            MarkerPresence::Defective {
+                defect: MarkerDefect::Legacy,
+                project_hint: Some(hinted),
+                primary_hint: Some(of),
+            } if &hinted == project && primary.same_directory(&of) => {
+                Self::migrate_legacy_as(dir, Some(name))
+            }
+            _ => Ok(false),
+        }
     }
 }
 

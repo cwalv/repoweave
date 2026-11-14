@@ -1994,6 +1994,33 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
             .judge(project_vcs.as_ref())
             .refused());
         }
+        if WorkweaveMarker::name_legacy_at(
+            &workweave_dir,
+            &CanonicalPath::of(primary_root),
+            project,
+            name,
+        )? {
+            let marker = WorkweaveMarker::read(&workweave_dir)?.ok_or_else(|| {
+                crate::untokened!(
+                    InternalInvariant,
+                    "{} lost its marker as it was named",
+                    workweave_dir.display()
+                )
+            })?;
+            workweave_index::record_workweave(
+                primary_root,
+                project,
+                name,
+                CanonicalPath::of(&workweave_dir),
+                marker.parent().clone(),
+            )?;
+            eprintln!(
+                "rwv workweave create: named the workweave an earlier release made at {} `{name}`, \
+                 and returned it as it is",
+                workweave_dir.display()
+            );
+            return Ok(workweave_dir);
+        }
         refuse_symlinked_members(&workweave_dir, project)?;
         return reuse_existing_workweave(
             &ReuseRequest {
