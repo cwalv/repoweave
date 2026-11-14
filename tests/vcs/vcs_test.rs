@@ -143,16 +143,17 @@ fn tag_at_head_multiple_tags() {
 }
 
 #[test]
-fn tag_at_head_skips_savepoint_only() {
-    // When only transient savepoint tags point at HEAD, tag_at_head returns
-    // None so the lock writer falls back to the canonical SHA.
+fn a_tag_in_the_retired_savepoint_prefix_is_an_ordinary_tag() {
     let dir = init_repo();
     let p = dir.path();
 
     common::git_in(p, &["tag", "savepoint/2024-01-01-abc"]);
 
     let vcs = git_vcs();
-    assert_eq!(vcs.tag_at_head(p).unwrap(), None);
+    assert_eq!(
+        vcs.tag_at_head(p).unwrap().as_ref().map(|t| t.as_str()),
+        Some("savepoint/2024-01-01-abc")
+    );
 }
 
 #[test]
@@ -172,7 +173,7 @@ fn tag_at_head_prefers_release_over_transient() {
     let dir = init_repo();
     let p = dir.path();
 
-    common::git_in(p, &["tag", "savepoint/old"]);
+    common::git_in(p, &["tag", "rwv/pre-op/old"]);
     common::git_in(p, &["tag", "v9.9.9"]);
 
     let vcs = git_vcs();
@@ -203,7 +204,7 @@ fn head_revision_skips_savepoint_tag_display() {
     let dir = init_repo();
     let p = dir.path();
 
-    common::git_in(p, &["tag", "savepoint/op-1"]);
+    common::git_in(p, &["tag", "rwv/pre-op/op-1"]);
 
     let vcs = git_vcs();
     let head = vcs.head_revision(p).unwrap();
@@ -218,7 +219,7 @@ fn head_revision_picks_release_tag_when_mixed() {
     let dir = init_repo();
     let p = dir.path();
 
-    common::git_in(p, &["tag", "savepoint/op-1"]);
+    common::git_in(p, &["tag", "rwv/pre-op/op-1"]);
     common::git_in(p, &["tag", "v9.9.9"]);
 
     let vcs = git_vcs();
