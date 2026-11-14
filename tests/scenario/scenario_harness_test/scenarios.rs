@@ -5722,6 +5722,36 @@ pub fn a_stopped_sync_with_an_unresolved_lock_prints_the_way_on() -> Scenario {
     )
 }
 
+/// The VCS replays a recorded resolution of `rwv.toml` and stages it, so the
+/// merge a sync makes stops with nothing unmerged: the sync stops as at any
+/// conflict, naming the continue and the abort, and the continue concludes.
+pub fn a_replayed_recorded_resolution_stops_the_sync_as_a_conflict() -> Scenario {
+    scenario(
+        "a replayed recorded resolution stops the sync as a conflict",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "set-role", LIB, "reference"]).expect(Exit::Succeeds),
+            Step::git(&ww("w"), Repo::Proj, &["config", "rerere.enabled", "true"]),
+            Step::git(
+                &ww("w"),
+                Repo::Proj,
+                &["config", "rerere.autoupdate", "true"],
+            ),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "--no-edit", "main"]).expect(Exit::Code(1)),
+            Step::git(&ww("w"), Repo::Proj, &["checkout", "--ours", "rwv.toml"]),
+            Step::git(&ww("w"), Repo::Proj, &["add", "rwv.toml"]),
+            Step::git(&ww("w"), Repo::Proj, &["commit", "--no-edit"]),
+            Step::git(&ww("w"), Repo::Proj, &["reset", "--hard", "HEAD~1"]),
+            Step::rwv(&ww("w"), &["sync", "--history", "merge"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .claim(Claim::OutputContains("rwv sync --continue"))
+                .claim(Claim::OutputContains("rwv abort")),
+            Step::rwv(&ww("w"), &["sync", "--continue"]).expect(Exit::Succeeds),
+        ],
+    )
+}
+
 /// An uncommitted `rwv.toml` and a member on a branch of its own never refuse
 /// each other's only choice: `lock --commit` refuses the member, naming
 /// `update`, and `update` aligns it under the uncommitted file, leaving the

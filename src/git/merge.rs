@@ -131,14 +131,30 @@ impl GitVcs {
             return Ok(Vec::new());
         }
         let unmerged = Self::unmerged(checkout)?;
-        if unmerged.is_empty() {
+        if !unmerged.is_empty() {
+            return Ok(unmerged);
+        }
+        let replayed = Self::resolved_by_a_recorded_resolution(checkout)?;
+        if replayed.is_empty() || Self::merge_head(checkout)?.is_none() {
             return Err(failed(
                 &args,
                 checkout,
                 String::from_utf8_lossy(&output.stderr).into_owned(),
             ));
         }
-        Ok(unmerged)
+        Ok(replayed)
+    }
+
+    /// The paths a stopped merge conflicted in that git's own record of
+    /// earlier resolutions (`rerere.autoupdate`) resolved and staged, so none
+    /// is left unmerged.
+    fn resolved_by_a_recorded_resolution(checkout: &Path) -> Result<Vec<String>, VcsError> {
+        let mut paths: Vec<String> = Self::run(["ls-files", "--resolve-undo", "-z"], checkout)?
+            .split('\0')
+            .filter_map(|record| record.split_once('\t').map(|(_, path)| path.to_owned()))
+            .collect();
+        paths.dedup();
+        Ok(paths)
     }
 
     pub(super) fn unmerged(checkout: &Path) -> Result<Vec<String>, VcsError> {
