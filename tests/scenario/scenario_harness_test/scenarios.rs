@@ -13472,14 +13472,16 @@ pub fn abort_sets_aside_an_untracked_file_in_the_way_in_the_target() -> Scenario
 }
 
 /// A landing fast-forwarded `app` in the target's workspace, then was
-/// killed; someone starts a merge there on the landing's tip. Abort never
-/// cancels an operation in the target: it refuses before anything of either
-/// side moves, keeping the op. Where the landing still leases the target,
-/// the printed abort run there gives the merge up, its edits kept as a
-/// backup; where it was killed in its retire, abort there is refused, so
-/// no give-up is printed, and once that merge is given up by hand, the
-/// printed rerun restores everything.
-pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop) -> Scenario {
+/// killed; someone starts a merge there on the landing's tip. Abort run in
+/// the source cannot keep that merge's working copy, which is in the
+/// target: it refuses before anything of either side moves, keeping the op.
+/// Where the landing still leases the target, the printed abort run there
+/// cancels the merge, its working copy kept as a backup; where it was killed
+/// in its retire, abort there is refused, so it is not printed, and once
+/// that merge is given up by hand, the printed rerun restores everything.
+pub fn abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(
+    stop: LandedStop,
+) -> Scenario {
     let mut steps = vec![
         create("w"),
         Step::commit(&ww("w"), Repo::App, "w-app"),
@@ -13491,10 +13493,9 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop
         .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
         .claim(Claim::OutputLacks("abort stopped there"))
         .claim(Claim::OutputContains(
-            "[target] local/remotes/app: stopped in a merge begun at",
+            "[target] local/remotes/app: holds uncommitted edits",
         ))
         .claim(Claim::OutputContains("nothing of either side is restored"))
-        .claim(Claim::OutputLacks("rwv abort --abandon-foreign-tip"))
         .claim(Claim::LocalStateUnchanged(a()))
         .claim(Claim::LocalStateUnchanged(ww("w")));
     steps.push(match stop {
@@ -13503,7 +13504,7 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop
     });
     match stop {
         LandedStop::Landed => steps.extend([
-            Step::rwv_printed_holding(&ww("w"), "rwv -C ", "--abandon-foreign-tip")
+            Step::rwv_printed_holding(&ww("w"), "rwv -C ", " abort")
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App])
@@ -13537,7 +13538,7 @@ pub fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop: LandedStop
         .expect(Exit::Succeeds)
         .claim(Claim::WorkweaveGone(ww("w")))]);
     scenario(
-        "abort refuses a merge in a target repo the landing moved",
+        "abort from the source refuses a merge in a target repo the landing moved",
         steps,
     )
 }
@@ -14247,9 +14248,8 @@ pub fn abort_in_the_target_keeps_colliding_edits(stop: LandedStop) -> Scenario {
 
 /// A landing killed right after it fast-forwarded `app` in the target's
 /// workspace: the move was journaled before it was made, so abort, run from
-/// the source, restores it rather than leaving it as someone else's. Naming
-/// `lib`, which the landing never reached, abandons nothing of it, and the
-/// abort leaves no savepoint behind in the target.
+/// the source, restores it as the landing's own, keeping no backup of it,
+/// and leaves no savepoint behind in the target.
 pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario {
     scenario(
         "abort restores a target fast-forward killed after the move",
@@ -14260,7 +14260,7 @@ pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario 
             Step::kill("landing"),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLine("w-app")),
-            Step::rwv(&ww("w"), &["abort", "--abandon-foreign-tip", LIB])
+            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::Proj])
                 .may_rewind(&[Repo::App])
@@ -14268,10 +14268,7 @@ pub fn abort_restores_a_target_fast_forward_killed_after_the_move() -> Scenario 
                 .claim(Claim::OutputContains(
                     "[target] local/remotes/app: restored",
                 ))
-                .claim(Claim::OutputContains(
-                    "[target] local/remotes/lib: --abandon-foreign-tip names it, but this \
-                     landing never moved it",
-                )),
+                .claim(Claim::OutputLacks("kept as backup")),
             Step::git(&a(), Repo::App, &["log", "-1", "--format=%s"])
                 .claim(Claim::OutputLacks("w-app")),
             Step::git(&a(), Repo::Lib, &["for-each-ref", "refs/rwv/pre-op/"])
@@ -14548,15 +14545,14 @@ pub enum BuiltOn {
 }
 
 /// A landing stopped in its retire; the operator commits in its workweave,
-/// and a second landing then builds on the target. Both sides are foreign:
-/// abort refuses before anything of either moves, and prints the one
-/// command that ends the operation, both flags naming what each gives up.
-/// Run as printed, it ends the landing: the source back at its savepoint,
-/// the commit kept as a backup, the target left as the second landing left
-/// it, and a later landing lands.
-pub fn abort_with_both_sides_foreign() -> Scenario {
+/// and a second landing then builds on the target. Abort refuses before
+/// anything of either side moves, printing `--leave-target`; run as printed,
+/// it ends the landing: the source back at its savepoint, the commit kept as
+/// a backup the printed show line returns, the target left as the second
+/// landing left it, and a later landing lands.
+pub fn abort_over_a_target_built_on_with_a_commit_in_the_source() -> Scenario {
     scenario(
-        "abort with both sides foreign",
+        "abort over a target built on, with a commit in the source",
         vec![
             create("w1"),
             create("w2"),
@@ -14577,26 +14573,17 @@ pub fn abort_with_both_sides_foreign() -> Scenario {
             Step::rwv(&ww("w1"), &["abort"])
                 .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
                 .claim(Claim::OutputLacks("abort stopped there"))
-                .claim(Claim::OutputContains(
-                    "rwv abort --leave-target --abandon-foreign-tip local/remotes/app",
-                ))
-                .claim(Claim::OutputLacks("rwv land --continue"))
                 .claim(Claim::LocalStateUnchanged(a()))
                 .claim(Claim::LocalStateUnchanged(ww("w1"))),
-            Step::rwv(&ww("w1"), &["abort", "--leave-target"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-                .claim(Claim::OutputLacks("abort stopped there"))
-                .claim(Claim::OutputContains(
-                    "rwv abort --leave-target --abandon-foreign-tip local/remotes/app",
-                ))
-                .claim(Claim::LocalStateUnchanged(a()))
-                .claim(Claim::LocalStateUnchanged(ww("w1"))),
-            Step::rwv_printed_holding(&ww("w1"), "rwv abort ", "--abandon-foreign-tip")
+            Step::rwv_printed_exactly(&ww("w1"), "rwv abort --leave-target")
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj])
                 .may_restore(&[Repo::App, Repo::Proj])
-                .claim(Claim::OutputContains("abandoned")),
+                .claim(Claim::OutputContains(
+                    "local/remotes/app: its tip, holding commits this operation did not make, is kept as backup",
+                )),
+            kept_backup_shown(&ww("w1"), "remotes/app log ", "w1-after-the-stop"),
             Step::rwv(&ww("w1"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("in progress")),
@@ -14610,56 +14597,32 @@ pub fn abort_with_both_sides_foreign() -> Scenario {
     )
 }
 
-/// How the operator ends a landing whose target checkout was switched off
-/// its branch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwitchedOffEnd {
-    LeaveTarget,
-    Abandon,
-}
-
 /// A landing stopped in its retire; in the target, `app` is switched onto a
-/// new branch and committed on. The landing's branches are all where it
-/// left them, but the checkout it would reset is not: abort refuses before
-/// anything of either side moves, and each printed choice, run as printed,
-/// ends the operation.
-pub fn abort_over_a_target_checkout_switched_off_its_branch(end: SwitchedOffEnd) -> Scenario {
-    let mut steps = vec![
-        create("w"),
-        Step::commit(&ww("w"), Repo::App, "w-app"),
-        Step::rwv_paused(
-            &ww("w"),
-            &["land", "--history", "linear", "--retire"],
-            "retire",
-            "landing",
-        ),
-        Step::kill("landing"),
-        Step::git(&a(), Repo::App, &["switch", "-q", "-c", "hotfix"]),
-        Step::commit(&a(), Repo::App, "hotfix-app"),
-        Step::rwv(&ww("w"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::OutputContains("[target] local/remotes/app"))
-            .claim(Claim::OutputContains("rwv abort --leave-target"))
-            .claim(Claim::LocalStateUnchanged(a()))
-            .claim(Claim::LocalStateUnchanged(ww("w"))),
-    ];
-    match end {
-        SwitchedOffEnd::LeaveTarget => steps.extend([
-            Step::rwv_printed_holding(&ww("w"), "rwv abort ", "--leave-target")
-                .expect(Exit::Succeeds)
-                .may_strand(&[Repo::App, Repo::Proj])
-                .may_rewind(&[Repo::App, Repo::Proj])
-                .may_restore(&[Repo::App, Repo::Proj]),
-            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
-                .claim(Claim::OutputContains("w-app")),
-        ]),
-        SwitchedOffEnd::Abandon => steps.extend([
-            Step::rwv_printed_holding(&ww("w"), "rwv abort ", "--abandon-foreign-tip")
+/// new branch and committed on. Abort switches the checkout back onto `main`,
+/// leaving the new branch where it stands, and puts the target back.
+pub fn abort_over_a_target_checkout_switched_off_its_branch() -> Scenario {
+    scenario(
+        "abort over a target checkout switched off its branch",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--history", "linear", "--retire"],
+                "retire",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::git(&a(), Repo::App, &["switch", "-q", "-c", "hotfix"]),
+            Step::commit(&a(), Repo::App, "hotfix-app"),
+            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_strand(&[Repo::App, Repo::Proj])
                 .may_rewind(&[Repo::App, Repo::Proj])
                 .may_restore(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains(
+                    "[target] local/remotes/app: switched back off 'hotfix'",
+                ))
                 .claim(Claim::OnBranch {
                     at: a(),
                     repo: Repo::App,
@@ -14669,16 +14632,10 @@ pub fn abort_over_a_target_checkout_switched_off_its_branch(end: SwitchedOffEnd)
                 .claim(Claim::OutputLacks("w-app")),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "hotfix"])
                 .claim(Claim::OutputContains("hotfix-app")),
-        ]),
-    }
-    steps.push(
-        Step::rwv(&ww("w"), &["status"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputLacks("in progress")),
-    );
-    scenario(
-        "abort over a target checkout switched off its branch",
-        steps,
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("in progress")),
+        ],
     )
 }
 
@@ -16879,11 +16836,11 @@ pub enum MovedRefThen {
 }
 
 /// A landing as refs killed once it moved every ref, before it released the
-/// target; then `then` happens to the `main` it moved in `app`. Abort
-/// refuses to put that branch back and keeps the op, printing the choice
-/// that clears it: for a commit, `--abandon-foreign-tip`, which keeps the
-/// new tip as a backup and restores the branch; for a checkout, freeing it
-/// and rerunning abort. The landing then lands again.
+/// target; then `then` happens to the `main` it moved in `app`. A commit on
+/// it is kept as a backup, which the printed show line returns, and the
+/// branch put back; a checkout of it refuses the abort before anything
+/// moves, printing the detach that frees it, and the rerun restores. The
+/// landing then lands again.
 pub fn abort_over_a_ref_the_landing_moved(then: MovedRefThen) -> Scenario {
     let mut steps = vec![create("w")];
     steps.extend(main_checked_out_nowhere());
@@ -16897,42 +16854,30 @@ pub fn abort_over_a_ref_the_landing_moved(then: MovedRefThen) -> Scenario {
         ),
         Step::kill("landing"),
     ]);
-    let (step, why) = match then {
-        MovedRefThen::Committed => (
-            Step::hand_commit(&a(), Repo::App, "main", &[("raced.txt", "raced\n")]),
-            "where this landing left it",
-        ),
-        MovedRefThen::CheckedOut => (
-            Step::git(&a(), Repo::App, &["switch", "-q", "main"]),
-            "free the checkout",
-        ),
-    };
-    steps.extend([
-        step,
-        Step::rwv(&ww("w"), &["abort"])
-            .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
-            .claim(Claim::OutputLacks("abort stopped there"))
-            .claim(Claim::OutputContains(why))
-            .claim(Claim::LocalStateUnchanged(a()))
-            .claim(Claim::LocalStateUnchanged(ww("w")))
-            .claim(Claim::Contains {
-                at: a(),
-                repo: Repo::App,
-                rev: "main",
-                mark: "w-app",
-            }),
-    ]);
     match then {
         MovedRefThen::Committed => steps.extend([
-            Step::rwv_printed(&ww("w"), "rwv abort --abandon-foreign-tip")
+            Step::hand_commit(&a(), Repo::App, "main", &[("raced.txt", "raced\n")]),
+            Step::rwv(&ww("w"), &["abort"])
                 .expect(Exit::Succeeds)
                 .may_rewind(&[Repo::App])
                 .may_restore(&[Repo::App, Repo::Proj])
-                .claim(Claim::OutputContains("abandoned foreign tip")),
-            Step::git(&a(), Repo::App, &["log", "--all", "--format=kept %s"])
-                .claim(Claim::OutputContains("kept hand commit")),
+                .claim(Claim::OutputContains("kept as backup")),
+            kept_backup_shown(&ww("w"), "remotes/app log ", "hand commit"),
         ]),
         MovedRefThen::CheckedOut => steps.extend([
+            Step::git(&a(), Repo::App, &["switch", "-q", "main"]),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .claim(Claim::OutputLacks("abort stopped there"))
+                .claim(Claim::OutputContains("free the checkout"))
+                .claim(Claim::LocalStateUnchanged(a()))
+                .claim(Claim::LocalStateUnchanged(ww("w")))
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "w-app",
+                }),
             Step::rwv_printed(&ww("w"), "git -C ").expect(Exit::Succeeds),
             Step::git(&a(), Repo::App, &["switch", "-q", "--detach"]),
             Step::rwv(&ww("w"), &["abort"])

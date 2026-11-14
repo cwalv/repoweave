@@ -1243,8 +1243,8 @@ every_scenario!(
         scenarios::LandedStop::Retire,
         scenarios::AbortFrom::Target
     ),
-    abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
-    abort_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
+    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Landed),
+    abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(scenarios::LandedStop::Retire),
     abort_sets_aside_an_untracked_file_in_the_way_in_the_target,
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Landed),
     abort_over_a_receiving_branch_deleted_after_the_landing_moved_it(scenarios::LandedStop::Retire),
@@ -1296,9 +1296,8 @@ every_scenario!(
         scenarios::EndedBy::LeaveTarget
     ),
     abort_of_a_landing_a_member_entered_with,
-    abort_with_both_sides_foreign,
-    abort_over_a_target_checkout_switched_off_its_branch(scenarios::SwitchedOffEnd::LeaveTarget),
-    abort_over_a_target_checkout_switched_off_its_branch(scenarios::SwitchedOffEnd::Abandon),
+    abort_over_a_target_built_on_with_a_commit_in_the_source,
+    abort_over_a_target_checkout_switched_off_its_branch,
     abort_after_an_entered_branch_moved(
         scenarios::EnteredThen::HandCommit,
         scenarios::EnteredEnd::LeaveTarget
@@ -3452,9 +3451,9 @@ holding_rwv! {
 
     /// A merge someone started in the target's workspace on a tip the
     /// landing wrote is never canceled by `rwv abort`.
-    fn abort_refuses_a_merge_in_a_target_repo_the_landing_moved() {
+    fn abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved() {
         for stop in scenarios::LandedStop::ALL {
-            runner::run(scenarios::abort_refuses_a_merge_in_a_target_repo_the_landing_moved(stop)).assert_fully_decided_green();
+            runner::run(scenarios::abort_from_the_source_refuses_a_merge_in_a_target_repo_the_landing_moved(stop)).assert_fully_decided_green();
         }
     }
 }
@@ -3661,21 +3660,17 @@ holding_rwv! {
         }
     }
 
-    /// Both sides foreign: one refusal, one printed command that ends it.
-    fn abort_with_both_sides_foreign() {
-        runner::run(scenarios::abort_with_both_sides_foreign()).assert_fully_decided_green();
+    /// A target built on and a commit in the source: one refusal, and the
+    /// printed `--leave-target` ends it, the commit kept as a backup.
+    fn abort_over_a_target_built_on_with_a_commit_in_the_source() {
+        runner::run(scenarios::abort_over_a_target_built_on_with_a_commit_in_the_source()).assert_fully_decided_green();
     }
 
-    /// A target checkout switched off its branch refuses the whole abort,
-    /// and each printed choice ends it.
+    /// A target checkout switched off its branch is switched back by abort,
+    /// the branch it was on left where it stands.
     fn abort_over_a_target_checkout_switched_off_its_branch() {
-        for end in [
-            scenarios::SwitchedOffEnd::LeaveTarget,
-            scenarios::SwitchedOffEnd::Abandon,
-        ] {
-            runner::run(scenarios::abort_over_a_target_checkout_switched_off_its_branch(end))
-                .assert_fully_decided_green();
-        }
+        runner::run(scenarios::abort_over_a_target_checkout_switched_off_its_branch())
+            .assert_fully_decided_green();
     }
 
     /// Abort of a landing a member entered with, `main` checked out.
@@ -3996,9 +3991,10 @@ holding_rwv! {
         }
     }
 
-    /// A ref the landing moved, then moved again or checked out before
-    /// abort, is refused with a choice that, run, lets abort restore it.
-    fn abort_over_a_ref_the_landing_moved_refuses_with_a_choice_that_clears_it() {
+    /// A ref the landing moved, then moved again before abort, is put back
+    /// with its new tip kept; one checked out since refuses with the choice
+    /// that, run, lets abort restore it.
+    fn abort_over_a_ref_the_landing_moved_keeps_or_refuses_as_it_stands() {
         for then in [
             scenarios::MovedRefThen::Committed,
             scenarios::MovedRefThen::CheckedOut,
@@ -4081,10 +4077,9 @@ holding_rwv! {
     }
 
     /// A landing that moved `app`'s `main` and lost on the project repo; a
-    /// commit is then made on that `main`. The landing moved it, so `rwv
-    /// abort` judges the new tip foreign, and the choice it prints restores
-    /// it, keeping the commit in a backup.
-    fn an_abort_refuses_a_branch_the_landing_moved_that_moved_again() {
+    /// commit is then made on that `main`. `rwv abort` puts the branch back,
+    /// keeping the new tip as a backup first.
+    fn an_abort_keeps_a_branch_the_landing_moved_that_moved_again() {
         let mut steps = landing_from("held");
         steps.extend([
             Step::rwv_paused(&ww("held"), &["land"], ADVANCE_TARGET, "landing"),
@@ -4093,21 +4088,18 @@ holding_rwv! {
                 .expect(Exit::refuses(Repo::Proj, State::TargetMovedMidOperation)),
             Step::commit(&a(), Repo::App, "after"),
             Step::rwv(&ww("held"), &["abort"])
-                .expect(Exit::refuses_kind(RefusalKind::ForeignTip))
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
                 .may_rewind(&[Repo::App])
-                .claim(Claim::OutputContains("rwv abort --abandon-foreign-tip")),
-            Step::rwv(
-                &ww("held"),
-                &["abort", "--abandon-foreign-tip", "local/remotes/app"],
-            )
-            .expect(Exit::Succeeds)
-            .may_rewrite(&[Repo::App])
-            .may_rewind(&[Repo::App])
-            .claim(Claim::BackedUp {
-                repo: Repo::App,
-                mark: "after",
-                marked: Some("abandoned"),
-            }),
+                .claim(Claim::OutputContains("kept as backup"))
+                .claim(Claim::BackedUp {
+                    repo: Repo::App,
+                    mark: "after",
+                    marked: None,
+                }),
+            Step::rwv_printed_holding(&ww("held"), "git -C ", "remotes/app log ")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("after")),
         ]);
         bad_steps("a landed branch moved again", steps).assert_fully_decided_green();
     }
