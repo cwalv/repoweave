@@ -753,7 +753,7 @@ than a quiet resurrection.
 under the same op record. Its order is fixed:
 
 1. The merge is computed as a tree where the backend can (`Vcs::tree_merges`,
-   git 2.38 and later), and in the project checkout, stopped before its commit,
+   every git rwv runs on), and in the project checkout, stopped before its commit,
    where it cannot. A conflict outside `rwv.lock` stops here, leaving the
    conflict staged in the checkout, and prints the conflict stop.
 2. The merged `rwv.toml` is read from the tree (or the index) and its entries

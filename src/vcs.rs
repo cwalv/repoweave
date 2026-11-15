@@ -3174,7 +3174,7 @@ pub trait Vcs: Send + Sync {
     /// The oldest release of the tool this backend drives that it runs on,
     /// spelled as the tool numbers its releases.
     ///
-    /// For git: 2.36.
+    /// For git: 2.40.
     fn minimum_release(&self) -> String;
 
     /// Whether the installed tool is one this backend runs on. Asked once per
@@ -5418,8 +5418,8 @@ pub trait Vcs: Send + Sync {
         None
     }
 
-    /// The merges this backend computes as trees, or `None` where its release
-    /// has no way to (git: before 2.38).
+    /// The merges this backend computes as trees, or `None` where it has no
+    /// way to.
     fn tree_merges(&self) -> Option<&dyn TreeMerges> {
         None
     }

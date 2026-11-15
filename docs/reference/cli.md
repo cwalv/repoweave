@@ -75,13 +75,12 @@ a binary built from a source archive has none. `RWV_VERSION` in the
 ## The git it needs
 
 Every verb that reads or writes a repository first asks the `git` on `PATH`
-for its version, once, before doing anything else. Below git 2.36 it refuses
+for its version, once, before doing anything else. Below git 2.40 it refuses
 with [`unsupported-vcs-tool`](./refusals.md#unsupported-vcs-tool), naming the
 release it found; with no `git` it can start, it refuses with
 [`missing-vcs-tool`](./refusals.md#missing-vcs-tool). `rwv explain`, `rwv
 completions`, `rwv setup claude`, `--help`, `--version` and an external verb
-(a plugin, which rwv starts without reading a repository) run without git. A command newer than 2.36 is used where the installed git
-has it and replaced by an older way to do the same work where it does not.
+(a plugin, which rwv starts without reading a repository) run without git.
 
 ## Verbs
 

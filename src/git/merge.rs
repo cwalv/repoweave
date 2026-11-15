@@ -1,14 +1,14 @@
-//! Merges, as git computes them: as trees where `merge-tree --write-tree`
-//! exists, and in a checkout stopped before its commit where it does not.
+//! Merges, as git computes them: as trees by `merge-tree --write-tree`, and in
+//! a checkout stopped before its commit where a conflict is the operator's.
 
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
 use super::{
-    derived_content_git_args, git_command, git_reads_attributes_from_a_commit, local_branch,
-    lock_driver_held_args, nul_terminated_fields, GitVcs, Scratch,
+    derived_content_git_args, git_command, local_branch, lock_driver_held_args,
+    nul_terminated_fields, GitVcs,
 };
 use crate::vcs::{
     BackupWitness, CommitId, DerivedContentPolicy, DerivedContentResolution, RawRefName, RefMerge,
-    TreeId, TreeMerge, TreeMerges, Vcs, VcsError,
+    TreeId, TreeMerge, TreeMerges, VcsError,
 };
 use std::path::Path;
 
@@ -258,49 +258,19 @@ impl GitVcs {
     ) -> Result<RefMerge, VcsError> {
         let held = if incoming == first { second } else { first };
         let resolving = !matches!(derived.resolution(), DerivedContentResolution::VcsDefault);
-        if self.tree_merges().is_some() && (!resolving || git_reads_attributes_from_a_commit()) {
-            let resolution = resolving.then_some((derived, held));
-            return Ok(
-                match Self::merge_tree_resolving(repo, held, incoming, resolution)? {
-                    TreeMerge::Clean(tree) => RefMerge::Merged(Self::commit_tree_of(
-                        repo,
-                        tree.as_str(),
-                        first,
-                        second,
-                        message,
-                    )?),
-                    TreeMerge::Conflicted { paths, .. } => RefMerge::Conflicted { paths },
-                },
-            );
-        }
-        let owner = Scratch::take(repo)?;
-        let scratch = owner.path("merge");
-        let scratch = Path::new(&scratch);
-        Self::run(
-            [
-                "worktree",
-                "add",
-                "--detach",
-                &scratch.display().to_string(),
-                held.as_str(),
-            ],
-            repo,
-        )?;
-        let merged = Self::begin_checkout_merge(scratch, incoming, derived).and_then(|paths| {
-            if paths.is_empty() {
-                let tree = Self::run_trimmed(["write-tree"], scratch)?;
-                Ok(RefMerge::Merged(Self::commit_tree_of(
-                    scratch, &tree, first, second, message,
-                )?))
-            } else {
-                Ok(RefMerge::Conflicted { paths })
-            }
-        });
-        let _ = Self::run(["merge", "--abort"], scratch);
-        let removed = Self::run(["worktree", "remove", &scratch.display().to_string()], repo);
-        let merged = merged?;
-        removed?;
-        Ok(merged)
+        let resolution = resolving.then_some((derived, held));
+        Ok(
+            match Self::merge_tree_resolving(repo, held, incoming, resolution)? {
+                TreeMerge::Clean(tree) => RefMerge::Merged(Self::commit_tree_of(
+                    repo,
+                    tree.as_str(),
+                    first,
+                    second,
+                    message,
+                )?),
+                TreeMerge::Conflicted { paths, .. } => RefMerge::Conflicted { paths },
+            },
+        )
     }
 
     pub(super) fn update_branch_ref(

@@ -31,7 +31,7 @@ Pins move only by a verb that says so: `rwv lock` and `rwv land` record where me
 
 ## Install
 
-**Prerequisites:** git 2.36 or newer on `$PATH`; `rwv` refuses to run a repository verb with an older one. On Windows, enable **Developer Mode** (or run from an elevated shell) so `rwv` can create workspace symlinks.
+**Prerequisites:** git 2.40 or newer on `$PATH`; `rwv` refuses to run a repository verb with an older one. On Windows, enable **Developer Mode** (or run from an elevated shell) so `rwv` can create workspace symlinks.
 
 - **Quick install (Linux/macOS):** `curl -fsSL https://cwalv.github.io/repoweave/install.sh | sh`
 - **Homebrew (macOS/Linux):** `brew install cwalv/tap/repoweave`

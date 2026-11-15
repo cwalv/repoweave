@@ -33,40 +33,23 @@ naming no release, and with `missing-vcs-tool` where no `git` can be started.
 Every detected capability answers from the same reading, so the check costs
 the one spawn the first capability question would have made.
 
-## Why 2.36
+## Why 2.40
 
-`git hook run` arrived in 2.36. Finishing a workspace whose files rwv placed
-itself (`WorkspacePopulation::finish_checkout`, see
-[member-population.md](member-population.md)) runs the `post-checkout` hook
-that `worktree add --no-checkout` skipped, and `git hook run` is the only way to
-have git run a hook as it would itself: the hooks directory, `core.hooksPath`,
-and how a hook script is started on each platform are git's. Population was
-once a capability detected at 2.36, and without it the backend answered no
-population questions; measured against 2.31.0, that silently stopped making
-`reference` members read-only, stopped checking out submodules in workweaves,
-and stopped reporting file placement. That is promised behavior disappearing,
-not a fallback, so the floor rose to 2.36 instead.
-
-Below that, the suite run against git built from the release tarballs:
-
-- 2.30.0: `rev-parse --path-format=absolute` (2.31) is unknown and echoed back
-  as text, so every path the backend reads through it is wrong, and nearly
-  every test that drives a repository fails.
-- 2.31.0: the population tests and every test of read-only `reference`
-  members, workweave submodules and file placement fail, as above.
+`merge-tree --write-tree` arrived in 2.38 and `--attr-source`, which reads
+attributes from a commit rather than a work tree a bare repository lacks, in
+2.40. A project merge with a derived-content policy is computed as a tree from
+a bare repository only with both, so every merge the backend computes as refs
+(`merge_commit_as_refs` in `src/git/merge.rs`) runs on them; the merge in a
+scratch worktree that older gits needed is gone, and a floor that kept it would
+carry a path the suite no longer reaches. `git hook run` (2.36), which finishing
+a workspace whose files rwv placed itself runs (`WorkspacePopulation::finish_checkout`,
+see [member-population.md](member-population.md)), is below the floor.
 
 ## Detected capabilities
 
-| Capability | Release | Seam | Fallback |
-|---|---|---|---|
-| `merge-tree --write-tree` | 2.38 | `Vcs::tree_merges` | the merge runs in a checkout stopped before its commit (`Vcs::start_merge`), which the caller commits |
-
-A capability is a `Vcs` method returning an `Option`, answered from the one
-`git version` reading. Its fallback is tested on a new git through the scenario
-harness's release shim (`Seed::old_git` in
-`tests/common/scenario_sandbox.rs`): a `git` earlier on `PATH` that
-answers as the release before the capability and refuses the command, then
-runs the real git. A new capability extends that shim.
+None. A command newer than the floor is either a detected capability, a
+`Vcs` method returning an `Option` answered from the one `git version` reading
+with a fallback that does the same work, or it raises the floor.
 
 ## Commands newer than 2.25, and how each is held
 
@@ -84,10 +67,11 @@ passing at the floor.
 | `rev-parse --path-format=absolute` | 2.31 | the floor (measured: 2.30 echoes it) |
 | `worktree list --porcelain` reporting `prunable` | 2.31 | the floor |
 | `git hook run` | 2.36 | the floor |
-| `merge-tree --write-tree` | 2.38 | detected capability |
+| `merge-tree --write-tree` | 2.38 | the floor |
+| `merge-tree --attr-source` | 2.40 | the floor |
 
 The lock merge driver reads the heads a merge names from the `GITHEAD_<id>`
-variables `git merge` and `git pull` export to a merge driver; 2.36 exports
+variables `git merge` and `git pull` export to a merge driver; 2.40 exports
 them as the newest releases do, and with none exported the driver takes no
 side and leaves git's conflict.
 

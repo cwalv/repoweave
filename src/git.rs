@@ -5618,7 +5618,7 @@ impl Vcs for GitVcs {
     }
 
     fn tree_merges(&self) -> Option<&dyn TreeMerges> {
-        git_merges_trees().then_some(self as &dyn TreeMerges)
+        Some(self as &dyn TreeMerges)
     }
 
     fn start_merge(
@@ -6910,12 +6910,9 @@ enum WorktreeFiles {
 }
 
 /// The oldest release every operation of this backend runs on, outside the
-/// capabilities it detects. `git hook run`, which finishing a populated
-/// workspace needs, arrived in 2.36.
-const MINIMUM_RELEASE: (u32, u32) = (2, 36);
-
-/// `merge-tree --write-tree`, which computes a merge as a tree, arrived in 2.38.
-const FIRST_RELEASE_MERGING_TREES: (u32, u32) = (2, 38);
+/// capabilities it detects. `merge-tree --write-tree` with `--attr-source`,
+/// which computes a merge as a tree from a bare repository, arrived in 2.40.
+const MINIMUM_RELEASE: (u32, u32) = (2, 40);
 
 /// What `git version` answered, read once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6975,18 +6972,6 @@ fn readiness_of(reading: &GitReading) -> ToolReadiness {
             cause: cause.clone(),
         },
     }
-}
-
-/// `--attr-source`, which reads attributes from a commit rather than a work
-/// tree a bare repo lacks, arrived in 2.40.
-const FIRST_RELEASE_READING_ATTRIBUTES_FROM_A_COMMIT: (u32, u32) = (2, 40);
-
-fn git_reads_attributes_from_a_commit() -> bool {
-    matches!(git_reading(), GitReading::Release { release, .. } if *release >= FIRST_RELEASE_READING_ATTRIBUTES_FROM_A_COMMIT)
-}
-
-fn git_merges_trees() -> bool {
-    matches!(git_reading(), GitReading::Release { release, .. } if *release >= FIRST_RELEASE_MERGING_TREES)
 }
 
 /// `(major, minor)` from `git version`, whose tail vendors extend freely
@@ -11675,7 +11660,7 @@ mod floor_tests {
                 installed: "1.99.0".to_owned()
             }
         );
-        assert_eq!(readiness("git version 2.36.0\n"), ToolReadiness::Ready);
+        assert_eq!(readiness("git version 2.40.0\n"), ToolReadiness::Ready);
         assert_eq!(
             readiness("git version 2.39.5 (Apple Git-154)\n"),
             ToolReadiness::Ready

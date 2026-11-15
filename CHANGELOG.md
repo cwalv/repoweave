@@ -395,10 +395,12 @@ Removed with what they judged: `dirty-project-dir`, `foreign-workweave-in-target
 `workweave-name-taken`. New: `not-a-project`, `unknown-integration-setting` and
 `unreadable-op-lease`.
 
-### Git 2.36 or newer is required
+### Git 2.40 or newer is required
 
 Every verb that reads or writes a repository checks the `git` on `PATH` first and
-refuses `unsupported-vcs-tool` below 2.36, or `missing-vcs-tool` with none.
+refuses `unsupported-vcs-tool` below 2.40, or `missing-vcs-tool` with none. A
+project merge is always computed as a tree; the merge in a scratch worktree that
+older gits took is gone.
 
 ## 0.25.0
 

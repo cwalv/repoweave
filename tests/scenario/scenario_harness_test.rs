@@ -1171,17 +1171,6 @@ macro_rules! every_scenario {
             let mut every = vec![
                 $((stringify!($name), scenarios::$name($($($arg),*)?).into_steps())),*
             ];
-            #[cfg(unix)]
-            every.push((
-                "three_way_pins_on_old_git",
-                scenarios::three_way_pins_on_old_git().into_steps(),
-            ));
-            #[cfg(unix)]
-            every.push((
-                "git_below_2_38",
-                scenarios::git_below_2_38().into_steps(),
-            ));
-            #[cfg(unix)]
             every.push((
                 "abort_after_a_carry_stop",
                 scenarios::abort_after_a_carry_stop(scenarios::BeforeTheCarry::LandingMerged)
@@ -2510,12 +2499,6 @@ fn a_pin_one_side_moved_backward_by_name_survives_a_merge_of_the_other() {
     let origin = sandbox.remote_path(Remote::origin(Repo::App));
     let one_back = sandbox.git_ok(&origin, &["rev-parse", "main~1"]);
     assert!(pinned.contains(&one_back), "{pinned}");
-}
-
-#[cfg(unix)]
-#[test]
-fn the_merge_without_merge_tree_gives_the_same_pins() {
-    runner::run(scenarios::three_way_pins_on_old_git()).assert_fully_decided_green();
 }
 
 #[test]
@@ -7309,7 +7292,6 @@ fn an_abort_after_a_sync_relocked_reads_the_relock_as_its_own() {
     .assert_fully_decided_green();
 }
 
-#[cfg(unix)]
 #[test]
 fn an_abort_after_a_landing_merged_its_project_reads_the_merge_as_its_own() {
     runner::run(scenarios::abort_after_a_carry_stop(
@@ -7698,12 +7680,6 @@ fn a_stopped_carry_under_update_refs_moves_no_dependent_and_aborts_clean() {
 #[test]
 fn abort_keeps_a_tip_amended_during_a_stop_as_a_backup() {
     runner::run(scenarios::abort_keeps_a_tip_amended_during_a_stop()).assert_fully_decided_green();
-}
-
-#[cfg(unix)]
-#[test]
-fn git_below_2_38_is_green() {
-    runner::run(scenarios::git_below_2_38()).assert_fully_decided_green();
 }
 
 #[test]

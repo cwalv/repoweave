@@ -4828,11 +4828,6 @@ pub fn three_way_pins() -> Scenario {
     three_way_pins_on(Seed::default())
 }
 
-#[cfg(unix)]
-pub fn three_way_pins_on_old_git() -> Scenario {
-    three_way_pins_on(Seed::default().old_git())
-}
-
 fn three_way_pins_on(seed: Seed) -> Scenario {
     let mut steps = publish_app_and_project("app-one");
     steps.extend(publish_app_and_project("app-two"));
@@ -25642,8 +25637,7 @@ pub enum BeforeTheCarry {
     /// A sync's relock commit, pinning an `app` commit the lock did not.
     SyncRelocked,
     /// A landing's project merge, under a `merge` project with a `linear`
-    /// `app`, by a git without `merge-tree --write-tree`.
-    #[cfg(unix)]
+    /// `app`.
     LandingMerged,
     /// Nothing more: the carry's replay was then finished by hand.
     FinishedByHand,
@@ -25762,11 +25756,7 @@ pub fn abort_after_a_carry_stop(before: BeforeTheCarry) -> Scenario {
     ]);
     Scenario {
         name: "stack: an abort after a carry stopped",
-        seed: match before {
-            #[cfg(unix)]
-            BeforeTheCarry::LandingMerged => Seed::default().old_git(),
-            BeforeTheCarry::SyncRelocked | BeforeTheCarry::FinishedByHand => Seed::default(),
-        },
+        seed: Seed::default(),
         steps,
     }
 }
@@ -27747,67 +27737,6 @@ pub fn stack_carry_stopped_under_update_refs() -> Scenario {
         "stack: under updateRefs, a stopped carry moves no dependent and aborts clean",
         steps,
     )
-}
-
-/// `git-below-2.38`: git answers as a release without `merge-tree
-/// --write-tree`. `main` merges its project branch and rebases `app`;
-/// `w1`'s landing, with `w2` landing into `w1`, merges the project in the
-/// source's checkout and carries `w2` along per dependent, `app` replayed
-/// and `w2`'s project branch re-pinned in place, and nothing refuses for the
-/// git release.
-#[cfg(unix)]
-pub fn git_below_2_38() -> Scenario {
-    let mut steps = vec![
-        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
-        Step::rwv(
-            &a(),
-            &[
-                "branch",
-                "set-history",
-                "linear",
-                "--repo",
-                "local/remotes/app",
-            ],
-        )
-        .expect(Exit::Succeeds),
-        create("w1"),
-        Step::commit(&ww("w1"), Repo::App, "w1-app"),
-        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
-        dependent_of(&ww("w1"), "w2", "proj--w1"),
-        Step::commit(&ww("w1"), Repo::App, "w2-app"),
-        Step::rwv(&ww("w1"), &["lock", "--commit"]).expect(Exit::Succeeds),
-        Step::rwv(&ww("w1"), &["switch", "proj--w1"]).expect(Exit::Succeeds),
-    ];
-    steps.extend(main_moves_app("main-app"));
-    steps.extend([
-        Step::rwv(&ww("w1"), &["land"])
-            .expect(Exit::Succeeds)
-            .claim(Claim::OutputContains("carried 'w2' along"))
-            .claim(Claim::Contains {
-                at: ww("w1"),
-                repo: Repo::App,
-                rev: "w2",
-                mark: "main-app",
-            })
-            .claim(Claim::PinsReplayed {
-                at: ww("w1"),
-                rev: "w2",
-                member: Repo::App,
-                subject: "w2-app",
-                reached_from: "w2",
-            }),
-        Step::git(
-            &ww("w1"),
-            Repo::Proj,
-            &["rev-parse", "--verify", "-q", "HEAD^2"],
-        )
-        .expect(Exit::Succeeds),
-    ]);
-    Scenario {
-        name: "git below 2.38: a merge in the checkout and a carried stack",
-        seed: Seed::default().old_git(),
-        steps,
-    }
 }
 
 /// `stack-carried`, by a landing: `w1`'s `linear` landing rebases `w1`

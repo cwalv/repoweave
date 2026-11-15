@@ -15,7 +15,7 @@ use repoweave::refusal::RefusalKind;
 
 use crate::common;
 
-const FLOOR: &str = "2.36";
+const FLOOR: &str = "2.40";
 
 struct StandIn {
     _dir: tempfile::TempDir,
@@ -121,7 +121,7 @@ fn a_git_below_the_floor_refuses_before_anything_is_read_or_written() {
 
 #[test]
 fn a_git_at_the_floor_is_accepted() {
-    let at = stand_in("[ \"$1\" = version ] && echo 'git version 2.36.0' || exit 1");
+    let at = stand_in("[ \"$1\" = version ] && echo 'git version 2.40.0' || exit 1");
     let ws = weave();
 
     let out = rwv_with_path(&at.bin, &["init", "demo"], ws.path());
