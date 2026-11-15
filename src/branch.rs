@@ -1300,7 +1300,8 @@ pub(crate) fn live_dependents(
         .collect()
 }
 
-/// Drop the records whose branches exist nowhere ([`ExistingBranches`]).
+/// Drop the records whose branches exist nowhere: no local branch, no
+/// remote-tracking branch, and no workspace of this machine aligned for it.
 /// Nothing drops while a fetch of the project repo went unconfirmed. What
 /// exists is read once per attempt, as the write that drops reads the
 /// records; a writer that creates a branch creates it before it writes the
