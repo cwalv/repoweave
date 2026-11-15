@@ -96,7 +96,7 @@ mod armed {
 mod tests {
     #[test]
     fn a_traced_pass_through_a_point_appends_its_name() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = crate::tempdir().unwrap();
         let file = dir.path().join("trace");
         std::env::set_var("RWV_TEST_PAUSE_TRACE", &file);
         super::point("first-point");
