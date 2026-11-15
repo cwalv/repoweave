@@ -60,7 +60,7 @@ rwv materialize
 rwv lock --commit
 ```
 
-`rwv lock --commit` commits `rwv.lock`, the edited `rwv.toml` and the workspace files regenerated from it in one commit.
+`rwv integration set-enabled` commits the key together with the workspace files it authors, and `rwv lock --commit` commits `rwv.lock`.
 
 To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, pin each member at its gitlink commit: `rwv member pin github/chatly/server <gitlink-sha> --commit`. The commit must be one the member's declared branch or its upstream reaches, or the verb refuses (`pin` `not on declared branch`). Your checkout stays on its branch at the tip, and a teammate's `rwv clone` puts the member at the pin. While the branch tip is past the pin, `rwv status` reports the member as `pin` `ahead`; when ready, `rwv lock --commit` records the tip.
 

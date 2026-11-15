@@ -759,27 +759,37 @@ impl<'a> Rule<'a> {
     }
 
     fn survives(&self, repo: &Repo, reason: Reason, detail: Vec<String>, outcome: &mut Outcome) {
+        let choices = match reason {
+            Reason::Unlanded if outcome.survivors.iter().all(|s| s.choices.is_empty()) => {
+                self.choices_of(repo, crate::diagnosis::Form::GiveUpUnlanded)
+            }
+            _ => Vec::new(),
+        };
         outcome.survivors.push(Survivor {
             path: repo.label(),
             branch: self.branch_name.to_string(),
             reason,
             detail,
-            choices: Vec::new(),
+            choices,
         });
     }
 
     /// The route that gives up a declared line holding unlanded work.
     fn retire_choices(&self, repo: &Repo) -> Vec<crate::diagnosis::ChoiceOutput> {
+        self.choices_of(repo, crate::diagnosis::Form::RetireDeclared)
+    }
+
+    fn choices_of(
+        &self,
+        repo: &Repo,
+        form: crate::diagnosis::Form,
+    ) -> Vec<crate::diagnosis::ChoiceOutput> {
         let bindings = std::collections::BTreeMap::from([
             ("<W>", self.request.branch.to_string()),
             ("<T>", self.request.target.to_string()),
             ("<repo>", repo.label()),
         ]);
-        crate::diagnosis::choices(
-            repo.vcs.as_ref(),
-            &[crate::diagnosis::Form::RetireDeclared],
-            &bindings,
-        )
+        crate::diagnosis::choices(repo.vcs.as_ref(), &[form], &bindings)
     }
 
     /// Delete what `proof` names. A remote that does not take the delete

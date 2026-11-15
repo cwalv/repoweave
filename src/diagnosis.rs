@@ -1953,6 +1953,7 @@ pub enum ChoiceId {
     C11,
     C12,
     RetireDeclared,
+    GiveUpUnlanded,
     C13,
     C14,
     C15,
@@ -2075,10 +2076,16 @@ impl ChoiceId {
                 phrase: "declare a branch for it, or keep, restore or port the entry's value",
                 keeps_work: "re-pins by name, backup kept",
             },
+            Self::GiveUpUnlanded => &ChoiceRow {
+                id: None,
+                phrase: "give up what has not landed: delete the branch, a backup keeping what it \
+                         held",
+                keeps_work: "backup kept",
+            },
             Self::RetireDeclared => &ChoiceRow {
                 id: None,
                 phrase: "give the line up unlanded: record it as a feature onto `<T>`, then \
-                         delete it and its published copy, a backup keeping what it held",
+                         delete it and its published copy, a backup keeping what it held, then publish the dropped record",
                 keeps_work: "backup kept",
             },
             Self::C12 => &ChoiceRow {
@@ -2569,6 +2576,7 @@ pub enum Form {
     C11UnsetTopHistory,
     C12Feature,
     RetireDeclared,
+    GiveUpUnlanded,
     C12Declared,
     C12RestoreTarget,
     C13,
@@ -2724,6 +2732,7 @@ impl Form {
         Self::C11UnsetTopHistory,
         Self::C12Feature,
         Self::RetireDeclared,
+        Self::GiveUpUnlanded,
         Self::C12Declared,
         Self::C12RestoreTarget,
         Self::C13,
@@ -3030,11 +3039,18 @@ impl Form {
                 at: W::WithBranch,
                 shipped: true,
             },
+            Self::GiveUpUnlanded => &FormRow {
+                choice: C::GiveUpUnlanded,
+                steps: &[Rwv("rwv branch delete <W> --target <T> --discard-unlanded")],
+                at: W::Any,
+                shipped: true,
+            },
             Self::RetireDeclared => &FormRow {
                 choice: C::RetireDeclared,
                 steps: &[
                     Rwv("rwv branch set-mode <W> feature --target <T>"),
                     Rwv("rwv branch delete <W> --discard-unlanded --delete-remote-unlanded <repo>"),
+                    Rwv("rwv push"),
                 ],
                 at: W::Any,
                 shipped: true,

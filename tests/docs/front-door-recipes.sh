@@ -8,7 +8,7 @@ set -uo pipefail
 
 BIN=${1:?directory holding rwv}
 shift || true
-PAGES=${*:-tutorial readme release-line create-a-project add-a-repo migrate bring-home each pr-review stops lineage}
+PAGES=${*:-tutorial readme release-line create-a-project add-a-repo add-an-integration migrate bring-home each pr-review stops lineage}
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 README=$ROOT/README.md
 TUTORIAL=$ROOT/docs/tutorial.md
@@ -116,7 +116,10 @@ recipe_tutorial() {
   run "$page" 'rwv land --retire'
   run "$page" 'rwv push'
   run "$page" 'rwv workweave create alpha && rwv workweave create beta'
-  run_stops "$page" 'cd ../.workweaves/web-app--beta'
+  sub "$page" 'cd ../.workweaves/web-app--beta' 'cd ../.workweaves/web-app--beta'
+  grep -qxF 'rwv land' "$page" || fail "not in tutorial.md: rwv land"
+  stops "the second landing stops" rwv land
+  expect "the stop names the verb, the repository and the file" bash -c '[[ $1 == *"land hit conflicts"* && $1 == *"shared.txt"* && $1 == *"github/chatly/server"* ]]' _ "$OUT"
   run "$page" 'rwv abort'
   cd ~/work && rwv workweave delete beta
   run "$page" 'rwv doctor'
@@ -152,6 +155,7 @@ recipe_release_line() {
   run_stops "$page" 'rwv branch delete stable --target main'
   run "$page" 'rwv branch set-mode stable feature --target main'
   expect "stable is gone" test -z "$(rwv branch list 2>&1 | grep ' stable ')"
+  expect "the published record is gone" test -z "$(git -C "$SANDBOX/remotes/chatly/web-app.git" ls-tree -r --name-only rwv-records | grep stable)"
   expect "v1 stays" git -C github/chatly/server rev-parse --verify -q v1
   [ -z "${EXPLORE:-}" ] || . "$EXPLORE"
 }
@@ -218,11 +222,11 @@ recipe_create_a_project() {
   expect "init commits exactly its three files" test "$(git -C projects/web-app show --format= --name-only "$(git -C projects/web-app rev-list --max-parents=0 HEAD)" | sort | tr '\n' ' ')" = ".gitattributes rwv.toml web-app.code-workspace "
   expect "init activates the project" test "$(cat .rwv-active)" = web-app
   expect "each add committed its pin" test -z "$(git -C projects/web-app status --short)"
-  block "$page" '[integrations.npm-workspaces]' >> projects/web-app/rwv.toml
   echo 'default:' > projects/web-app/justfile
-  run "$page" 'rwv doctor --fix'
+  run "$page" 'rwv integration set-enabled npm-workspaces false'
+  run "$page" 'rwv materialize'
+  expect "each setter committed its own change and what it authored" test -z "$(git -C projects/web-app status --short)"
   expect "the static file is surfaced" test -L justfile
-  git -C projects/web-app add -A && git -C projects/web-app commit -qm "integrations" || fail "commit the edit"
   run "$page" 'rwv member set-url projects/web-app https://github.com/chatly/web-app.git'
   expect "the project is published" git -C "$SANDBOX/remotes/chatly/web-app.git" rev-parse --verify -q main
   (export HOME=$SANDBOX/teammate-home && mkdir -p "$HOME" && cp "$SANDBOX/home/.gitconfig" "$HOME/" \
@@ -263,6 +267,26 @@ recipe_add_a_repo() {
   expect "every verb committed what it did" test -z "$(git -C projects/web-app status --short)"
 }
 
+recipe_add_an_integration() {
+  local page=$HOWTO/add-an-integration.md
+  sandbox
+  org example
+  remote example/some-lib a.txt
+  run "$TUTORIAL" 'mkdir ~/work && cd ~/work'
+  rwv member add https://github.com/example/some-lib.git --role dependency >/dev/null 2>&1 || fail "add a member"
+  run "$page" 'rwv integration set-enabled pnpm-workspaces true'
+  expect "enabling committed the key and the files it authored" test -z "$(git -C projects/web-app status --short)"
+  run "$page" 'rwv materialize       # strip disabled-integration artifacts and run install hooks'
+  says "a misspelled name is refused naming the accepted ones" "unknown integration" rwv integration set-enabled nosuch true
+  echo '{}' > projects/web-app/turbo.json
+  run "$page" 'rwv integration set-enabled static-files true'
+  sub "$page" "rwv integration set static-files files '[\"turbo.json\", \".eslintrc.json\", \".prettierrc\", \".mise.toml\"]'" "rwv integration set static-files files '[\"turbo.json\"]'"
+  expect "the listed file is surfaced" test -L turbo.json
+  expect "every setter committed what it did" test -z "$(git -C projects/web-app status --short)"
+  run "$page" 'rwv integration set-enabled npm-workspaces false' 2
+  run "$page" 'rwv doctor            # disabled-integration-artifact lists what materialize will remove'
+}
+
 recipe_migrate() {
   local page=$HOWTO/migrate-from-submodules.md
   sandbox
@@ -271,10 +295,11 @@ recipe_migrate() {
   remote chatly/client; remote vendor/codec
   run "$page" 'mkdir -p ~/weave && cd ~/weave'
   expect "the project is published" git -C "$SANDBOX/remotes/chatly/web-app.git" rev-parse --verify -q main
-  printf '#!/bin/sh\nprintf "\\n[integrations.static-files]\\nenabled = true\\nfiles = [\\"justfile\\"]\\n" >> "$1"\n' > "$SANDBOX/enable-static-files" && chmod +x "$SANDBOX/enable-static-files"
-  export EDITOR=$SANDBOX/enable-static-files
   echo 'default:' > projects/web-app/justfile
-  run "$page" '$EDITOR projects/web-app/rwv.toml   # enable [integrations.<name>]'
+  git -C projects/web-app add justfile && git -C projects/web-app commit -qm "justfile" || fail "commit the file"
+  sub "$page" 'rwv integration set-enabled <name> true   # enable [integrations.<name>]; authors its files' 'rwv integration set-enabled static-files true && rwv integration set static-files files "[\"justfile\"]"'
+  sub "$page" 'rwv materialize' 'rwv materialize'
+  sub "$page" 'rwv lock --commit' 'rwv lock --commit'
   expect "the lock commit carried the edit and the files it declares" test -z "$(git -C projects/web-app status --short)"
   expect "the surfaced file is committed" git -C projects/web-app cat-file -e HEAD:justfile
   run "$page" 'rwv member set-url projects/web-app https://github.com/chatly/web-app.git' 2

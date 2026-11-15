@@ -98,14 +98,17 @@ From `main`, a line that has shipped its last fix is deleted by the deletion rul
 rwv branch delete stable --target main
 ```
 
-The line is kept and listed (`open-head`, exit status `3`), and the listing prints the next step. To give the line up unlanded, record it as a feature, which makes it an ordinary branch, then delete it with its published copy. The delete keeps its tip as a backup first (`rwv backup list`):
+The line is kept and listed (`open-head`, exit status `3`), and the listing prints the next step. To give the line up unlanded, record it as a feature, which makes it an ordinary branch, then delete it with its published copy. The delete keeps its tip as a backup first (`rwv backup list`), and a last push publishes the dropped record:
 
 ```bash
 rwv branch set-mode stable feature --target main
 rwv branch delete stable --discard-unlanded --delete-remote-unlanded projects/web-app
+rwv push
 ```
 
-The hosting service keeps the line's record until a push removes it; `rwv push` publishes the deletion. The line's member branches, `v1` and `protov1`, stay: once `stable` is a feature they are ordinary branches, and a delete never touches a branch a live line still declares.
+The `rwv push` publishes the dropped record of `stable`, so the published records stop listing the line.
+
+The line's member branches, `v1` and `protov1`, stay: once `stable` is a feature they are ordinary branches, and a delete never touches a branch a live line still declares.
 
 ## Related
 

@@ -221,6 +221,35 @@ fn a_landed_branch_is_deleted_cleanly_whatever_language_git_speaks() {
 }
 
 #[test]
+fn the_stop_for_an_unlanded_branch_prints_the_delete_that_gives_it_up_and_it_runs() {
+    let w = weave(&[LIB]);
+    let ww = create_workweave(&w.workspace, "feat");
+    let branch = minted("feat");
+    commit_in(&ww.join(LIB), "unlanded.txt");
+
+    let out = run(&["workweave", "delete", "feat"], &w.workspace);
+
+    assert_eq!(out.status.code(), Some(3), "{}", describe(&out));
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("rwv branch delete"))
+        .unwrap_or_else(|| panic!("no runnable delete in:\n{stderr}"))
+        .to_owned();
+    assert_eq!(
+        line,
+        format!("rwv branch delete {branch} --target main --discard-unlanded")
+    );
+    assert!(has_branch(&w.workspace.join(LIB), &branch));
+
+    let out = run_line(&line, &w.workspace);
+
+    assert!(out.status.success(), "{line}: {}", describe(&out));
+    assert!(!has_branch(&w.workspace.join(LIB), &branch));
+}
+
+#[test]
 fn an_unlanded_branch_survives_with_status_3_and_a_json_outcome_naming_it() {
     let w = weave(&[LIB]);
     let ww = create_workweave(&w.workspace, "feat");
@@ -726,7 +755,8 @@ fn a_published_declared_line_is_given_up_by_the_two_lines_both_refusals_print() 
         retire_lines(&left_text, "main"),
         [
             "rwv branch set-mode stable feature --target main",
-            "rwv branch delete stable --discard-unlanded --delete-remote-unlanded projects/p"
+            "rwv branch delete stable --discard-unlanded --delete-remote-unlanded projects/p",
+            "rwv push"
         ]
     );
 
@@ -757,6 +787,19 @@ fn a_published_declared_line_is_given_up_by_the_two_lines_both_refusals_print() 
     }
     assert!(!bare_has(&w.project_bare, "stable"));
     assert!(!has_branch(&project_dir(ws), "stable"));
+    let published_record = common::git()
+        .args([
+            "cat-file",
+            "-e",
+            &format!("rwv-records:{}", common::records::path("stable")),
+        ])
+        .current_dir(&w.project_bare)
+        .output()
+        .unwrap();
+    assert!(
+        !published_record.status.success(),
+        "the published record of the retired line is gone once the printed push ran"
+    );
 }
 
 #[test]

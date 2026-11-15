@@ -441,7 +441,7 @@ The others follow.
 | `declared` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m> --commit` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `declared` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `declared mode` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
-| `declared mode`, for `rwv branch delete` | give the line up unlanded: record it as a feature onto `<T>`, then delete it and its published copy, a backup keeping what it held | `rwv branch set-mode <W> feature --target <T>`; `rwv branch delete <W> --discard-unlanded --delete-remote-unlanded <repo>` | any workspace | backup kept |
+| `declared mode`, for `rwv branch delete` | give the line up unlanded: record it as a feature onto `<T>`, then delete it and its published copy, a backup keeping what it held, then publish the dropped record | `rwv branch set-mode <W> feature --target <T>`; `rwv branch delete <W> --discard-unlanded --delete-remote-unlanded <repo>`; `rwv push` | any workspace | backup kept |
 
 **Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Destructive operations](../explanation/destructive-operations.md).
 
