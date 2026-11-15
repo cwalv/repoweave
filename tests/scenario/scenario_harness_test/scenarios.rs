@@ -30388,6 +30388,7 @@ pub fn j01_two_repo_change() -> Journey {
     Journey {
         name: "j01: a two-repo change from a new feature to a published main",
         seed: Seed::default(),
+        start: 0,
         path,
         fault,
         end: vec![
@@ -30469,6 +30470,7 @@ pub fn j02_pick_up_a_colleagues_landing() -> Journey {
     Journey {
         name: "j02: a colleague's landing that adds a member is taken in and carried on",
         seed: Seed::default(),
+        start: 9,
         path,
         fault,
         end: vec![clean_end(a())
@@ -30546,6 +30548,7 @@ pub fn j03_a_landing_stops_on_a_conflict_and_is_finished() -> Journey {
     Journey {
         name: "j03: a landing stops on a conflict and is finished",
         seed: Seed::default(),
+        start: 10,
         path,
         fault,
         end: vec![
@@ -30591,6 +30594,7 @@ pub fn j04_a_stopped_landing_is_abandoned() -> Journey {
     Journey {
         name: "j04: a stopped landing is abandoned and everything is as it was",
         seed: Seed::default(),
+        start: 11,
         path,
         fault,
         end: vec![
@@ -30629,6 +30633,7 @@ pub fn j05_a_landing_loses_a_race() -> Journey {
     Journey {
         name: "j05: a landing loses a race to a colleague's publish and recovers",
         seed: Seed::default(),
+        start: 4,
         path,
         fault: 9,
         end: vec![clean_end(a())
@@ -30688,6 +30693,7 @@ pub fn j06_a_published_feature_is_renamed() -> Journey {
     Journey {
         name: "j06: a feature already published is renamed everywhere",
         seed: Seed::default(),
+        start: 0,
         path,
         fault: 6,
         end: vec![
@@ -30751,6 +30757,7 @@ pub fn j08_a_second_feature_stacked_on_the_first() -> Journey {
     Journey {
         name: "j08: a second feature stacked on the first, both landed and published",
         seed: Seed::default(),
+        start: 4,
         path,
         fault,
         end: vec![
@@ -30801,6 +30808,7 @@ pub fn j09_an_experiment_that_never_landed_is_thrown_away() -> Journey {
     Journey {
         name: "j09: an experiment that never landed is thrown away and can be recovered",
         seed: Seed::default(),
+        start: 2,
         path,
         fault,
         end: vec![
@@ -30851,6 +30859,7 @@ pub fn j10_a_second_machine_takes_the_project() -> Journey {
     Journey {
         name: "j10: a second machine takes the project and reaches the same state",
         seed: Seed::default(),
+        start: 5,
         path,
         fault,
         end: vec![
@@ -30898,6 +30907,7 @@ pub fn j11_an_ordinary_repository_becomes_a_project() -> Journey {
     Journey {
         name: "j11: an ordinary repository is taken as a project and published",
         seed: Seed::default(),
+        start: 1,
         path,
         fault,
         end: vec![
@@ -30936,6 +30946,7 @@ pub fn j12_a_hand_edited_manifest_converges() -> Journey {
     Journey {
         name: "j12: a hand-edited manifest converges",
         seed: Seed::default(),
+        start: 4,
         path,
         fault,
         end: vec![
@@ -31004,6 +31015,7 @@ pub fn j13_a_release_line_is_cut() -> Journey {
     Journey {
         name: "j13: a release line is cut for two members and published",
         seed: Seed::default(),
+        start: 3,
         path,
         fault,
         end: vec![
@@ -31072,6 +31084,7 @@ pub fn j14_a_hotfix_lands_on_the_release_line() -> Journey {
     Journey {
         name: "j14: a hotfix is landed on the release line and main is left alone",
         seed: Seed::default(),
+        start: 9,
         path,
         fault,
         end: vec![
@@ -31130,6 +31143,7 @@ pub fn j15_a_fix_is_ported_from_one_line_to_the_other() -> Journey {
     Journey {
         name: "j15: a fix is ported from the release line to main",
         seed: Seed::default(),
+        start: 13,
         path,
         fault,
         end: vec![
@@ -31180,6 +31194,7 @@ pub fn j16_a_release_line_is_retired() -> Journey {
     Journey {
         name: "j16: a release line is retired from main and its tip is kept",
         seed: Seed::default(),
+        start: 13,
         path,
         fault,
         end: vec![
@@ -31241,6 +31256,7 @@ pub fn j18_a_landing_killed_midway_is_finished() -> Journey {
     Journey {
         name: "j18: a landing killed midway is found and finished",
         seed: Seed::default(),
+        start: 7,
         path,
         fault,
         end: vec![clean_end(a())
@@ -31287,11 +31303,70 @@ pub fn j19_a_landing_killed_midway_is_given_up() -> Journey {
     Journey {
         name: "j19: a landing killed midway is given up and everything is as it was",
         seed: Seed::default(),
+        start: 7,
         path,
         fault,
         end: vec![
             clean_end(a()).claim(Claim::TipsAsCaptured("before the landing")),
             Step::rwv(&w, &["status"]).expect(Exit::Succeeds),
+        ],
+    }
+}
+
+/// A workspace holds a commit inside a nested repository that no remote has;
+/// its landing stops at the retire, the nested commit is published, and the
+/// landing finishes.
+pub fn j17_a_retire_stops_over_unpublished_nested_work() -> Journey {
+    let w = ww("w");
+    let mut path = app_gains_a_submodule();
+    path.extend([
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        documented_create("w"),
+        Step::git(
+            &w,
+            Repo::App,
+            &[
+                "-C",
+                "sub",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "nested-only",
+            ],
+        ),
+        Step::git(&w, Repo::App, &["add", "sub"]),
+        Step::git(&w, Repo::App, &["commit", "-qm", "bump sub"]),
+        Step::rwv(&w, &["land", "--retire"])
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains("in submodule sub"))
+            .claim(Claim::OutputContains("rwv land --continue")),
+        Step::git(
+            &w,
+            Repo::App,
+            &["-C", "sub", "push", "-q", "origin", "HEAD:main"],
+        )
+        .pushes(Remote::origin(Repo::Lib), "main"),
+        Step::rwv_printed_quoted(&w, "rwv land --continue", "").expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j17: a retire stops over unpublished nested work and finishes once it is published",
+        seed: Seed::default(),
+        start: 9,
+        path,
+        fault,
+        end: vec![
+            clean_end(a()).claim(Claim::WorkweaveGone(w)),
+            Step::git(&a(), Repo::App, &["-C", "sub", "fetch", "-q", "origin"])
+                .expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::App,
+                &["-C", "sub", "log", "--format=%s", "origin/main"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("nested-only")),
         ],
     }
 }

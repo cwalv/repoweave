@@ -1208,6 +1208,7 @@ every_scenario!(
     j14_a_hotfix_lands_on_the_release_line,
     j15_a_fix_is_ported_from_one_line_to_the_other,
     j16_a_release_line_is_retired,
+    j17_a_retire_stops_over_unpublished_nested_work,
     j18_a_landing_killed_midway_is_finished,
     j19_a_landing_killed_midway_is_given_up,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
@@ -9049,6 +9050,15 @@ fn a_feature_in_the_primary_survives_main_moving_and_lands() {
 /// is after an end step.
 macro_rules! journey_tests {
     ($($name:ident),* $(,)?) => {
+        fn journey_by_id(id: &str) -> Option<common::scenario_steps::Journey> {
+            $(
+                if stringify!($name).split('_').next() == Some(id) {
+                    return Some(scenarios::$name());
+                }
+            )*
+            None
+        }
+
         fn journey_names() -> std::collections::BTreeSet<String> {
             [$(stringify!($name)),*].into_iter().map(str::to_owned).collect()
         }
@@ -9091,6 +9101,7 @@ journey_tests!(
     j14_a_hotfix_lands_on_the_release_line,
     j15_a_fix_is_ported_from_one_line_to_the_other,
     j16_a_release_line_is_retired,
+    j17_a_retire_stops_over_unpublished_nested_work,
     j18_a_landing_killed_midway_is_finished,
     j19_a_landing_killed_midway_is_given_up,
 );
@@ -9106,4 +9117,30 @@ fn every_journey_constructor_has_a_test() {
         .collect();
     assert!(journeys.contains("j01_two_repo_change"), "{journeys:?}");
     assert_eq!(journeys, journey_names());
+}
+
+/// Builds the start state of the journey named by `RWV_JOURNEY` (`j01` ...)
+/// in a sandbox left on disk, and prints where it is, so a probe can run the
+/// task against it with the `rwv` under test on `PATH`:
+///
+/// `RWV_JOURNEY=j03 cargo test --release --features test-pause --test scenario -- build_a_journey_start_state --ignored --nocapture`
+#[test]
+#[ignore = "builds a journey's start state for a probe; set RWV_JOURNEY"]
+fn build_a_journey_start_state() {
+    let id = std::env::var("RWV_JOURNEY").expect("RWV_JOURNEY names the journey, such as j03");
+    let journey = journey_by_id(&id).unwrap_or_else(|| panic!("no journey {id}"));
+    let sandbox = Sandbox::new(journey.seed.clone());
+    let report = runner::run_in(&sandbox, journey.start_scenario());
+    report.assert_green();
+    let root = sandbox.keep();
+    println!("SANDBOX={}", root.display());
+    println!("HOME={}", root.join("home").display());
+    println!(
+        "MACHINE_A_WEAVE={}",
+        root.join("machine-a").join("weave").display()
+    );
+    println!(
+        "MACHINE_B_WEAVE={}",
+        root.join("machine-b").join("weave").display()
+    );
 }

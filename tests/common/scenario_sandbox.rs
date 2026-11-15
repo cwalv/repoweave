@@ -304,6 +304,13 @@ pub struct Sandbox {
 }
 
 impl Sandbox {
+    /// Leave the sandbox on disk when this process ends, and return its root.
+    pub fn keep(self) -> PathBuf {
+        let root = self.root.clone();
+        std::mem::forget(self);
+        root
+    }
+
     pub fn new(seed: Seed) -> Sandbox {
         let tmp = common::tempdir().expect("a sandbox root");
         let root = tmp.path().to_path_buf();

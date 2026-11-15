@@ -35,6 +35,25 @@ A **clean end** is the check every task includes: the project reports no drift, 
 member is off the commit the project records for it, and no unfinished operation is
 left, in every workspace the task touched.
 
+## Building a start state outside the tests
+
+Each journey's start state is its first `start` path steps
+(`Journey::start_scenario` in `tests/common/scenario_steps.rs`). One command
+builds it in a sandbox left on disk, with `HOME` inside the sandbox and every
+remote a local bare repository, and prints where everything is:
+
+```sh
+RWV_JOURNEY=j03 cargo test --release --features test-pause --test scenario -- \
+  build_a_journey_start_state --ignored --nocapture
+```
+
+It prints `SANDBOX`, `HOME`, `MACHINE_A_WEAVE` (the operator's `~/work`) and
+`MACHINE_B_WEAVE`. A probe runs with `HOME` set to the printed one, the `rwv`
+under test on `PATH`, and the weave as its working directory. The sandbox's
+names differ from the task text's: `server` is `app`, `protocol` is `lib`, the
+other code repository is `docs`, the project is `proj`, and the hosting service
+is the bare repositories under `SANDBOX/remotes/`.
+
 ## Tasks
 
 ### J01 Ship a change that spans two repositories

@@ -159,12 +159,26 @@ pub fn recurse_moved_back(at: &Place) -> [Step; 3] {
 pub struct Journey {
     pub name: &'static str,
     pub seed: Seed,
+    /// How many leading steps of `path` build the start state the task
+    /// describes; the rest is the documented path.
+    pub start: usize,
     pub path: Vec<Step>,
     pub fault: usize,
     pub end: Vec<Step>,
 }
 
 impl Journey {
+    /// The scenario that only builds the task's start state.
+    pub fn start_scenario(self) -> Scenario {
+        let mut steps = self.path;
+        steps.truncate(self.start);
+        Scenario {
+            name: self.name,
+            seed: self.seed,
+            steps,
+        }
+    }
+
     pub fn scenario(self) -> Scenario {
         let mut steps = self.path;
         steps.extend(self.end);
