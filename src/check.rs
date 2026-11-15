@@ -8984,34 +8984,31 @@ fn apply_workspace_repairs(
         }
         match crate::lock_driver::migrate(vcs, &project_repo) {
             Ok(migrated) => {
-                let fixed = if migrated.outranked.is_empty() {
-                    "[fixed] "
-                } else {
-                    ""
-                };
-                if migrated.committed {
-                    outln!(
-                        "{fixed}core: set up the lock merge driver's attribute line in {}, \
-                         committing only that",
-                        project.name
-                    );
-                } else if migrated.declared {
-                    outln!(
-                        "{fixed}core: wrote the lock merge driver's attribute line in {}",
-                        project.name
-                    );
+                if migrated.outranked.is_empty() {
+                    if migrated.committed {
+                        outln!(
+                            "[fixed] core: set up the lock merge driver's attribute line in {}, \
+                             committing only that",
+                            project.name
+                        );
+                    } else if migrated.declared {
+                        outln!(
+                            "[fixed] core: wrote the lock merge driver's attribute line in {}",
+                            project.name
+                        );
+                    }
+                    if migrated.defined {
+                        outln!(
+                            "[fixed] core: defined the lock merge driver in {}'s config",
+                            project.name
+                        );
+                    }
                 }
                 if let Some(why) = migrated.withheld {
                     fix_errors.push(format!(
                         "{}: the lock merge driver's attribute line was not migrated: {why}",
                         project.name
                     ));
-                }
-                if migrated.defined && migrated.outranked.is_empty() {
-                    outln!(
-                        "[fixed] core: defined the lock merge driver in {}'s config",
-                        project.name
-                    );
                 }
                 for why in migrated.outranked {
                     fix_errors.push(format!("{}: {why}", project.name));
