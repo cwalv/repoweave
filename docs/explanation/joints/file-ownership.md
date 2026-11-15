@@ -164,7 +164,7 @@ is *when* it authors them. In brief:
 
 | Verbs | Action on managed region |
 |---|---|
-| `add`, `remove`, `update --remote`, `role` (the authoring verbs) | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
+| `rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role` (the authoring verbs) | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
 | `init <name>` | Author the files the new project's empty manifest implies, before activating it |
 | `activate`, `materialize`, `clone`, `update`, workweave-create, `lock` | Surface (symlink, always) + verify-and-warn; never rewrite integration workspace files to pick up `rwv.toml` changes (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
 | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |

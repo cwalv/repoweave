@@ -19,7 +19,7 @@ The exit status is the reproducibility check: `0` means every member repository 
 
 During development, workspace integrations resolve cross-repo imports to local checkouts without version bumps or registry publishes. When a member repository is published externally (crates.io, npm, PyPI, Go module proxy), tag and publish in dependency order after locking.
 
-A version bump usually also changes the ecosystem lockfile in `projects/<project>/` (`Cargo.lock`, `package-lock.json`, `uv.lock`). `rwv lock --commit` commits only `rwv.lock` and a changed `rwv.toml`, and refuses while another tracked file there has uncommitted changes. When it refuses, write the lock with `rwv lock` and commit both files with git, as the npm recipe below does.
+A version bump usually also changes the ecosystem lockfile in `projects/<project>/` (`Cargo.lock`, `package-lock.json`, `uv.lock`). `rwv lock --commit` commits only `rwv.lock` and a changed `rwv.toml`: another tracked file with uncommitted changes there stays out of the commit and is named in one line. To record the lock and the ecosystem lockfile in one commit, write the lock with `rwv lock` and commit both files with git, as the npm recipe below does.
 
 ### Cargo (crates.io)
 

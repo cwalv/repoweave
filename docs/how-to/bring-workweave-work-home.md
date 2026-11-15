@@ -16,8 +16,9 @@ moves. Then:
    `rwv.lock` are relocked forward. Each member holding work its receiving
    branch lacks is rebased onto that branch's tip, and the project branch onto
    the target's tip — all in the workweave.
-2. **Record the lock.** `rwv.lock` is merged three ways and committed, each
-   composed member at its new tip.
+2. **Record the lock.** `rwv.lock` is recorded in the landing's one project
+   commit: each composed member at its new tip, and a pin no member merge
+   moved merged three ways against the merge base's lock.
 3. **Fast-forward the target.** Where the target is checked out, each
    receiving branch and the target's project branch fast-forward to what was
    composed. That workspace then aligns, and the workweave's members follow

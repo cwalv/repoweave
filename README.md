@@ -97,7 +97,7 @@ rwv pull
 rwv push
 ```
 
-`rwv pull` fetches, fast-forwards the project branch to its upstream, and aligns every member to the pins the pulled lock holds. `rwv push` publishes the member repos first, then the branch's record, then the project repo, so no teammate pulls a lock that names an unpublished commit. Until then `rwv pull` and `rwv status` report a pin the remote does not hold as `pin off remote`.
+`rwv pull` fetches, fast-forwards the project branch to its upstream, and aligns every member to the pins the pulled lock holds. `rwv push` publishes the member repos first, then the branch's record, then the project repo, so no teammate pulls a lock that names an unpublished commit. Until then `rwv pull` and `rwv fetch` report a pin the remote does not hold as `pin off remote`.
 
 **Starting a new project from scratch (Day 0)** — see [create a project](docs/how-to/create-a-project.md) for the full walkthrough:
 
@@ -128,6 +128,8 @@ rwv push
 | `rwv member add <url>` | Clone a repo, add to `rwv.toml`, re-run integrations, and commit the change with the repo's first pin. `<url>` is a URL (`file://` for a local remote) or registry shorthand; `--adopt <path>` registers a clone already under the weave root; `--role` sets the role, `--new` for `git init`, `--no-recurse-submodules` leaves the member's submodules uninitialized in new checkouts |
 | `rwv member remove <path>` | Remove from `rwv.toml`, re-run integrations. `--delete` removes this workspace's checkout |
 | `rwv member pin <repo> <rev>` | Pin a repo at a commit you choose, in either direction, and align it to the pin. Gives a repo its first pin when `member add` could not (`--commit` commits the lock) |
+| `rwv member set-branch <repo> <branch>` | Declare the branch a repo follows and pin it at that branch's tip, committing both (`--new` creates a branch that exists nowhere) |
+| `rwv member set-url <repo> <url>` | Set a repo's url; for `projects/<name>`, record the remote the project repo publishes to |
 | `rwv member set-role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
 | `rwv member set-recurse-submodules <repo> <true\|false>` | Say whether new checkouts of a repo populate its submodules, and update ecosystem workspace files |
 | `rwv lock` | Record repo HEADs as `rwv.lock`'s pins, moving a pin forward only: a repo with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
@@ -137,7 +139,9 @@ rwv push
 | `rwv sync` | Take the target's new work into a feature: each member from the branch it lands on, then the project branch, then the relock, each repo integrated as the target's `history` setting says (`--history linear\|merge\|ff-only` for one run where it records none); `--from <branch>` merges another weave branch in; `--reset-to-target <repo>` moves a repo to what it lands on, keeping a backup. Work built on another lineage is refused before anything moves |
 | `rwv land` | Land the feature into the branch its record lands into: compose this workspace onto it by the target's `history` setting, record every member's tip in one project commit, fast-forward the target. `--target <T>` lands into another branch for one run, `--history <h>` supplies a setting where the target records none, `--retire` deletes the workweave on success, `--continue` resumes a stopped landing |
 | `rwv abort` | Roll an in-flight `sync` or `land` back to its savepoints in every workspace it touched; run it from any of them |
-| `rwv branch <set-mode\|list>` | Record how a weave branch is used, `feature` onto a `--target` branch or `declared`, or list the weave branches with their records. `init`, `clone` and `workweave create` record the branch they make or leave checked out; `update`, `pull`, `lock`, `sync`, `land` and `push` refuse a branch with no record |
+| `rwv branch <create\|set-mode\|set-history\|list\|rename\|delete>` | Create a weave branch, record how one is used (`feature` onto a `--target` branch, or `declared`) or how it accepts landings, list the weave branches with their records, rename one, or delete one by the deletion rule. `init`, `clone` and `workweave create` record the branch they make or leave checked out; `update`, `pull`, `lock`, `sync`, `land` and `push` refuse a branch with no record |
+| `rwv switch <W>` | Put the project repo on a recorded weave branch and align the members to it; `--detach <rev>` detaches the workspace at a revision |
+| `rwv cherry-pick <project-rev>` | Port one project commit onto this feature: each member's change, each dependency's pin, and the project change with its relock |
 | `rwv backup <list\|drop\|prune>` | List the backups rwv keeps before a step that would leave a commit or an edit unpreserved (`workweave delete --discard-*`, and `abort`, which keeps what it resets in one slot per branch and per checkout), drop them by name, or prune those a branch already reaches. A drop that would leave a commit some project's lock pins unreachable is refused |
 | `rwv push` | Publish a weave branch from any workspace: member repos first, then the branch's record, then the project branch. `--dry-run` to preview; `--overwrite <repo>` to replace a rewritten branch; `--branch` to push one that is not checked out; `--role`/`--repo` selectors to limit scope |
 | `rwv fetch` | Pruning fetch of every remote of the project repo and of each member present on disk. Moves no branch, checkout, or lock; reports which remote-tracking branches moved |

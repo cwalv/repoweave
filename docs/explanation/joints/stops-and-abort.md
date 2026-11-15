@@ -15,9 +15,9 @@ holds the plan (the verb's parameters, the tips it will write, the consents it w
 given: `--allow-member-change`, `--reset-to-target`, `--history`, and for
 `cherry-pick` its `<rev>`, `-m` and `--except`) and how far it got. A workspace the
 operation also changes holds a lease pointing back at the record, which keeps a second
-operation out. During an operation only `--continue`, `rwv abort`, `rwv status` and
-`rwv backup list` run, and, while it is stopped on a conflict in `rwv.toml`, the
-setters that settle it.
+operation out. During an operation only `--continue`, `rwv abort` and the verbs that read
+(`rwv status`, `rwv backup list`, `rwv doctor`) run; every verb that writes,
+the setters included, refuses until the operation ends.
 
 Every refusal a verb can judge up front is reported, all together, before the record is
 written and before anything changes; a refusal there leaves no trace. Every other verb
@@ -42,7 +42,7 @@ the operation left it.
 | Stop | What stopped it | Exits |
 |---|---|---|
 | conflict | a merge, rebase or copy in one checkout conflicted; the stop names the checkout | resolve it, mark it resolved, `--continue`; or `rwv abort` |
-| `rwv.toml` conflict | the project repo's `rwv.toml` is unmerged; each entry in conflict is listed with both values | settle each entry with its setter during the stop (`rwv member set-branch`, `set-url`, `set-role`, `set-recurse-submodules`, `rwv branch set-history`), or `--continue --keep yours` or `--keep incoming`, then `--continue` |
+| `rwv.toml` conflict | the project repo's `rwv.toml` is unmerged; each entry in conflict is listed with both values | `--continue --keep yours` or `--keep incoming`, which takes that side for every entry in conflict; or edit `rwv.toml` into what you mean, mark it resolved, then `--continue`; or `rwv abort` |
 | check stop | the VCS merged `rwv.toml` as text without a conflict, and the result differs from the merge of both sides' values, or does not parse (`unparseable-project` `mid-operation`) | mark an `rwv.toml` that parses resolved, then `--continue`; `--continue --keep text-merge` marks the VCS's text merge resolved as it stands; or `rwv abort` |
 | lost race | a landing's target or receiving branch moved since the landing read it (`target` `moved mid-operation`) | `rwv abort` only; `--continue` refuses it |
 | crash | the process died anywhere | `--continue` or `rwv abort`; a `--continue` that finds its work done ends the operation |
@@ -51,8 +51,11 @@ At a check stop rwv writes nothing to `rwv.toml`: it names what differs and leav
 file as the VCS made it. `--keep` is accepted only where there is something to choose:
 `yours` or `incoming` where regions of `rwv.toml` are in conflict, taking that side for
 every entry both sides changed differently, and `--continue --keep text-merge` at the
-check stop. At any other stop a `--keep` is refused. Both sides' own values never need a
-hand edit of the file: each entry has a setter, and the setters run during the stop.
+check stop. At any other stop a `--keep` is refused. To mix the two
+sides, keep one, then run the setter for each entry you want otherwise once the
+operation has ended (`rwv member set-branch`, `set-url`, `set-role`,
+`set-recurse-submodules`, `rwv branch set-history`); an edit of the file at the stop,
+marked resolved, does the same in one step.
 
 ## Continuing
 
@@ -90,8 +93,8 @@ keeps something for, with the command that shows it; `rwv backup list` shows the
 and `rwv backup drop` drops one.
 
 **Planned whole.** Abort plans every write on both sides before making any. One blocked
-step (a branch gone or checked out elsewhere, a branch of a landing's target that
-something else moved, something unreadable) refuses the whole abort as `foreign-tip`:
+step (a branch gone or checked out elsewhere, a branch the landing moved in its
+target that something else has moved since, something unreadable) refuses the whole abort as `foreign-tip`:
 nothing of either side is restored and `--continue` stays open. The refusal names each
 obstacle with what clears it. After abort has begun `--continue` is closed, and a write
 that finds a repo moved since the plan stops there; running `rwv abort` again completes
@@ -103,7 +106,8 @@ with each tip the landing wrote there kept as a backup where no branch reaches i
 the target's savepoints are dropped only after every step on the source side ran.
 
 **A record rwv cannot read.** A record another release wrote, or one that was edited, is
-refused by every verb as `unreadable-op-record`. `rwv abort --discard-unreadable-record`
+refused by every verb that reads it as `unreadable-op-record`, and reported by
+`rwv status` and `rwv doctor`. `rwv abort --discard-unreadable-record`
 ends the operation: it removes the record, its leases and claims, and moves nothing back,
 since only the record says which tips are the operation's. It lists each repo left stopped
 and each savepoint and backup the repos hold.

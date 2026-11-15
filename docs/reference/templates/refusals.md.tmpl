@@ -175,7 +175,7 @@ keep the project's by deleting the file at the weave root. Then run `rwv doctor
 
 ### `cwd-in-inactive-project`
 
-**Condition.** A verb that writes into its project (`add`, `remove`, `role`,
+**Condition.** A verb that writes into its project (`member add`, `member remove`, `member set-role`,
 `lock`, `fetch`, `pull`, `update`, `push`, `sync`, `land`, or `doctor
 --fix`) was run from inside `projects/<name>/` at a primary weave root, with no
 `--project`, while `.rwv-active` selects a different project.

@@ -393,6 +393,11 @@ Set the member's url. The branch the member sits on in this workspace, when its 
 
 For the project repo, `<path>` is `projects/<name>`: the verb records the remote that has `<url>` as the project repo's url remote, which `rwv push` publishes the project repo to, adding the remote first when the repo has none for the url (a name another url holds refuses, `name` `taken`). It changes nothing in `rwv.toml` and commits nothing. With several remotes and none recorded, a branch with no push remote of its own has no push target; this records one.
 
+| Flag | Effect |
+|---|---|
+| `--no-materialize` | Skip integration install hooks; `rwv materialize` runs them later |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
 ### `rwv member set-role <path> <role>`
 
 Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace files (a `reference` repo leaves every ecosystem's build graph), run integration install hooks, and settle the repo's files: a `reference` repo's tracked regular files lose their write bits; any other role restores owner write permission. If `role` was already edited in `rwv.toml` by hand, `rwv member set-role` converges the on-disk permissions and integration files to match. Refuses a change to `reference` while the repo has uncommitted changes to tracked files. The change is committed alone: any other uncommitted edit to `rwv.toml` stays uncommitted, and so do uncommitted changes to other tracked files of the project repo, named in one line.
@@ -579,7 +584,7 @@ Abort never discards a commit or an edit without keeping it first, and does not 
 
 Abort reads the members it restores from each workspace's working `rwv.toml`. Where one does not parse or is missing, it reads the one at the checked-out commit while that project repo is stopped in a VCS operation, else the one at the operation's savepoint in that workspace, the same for the source and a landing's target and from whichever workspace abort runs in. Where neither reads, abort says so, names no member there, and puts back what it can find. Every member the operation recorded moving is restored whichever file lists it.
 
-Abort plans every write it would make, on both sides, before it makes any. Where something blocks the plan (a branch gone or checked out elsewhere, a landing's target that something else moved since, a commit the landing wrote in its target that a lock other than the two abort puts back pins and that restoring the target would leave reached by no branch or backup, something it cannot read) it refuses whole as `foreign-tip`: nothing of either side is restored, the op record is kept and `--continue` stays open. The refusal names each obstacle with what clears it, then the command that ends the operation once each is cleared. Once abort has begun, `--continue` refuses the op; a write that no longer finds what the plan judged (something moved between the plan and the write) stops there, what was already restored stays, nothing after it is done, and `rwv abort` run again completes the rest.
+Abort plans every write it would make, on both sides, before it makes any. Where something blocks the plan (a branch gone or checked out elsewhere, a branch the landing moved in its target that something else moved since, a commit the landing wrote in its target that a lock other than the two abort puts back pins and that restoring the target would leave reached by no branch or backup, something it cannot read) it refuses whole as `foreign-tip`: nothing of either side is restored, the op record is kept and `--continue` stays open. The refusal names each obstacle with what clears it, then the command that ends the operation once each is cleared. Once abort has begun, `--continue` refuses the op; a write that no longer finds what the plan judged (something moved between the plan and the write) stops there, what was already restored stays, nothing after it is done, and `rwv abort` run again completes the rest.
 
 | Flag | Effect |
 |---|---|
@@ -588,7 +593,7 @@ Abort plans every write it would make, on both sides, before it makes any. Where
 
 A dependent's branch the op carried along and moved is put back like any other branch the op moved, its tip kept first in its slot where nothing else reaches it; one gone or checked out outside the op's workspaces refuses the whole abort before anything is put back (`foreign-tip`), naming what to do first.
 
-Refuses as `no-op-recorded` if no operation is in progress. An op record this rwv does not read whole, whatever failed in it or whichever record schema wrote it, is refused by every verb as `unreadable-op-record`, plain `rwv abort` included, naming `rwv abort --discard-unreadable-record`.
+Refuses as `no-op-recorded` if no operation is in progress. An op record this rwv does not read whole, whatever failed in it or whichever record schema wrote it, is refused by every verb that reads it as `unreadable-op-record`, plain `rwv abort` included, naming `rwv abort --discard-unreadable-record`; `rwv status` and `rwv doctor` report it and run.
 
 **Exit codes:**
 - `0` — all repositories restored cleanly to their savepoints and the op record removed.
@@ -604,6 +609,8 @@ List each repo's backups, one line each: the name, the commit it holds, its mark
 
 `--json` emits the envelope `{"$schema": "...", "repos": [...]}`. Each repo record has `path` (as `rwv backup drop` names the repo) and `backups`; each backup has `name`, `tip`, `mark` (`rebased`, `superseded`, `aborted` or `aborted-working-copy`, absent otherwise), `redundant` and `held` (`sha`, `short`, `subject`). See [JSON envelope convention](#--json-envelope-convention).
 
+`--project <name>` acts on that project instead of the active one.
+
 ### `rwv backup drop <repo> <name>...`
 ### `rwv backup drop <repo> --all`
 
@@ -611,9 +618,13 @@ Drop the named backups of one repo, or with `--all` every backup of that repo, p
 
 Refused under the **pin rule** (`pin` `would be unreachable`) when it would leave a commit some project's live lock pins reached by no branch, remote-tracking branch or backup. A pin is live in every project of the weave, not only the active one: it is the commit a member's pin names in the `rwv.lock` at the tip of any local or remote-tracking branch of any project's repo. The refusal names the commits and the locks, and nothing is dropped. Dropping a backup that holds commits nothing else reaches loses them; the drop prints what it dropped, and that is the whole record.
 
+`--project <name>` acts on that project instead of the active one.
+
 ### `rwv backup prune`
 
 Fetch every remote of every repo of the project with pruning, then drop each backup a branch or remote-tracking branch reaches in full (`[redundant]` in the list), abort's slots among them. A remote that cannot be fetched is named and its remote-tracking branches are not counted, so a backup is dropped only on what a confirmed fetch or a local branch vouches for. Obeys the pin rule as `drop` does. Prints `nothing to prune` when no backup is redundant. A backup holding commits no branch reaches is never pruned; only `drop` removes it.
+
+`--project <name>` acts on that project instead of the active one.
 
 ### `rwv branch`
 
@@ -1085,6 +1096,8 @@ Every JSON-capable verb emits a self-describing envelope:
 | `rwv sync --json` | `outcomes` |
 | `rwv land --json` | `outcomes` |
 | `rwv push --json` | `outcomes` |
+| `rwv branch list --json` | `branches` |
+| `rwv backup list --json` | `repos` |
 
 The `sync` and `land` envelopes also carry `complete`: `true` when the op ran its last phase and cleared the op record, `false` when a phase parked it.
 

@@ -14,7 +14,7 @@ The argument is a URL or a registry shorthand (`github/example/some-lib`), and `
 
 ## The commit an add makes
 
-`rwv member add` commits what it did, so there is nothing left to record: `rwv.toml` with the new entry, the regenerated integration files and `rwv.lock` with the member's first pin land in one commit. The pin is the commit the clone is at, the tip of the declared branch just cloned. It refuses before changing anything while another tracked file in `projects/<project>/` has uncommitted changes.
+`rwv member add` commits what it did, so there is nothing left to record: `rwv.toml` with the new entry, the regenerated integration files and `rwv.lock` with the member's first pin land in one commit. The pin is the commit the clone is at, the tip of the declared branch just cloned. Another tracked file in `projects/<project>/` with uncommitted changes stays out of the commit and as it is, named in one line.
 
 A member with no pin is reported as `pin` `none`, and the report names the verbs that give one: `rwv member pin <path> <rev> --commit`, or `rwv update --remote --repo <path> --commit` for its upstream's tip. `rwv lock` gives none, since it only moves a pin forward.
 

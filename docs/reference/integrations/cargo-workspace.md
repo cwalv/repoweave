@@ -271,8 +271,8 @@ table in `Cargo.toml`, marked as its own:
 [workspace.package]
 ```
 
-`rwv` writes no keys into the table. An authoring verb (`add`, `remove`,
-`role`, `update --remote`) authors it as soon as the knob is set; `rwv doctor --fix`
+`rwv` writes no keys into the table. An authoring verb (`rwv member add`, `rwv member remove`,
+`rwv member set-role`, `rwv update --remote`) authors it as soon as the knob is set; `rwv doctor --fix`
 authors it only when other drift already makes it regenerate. Disabling the
 integration and running `rwv materialize` strips the table and its marker.
 With the knob unset (the default), `[workspace.package]` is left entirely to
@@ -325,7 +325,7 @@ A Cargo workspace weave produces three distinct lock/manifest artifacts with sep
 
 | Artifact | Produced by | Pins | Committable |
 |---|---|---|---|
-| `Cargo.toml` (managed) | Authoring verbs (`rwv member add`, `remove`, `update --remote`, `role`, `doctor --fix`) | Workspace shape — which repos are members | Yes |
+| `Cargo.toml` (managed) | Authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`, `doctor --fix`) | Workspace shape — which repos are members | Yes |
 | `Cargo.lock` | Install hook (`cargo generate-lockfile` for the first resolve, `cargo fetch` after) | External crate versions from crates.io | Operator's choice ([details](./index.md#committed-files-and-committability)) |
 | `rwv.lock` | `rwv lock` | Internal repo revisions (git SHAs) | Yes |
 

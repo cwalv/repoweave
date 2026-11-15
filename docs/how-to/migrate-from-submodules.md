@@ -52,19 +52,18 @@ If the old superproject itself also contains application code (not just submodul
 
 ### 4. Enable ecosystem integrations and pin `rwv.lock`
 
-If the old superproject held a top-level `Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, or `pyproject.toml`, enable the corresponding integration in `projects/web-app/rwv.toml`, generate the workspace files, and commit the lock and project files:
+If the old superproject held a top-level `Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, or `pyproject.toml`, enable the corresponding integration in `projects/web-app/rwv.toml`, generate the workspace files, and commit them:
 
 ```bash
 $EDITOR projects/web-app/rwv.toml   # enable [integrations.<name>]
 rwv doctor --fix
 rwv materialize
 rwv lock --commit
-git -C projects/web-app add -A && git -C projects/web-app commit -m "Generate workspace files"
 ```
 
-`rwv lock --commit` commits `rwv.lock` and `rwv.toml`; the `git` commit carries the workspace files the newly enabled integrations generated.
+`rwv lock --commit` commits `rwv.lock`, the edited `rwv.toml` and the workspace files regenerated from it in one commit.
 
-To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, pin each member at its gitlink commit: `rwv member pin github/chatly/server <gitlink-sha> --commit`. The commit must be one the member's declared branch or its upstream reaches, or the verb refuses (`pin` `not on declared branch`). The member is aligned to the pin, and a teammate's `rwv clone` puts the member at it. While the branch tip is past the pin, `rwv status` reports the member as `pin` `ahead`; when ready, `rwv lock --commit` records the tip.
+To start from the exact commits the superproject's gitlinks pinned rather than from branch tips, pin each member at its gitlink commit: `rwv member pin github/chatly/server <gitlink-sha> --commit`. The commit must be one the member's declared branch or its upstream reaches, or the verb refuses (`pin` `not on declared branch`). Your checkout stays on its branch at the tip, and a teammate's `rwv clone` puts the member at the pin. While the branch tip is past the pin, `rwv status` reports the member as `pin` `ahead`; when ready, `rwv lock --commit` records the tip.
 
 ### 5. Publish the project repository
 

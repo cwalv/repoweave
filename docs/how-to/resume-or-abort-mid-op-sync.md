@@ -62,11 +62,11 @@ git -C <checkout> log -g -p <slot>
 
 Abort does not tell your work from the operation's, so an abort nobody disturbed still keeps the operation's own replayed commits and conflict markers: each repository the operation moved onto commits nothing else reaches, or left stopped, gets a slot and one line, worded the same whichever it holds. A commit you made at a stop that `--continue` then rebased is also in the backup the operation made before rebasing, which abort names on a line of its own with the command that shows it. A commit that two branches reset by one abort both hold is kept once, in the slot of the branch reset last, and named on that branch's line, which can be another repository's or, under a `land`, the other workspace's.
 
-A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a branch that is gone or checked out elsewhere, a branch of a landing's target, project or member, that something else moved, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort as `foreign-tip`, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
+A refusal moves and writes nothing: abort plans every step on both sides before it makes any, so one obstacle anywhere (a branch that is gone or checked out elsewhere, a branch the landing moved in its target, project or member, that something else moved since, another lock pinning what a landing wrote in its target, a manifest it cannot read) refuses the whole abort as `foreign-tip`, says `nothing is restored` (for a landing, `nothing of either side is restored`) and leaves `--continue` open.
 
 ### Ending an operation whose record cannot be read
 
-If every verb refuses with `unreadable-op-record`, the operation record cannot be read whole: another release wrote it, or it was edited. If another release wrote it, that release resumes or aborts the operation. Otherwise run the command the refusal prints:
+If `rwv status` opens with `unreadable-op-record` and every verb that acts refuses with it, the operation record cannot be read whole: another release wrote it, or it was edited. If another release wrote it, that release resumes or aborts the operation. Otherwise run the command the refusal prints:
 
 ```bash
 rwv -C <workspace> abort --discard-unreadable-record

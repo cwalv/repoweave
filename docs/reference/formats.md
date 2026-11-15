@@ -184,7 +184,9 @@ Each workspace (primary weave or workweave) owns its own `rwv.lock`. A `rwv lock
 A lock commit made by a verb that re-pins members by name ends with one `Rwv-Repin` trailer per member whose pin it moves, forward or backward: the member's path as a JSON string, its old pin (`none` where the lock had none), its new pin, both as full commit ids, and the verb:
 
 ```
-member pin github/chatly/server 0123abcd --commit
+lock: refresh 1 repo
+
+  - github/chatly/server: 0123abcd4e5f
 
 Rwv-Repin: "github/chatly/server" 7a3b2c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b 0123abcd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b member pin
 ```
