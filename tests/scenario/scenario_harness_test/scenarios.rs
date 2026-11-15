@@ -30591,3 +30591,123 @@ pub fn j04_a_stopped_landing_is_abandoned() -> Journey {
         ],
     }
 }
+
+/// A landing is done in the primary while a colleague has published to the
+/// same member, so the publish is refused and the printed way out is taken.
+pub fn j05_a_landing_loses_a_race() -> Journey {
+    let workweave = ww("mine");
+    let path = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        documented_create("mine"),
+        Step::commit(&workweave, Repo::App, "my-app"),
+        Step::forge(Forge::Commit {
+            repo: Repo::App,
+            branch: "main",
+            mark: "their-app",
+        }),
+        Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::App, State::PushBranchDiverged)),
+        Step::rwv_printed_holding(&a(), "rwv update ", "--merge-upstream")
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push"])
+            .expect(Exit::refuses(Repo::Proj, State::EditsLockFilesUncommitted)),
+        Step::rwv_printed(&a(), "rwv lock --commit").expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ];
+    Journey {
+        name: "j05: a landing loses a race to a colleague's publish and recovers",
+        seed: Seed::default(),
+        path,
+        fault: 9,
+        end: vec![clean_end(a())
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "main",
+                mark: "their-app",
+            })
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "main",
+                mark: "my-app",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::remote_main(Repo::Proj),
+                member: Repo::App,
+                mark: "my-app",
+            })],
+    }
+}
+
+/// A feature published under one name is renamed, republished under the new
+/// one, and the old name is deleted from the remotes with the printed choice.
+pub fn j06_a_published_feature_is_renamed() -> Journey {
+    let path = vec![
+        Step::rwv(&a(), &["branch", "create", "try-1"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "try-app"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "try-1")
+            .pushes(Remote::origin(Repo::Proj), "try-1")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "rename", "welcome-field"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "rwv branch delete try-1 --target welcome-field --delete-remote",
+            )),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "welcome-field")
+            .pushes(Remote::origin(Repo::Proj), "welcome-field")
+            .expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "delete",
+                "try-1",
+                "--target",
+                "welcome-field",
+                "--delete-remote",
+            ],
+        )
+        .deletes(Remote::origin(Repo::App), "try-1")
+        .deletes(Remote::origin(Repo::Proj), "try-1")
+        .expect(Exit::Succeeds),
+    ];
+    Journey {
+        name: "j06: a feature already published is renamed everywhere",
+        seed: Seed::default(),
+        path,
+        fault: 6,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "welcome-field",
+                    mark: "try-app",
+                })
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::App,
+                    branch: "try-1",
+                })
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::Proj,
+                    branch: "try-1",
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "welcome-field",
+                    record: Some(feature_onto("main", Mode::Declared)),
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "try-1",
+                    record: None,
+                }),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("try-1")),
+        ],
+    }
+}

@@ -1197,6 +1197,8 @@ every_scenario!(
     j02_pick_up_a_colleagues_landing,
     j03_a_landing_stops_on_a_conflict_and_is_finished,
     j04_a_stopped_landing_is_abandoned,
+    j05_a_landing_loses_a_race,
+    j06_a_published_feature_is_renamed,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9037,6 +9039,8 @@ fn every_journey() -> Vec<common::scenario_steps::Journey> {
         scenarios::j02_pick_up_a_colleagues_landing(),
         scenarios::j03_a_landing_stops_on_a_conflict_and_is_finished(),
         scenarios::j04_a_stopped_landing_is_abandoned(),
+        scenarios::j05_a_landing_loses_a_race(),
+        scenarios::j06_a_published_feature_is_renamed(),
     ]
 }
 
