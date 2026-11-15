@@ -2786,6 +2786,34 @@ mod tests {
     }
 
     #[test]
+    fn a_report_is_journaled_once_and_a_repeat_says_it_was_reported_before() {
+        let tmp = crate::tempdir().unwrap();
+        let report = |subject: &str| LandingReport::BeyondPin {
+            repo: RepoKey::Project,
+            target: "main".into(),
+            commits: vec![crate::vcs::CommitSummary {
+                id: CommitId::parse(&"a".repeat(40)).unwrap(),
+                subject: subject.into(),
+            }],
+        };
+        let record = OwnerRecord::new_take_in(
+            &"1".parse().unwrap(),
+            OpVerb::Land,
+            test_project(),
+            tmp.path(),
+            TakeInRecord::default(),
+        );
+        write_owner(tmp.path(), &record).unwrap();
+
+        assert!(journal_report(tmp.path(), &report("one")).unwrap());
+        assert!(!journal_report(tmp.path(), &report("one")).unwrap());
+        assert!(journal_report(tmp.path(), &report("two")).unwrap());
+
+        let journaled = read_owner(tmp.path()).unwrap().unwrap().take_in.unwrap();
+        assert_eq!(journaled.reports, vec![report("one"), report("two")]);
+    }
+
+    #[test]
     fn a_field_this_release_does_not_read_inside_an_enum_of_the_record_is_refused() {
         let tmp = crate::tempdir().unwrap();
         let tip = CommitId::parse(&"a".repeat(40)).unwrap();
