@@ -2414,11 +2414,13 @@ pub(crate) fn plan_checkout_removal(
                          this directory would destroy the only object database the weave \
                          has for this repo, with nothing having checked what is in it.\n\
                          \n\
-                         Run `rwv doctor` for a topology audit and remediation guidance, or \
-                         remove the directory manually once you are certain nothing needs \
-                         its objects.",
+                         Run `rwv doctor` for a topology audit and remediation guidance. \
+                         Removing {} destroys the only copy of this repo's objects, which no \
+                         other clone holds; remove it only once you are certain nothing \
+                         needs them.",
                         dest.display(),
                         canonical.display(),
+                        dest.display(),
                     );
                 }
                 // `dest` is a linked workspace: its refdb and objects live in

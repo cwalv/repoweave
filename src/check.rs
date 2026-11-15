@@ -7199,7 +7199,8 @@ impl CheckViolation {
                         None => format!(
                             "{}: workweave directory name disagrees with its records — \
                                  {detail}. Rename it to the `<project>--<name>` you intend, \
-                                 or remove the directory",
+                                 or remove the directory, which deletes every checkout in it \
+                                 with any commit or edit only those checkouts hold",
                             workweave_dir.display(),
                         ),
                     },

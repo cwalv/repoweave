@@ -130,6 +130,11 @@ defense, never the only report.
   `SurfacedFile::written_at_source` (the file is in the project directory
   before it is linked); `.from_primary()` makes the link read the primary's
   checkout. Declaring a file here means "surface this", not "rwv wrote this".
+  A `written_through_link` link stands over a file the tool has not written
+  yet, and that is its accepted state: surfacing does not wait for the file
+  and `verify` does not call the link stale. `check` says why the file is
+  absent when the tool is not on `PATH`, as a `tool-missing` finding that
+  names the file and its dangling link (`integrations::unwritten_file`).
 - **`managed_files`** — the wider set including hybrid files, which are
   surfaced by symlink, never gitignored, and only ever strip-edited. Defaults
   to `generated_files()`, so a fully-owned integration implements just the one.
