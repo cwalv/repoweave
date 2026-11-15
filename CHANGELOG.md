@@ -19,8 +19,8 @@ of a checkout in it, and removes no lease or landing claim it may own; the new
 [`unreadable-holder`](docs/reference/doctor-findings.md#unreadable-holder)
 finding names it with the line that ends it. A workspace gone for good that no
 index records is released with `rwv doctor --fix --forget-gone-workspace
-<dir>`. No checkout of a workspace an operation's record or lease holds is
-refreshed, created or unregistered by a `--fix` run elsewhere. The discard of
+<dir>`. No registration of a checkout in a workspace an operation's record or lease
+holds is dropped by a `--fix` run elsewhere. The discard of
 an unreadable record says, per savepoint, whether the checkout and each branch
 it filed still stand at the tip it recorded. A savepoint or registration seen
 through several checkouts of one store is reported once.

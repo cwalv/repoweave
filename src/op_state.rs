@@ -3884,7 +3884,8 @@ mod tests {
     fn check_no_op_dangling_lease_refusal_is_the_whole_template() {
         let tmp = crate::tempdir().unwrap();
         let dir = tmp.path();
-        let owner = tmp.path().join("nonexistent-owner");
+        let owner = tmp.path().join("owner-recording-nothing");
+        std::fs::create_dir_all(&owner).unwrap();
         let lease = LeaseRecord {
             id: "dangling-op".parse().unwrap(),
             owner: CanonicalPath::of(&owner),
@@ -3905,6 +3906,36 @@ mod tests {
                 dir = dir.display(),
                 owner = owner.display(),
             )
+        );
+    }
+
+    /// A lease whose owner is not there may belong to an operation that
+    /// still runs where that workspace is, so nothing releases it on its own:
+    /// the refusal names the line that gives it up.
+    #[test]
+    fn a_lease_whose_owner_is_not_there_names_the_line_that_gives_it_up() {
+        let tmp = crate::tempdir().unwrap();
+        let dir = tmp.path();
+        let owner = tmp.path().join("not-mounted");
+        let lease = LeaseRecord {
+            id: "away-op".parse().unwrap(),
+            owner: CanonicalPath::of(&owner),
+            created_at: None,
+        };
+        overwrite_lease_in_test(dir, &lease).unwrap();
+        assert!(detect_dead_lease(dir).unwrap().is_none());
+        let err = check_no_op_in_progress(&[dir]).unwrap_err();
+        assert_eq!(
+            crate::refusal::kind_of(&err),
+            Some(RefusalKind::DeadOpLease)
+        );
+        assert!(
+            err.to_string().ends_with(&format!(
+                "rwv -C {} doctor --fix --forget-gone-workspace {}",
+                dir.display(),
+                owner.display()
+            )),
+            "{err}"
         );
     }
 

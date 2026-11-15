@@ -5471,9 +5471,6 @@ fn repair_uninitialized_submodules(
     project_scope: Option<&ProjectName>,
 ) {
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
-        if held_by_an_operation(&workweave_dir) {
-            continue;
-        }
         for (repo, entry) in loaded.manifest.iter_entries() {
             let member = workweave_dir.join(repo.as_path());
             if entry.recurse_submodules == crate::manifest::SubmoduleRecursion::Skip
@@ -6033,9 +6030,6 @@ fn repair_member_gaps(
     fix_errors: &mut Vec<String>,
 ) {
     for gap in scan_member_gaps(ctx, project_scope) {
-        if held_by_an_operation(&gap.workweave_dir) {
-            continue;
-        }
         let vcs = crate::vcs::vcs_for(gap.vcs_type);
         let abandoned = match (gap.local, gap.slot, abandon_lost_pins) {
             (true, _, _) => None,
@@ -6117,9 +6111,6 @@ fn repair_standalone_members(
     fix_errors: &mut Vec<String>,
 ) {
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
-        if held_by_an_operation(&workweave_dir) {
-            continue;
-        }
         for (repo, entry) in loaded.manifest.iter_entries() {
             let slot = workweave_dir.join(repo.as_path());
             if crate::workweave::is_symlinked_member(&slot) {
@@ -11509,16 +11500,13 @@ struct ReportLine {
 /// Whether `dir` is stopped in a VCS operation of a workspace that records
 /// an operation of its own: its HEAD and edits are that operation's until it
 /// ends.
-/// Whether the workspace the checkout at `dir` belongs to holds an
-/// operation's record or lease, readable or not: what the operation's abort
-/// restores of the checkout is left as it stands.
-fn held_by_an_operation(dir: &Path) -> bool {
-    crate::workspace::WorkspaceContext::resolve_unbound(dir)
-        .ok()
-        .is_some_and(|ctx| {
-            crate::op_state::OwnerRecord::path_in(ctx.active_path()).exists()
-                || crate::op_state::LeaseRecord::path_in(ctx.active_path()).exists()
-        })
+fn stopped_in_recorded_operation(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> bool {
+    vcs.mid_operation(dir).is_some()
+        && crate::workspace::WorkspaceContext::resolve_unbound(dir)
+            .ok()
+            .is_some_and(|ctx| {
+                matches!(crate::op_state::read_owner(ctx.active_path()), Ok(Some(_)))
+            })
 }
 
 fn collect_doctor_violations(
@@ -11768,7 +11756,9 @@ fn collect_doctor_violations(
             continue;
         }
 
-        if crate::git::repo_is_dirty(repo_abs) == Some(false) || held_by_an_operation(repo_abs) {
+        if crate::git::repo_is_dirty(repo_abs) == Some(false)
+            || stopped_in_recorded_operation(vcs, repo_abs)
+        {
             continue;
         }
         let project_repo = project_repos.contains(repo_abs);

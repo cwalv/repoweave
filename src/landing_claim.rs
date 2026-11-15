@@ -1462,7 +1462,7 @@ mod tests {
     }
 
     #[test]
-    fn a_claim_whose_owner_is_not_here_is_never_taken_over_and_doctor_releases_it() {
+    fn a_claim_whose_owner_is_not_here_is_never_taken_over_and_its_release_is_named() {
         let tmp = crate::tempdir().unwrap();
         let elsewhere = tmp.path().join("elsewhere");
         std::fs::create_dir_all(elsewhere.join("projects")).unwrap();
@@ -1476,7 +1476,13 @@ mod tests {
         let refused =
             take_within(path.clone(), &p(), "t", &op(2), &next, Duration::ZERO).unwrap_err();
         assert!(crate::refusal::kind_of(&refused) == Some(RefusalKind::ClaimOwnerUnreachable));
-        assert!(format!("{refused:#}").contains("rwv doctor --fix"));
+        assert!(
+            format!("{refused:#}").contains(&format!(
+                "doctor --fix --forget-gone-workspace {}",
+                elsewhere.display()
+            )),
+            "{refused:#}"
+        );
         assert_eq!(Holder::parse(&path.read().unwrap()).unwrap().op, op(1));
 
         let unreachable = UnreachableClaim {
