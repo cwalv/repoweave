@@ -495,43 +495,51 @@ fn a_seat_that_is_away_keeps_its_lease_claim_registrations_and_savepoints() {
     }
 }
 
-/// A seat killed in a sync after it moved a branch under a checkout: what
-/// the checkout holds is what the operation's abort restores, so `--fix`
-/// elsewhere refreshes nothing in it, and the abort puts it back.
+/// A landing killed after it moved the target's branch and before it moved
+/// the target's checkout: what that checkout holds is what the landing's
+/// abort restores, so `--fix` anywhere refreshes nothing in it, and the abort
+/// puts the target back.
 #[test]
-fn doctor_elsewhere_refreshes_nothing_in_a_checkout_an_operation_holds() {
+fn doctor_refreshes_nothing_in_a_checkout_an_operation_holds() {
     if !cfg!(feature = "test-pause") {
-        common::report_skip("kills rwv sync at a pause point, which needs --features test-pause");
+        common::report_skip("kills rwv land at a pause point, which needs --features test-pause");
         return;
     }
     let ready = ready_to_sync(false);
-    commit_file(&ready.primary.lib, "d.txt", "primary\n", "primary: lib d");
-    succeed(&ready.primary.root, &["lock", "--commit"]);
-    let mut sync = common::rwv_std();
-    sync.args(["sync"]).current_dir(&ready.seat.root);
-    common::pause::Paused::spawn(sync, "carry-moved", &ready._tmp.path().join("pause"))
-        .expect("the sync moves the seat's branch")
-        .kill();
+    let primary_lib = head(&ready.primary.lib);
+    let primary_project = head(&ready.primary.project);
+    let mut land = common::rwv_std();
+    land.args(["land"]).current_dir(&ready.seat.root);
+    common::pause::Paused::spawn(
+        land,
+        "advance-target-move",
+        &ready._tmp.path().join("pause"),
+    )
+    .expect("the landing moves the target's branch")
+    .kill();
     assert!(ready.seat.root.join(".rwv-op").exists());
     let status =
         |dir: &Path| common::git_in(dir, &["status", "--porcelain", "--untracked-files=all"]);
-    let lib_status = status(&ready.seat.lib);
-    let project_status = status(&ready.seat.project);
+    let held: Vec<(PathBuf, String)> = [&ready.primary.lib, &ready.primary.project]
+        .into_iter()
+        .map(|dir| (dir.clone(), status(dir)))
+        .collect();
 
     for at in [&ready.primary.root, &ready.sibling.root] {
         let fixed = rwv(at, &["doctor", "--fix"]);
         let report = common::cli::describe(&fixed);
         assert!(!report.contains("drift in"), "{report}");
-        assert_eq!(status(&ready.seat.lib), lib_status, "{report}");
-        assert_eq!(status(&ready.seat.project), project_status, "{report}");
+        for (dir, was) in &held {
+            assert_eq!(&status(dir), was, "{}: {report}", dir.display());
+        }
     }
 
     succeed(&ready.seat.root, &["abort"]);
-    assert_eq!(head(&ready.seat.lib), ready.seat_lib);
-    assert_eq!(head(&ready.seat.project), ready.seat_project);
+    assert_eq!(head(&ready.primary.lib), primary_lib);
+    assert_eq!(head(&ready.primary.project), primary_project);
     assert!(
-        status(&ready.seat.lib).trim().is_empty(),
+        status(&ready.primary.lib).trim().is_empty(),
         "{}",
-        status(&ready.seat.lib)
+        status(&ready.primary.lib)
     );
 }
