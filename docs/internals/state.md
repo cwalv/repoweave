@@ -46,7 +46,8 @@ file's existence, and a holder on another host is cleared by
 Every ref rwv writes is below `refs/rwv/` and in a namespace of `RwvRef`
 (`src/git/rwv_ref.rs`), which names it, its owner and how long it lives.
 `rwv doctor` reports a ref below `refs/rwv/` in no namespace as
-`unrecognized-savepoint-ref`.
+`unrecognized-savepoint-ref`; `rwv doctor --fix` keeps what it points at
+as a backup where no branch reaches it, then removes it.
 
 | Namespace | Owner | Lifetime | What it holds |
 |---|---|---|---|

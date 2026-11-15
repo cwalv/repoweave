@@ -4751,6 +4751,25 @@ impl Vcs for GitVcs {
         Ok(listing)
     }
 
+    fn unrecognized_savepoint_tip(
+        &self,
+        repo: &Path,
+        reference: &str,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        let peeled = format!("{reference}^{{commit}}");
+        let args = ["rev-parse", "--verify", "--quiet", &peeled];
+        match Self::run_trimmed_or_absent(args, repo, Absent::Revision)? {
+            Some(printed) => Ok(Some(ResolvedRevisionId::from(commit_id_printed(
+                &printed, &args, repo,
+            )?))),
+            None => Ok(None),
+        }
+    }
+
+    fn drop_unrecognized_savepoint(&self, repo: &Path, reference: &str) -> Result<(), VcsError> {
+        Self::run(["update-ref", "-d", reference], repo).map(|_| ())
+    }
+
     fn file_versions(
         &self,
         repo: &Path,

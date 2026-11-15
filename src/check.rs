@@ -554,8 +554,8 @@ pub enum CheckViolation {
 
     /// A ref under the savepoint namespace that no op id names. rwv filed
     /// none of it: a hand-made ref, a damaged name, or one written by a
-    /// different rwv. What it points at is unknown, so it is reported and
-    /// never dropped.
+    /// different rwv. `--fix` keeps what it points at as a backup where no
+    /// branch reaches it, then removes the ref.
     UnrecognizedSavepointRef {
         /// The workweave the holding repo lives in; `None` for the primary.
         workweave: Option<WorkweaveId>,
@@ -782,7 +782,7 @@ impl CheckViolation {
             CheckViolation::OrphanedSavepoint { sub_kind, .. } => match sub_kind {
                 OrphanedSavepointKind::Redundant | OrphanedSavepointKind::Live => Auto,
             },
-            CheckViolation::UnrecognizedSavepointRef { .. } => ReportOnly,
+            CheckViolation::UnrecognizedSavepointRef { .. } => Auto,
             CheckViolation::ConfusableSiblings { .. } => ReportOnly,
         }
     }
@@ -2314,8 +2314,8 @@ pub enum ViolationOutput {
         #[serde(rename = "sub_kind")]
         sub_kind: OrphanedSavepointKind,
     },
-    /// A ref under the savepoint namespace that no op id names. rwv did not
-    /// file it, so `--fix` never drops it.
+    /// A ref under the savepoint namespace that no op id names. `--fix`
+    /// keeps what it points at as a backup and removes the ref.
     UnrecognizedSavepointRef {
         path: String,
         absolute_path: WirePath,
@@ -6318,6 +6318,30 @@ pub fn fix_state_hygiene(
             vcs.drop_savepoint(repo_abs, key);
             Ok(true)
         }
+        CheckViolation::UnrecognizedSavepointRef { ref_name, .. } => {
+            let Some(tip) = vcs.unrecognized_savepoint_tip(repo_abs, ref_name)? else {
+                return Ok(false);
+            };
+            if !vcs
+                .reached_by_no_branch(repo_abs, &tip, crate::vcs::RemoteTracking::Counted)?
+                .is_empty()
+            {
+                vcs.create_backup(
+                    repo_abs,
+                    &crate::vcs::BackupSource::DetachedHead,
+                    &tip,
+                    None,
+                )
+                .with_context(|| {
+                    format!(
+                        "could not keep {ref_name} as a backup in {}",
+                        repo_abs.display()
+                    )
+                })?;
+            }
+            vcs.drop_unrecognized_savepoint(repo_abs, ref_name)?;
+            Ok(true)
+        }
         CheckViolation::DeadOpLease { workspace_dir, .. } => {
             crate::op_state::fix_dead_lease(workspace_dir);
             Ok(true)
@@ -7576,21 +7600,19 @@ impl CheckViolation {
             CheckViolation::UnrecognizedSavepointRef {
                 workweave,
                 repo,
-                holder,
                 ref_name,
+                ..
             } => {
                 let location = match workweave {
                     Some(ww) => format!("{ww}/{repo}"),
                     None => format!("{repo}"),
                 };
-                let holder = holder.display().to_string();
-                let holder = shell_word(&holder);
                 format!(
                     "{location}: unrecognized-savepoint-ref {ref_name} — it sits in the \
                          savepoint namespace but no op id names it, so rwv did not file it. \
-                         Never auto-fixed: what it points at is unknown. Inspect it, and \
-                         delete it by hand with `git -C {holder} update-ref -d {ref_name}` \
-                         once nothing needs it."
+                         `rwv doctor --fix` keeps what it points at as a backup (`rwv backup \
+                         list`, `rwv backup drop`) where no branch reaches it, and removes the \
+                         ref."
                 )
             }
             CheckViolation::CargoVersionSkew {
@@ -9479,6 +9501,30 @@ fn apply_finding_repairs(
                         };
                         outln!(
                             "[fixed] core: orphaned-savepoint for {}: {done} op_id={key}",
+                            location_of(workweave, repo)
+                        );
+                        true
+                    }
+                    Ok(false) => false,
+                    Err(e) => {
+                        fix_errors.push(format!("state-hygiene --fix failed: {e:#}"));
+                        true
+                    }
+                },
+                None => false,
+            },
+
+            CheckViolation::UnrecognizedSavepointRef {
+                workweave,
+                repo,
+                ref_name,
+                ..
+            } => match repo_locations.get(&(workweave.clone(), repo.clone())) {
+                Some(repo_abs) => match fix_state_hygiene(vcs, &v, repo_abs) {
+                    Ok(true) => {
+                        outln!(
+                            "[fixed] core: unrecognized-savepoint-ref for {}: kept as a backup \
+                             (`rwv backup list`) and removed {ref_name}",
                             location_of(workweave, repo)
                         );
                         true

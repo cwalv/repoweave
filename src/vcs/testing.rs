@@ -1369,6 +1369,18 @@ impl Vcs for FakeVcs {
         unsupported("list_savepoints")
     }
 
+    fn unrecognized_savepoint_tip(
+        &self,
+        _repo: &Path,
+        _reference: &str,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError> {
+        unsupported("unrecognized_savepoint_tip")
+    }
+
+    fn drop_unrecognized_savepoint(&self, _repo: &Path, _reference: &str) -> Result<(), VcsError> {
+        unsupported("drop_unrecognized_savepoint")
+    }
+
     fn read_file_at_revision(
         &self,
         _repo: &Path,

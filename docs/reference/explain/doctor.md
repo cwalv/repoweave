@@ -2567,7 +2567,7 @@ Schema:
           }
         },
         {
-          "description": "A ref under the savepoint namespace that no op id names. rwv did not file it, so `--fix` never drops it.",
+          "description": "A ref under the savepoint namespace that no op id names. `--fix` keeps what it points at as a backup and removes the ref.",
           "type": "object",
           "required": [
             "absolute_path",

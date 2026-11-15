@@ -4496,6 +4496,19 @@ pub trait Vcs: Send + Sync {
     /// [`drop_savepoint`]: Vcs::drop_savepoint
     fn list_savepoints(&self, repo: &Path) -> Result<SavepointListing, VcsError>;
 
+    /// The commit the unrecognized savepoint reference `reference` (as
+    /// [`SavepointListing::unrecognized`] spells it) points at, `None` where
+    /// it points at nothing a backup can keep.
+    fn unrecognized_savepoint_tip(
+        &self,
+        repo: &Path,
+        reference: &str,
+    ) -> Result<Option<ResolvedRevisionId>, VcsError>;
+
+    /// Remove the unrecognized savepoint reference `reference` from the
+    /// savepoint namespace.
+    fn drop_unrecognized_savepoint(&self, repo: &Path, reference: &str) -> Result<(), VcsError>;
+
     /// Read the content of `file_path` at `revision` in `repo`.
     ///
     /// Returns the raw byte content of the file as committed at that

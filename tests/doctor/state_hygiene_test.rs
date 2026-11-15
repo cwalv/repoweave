@@ -1178,28 +1178,8 @@ fn dotfiles(root: &Path) -> Vec<String> {
     names
 }
 
-/// The words of a command printed with POSIX single-quoting.
-fn shell_words(command: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut word: Option<String> = None;
-    let mut quoted = false;
-    for c in command.chars() {
-        match c {
-            '\'' => {
-                quoted = !quoted;
-                word.get_or_insert_with(String::new);
-            }
-            c if c.is_whitespace() && !quoted => words.extend(word.take()),
-            c => word.get_or_insert_with(String::new).push(c),
-        }
-    }
-    assert!(!quoted, "unbalanced quote in: {command}");
-    words.extend(word);
-    words
-}
-
 #[test]
-fn an_unrecognized_ref_is_reported_once_per_clone_and_its_printed_deletion_clears_it() {
+fn doctor_fix_keeps_what_an_unrecognized_ref_alone_reaches_as_a_backup_and_removes_the_ref() {
     let repo_rel = "github/acme/server";
     let pw = common::build_workspace("demo", &[(repo_rel, "owned")]);
     let created = rwv_cmd()
@@ -1214,7 +1194,20 @@ fn an_unrecognized_ref_is_reported_once_per_clone_and_its_printed_deletion_clear
     );
     let repo_abs = pw.workspace.join(repo_rel);
     let head = common::git_in(&repo_abs, &["rev-parse", "HEAD"]);
-    add_savepoint(&repo_abs, "not.a.key", head.trim());
+    let tree = common::git_in(&repo_abs, &["rev-parse", "HEAD^{tree}"]);
+    let stranded = common::git_in(
+        &repo_abs,
+        &[
+            "commit-tree",
+            tree.trim(),
+            "-p",
+            head.trim(),
+            "-m",
+            "stranded",
+        ],
+    );
+    add_savepoint(&repo_abs, "not.a.key", stranded.trim());
+    add_savepoint(&repo_abs, "also.not.a.key", head.trim());
 
     let doctor = |args: &[&str]| -> String {
         let out = rwv_cmd()
@@ -1229,38 +1222,36 @@ fn an_unrecognized_ref_is_reported_once_per_clone_and_its_printed_deletion_clear
         )
     };
     let report = doctor(&["doctor"]);
-    let findings: Vec<&str> = report
+    let found = report
         .lines()
         .filter(|l| l.contains("unrecognized-savepoint-ref"))
-        .collect();
+        .count();
     assert_eq!(
-        findings.len(),
-        1,
+        found, 2,
         "the primary and the workweave share one ref store:\n{report}"
     );
+    assert!(report.contains("rwv doctor --fix"), "{report}");
 
-    let printed = findings[0]
-        .split('`')
-        .nth(1)
-        .unwrap_or_else(|| panic!("no command in: {}", findings[0]));
-    let words = shell_words(printed);
-    assert_eq!(words[0], "git", "{printed}");
-    let followed = common::git()
-        .args(&words[1..])
-        .current_dir(&pw.workspace)
-        .output()
-        .unwrap();
+    let fixed = doctor(&["doctor", "--fix"]);
     assert!(
-        followed.status.success(),
-        "`{printed}` from the weave root: {}",
-        String::from_utf8_lossy(&followed.stderr)
+        fixed.contains("[fixed] core: unrecognized-savepoint-ref"),
+        "{fixed}"
     );
-
     assert!(!savepoint_exists(&repo_abs, "not.a.key"));
+    assert!(!savepoint_exists(&repo_abs, "also.not.a.key"));
     let after = doctor(&["doctor", "--json"]);
     assert!(
         !after.contains("unrecognized-savepoint-ref"),
-        "the finding outlived the deletion it printed:\n{after}"
+        "the finding outlived the fix:\n{after}"
+    );
+    let backups = doctor(&["backup", "list", "--project", "demo"]);
+    assert!(
+        backups.contains(&stranded.trim()[..12]),
+        "the commit only the ref reached must be a backup:\n{backups}"
+    );
+    assert!(
+        !backups.contains(&head.trim()[..12]),
+        "a commit a branch reaches needs no backup:\n{backups}"
     );
 }
 

@@ -112,7 +112,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`working-tree-drift`](#working-tree-drift) / `live-edits` | Warning | Report-only |
 | [`orphaned-savepoint`](#orphaned-savepoint) / `redundant` | Warning | Auto-fixable |
 | [`orphaned-savepoint`](#orphaned-savepoint) / `live` | Warning | Auto-fixable |
-| [`unrecognized-savepoint-ref`](#unrecognized-savepoint-ref) | Warning | Report-only |
+| [`unrecognized-savepoint-ref`](#unrecognized-savepoint-ref) | Warning | Auto-fixable |
 | [`stale-op-state`](#stale-op-state) | Warning | Report-only |
 | [`unreadable-op-record`](#unreadable-op-record) | Warning | Report-only |
 | [`dead-op-lease`](#dead-op-lease) (`owner-record-absent`, `owner-op-id-mismatch`) | Warning | Auto-fixable |
@@ -1568,17 +1568,17 @@ as the operation's record exists.
 
 ### `unrecognized-savepoint-ref`
 
-**Warning. Report-only.** A ref below `refs/rwv/` in no namespace rwv writes
+**Warning. Auto-fixable.** A ref below `refs/rwv/` in no namespace rwv writes
 (`pre-op`, `backup`), or one under `refs/rwv/pre-op/` that no op id names.
 rwv did not file it: it is a hand-made ref, a damaged name, or one written by
-a different rwv. What it points at is unknown, so `--fix` never drops it. The
-finding carries the `ref_name` and the holding repo's `absolute_path`. Refs
-live in the store a clone shares with its workweave checkouts, so one ref is
-one finding, however many checkouts see it.
+a different rwv. The finding carries the `ref_name` and the holding repo's
+`absolute_path`. Refs live in the store a clone shares with its workweave
+checkouts, so one ref is one finding, however many checkouts see it.
 
-**What to do:** inspect it, and delete it by hand with
-`git -C <absolute_path> update-ref -d <ref_name>` once nothing needs it; the
-text output prints that command filled in.
+**What to do:** `rwv doctor --fix` keeps the commit the ref points at as a
+backup where no branch reaches it (`rwv backup list` shows it, `rwv backup drop`
+discards it), then removes the ref. A ref that points at no commit is left and
+reported.
 
 ### `stale-op-state`
 

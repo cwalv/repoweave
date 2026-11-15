@@ -489,7 +489,7 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"update-ref\"",
-        count: 10,
+        count: 11,
         callers: &[],
         justification: "(1)-(2) savepoint creates, a checkout's and a \
             branch's moved as a ref; (A)-(C) savepoint drops: every one \
@@ -517,7 +517,11 @@ const ALLOWLIST: &[Allowed] = &[
             (7) record_checkout_at_head: a HEAD reflog entry at the HEAD the \
             refresh read, by a compare-and-swap whose old and new values are \
             both that commit, so it moves no ref; a branch moved since makes \
-            it fail rather than move back or record the newer tip.",
+            it fail rather than move back or record the newer tip. (8) \
+            drop_unrecognized_savepoint: removes one reference under the \
+            savepoint namespace no key names, reached only from the doctor \
+            fix that first keeps what it points at as a backup when no \
+            branch reaches it.",
     },
     Allowed {
         file: "git.rs",
