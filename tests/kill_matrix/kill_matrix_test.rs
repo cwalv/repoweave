@@ -1888,8 +1888,10 @@ shape_tests!(
 );
 
 /// Every shape, phase and point the shape's verb passes.
-fn discovered() -> std::collections::BTreeSet<(String, String, String)> {
-    let jobs: Vec<Box<dyn FnOnce() -> Vec<(String, String, String)> + Send>> = SHAPES
+type Reached = (String, String, String);
+
+fn discovered() -> std::collections::BTreeSet<Reached> {
+    let jobs: Vec<Box<dyn FnOnce() -> Vec<Reached> + Send>> = SHAPES
         .iter()
         .filter(|shape| {
             std::env::var("DISCOVER_SHAPE").map_or(true, |only| shape.id.starts_with(&only))
@@ -1901,7 +1903,7 @@ fn discovered() -> std::collections::BTreeSet<(String, String, String)> {
                         .into_iter()
                         .map(|point| (shape.id.to_owned(), point, format!("{phase:?}")))
                         .collect()
-                }) as Box<dyn FnOnce() -> Vec<(String, String, String)> + Send>
+                }) as Box<dyn FnOnce() -> Vec<Reached> + Send>
             })
         })
         .collect();
@@ -1914,7 +1916,7 @@ fn discovered() -> std::collections::BTreeSet<(String, String, String)> {
 #[test]
 fn the_cells_are_exactly_where_the_shapes_reach_the_points() {
     let found = discovered();
-    let listed: std::collections::BTreeSet<(String, String, String)> = POINTS
+    let listed: std::collections::BTreeSet<Reached> = POINTS
         .iter()
         .flat_map(|row| {
             row.cells.iter().map(move |(id, phase)| {
