@@ -913,6 +913,8 @@ pub(crate) enum Produced {
     ReplayDiffers,
     /// An edit of the working file over a resolved one that parses.
     WorkingEdit,
+    /// The resolved file a stopped copy of a picked commit is to commit.
+    ResolvedCopy,
 }
 
 impl Produced {
@@ -934,6 +936,10 @@ impl Produced {
             Self::WorkingEdit => {
                 "the resolved rwv.toml parses, but the working rwv.toml differs from the resolved \
                  one and does not parse; nothing is committed while it does not"
+            }
+            Self::ResolvedCopy => {
+                "the copy of the picked commit stopped on rwv.toml and the resolved rwv.toml \
+                 does not parse; nothing is committed while it does not"
             }
         }
     }

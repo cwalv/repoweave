@@ -1234,11 +1234,14 @@ impl State {
                         holds the file; continuing makes the resolved file part of that \
                         commit, which the replay wrote and nothing has published. A resolved \
                         file that parses under a working file that differs and does not parse \
-                        stops here too, before anything is committed",
+                        stops here too, before anything is committed. A copy of a picked \
+                        commit that stopped on `rwv.toml` commits the resolved file, which \
+                        must parse",
                 refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
                              first read what the merge or replay produced, and their \
                              `--continue` while the resolved `rwv.toml` does not parse; `rwv \
-                             abort` runs",
+                             cherry-pick --continue` while the resolved `rwv.toml` does not \
+                             parse; `rwv abort` runs",
                 offers: &[
                     Form::StageParsingManifest,
                     Form::ResumeWithManifest,

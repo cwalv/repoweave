@@ -14615,6 +14615,9 @@ enum PortedText {
     /// [`PortedText::TablesChangedAtDifferentKeys`] where the picked commit
     /// changes `rwv.toml` alone.
     TablesChangedAtDifferentKeysAlone,
+    /// Both sides change the same key of the table, differently: git's text
+    /// merge conflicts in `rwv.toml`.
+    TablesChangedAtTheSameKey,
     /// `main` adds `enabled` to `cargo-workspace` below a blank line, the
     /// feature adds a `go-work` table under it: git's text merge puts the key
     /// in `go-work`.
@@ -14629,7 +14632,8 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
     if !matches!(shape, PortedText::TwoTables) {
         let edited = match shape {
             PortedText::TablesChangedAtDifferentKeys
-            | PortedText::TablesChangedAtDifferentKeysAlone => {
+            | PortedText::TablesChangedAtDifferentKeysAlone
+            | PortedText::TablesChangedAtTheSameKey => {
                 format!("{base_table}{VSCODE_TABLE}")
             }
             PortedText::KeyMovedUnderANewTable => {
@@ -14668,7 +14672,8 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
             ),
         ]),
         PortedText::TablesChangedAtDifferentKeys
-        | PortedText::TablesChangedAtDifferentKeysAlone => steps.push(Step::hand_edit(
+        | PortedText::TablesChangedAtDifferentKeysAlone
+        | PortedText::TablesChangedAtTheSameKey => steps.push(Step::hand_edit(
             &a(),
             Repo::Proj,
             "rwv.toml",
@@ -14713,6 +14718,13 @@ fn text_merged_port(shape: PortedText) -> Vec<Step> {
             "rwv.toml",
             "link = [\"a\"]",
             "link = [\"a2\"]",
+        )),
+        PortedText::TablesChangedAtTheSameKey => steps.push(Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "copy = [\"b\"]",
+            "copy = [\"b3\"]",
         )),
         PortedText::KeyMovedUnderANewTable => steps.push(Step::hand_edit(
             &ww("p"),
@@ -14870,6 +14882,45 @@ pub fn cherry_pick_a_key_the_text_merge_moved_stops() -> Scenario {
         )),
     ]);
     scenario("cherry-pick a key the text merge moved", steps)
+}
+
+/// [`PortedText::TablesChangedAtTheSameKey`]: git's text merge conflicts in
+/// `rwv.toml`.
+pub fn cherry_pick_a_manifest_conflict_stops() -> Scenario {
+    let mut steps = text_merged_port(PortedText::TablesChangedAtTheSameKey);
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputOnce("add -- rwv.toml"))
+            .claim(Claim::OutputLacks("git add <files>")),
+        Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "copy = [\"b3\"]",
+            "copy = [\"b3\"",
+        ),
+        Step::git(&ww("p"), Repo::Proj, &["add", "rwv.toml"]),
+        Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
+            .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectMidOperation))
+            .claim(Claim::OutputContains("the resolved rwv.toml does not parse"))
+            .claim(Claim::OutputContains("TOML parse error"))
+            .claim(Claim::OutputLacks("Caused by")),
+        Step::hand_edit(
+            &ww("p"),
+            Repo::Proj,
+            "rwv.toml",
+            "copy = [\"b3\"",
+            "copy = [\"b3\", \"b2\"]",
+        ),
+        Step::rwv_printed_holding(&ww("p"), "git -C", "add").expect(Exit::Succeeds),
+        Step::rwv_printed_exactly(&ww("p"), "rwv cherry-pick --continue")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("ported")),
+        Step::git(&ww("p"), Repo::Proj, &["show", "HEAD:rwv.toml"])
+            .claim(Claim::OutputContains("copy = [\"b3\", \"b2\"]")),
+    ]);
+    scenario("cherry-pick a manifest conflict stops", steps)
 }
 
 /// [`cherry_pick_a_key_the_text_merge_moved_stops`], abandoned.

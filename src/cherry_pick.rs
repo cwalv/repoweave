@@ -1956,8 +1956,21 @@ fn commit_project(
     }
 
     if !ported.conflicted.is_empty() {
-        let mut resolved = Manifest::from_path(&manifest_path)
-            .with_context(|| format!("{}: the resolved rwv.toml does not parse", label))?;
+        let mut resolved = match Manifest::from_path(&manifest_path) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                return Err(crate::project_merge::unparseable_result(
+                    vcs,
+                    &label,
+                    dir,
+                    (
+                        &crate::op_state::resume_command(OpVerb::CherryPick),
+                        crate::project_merge::Produced::ResolvedCopy,
+                    ),
+                    &error,
+                ))
+            }
+        };
         resolved.history = ours.history;
         resolved.repositories = ours.repositories.clone();
         if resolved.declares_same(ours) {
