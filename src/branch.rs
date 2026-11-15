@@ -1023,7 +1023,8 @@ pub fn run_rename(ctx: &WorkspaceContext, request: Rename) -> anyhow::Result<()>
             eprintln!("left: {} {old}: {} still has it", repo.label, copy.remote);
         }
         eprintln!(
-            "  delete what is landed: rwv branch delete {old} --target {new} --delete-remote"
+            "  publish the new name, then delete what is landed:\n    rwv push\n    rwv branch \
+             delete {old} --target {new} --delete-remote"
         );
     }
     Ok(())
@@ -1213,6 +1214,14 @@ pub fn run_delete(
     } else {
         if outcome.deleted.is_empty() && outcome.survivors.is_empty() {
             outln!("nothing of {branch} to delete");
+            for copy in vcs.remote_copies(&dir, &crate::vcs::RawRefName::new(branch.as_str()))? {
+                outln!(
+                    "{} still has {branch}, which has not landed on {target}'s remote copy as \
+                     last fetched: publish {target} with `rwv push --branch {target}`, run \
+                     `rwv fetch`, then run this again",
+                    copy.remote
+                );
+            }
         }
         outcome.print();
     }

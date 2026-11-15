@@ -79,6 +79,16 @@ impl Containment {
 
     /// The verdict as an operator phrase measuring the subject against
     /// `other`, which names the other tip in the reader's terms.
+    fn plainly(self, other: &str) -> String {
+        match self {
+            Self::Ahead(n) => format!(
+                "{n} commit{s} ahead of {other}, which it contains",
+                s = plural_s(n)
+            ),
+            other_verdict => other_verdict.describe(other),
+        }
+    }
+
     fn describe(self, other: &str) -> String {
         match self {
             Self::Equal => format!("equal to {other}"),
@@ -197,8 +207,11 @@ fn workspace_name(ctx: &WorkspaceContext) -> anyhow::Result<String> {
 /// placeholder so the docs cannot drift from the code. `<source>` is the
 /// display name of the workspace the sync pulled from. Text is unchanged from
 /// the pre-extraction literal.
-pub fn auto_relock_commit_message(source: &str) -> String {
-    format!("lock: auto-relock after sync from {source}")
+pub fn auto_relock_commit_message(verb: op_state::OpVerb, source: &str) -> String {
+    match verb {
+        op_state::OpVerb::Land => format!("lock: relock for the landing of {source}"),
+        _ => format!("lock: auto-relock after sync from {source}"),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,7 +1191,7 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
 fn emit_relock(handler: &dyn OutputHandler, relock: &crate::land::Relock) {
     if handler.emit_text() {
         eprintln!(
-            "  {}: lock behind HEAD by {} commits — the landing records {} in place of the pin {}",
+            "  {}: lock behind HEAD by {} — the landing records {} in place of the pin {}",
             RepoKey::Member(relock.repo.clone()),
             display_count(relock.commits),
             relock.now.short(),
@@ -1323,8 +1336,8 @@ impl fmt::Display for RepoSyncOutcome {
                 source_position,
             } => write!(
                 f,
-                "already-ahead — HEAD is {shape}; {source}; nothing to replay",
-                shape = Containment::Ahead(*commits_ahead).describe(baseline.label()),
+                "nothing to replay: HEAD is {shape}; {source}",
+                shape = Containment::Ahead(*commits_ahead).plainly(baseline.label()),
                 source = source_position_phrase(*source_position, *baseline),
             ),
             Self::NoOp => f.write_str("up-to-date"),
@@ -1844,17 +1857,8 @@ fn reload_replayed_project(ctx: &OpContext<'_>) -> anyhow::Result<(Project, Opti
         Ok(project) => return Ok((project, fix)),
         Err(failure) => failure,
     };
-    let refusal = match UnparseableProjectKind::of(&failure) {
-        UnparseableProjectKind::PreSchema => failure,
-        UnparseableProjectKind::Malformed => {
-            let listing = format!("{failure:#}");
-            State::UnparseableProjectMalformed
-                .of(crate::workspace::project_rel_path(&ctx.cwd_project_name))
-                .listing(listing.lines())
-                .judge(ctx.project_vcs.as_ref())
-                .refused()
-        }
-    };
+    let refusal =
+        UnparseableProjectKind::refusal(failure, &ctx.cwd_project_name, ctx.project_vcs.as_ref());
     Err(refusal.context(format!(
         "failed to reload project manifest after Phase 1'.\n\
          \n\
@@ -1970,7 +1974,7 @@ pub(crate) fn judge_checkout(
     recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
     opening: Option<(&'static str, &str)>,
 ) -> crate::diagnosis::Judged {
-    let judging = checkout_judging(repo, checkout, store, recorded);
+    let judging = checkout_judging(vcs, repo, checkout, store, recorded);
     match opening {
         Some((verb, branch)) => judging.by_verb(verb).bind("<W>", branch),
         None => judging,
@@ -1987,12 +1991,13 @@ fn judge_checkout_of_removed(
     store: &Path,
     recorded: &[(crate::manifest::WorkweaveId, CanonicalPath)],
 ) -> crate::diagnosis::Judged {
-    checkout_judging(repo, checkout, store, recorded)
+    checkout_judging(vcs, repo, checkout, store, recorded)
         .bind("<repo>", repo)
         .judge(vcs)
 }
 
 fn checkout_judging(
+    vcs: &dyn Vcs,
     repo: impl std::fmt::Display,
     checkout: &Path,
     store: &Path,
@@ -2007,6 +2012,16 @@ fn checkout_judging(
             .bind("<project>", &workweave.project)
             .bind("<ww>", &workweave.name)
             .bind_place("<other>", dir.as_path()),
+        None if vcs
+            .store_of(checkout)
+            .is_some_and(|own| at.contains(&CanonicalPath::of(own.as_path()))) =>
+        {
+            State::CheckoutInAnotherWorkspace
+                .of(repo)
+                .subject("the primary")
+                .listing([checkout.display()])
+                .only_forms(&[crate::diagnosis::Form::C16Detach])
+        }
         None => State::CheckoutInRawWorktree
             .of(repo)
             .listing([checkout.display()])
@@ -6139,10 +6154,14 @@ pub(crate) fn parked_note(verb: op_state::OpVerb) -> String {
     )
 }
 
-/// A commit count for an operator line, or `?` when the count could not be
-/// taken.
+/// A commit count for an operator line (`1 commit`, `3 commits`), or `?
+/// commits` when the count could not be taken.
 fn display_count(n: Option<usize>) -> String {
-    n.map_or_else(|| "?".to_owned(), |c| c.to_string())
+    match n {
+        Some(1) => "1 commit".to_owned(),
+        Some(c) => format!("{c} commits"),
+        None => "? commits".to_owned(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -7162,7 +7181,7 @@ fn relock_landing(ctx: &OpContext<'_>, manifest: &Manifest) -> anyhow::Result<()
     let committed = crate::lock::commit_lock_file_annotated(
         vcs,
         dir,
-        &auto_relock_commit_message(&ctx.source_workspace_name),
+        &auto_relock_commit_message(ctx.verb, &ctx.source_workspace_name),
         &named,
         rebased,
     )?;

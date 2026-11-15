@@ -1400,6 +1400,10 @@ impl RootSite {
     }
 }
 
+/// Set once the process has warned that CWD is inside a project other than the
+/// active one, so a verb that asks for the active project twice says it once.
+static CWD_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 impl WorkspaceContext {
     /// Resolve the workspace context by walking up from `cwd`.
     ///
@@ -1693,7 +1697,10 @@ impl WorkspaceContext {
     /// `rwv activate <X>` and `--project <X>` when none is selected.
     pub fn require_active_project(&self) -> anyhow::Result<&ProjectName> {
         if let Some(name) = self.active_project() {
-            if let Some((cwd_project, active)) = self.cwd_project_contradicting_pointer() {
+            if let Some((cwd_project, active)) = self
+                .cwd_project_contradicting_pointer()
+                .filter(|_| !CWD_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed))
+            {
                 eprintln!(
                     "warning: you are in projects/{}/, but the active project is {}; \
                      pass `--project {}` to operate on the CWD project, or \

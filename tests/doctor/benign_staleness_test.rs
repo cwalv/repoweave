@@ -885,8 +885,8 @@ fn dirty_source_non_lock_project_change_refuses() {
 fn already_ahead_line(stdout: &str) -> String {
     stdout
         .lines()
-        .find(|l| l.contains("already-ahead"))
-        .unwrap_or_else(|| panic!("no already-ahead line in stdout:\n{stdout}"))
+        .find(|l| l.contains("nothing to replay"))
+        .unwrap_or_else(|| panic!("no nothing-to-replay line in stdout:\n{stdout}"))
         .trim()
         .to_owned()
 }
@@ -911,9 +911,9 @@ fn the_already_ahead_line_reports_a_source_that_sits_at_its_lock_entry() {
     assert_eq!(
         already_ahead_line(&stdout),
         format!(
-            "{MANIFEST_REPO_PATH}: already-ahead — HEAD is strictly ahead of the source lock \
-             entry by 2 commits (contains it); the source's own HEAD is equal to the source lock \
-             entry; nothing to replay"
+            "{MANIFEST_REPO_PATH}: nothing to replay: HEAD is 2 commits ahead of the source \
+             lock entry, which it contains; the source's own HEAD is equal to the source lock \
+             entry"
         ),
     );
 }

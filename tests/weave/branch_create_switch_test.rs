@@ -432,6 +432,41 @@ fn switch_refuses_a_project_branch_checked_out_in_another_workspace() {
 }
 
 #[test]
+fn a_switch_onto_the_branch_the_primary_holds_names_the_primary_and_prints_no_remove() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    succeed(&["workweave", "create", "--project", PROJECT, "side"], ws);
+    let side = ws
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--side"));
+
+    let out = refuse(&["switch", "main"], &side);
+
+    assert_eq!(routes(&out), ["checkout"], "{out}");
+    assert!(
+        out.contains("checkout in another workspace (the primary)"),
+        "{out}"
+    );
+    assert!(!out.contains("worktree remove"), "{out}");
+    let line = out
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("rwv workweave create"))
+        .unwrap_or_else(|| panic!("no detach choice in:\n{out}"))
+        .replace("<new>", "look");
+    let words: Vec<&str> = line.split_whitespace().skip(1).collect();
+    succeed(&words, &side);
+    assert!(ws
+        .parent()
+        .unwrap()
+        .join(".workweaves")
+        .join(format!("{PROJECT}--look"))
+        .exists());
+}
+
+#[test]
 fn switch_with_no_branch_refuses_naming_update_and_no_such_branch_names_the_fetch() {
     let w = weave(&[LIB]);
     let ws = &w.workspace;

@@ -877,7 +877,7 @@ impl State {
                 axis: Axis::Checkout,
                 name: "in another workspace",
                 means: "a workweave's checkout derives from the clone, named; or the \
-                        branch is checked out there",
+                        branch is checked out there, the primary's own checkout included",
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
                              of a dropped member there; `rwv branch delete`, `rwv switch` and \
                              `rwv workweave create --branch`, for a project branch checked out \
@@ -2057,7 +2057,7 @@ impl ChoiceId {
             },
             Self::C7 => &ChoiceRow {
                 id: Some("C7"),
-                phrase: "publish it (again)",
+                phrase: "publish it",
                 keeps_work: "adds only",
             },
             Self::C9 => &ChoiceRow {
@@ -2850,7 +2850,9 @@ impl Form {
             },
             Self::C2UpdateRemote => &FormRow {
                 choice: C::C2,
-                steps: &[Rwv("rwv update --remote --merge-upstream --repo <m>")],
+                steps: &[Rwv(
+                    "rwv update --remote --merge-upstream --repo <m> --commit",
+                )],
                 at: W::WithBranch,
                 shipped: true,
             },

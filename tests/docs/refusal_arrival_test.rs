@@ -799,7 +799,7 @@ fn a_rejected_member_push_routes_to_publish() {
     assert!(
         stderr.contains("rwv push: local/org/a: publish withheld\n")
             && stderr.contains("projects/alpha was not pushed")
-            && stderr.contains("  publish it (again)\n    rwv push\n"),
+            && stderr.contains("  publish it\n    rwv push\n"),
         "precondition: the rejected push was judged:\n{stderr}"
     );
     assert_routes_to(&stderr, "publish");

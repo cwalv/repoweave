@@ -1075,6 +1075,27 @@ impl UnparseableProjectKind {
         }
     }
 
+    /// `failure`, a project that did not load, as the refusal its kind is:
+    /// an earlier release's keys as they are, anything else judged
+    /// `unparseable-project` `malformed`, listing the parser's words.
+    pub(crate) fn refusal(
+        failure: anyhow::Error,
+        project: &crate::manifest::ProjectName,
+        vcs: &dyn crate::vcs::Vcs,
+    ) -> anyhow::Error {
+        match Self::of(&failure) {
+            Self::PreSchema => failure,
+            Self::Malformed => {
+                let listing = format!("{failure:#}");
+                crate::diagnosis::State::UnparseableProjectMalformed
+                    .of(crate::workspace::project_rel_path(project))
+                    .listing(listing.lines())
+                    .judge(vcs)
+                    .refused()
+            }
+        }
+    }
+
     pub(crate) fn of(failure: &anyhow::Error) -> Self {
         if failure
             .chain()

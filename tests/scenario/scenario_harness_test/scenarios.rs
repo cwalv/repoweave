@@ -9016,7 +9016,7 @@ pub fn landing_writes_no_relock_of_its_own(how: ProjectLands) -> Scenario {
         Step::rwv(&ww("w"), land)
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
-                "lock behind HEAD by 1 commits — the landing records",
+                "lock behind HEAD by 1 commit — the landing records",
             ))
             .claim(Claim::PinContains {
                 site: main_lock(),
@@ -12158,7 +12158,7 @@ pub fn dc06_member_set_from_merge() -> Scenario {
                 .claim(Claim::OutputContains(DOCS))
                 .claim(Claim::OutputContains("local/remotes/app")),
             Step::git(&a(), Repo::Proj, &["log", "-1", "--format=%s", "main"])
-                .claim(Claim::OutputContains("lock: auto-relock after sync from")),
+                .claim(Claim::OutputContains("lock: relock for the landing of")),
         ],
     )
 }

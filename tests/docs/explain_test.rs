@@ -417,7 +417,8 @@ fn msg_auto_relock_splice_resolves_and_matches_code() {
     );
 
     // The sentinel form the generator uses: auto_relock_commit_message("<source>").
-    let expected = repoweave::sync::auto_relock_commit_message("<source>");
+    let expected =
+        repoweave::sync::auto_relock_commit_message(repoweave::op_state::OpVerb::Land, "<source>");
     assert!(
         content.contains(&expected),
         "land.md does not contain the auto-relock commit message '{expected}'; \

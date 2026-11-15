@@ -375,7 +375,7 @@ it.
 Regenerate `rwv.lock` from the post-replay manifest tips in CWD. If
 the result differs from what is currently committed, the engine commits
 it automatically with a message like `lock: auto-relock after sync from
-<named-workspace>`.
+<named-workspace>`, or `lock: relock for the landing of <named-workspace>` under `land`.
 
 On completion, record the per-repo **converged tips** in the owner
 record: the HEAD of each member repo and the project repo, keyed by

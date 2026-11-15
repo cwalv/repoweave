@@ -188,8 +188,8 @@ pub fn run(ctx: &WorkspaceContext, query: &LogQuery, mode: OutputMode) -> anyhow
     let project = ctx.require_active_project_on_disk()?;
     let workspace = ctx.active_path();
     let project_repo = project_dir(workspace, project);
-    let manifest = Manifest::from_path(&project_repo.join(Manifest::FILE_NAME))?;
     let project_vcs = project_vcs();
+    let manifest = crate::backup::members_manifest(&project_repo)?;
 
     let branch = match query {
         LogQuery::Against { weave_branch, .. } => Some(

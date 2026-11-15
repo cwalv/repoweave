@@ -1577,7 +1577,7 @@ fn judged(axis: Axis, state: &str, run: &str) -> JudgedOutput {
         }],
         choices: vec![ChoiceOutput {
             id: Some("C7".to_owned()),
-            phrase: "publish it (again)".to_owned(),
+            phrase: "publish it".to_owned(),
             at: Some(wire(ABS)),
             run: vec![run.to_owned()],
         }],

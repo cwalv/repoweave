@@ -387,4 +387,11 @@ fn status_from_another_projects_directory_warns_and_reports() {
             && stderr.contains("--project proj-b"),
         "a report warns instead of refusing; got: {stderr}"
     );
+    assert_eq!(
+        stderr
+            .matches("warning: you are in projects/proj-b/")
+            .count(),
+        1,
+        "the warning is said once; got: {stderr}"
+    );
 }

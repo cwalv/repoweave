@@ -631,3 +631,51 @@ fn a_member_branch_an_unrecorded_live_branch_declares_stays_through_the_rename()
     succeed(&["branch", "rename", "y"], ws);
     assert!(has_branch(&ws.join(LIB), "x") && has_branch(&ws.join(LIB), "y"));
 }
+
+#[test]
+fn the_publish_and_delete_a_rename_prints_run_in_order_and_the_early_delete_says_why() {
+    let w = weave(&[LIB]);
+    let ww = create_workweave(&w.workspace, "anon");
+    let old = minted("anon");
+    publish_project_branch(&w, &old, false);
+    let on_remote =
+        |name: &str| !common::git_in(&w.project_bare, &["branch", "--list", name]).is_empty();
+
+    let renamed = describe(&succeed(&["branch", "rename", "renamed"], &ww));
+    let printed =
+        format!("    rwv push\n    rwv branch delete {old} --target renamed --delete-remote");
+    assert!(renamed.contains(&printed), "{renamed}");
+
+    let early = describe(&succeed(
+        &[
+            "branch",
+            "delete",
+            &old,
+            "--target",
+            "renamed",
+            "--delete-remote",
+        ],
+        &w.workspace,
+    ));
+    assert!(
+        early.contains(&format!("origin still has {old}")),
+        "{early}"
+    );
+    assert!(early.contains("rwv push --branch renamed"), "{early}");
+    assert!(on_remote(&old));
+
+    succeed(&["push"], &ww);
+    succeed(
+        &[
+            "branch",
+            "delete",
+            &old,
+            "--target",
+            "renamed",
+            "--delete-remote",
+        ],
+        &w.workspace,
+    );
+    assert!(!on_remote(&old));
+    assert!(on_remote("renamed"));
+}

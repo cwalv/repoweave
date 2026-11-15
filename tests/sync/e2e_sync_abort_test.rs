@@ -1305,8 +1305,8 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
 
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
-        stdout.contains("already-ahead"),
-        "sync should report already-ahead when CWD is past the lock target; got stdout: {stdout}"
+        stdout.contains("nothing to replay: HEAD is"),
+        "sync should report nothing to replay when CWD is past the lock target; got stdout: {stdout}"
     );
     assert!(
         !stdout.contains(": ok"),
@@ -1328,7 +1328,7 @@ fn sync_to_reports_already_ahead_when_cwd_is_past_lock_target() {
          divergence; got stdout: {stdout}"
     );
     assert!(
-        stdout.contains("strictly ahead of the source lock entry"),
+        stdout.contains("ahead of the source lock entry, which it contains"),
         "the line must name the baseline HEAD is ahead of; got stdout: {stdout}"
     );
 }

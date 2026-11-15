@@ -999,7 +999,10 @@ fn build_msg_registry() -> MsgRegistry {
     // spliced doc form shows the template structure rather than a literal name.
     // Single-source: `repoweave::sync::auto_relock_commit_message` is the ONE
     // place this string lives — both the runtime and the doc derive from it.
-    m.insert("auto_relock", auto_relock_commit_message("<source>"));
+    m.insert(
+        "auto_relock",
+        auto_relock_commit_message(repoweave::op_state::OpVerb::Land, "<source>"),
+    );
 
     // "doctor_kinds"/"doctor_subkind_variants": the `ViolationOutput` `kind`
     // tag enumeration, walked from the schemars-derived doctor JSON Schema

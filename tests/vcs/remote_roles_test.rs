@@ -456,6 +456,29 @@ fn push_refuses_a_diverged_branch_holding_commits_of_its_own_before_any_push() {
 }
 
 #[test]
+fn the_merge_a_diverged_branch_prints_leaves_nothing_uncommitted_so_the_push_runs() {
+    let weave = Weave::new();
+    behind(&weave);
+    commit(&weave.member(), "mine");
+    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    let line = refused
+        .lines()
+        .map(str::trim)
+        .find(|l| l.starts_with("rwv ") && l.contains("--merge-upstream"))
+        .unwrap_or_else(|| panic!("no printed merge in:\n{refused}"))
+        .to_owned();
+    assert!(line.ends_with("--commit"), "{line}");
+
+    let words: Vec<&str> = line.split_whitespace().skip(1).collect();
+    let merged = weave.rwv(&words);
+    assert!(merged.status.success(), "{line}: {}", text(&merged.stderr));
+
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+}
+
+#[test]
 fn status_reports_a_branch_behind_its_push_branch_with_the_choice_to_take_it_in() {
     let weave = Weave::new();
     behind(&weave);

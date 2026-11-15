@@ -213,6 +213,25 @@ fn section<'a>(text: &'a str, path: &str) -> &'a str {
 }
 
 #[test]
+fn a_log_during_a_stop_in_rwv_toml_reads_the_manifest_the_checked_out_commit_holds() {
+    let world = world(true);
+    let manifest = world.project().join("rwv.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let before = world.rwv(&["log", "--against", "main", "--json"]);
+    assert!(before.status.success(), "{}", stderr(&before));
+    std::fs::write(
+        &manifest,
+        format!("<<<<<<< yours\n{text}=======\n{text}>>>>>>> theirs\n"),
+    )
+    .unwrap();
+
+    let during = world.rwv(&["log", "--against", "main", "--json"]);
+
+    assert!(during.status.success(), "{}", stderr(&during));
+    assert_eq!(json(&during), json(&before));
+}
+
+#[test]
 fn a_bare_log_is_the_vcs_log_of_head_with_no_default_endpoint() {
     let (w, f) = feature_world();
 

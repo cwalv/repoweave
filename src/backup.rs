@@ -42,7 +42,7 @@ struct BackupRepo {
 /// The manifest naming the members on disk: while a merge or replay has
 /// left `rwv.toml` unmerged, or the working file is not a manifest, the one
 /// the checked-out commit holds.
-fn members_manifest(project_dir: &std::path::Path) -> anyhow::Result<Manifest> {
+pub(crate) fn members_manifest(project_dir: &std::path::Path) -> anyhow::Result<Manifest> {
     let vcs = project_vcs();
     let unmerged = vcs.is_repo(project_dir)
         && vcs

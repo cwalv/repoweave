@@ -365,9 +365,21 @@ fn a_branch_checked_out_in_another_workspace_is_not_taken_and_detach_looks_at_it
             "main",
         ],
         ws,
-        State::CheckoutInRawWorktree,
+        State::CheckoutInAnotherWorkspace,
     );
     assert!(primary_has_main.contains("checkout"), "{primary_has_main}");
+    assert!(
+        primary_has_main.contains("(the primary)"),
+        "{primary_has_main}"
+    );
+    assert!(
+        primary_has_main.contains("rwv workweave create <new> --detach main"),
+        "{primary_has_main}"
+    );
+    assert!(
+        !primary_has_main.contains("worktree remove"),
+        "{primary_has_main}"
+    );
     assert!(!workweave_of(ws, "ww").exists());
 
     succeed(
