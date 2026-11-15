@@ -81,6 +81,8 @@ pub struct Survivor {
     pub reason: Reason,
     /// What the reason rests on: the commits, the locks, the remote's cause.
     pub detail: Vec<String>,
+    /// What the operator can run to give the branch up.
+    pub choices: Vec<crate::diagnosis::ChoiceOutput>,
 }
 
 /// What the rule did.
@@ -142,6 +144,15 @@ impl Outcome {
             );
             for line in &survivor.detail {
                 eprintln!("  {line}");
+            }
+            if !survivor.choices.is_empty() {
+                eprintln!("choices:");
+                for choice in &survivor.choices {
+                    eprintln!("  {}", choice.phrase);
+                    for line in &choice.run {
+                        eprintln!("    {line}");
+                    }
+                }
             }
         }
         for name in &self.records_dropped {
@@ -422,6 +433,10 @@ impl<'a> Rule<'a> {
                     .of(repo.label())
                     .project_repo()
                     .subject(&self.request.branch)
+                    .bind("<W>", &self.request.branch)
+                    .bind("<T>", &self.request.target)
+                    .bind("<repo>", repo.label())
+                    .without(&[crate::diagnosis::ChoiceId::C2])
                     .by_verb(self.request.verb)
                     .judge(repo.vcs.as_ref())
                     .refused());
@@ -675,6 +690,11 @@ impl<'a> Rule<'a> {
         }
         if let Some(open) = self.open_head(repo)? {
             self.survives(repo, Reason::OpenHead, open, outcome);
+            if repo.member.is_none() && self.w_record_mode == Some(Mode::Declared) {
+                if let Some(survivor) = outcome.survivors.last_mut() {
+                    survivor.choices = self.retire_choices(repo);
+                }
+            }
             return Ok(());
         }
         self.delete_local(repo, &local, outcome)?;
@@ -744,7 +764,22 @@ impl<'a> Rule<'a> {
             branch: self.branch_name.to_string(),
             reason,
             detail,
+            choices: Vec::new(),
         });
+    }
+
+    /// The route that gives up a declared line holding unlanded work.
+    fn retire_choices(&self, repo: &Repo) -> Vec<crate::diagnosis::ChoiceOutput> {
+        let bindings = std::collections::BTreeMap::from([
+            ("<W>", self.request.branch.to_string()),
+            ("<T>", self.request.target.to_string()),
+            ("<repo>", repo.label()),
+        ]);
+        crate::diagnosis::choices(
+            repo.vcs.as_ref(),
+            &[crate::diagnosis::Form::RetireDeclared],
+            &bindings,
+        )
     }
 
     /// Delete what `proof` names. A remote that does not take the delete

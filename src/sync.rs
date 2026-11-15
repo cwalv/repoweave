@@ -3620,6 +3620,17 @@ fn announce_completion(ctx: &OpContext<'_>) {
                 "land complete: {} fast-forwarded to this workspace's tip",
                 target_name(ctx)
             );
+            if ctx.retire && !ctx.cwd_workspace_dir.exists() {
+                let landed_in = ctx
+                    .dest_workspace_dir
+                    .as_deref()
+                    .unwrap_or_else(|| ctx.cwd_ctx.primary_path());
+                eprintln!(
+                    "{} is gone; continue in {}",
+                    ctx.cwd_workspace_dir.display(),
+                    landed_in.display()
+                );
+            }
         }
     }
 }

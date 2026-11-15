@@ -1427,6 +1427,7 @@
       "type": "object",
       "required": [
         "branch",
+        "choices",
         "detail",
         "path",
         "reason"
@@ -1434,6 +1435,13 @@
       "properties": {
         "branch": {
           "type": "string"
+        },
+        "choices": {
+          "description": "What the operator can run to give the branch up.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
         },
         "detail": {
           "description": "What the reason rests on: the commits, the locks, the remote's cause.",

@@ -495,16 +495,16 @@ fn sync_to_continue_with_retire_flag_is_rejected() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // rwv land --retire --continue must be rejected.
-    let assertion = rwv()
+    let out = rwv()
         .args(["land", "--retire", "--continue"])
         .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(&out, repoweave::refusal::RefusalKind::InapplicableFlag);
 
     assert!(
-        stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for land --retire --continue; got: {stderr}"
+        stderr.contains("--retire cannot be passed again. Run `rwv land --continue`."),
+        "{stderr}"
     );
 }
 
@@ -514,16 +514,16 @@ fn land_continue_with_history_flag_is_rejected() {
     let (_primary, ww, _c1) = make_shared_workspaces(tmp.path());
 
     // rwv land --history=linear --continue must be rejected.
-    let assertion = rwv()
+    let out = rwv()
         .args(["land", "--history", "linear", "--continue"])
         .current_dir(&ww.root)
-        .assert()
-        .failure();
-    let stderr = String::from_utf8_lossy(&assertion.get_output().stderr).to_string();
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(&out, repoweave::refusal::RefusalKind::InapplicableFlag);
 
     assert!(
-        stderr.contains("cannot be used with '--continue'"),
-        "expected clap exclusivity error for land --history=linear --continue; got: {stderr}"
+        stderr.contains("--history cannot be passed again. Run `rwv land --continue`."),
+        "{stderr}"
     );
 }
 

@@ -330,6 +330,43 @@ Schema:
     }
   },
   "definitions": {
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "Deleted": {
       "description": "A branch the rule deleted.",
       "type": "object",
@@ -455,6 +492,7 @@ Schema:
       "type": "object",
       "required": [
         "branch",
+        "choices",
         "detail",
         "path",
         "reason"
@@ -462,6 +500,13 @@ Schema:
       "properties": {
         "branch": {
           "type": "string"
+        },
+        "choices": {
+          "description": "What the operator can run to give the branch up.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
         },
         "detail": {
           "description": "What the reason rests on: the commits, the locks, the remote's cause.",
@@ -496,6 +541,10 @@ Schema:
           "type": "string"
         }
       }
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }

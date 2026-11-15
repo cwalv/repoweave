@@ -212,6 +212,12 @@ Refused, before anything changes: a `<W>` checked out in any workspace
 `dependents`, one line for each), and a `<W>` that is not a feature with no
 `--target` (`target` `no target`).
 
+- A declared line that is being given up unlanded is recorded as a feature
+  first, `rwv branch set-mode <W> feature --target <T>`, which makes it an
+  ordinary branch; `rwv branch delete <W> --discard-unlanded
+  --delete-remote-unlanded projects/<name>` then deletes it and its published
+  copy, a backup keeping what it held. The `open-head` survivor a plain delete
+  leaves and the `protected` `declared mode` refusal print both lines.
 - `--discard-unlanded` also deletes a branch that has not landed, after keeping
   its tip as a backup (`rwv backup list`). It lifts the landed clause and no
   other: a pinned branch still survives.

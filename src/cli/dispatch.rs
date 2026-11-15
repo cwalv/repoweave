@@ -441,6 +441,41 @@ fn writes_project(command: Option<&Commands>) -> bool {
     }
 }
 
+/// `rwv land --continue` resumes the landing as its op record has it, so a
+/// parameter of a fresh landing passed with it is refused.
+fn refuse_flags_on_land_continue(command: Option<&Commands>) -> anyhow::Result<()> {
+    let Some(Commands::Land {
+        target,
+        history,
+        retire,
+        jobs,
+        do_continue: true,
+        ..
+    }) = command
+    else {
+        return Ok(());
+    };
+    let given: Vec<&str> = [
+        (target.is_some(), "--target"),
+        (history.is_some(), "--history"),
+        (*retire, "--retire"),
+        (jobs.is_some(), "-j"),
+    ]
+    .into_iter()
+    .filter_map(|(passed, name)| passed.then_some(name))
+    .collect();
+    if given.is_empty() {
+        return Ok(());
+    }
+    crate::refuse!(
+        RefusalKind::InapplicableFlag,
+        "`--continue` resumes the landing as it started, with every parameter from its op \
+         record, so {} cannot be passed again. Run `{}`.",
+        given.join(", "),
+        crate::op_state::resume_command(crate::op_state::OpVerb::Land)
+    );
+}
+
 fn continues(
     command: Option<&Commands>,
 ) -> Option<(
@@ -868,6 +903,7 @@ pub fn run() -> anyhow::Result<()> {
     // Step 3: the root's marker against the index and the worktree relation,
     // before the verb resolves the root it runs in. A verb that destroys the
     // workweave refuses on a disagreement; every other verb repairs it.
+    refuse_flags_on_land_continue(cli.command.as_ref())?;
     crate::workspace::reconcile_invocation(origin_dir, |root| {
         reconcile_policy(cli.command.as_ref(), root)
     })?;

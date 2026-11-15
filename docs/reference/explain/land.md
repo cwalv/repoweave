@@ -98,7 +98,9 @@ nothing could be landed into. Then, under an op record:
    presents stays where that project has it.
 5. **Retire** (`--retire`). The workweave is removed, and the deletion rule
    decides each of the feature's branches: one that landed is deleted, one
-   that did not survives and is listed with its reason.
+   that did not survives and is listed with its reason. When the workweave
+   was the directory the verb ran in, the last line names the workspace to
+   continue in.
 
 Before anything is judged, `rwv land` reads the checked-out branch's record,
 with the records remotes' as last fetched merged in. A record that differs from
@@ -1801,6 +1803,7 @@ Schema:
       "type": "object",
       "required": [
         "branch",
+        "choices",
         "detail",
         "path",
         "reason"
@@ -1808,6 +1811,13 @@ Schema:
       "properties": {
         "branch": {
           "type": "string"
+        },
+        "choices": {
+          "description": "What the operator can run to give the branch up.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
         },
         "detail": {
           "description": "What the reason rests on: the commits, the locks, the remote's cause.",

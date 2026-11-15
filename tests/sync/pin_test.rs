@@ -371,6 +371,18 @@ fn the_pruning_fetch_reports_a_pin_off_the_remote_and_moves_nothing() {
     assert_eq!(heads(&app), branches);
     assert_eq!(lock_text(&project(&w)), lock);
     assert_eq!(git_in(project(&w), &["status", "--porcelain"]), "");
+
+    assert!(
+        text.contains("    rwv push --repo github/acme/app\n"),
+        "{text}"
+    );
+    assert!(!text.contains("rwv member pin"), "{text}");
+    let pushed = run(&w, &["push", "--repo", "github/acme/app"]);
+    succeeded(&pushed);
+    let again = run(&w, &["fetch"]);
+    succeeded(&again);
+    let again = String::from_utf8_lossy(&again.stdout).into_owned();
+    assert!(!again.contains("pin off remote"), "{again}");
 }
 
 #[test]

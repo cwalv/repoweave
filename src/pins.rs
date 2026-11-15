@@ -441,7 +441,18 @@ pub(crate) fn off_remote(
                     None => &[ChoiceId::C7, ChoiceId::C27],
                 }
             }
-            Holding::Declared => &[ChoiceId::C25],
+            Holding::Declared => {
+                let reached_by_head = vcs
+                    .head_revision(dir)
+                    .ok()
+                    .and_then(|head| vcs.is_ancestor(dir, &resolved, &head).ok())
+                    .unwrap_or(false);
+                if reached_by_head {
+                    &[ChoiceId::C7]
+                } else {
+                    &[ChoiceId::C25]
+                }
+            }
             Holding::NotHeld => &[ChoiceId::C19],
         };
         lines.push(judging.only(only).judge(vcs));

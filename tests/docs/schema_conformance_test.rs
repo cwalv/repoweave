@@ -1770,6 +1770,7 @@ fn survivors_of_every_reason() -> Vec<Survivor> {
         branch: "proj--feat-a".to_owned(),
         reason,
         detail: vec!["what the reason rests on".to_owned()],
+        choices: Vec::new(),
     })
     .collect()
 }

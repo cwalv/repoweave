@@ -5094,13 +5094,15 @@ pub fn sync_takes_in_the_target() -> Scenario {
             Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
             Step::rwv(&ww("w"), &["sync"])
                 .expect(Exit::refuses(Repo::App, State::HistoryUnset))
+                .claim(Claim::OutputContains(" branch set-history <h>\n"))
                 .claim(Claim::OutputContains(" branch set-history <h> --repo"))
                 .claim(Claim::OutputContains("rerun with --history <h>"))
                 .claim(Claim::OutputContains(
                     "`<h>` being `linear`, `merge` or `ff-only`",
                 ))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
-            Step::rwv(&ww("w"), &["sync", "--history", "linear"])
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
                 .expect(Exit::Succeeds)
                 .may_rewrite(&[Repo::App])
                 .claim(Claim::OutputContains("local/remotes/app: rebased onto"))

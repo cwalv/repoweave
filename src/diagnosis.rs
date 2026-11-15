@@ -1556,6 +1556,7 @@ impl State {
                         reaches after the pruning fetch, listed with the locks that pin it. \
                         Choices print only in a workspace whose checked-out branch's lock holds \
                         the pin: a feature's offers publishing it, a declared branch's offers \
+                        publishing it where the member's checkout holds the pin, else \
                         pinning another commit; elsewhere the state is a fact and offers \
                         waiting",
                 refused_by: "nothing refuses; `rwv fetch` and `rwv pull` report it",
@@ -1612,7 +1613,7 @@ impl State {
                 refused_by: "`rwv push --overwrite`; `rwv branch delete \
                              --delete-remote-unlanded`, for the project repo",
                 offers: &[Form::C2Pull],
-                verb_offers: &[],
+                verb_offers: &[("branch delete", Form::RetireDeclared)],
             },
             Self::PinWaived => &StateRow {
                 axis: Axis::Pin,
@@ -1937,6 +1938,7 @@ pub enum ChoiceId {
     C10,
     C11,
     C12,
+    RetireDeclared,
     C13,
     C14,
     C15,
@@ -2057,6 +2059,12 @@ impl ChoiceId {
                 id: Some("C11"),
                 phrase: "declare a branch for it, or keep, restore or port the entry's value",
                 keeps_work: "re-pins by name, backup kept",
+            },
+            Self::RetireDeclared => &ChoiceRow {
+                id: None,
+                phrase: "give the line up unlanded: record it as a feature onto `<T>`, then \
+                         delete it and its published copy, a backup keeping what it held",
+                keeps_work: "backup kept",
             },
             Self::C12 => &ChoiceRow {
                 id: Some("C12"),
@@ -2540,6 +2548,7 @@ pub enum Form {
     C11SetTopHistory,
     C11UnsetTopHistory,
     C12Feature,
+    RetireDeclared,
     C12Declared,
     C12RestoreTarget,
     C13,
@@ -2658,7 +2667,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 125] = [
+    pub const ALL: [Form; 126] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2693,6 +2702,7 @@ impl Form {
         Self::C11SetTopHistory,
         Self::C11UnsetTopHistory,
         Self::C12Feature,
+        Self::RetireDeclared,
         Self::C12Declared,
         Self::C12RestoreTarget,
         Self::C13,
@@ -2994,6 +3004,15 @@ impl Form {
                 choice: C::C11,
                 steps: &[Rwv("rwv branch set-history --unset")],
                 at: W::WithBranch,
+                shipped: true,
+            },
+            Self::RetireDeclared => &FormRow {
+                choice: C::RetireDeclared,
+                steps: &[
+                    Rwv("rwv branch set-mode <W> feature --target <T>"),
+                    Rwv("rwv branch delete <W> --discard-unlanded --delete-remote-unlanded <repo>"),
+                ],
+                at: W::Any,
                 shipped: true,
             },
             Self::C12Feature => &FormRow {

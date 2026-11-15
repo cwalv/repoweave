@@ -447,7 +447,7 @@ pub enum Commands {
     ///   rwv land --allow-member-change github/o/lib
     Land {
         /// Land into this branch instead of the record's target, for one run
-        #[arg(long, value_name = "T", conflicts_with = "do_continue")]
+        #[arg(long, value_name = "T")]
         target: Option<String>,
         /// Let the landing change the target's entry for this member: any field, its removal, or a backward pin; `projects/<p>` names the target's top-level `history`. Repeat per repo. A name the landing changes nothing for is refused. With `--continue`, adds to the names the landing started with
         #[arg(long = "allow-member-change", value_name = "REPO")]
@@ -455,11 +455,11 @@ pub enum Commands {
         /// How a repo holding work the branch it lands on lacks lands, for this run, where the
         /// target records no `history` for it: linear, merge or ff-only. A value differing
         /// from a recorded one is refused
-        #[arg(long, value_name = "H", value_enum, conflicts_with = "do_continue")]
+        #[arg(long, value_name = "H", value_enum)]
         history: Option<crate::manifest::History>,
         /// Once the landing is done, remove the workweave and the feature's branches by
         /// the deletion rule: a branch holding anything not landed is kept and listed
-        #[arg(long, conflicts_with = "do_continue")]
+        #[arg(long)]
         retire: bool,
         /// Emit per-repo outcomes as JSON. With `--continue`, the envelope carries a
         /// `resumed` field naming the phase the stopped landing had reached. See `rwv
@@ -467,7 +467,7 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
         /// Run up to N per-repo steps in parallel. Default: 1 (serial).
-        #[arg(short = 'j', long = "jobs", conflicts_with = "do_continue")]
+        #[arg(short = 'j', long = "jobs")]
         jobs: Option<usize>,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]

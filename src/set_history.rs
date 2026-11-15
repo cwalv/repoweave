@@ -230,7 +230,7 @@ pub(crate) fn governing(
             scoped(State::HistoryUnset)
                 .on_target(vcs)
                 .subject("the target records no history for it")
-                .only_forms(&[set, Form::C23Rerun])
+                .only_forms(&[Form::C23SetHistory, set, Form::C23Rerun])
                 .judge(vcs),
         )),
     }

@@ -686,6 +686,79 @@ fn a_published_project_branch_whose_push_branch_has_not_landed_is_an_open_head()
     assert!(!has_branch(&project_dir(&w.workspace), &branch));
 }
 
+/// The two lines printed under the choice that gives a declared line up
+/// unlanded, `<T>` filled where the operator names it.
+fn retire_lines(stderr: &str, target: &str) -> Vec<String> {
+    let mut lines = stderr
+        .lines()
+        .skip_while(|l| !l.starts_with("  give the line up unlanded"));
+    lines.next().expect("the give-up choice is printed");
+    lines
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| l.trim().replace("<T>", target))
+        .collect()
+}
+
+fn run_line(line: &str, dir: &Path) -> std::process::Output {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(words[0], "rwv", "{line}");
+    run(&words[1..], dir)
+}
+
+#[test]
+fn a_published_declared_line_is_given_up_by_the_two_lines_both_refusals_print() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    succeed(&["branch", "create", "stable", "--declared"], ws);
+    commit_in(&project_dir(ws), "stable.txt");
+    succeed(&["push"], ws);
+    succeed(&["switch", "main"], ws);
+    assert!(bare_has(&w.project_bare, "stable"));
+
+    let left = run(&["branch", "delete", "stable", "--target", "main"], ws);
+    assert_eq!(left.status.code(), Some(3), "{}", describe(&left));
+    let left_text = String::from_utf8_lossy(&left.stderr).into_owned();
+    assert!(
+        left_text.contains("left: projects/p stable: open-head"),
+        "{left_text}"
+    );
+    assert_eq!(
+        retire_lines(&left_text, "main"),
+        [
+            "rwv branch set-mode stable feature --target main",
+            "rwv branch delete stable --discard-unlanded --delete-remote-unlanded projects/p"
+        ]
+    );
+
+    let refused = run(
+        &[
+            "branch",
+            "delete",
+            "stable",
+            "--target",
+            "main",
+            "--discard-unlanded",
+            "--delete-remote-unlanded",
+            "projects/p",
+        ],
+        ws,
+    );
+    let refused_text = common::cli::refused(&refused, State::ProtectedDeclaredMode);
+    assert!(
+        !refused_text.contains("pull --merge-upstream"),
+        "{refused_text}"
+    );
+    let lines = retire_lines(&refused_text, "main");
+    assert_eq!(lines, retire_lines(&left_text, "main"));
+
+    for line in &lines {
+        let out = run_line(line, ws);
+        assert!(out.status.success(), "{line}: {}", describe(&out));
+    }
+    assert!(!bare_has(&w.project_bare, "stable"));
+    assert!(!has_branch(&project_dir(ws), "stable"));
+}
+
 #[test]
 fn no_receipts_are_minted() {
     let w = weave(&[LIB]);
@@ -738,6 +811,19 @@ fn land_retire_deletes_what_landed_into_the_target_it_names() {
     assert!(
         !has_branch(&w.workspace.join(LIB), &branch),
         "the landing put the work on main, so the branch landed"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert_eq!(
+        stderr.lines().last().map(str::trim_end),
+        Some(
+            format!(
+                "{} is gone; continue in {}",
+                ww.display(),
+                w.workspace.display()
+            )
+            .as_str()
+        ),
+        "{stderr}"
     );
 
     let ww = create_workweave(&w.workspace, "later");

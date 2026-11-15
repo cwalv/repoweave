@@ -212,6 +212,12 @@ Refused, before anything changes: a `<W>` checked out in any workspace
 `dependents`, one line for each), and a `<W>` that is not a feature with no
 `--target` (`target` `no target`).
 
+- A declared line that is being given up unlanded is recorded as a feature
+  first, `rwv branch set-mode <W> feature --target <T>`, which makes it an
+  ordinary branch; `rwv branch delete <W> --discard-unlanded
+  --delete-remote-unlanded projects/<name>` then deletes it and its published
+  copy, a backup keeping what it held. The `open-head` survivor a plain delete
+  leaves and the `protected` `declared mode` refusal print both lines.
 - `--discard-unlanded` also deletes a branch that has not landed, after keeping
   its tip as a backup (`rwv backup list`). It lifts the landed clause and no
   other: a pinned branch still survives.
@@ -557,6 +563,43 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
     }
   },
   "definitions": {
+    "ChoiceOutput": {
+      "type": "object",
+      "required": [
+        "phrase",
+        "run"
+      ],
+      "properties": {
+        "id": {
+          "description": "The choice's id on the axis's page; null for one it does not number.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phrase": {
+          "type": "string"
+        },
+        "run": {
+          "description": "The commands, one per line, as the terminal prints them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where": {
+          "description": "The directory it must run in; null where it runs here or names its own directory.",
+          "anyOf": [
+            {
+              "$ref": "#/definitions/WirePath"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
     "Deleted": {
       "description": "A branch the rule deleted.",
       "type": "object",
@@ -636,6 +679,7 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
       "type": "object",
       "required": [
         "branch",
+        "choices",
         "detail",
         "path",
         "reason"
@@ -643,6 +687,13 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
       "properties": {
         "branch": {
           "type": "string"
+        },
+        "choices": {
+          "description": "What the operator can run to give the branch up.",
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChoiceOutput"
+          }
         },
         "detail": {
           "description": "What the reason rests on: the commits, the locks, the remote's cause.",
@@ -658,6 +709,10 @@ The delete's carries `branch`, `landed_on`, `deleted` (`path`, `branch`, `site`,
           "$ref": "#/definitions/Reason"
         }
       }
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
     }
   }
 }
