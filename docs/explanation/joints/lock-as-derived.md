@@ -68,17 +68,16 @@ post-merge manifest tips. Asking an operator to resolve a lock conflict
 by hand is asking them to compute a function whose inputs are already
 known.
 
-[`rwv land`](./sync-semantics.md) encodes this directly. The lock is
-excluded from the project-repo merge phase (Phase 1') and regenerated
-in Phase 3 from the now-aligned manifest tips. `rwv sync` records its lock
+[`rwv land`](./landing.md) encodes this directly. Every member is composed
+first, and the project commit is written last with the relock, which records
+the composed member tips: a lock is never a text input to a merge rwv makes. `rwv sync` records its lock
 once every member has taken in: each pin merged three ways against the
 merge base's lock, with every member it moved at its new tip. Where a rebase
 replays the project branch, each replayed commit pins what the member rebases
 made of the commits it pinned: the VCS reports which old commit became which,
 and a pin outside the rebased ranges is kept. A pin on a commit the rebase
 dropped, already on the target, moves to what the rebase made of the commits
-before it, reported `re-pinned`. The phase model is described in
-[sync-semantics](./sync-semantics.md).
+before it, reported `re-pinned`. [Sync semantics](./sync-semantics.md) and [landing](./landing.md) describe the order.
 
 A merge rwv does not make — a `git merge` or `git pull` run by hand — merges
 the lock through the lock merge driver, which `rwv init` and `rwv clone` set

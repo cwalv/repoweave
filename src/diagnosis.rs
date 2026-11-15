@@ -151,7 +151,8 @@ impl Axis {
                       The branch that holds the branch records is rwv's own: a weave branch of \
                       that name, or below it, would be read as records and written over by \
                       them.",
-                sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
+                sits: "[Alignment](../explanation/joints/alignment.md); \
+                       [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
                        [Lock as derived](../explanation/joints/lock-as-derived.md).",
             },
             Self::Publish => &KindRow {
@@ -188,7 +189,9 @@ impl Axis {
                       something else. A record two writers set differently keeps both values \
                       until one is chosen, an entry rwv cannot read is refused for that branch \
                       alone, and a target chain that returns to its branch could never land.",
-                sits: "[Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
+                sits: "[Records and modes](../explanation/joints/branch-records.md); \
+                       [Landing](../explanation/joints/landing.md); \
+                       [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); \
                        [Formats](./formats.md).",
             },
             Self::History => &KindRow {
@@ -203,7 +206,7 @@ impl Axis {
                       owners' to make, once, and every later landing follows it. A fast-forward \
                       reads no setting.",
                 sits: "[Formats](./formats.md) states the `history` keys; \
-                       [Sync semantics](../explanation/joints/sync-semantics.md).",
+                       [History and lineage](../explanation/joints/history-and-lineage.md).",
             },
             Self::HistoryDisagreement => &KindRow {
                 condition: "Two projects list the same member, and their live weave branches \
@@ -233,7 +236,8 @@ impl Axis {
                       activating a project leaves it where it is, so `rwv activate` refuses one \
                       that is not aligned for the incoming project and names `--update`, which \
                       aligns it first.",
-                sits: "[Clone topology](../explanation/joints/clone-topology.md); \
+                sits: "[Alignment](../explanation/joints/alignment.md); \
+                       [Clone topology](../explanation/joints/clone-topology.md); \
                        [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); \
                        [Shared refs and drift](../explanation/joints/shared-refs-drift.md).",
             },

@@ -144,8 +144,8 @@ The single-repo analog is `sl rebase --dest <bookmark>` or `git rebase
 <branch> && git merge --ff-only`: strategy is available, just without a
 dedicated cross-workspace verb. rwv's contribution is not a new concept —
 single-repo VCSes can do local-to-local alignment too — it is the
-multi-repo bundling: loop over N member repos with lock-excluded replay,
-regenerate `rwv.lock` in Phase 3, and handle workspace lifecycle
+multi-repo bundling: loop over N member repos, compose each as the target's history
+setting says, record `rwv.lock` once from the composed tips, and handle workspace lifecycle
 (`--retire`). The sync vocabulary is doing real work, not inventing a new
 direction concept.
 

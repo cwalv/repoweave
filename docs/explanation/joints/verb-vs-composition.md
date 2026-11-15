@@ -179,19 +179,18 @@ and not `publish`.
 A direction-explicit pair. `rwv sync` takes the target's new work into a
 feature (or merges another weave branch in with `--from`): members first,
 each from the branch it lands on, then the project branch, then the relock.
-`rwv land` pushes CWD's committed state into another workspace:
-Phase 1' (project repo, lock-excluded), Phase 2 (member repos), Phase 3
-(re-lock), then the target's fast-forward.
+`rwv land` composes CWD's committed state in its own workspace, members
+first and then the project commit with the relock, and then fast-forwards the
+target and each receiving branch to exactly that.
 See [sync-semantics](./sync-semantics.md).
 
 - *Per-repo policy from role?* Yes — member repos and project repo
   follow different treatment under the same `history` setting (the
-  project repo excludes the lock from the merge; member repos
-  don't).
+  project branch's lock is recorded by the relock from what the members
+  became; member repos have no lock).
 - *Cross-repo ordering?* Yes — every member must have taken in before
-  the lock can record its new tip, and in `land` Phase 1' must complete
-  before replay can read the member set its manifest names, and Phase 2
-  before Phase 3 can capture the resulting manifest tips into the new lock.
+  the lock can record its new tip, and in `land` every member is composed
+  before the project commit can capture the resulting tips in the relock.
 - *rwv-owned state?* The lock is the principal output of the relock.
 
 Strong pass. See [verb-vs-vocabulary](./verb-vs-vocabulary.md) for why

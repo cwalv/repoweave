@@ -17,7 +17,7 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Branch record** | How a weave branch is used: `feature` (work onto a target branch, with `as` the target's own mode when the record was written) or `declared` (members on the branches its member entries declare). Written by `rwv branch set-mode`, `rwv init`, `rwv clone` and `rwv workweave create`, listed by `rwv branch list`. A branch with none is **unrecorded**, and the verbs that align, lock, land or publish refuse it. See [formats](./formats.md#branch-records). |
 | **Records branch** | The branch of the project repo (`rwv-records`) that holds one file per weave branch, its record. It has no working tree and no history in common with a weave branch, and is written by compare-and-swap. Its name and every name below it are reserved. Plugins must not write it. |
 | **Canonical clone** (or **Canonical store**) | The full git clone at `<primary>/<registry>/<owner>/<repo>/` (or `<primary>/projects/<name>/`) whose `.git` object store backs both the primary weave checkout and every workweave's git worktree. See [clone-topology](../explanation/joints/clone-topology.md). |
-| **Minted branch** | The feature branch a workweave created without a branch flag runs on, named `<project>--<workweave>` (with `/` in scoped project names encoded as `+`), in the project repo and in each `owned` or `fork` member. Its record is never published, and it is deleted by the [deletion rule](../explanation/joints/deletion-rule.md) when the workweave is deleted or retired. See [workweave-hierarchy](../explanation/joints/workweave-hierarchy.md). |
+| **Minted branch** (ephemeral branch) | The feature branch a workweave created without a branch flag runs on, named `<project>--<workweave>` (with `/` in scoped project names encoded as `+`), in the project repo and in each `owned` or `fork` member. Its record is never published, and it is deleted by the [deletion rule](../explanation/joints/deletion-rule.md) when the workweave is deleted or retired. See [workweave-hierarchy](../explanation/joints/workweave-hierarchy.md). |
 | **Manifest** (`rwv.toml`) | Declares which repos belong to a project, their roles, and integration config. See [formats](./formats.md). |
 | **Lock file** (`rwv.lock`) | Pins repos to exact 40-character commit SHAs for reproducibility. Derived state — recorded by `rwv lock`, `rwv member add`, `rwv member pin`, `rwv update --remote`, `rwv sync`, and `rwv land`. See [lock-as-derived](../explanation/joints/lock-as-derived.md). |
 | **Pin** | A member's commit in a lock. Re-pinning moves it **forward** when the old pin is an ancestor of the new commit or absent, else **backward**; a backward move happens only by name (`rwv member pin`, a setter, or a hand edit of the entry that `rwv lock --commit` commits). A member the lock has no entry for has **no pin** (`pin` `none`). A first pin comes from `rwv member add` (the commit it cloned), `rwv member pin` or `rwv update --remote` (the upstream's tip). `rwv status`, `rwv push` and `rwv doctor` judge a member's pin as a state of the `pin` kind: `none`, `unreachable`, `behind`, `ahead`, `unpinned` or `diverged`. See [doctor findings](./doctor-findings.md#pin). |
@@ -71,6 +71,21 @@ Terminology lookup. For deeper material on each concept, follow the cross-links.
 | **Deletion rule** | What decides which branches `rwv branch delete`, `rwv workweave delete` and `rwv land --retire` delete. A branch belongs to the deleted branch `W` if it is the project branch `W`, or a listed member's branch named `W` that no live weave branch declares. It is deleted when everything on it has landed on the branch `W` lands into, no live lock pins a commit only it reaches, and (for the project branch) no member branch that belongs survives. `--discard-unlanded` lifts the landed condition after a backup. See [`rwv branch delete`](./cli.md). |
 | **Survivor** | A branch the deletion rule kept, reported with its reason (`unlanded`, `pinned`, `open-head`, `members`, `unconfirmed`). A delete that leaves one exits with status `3`. |
 | **Consent flag** | A flag that permits one named consequence a verb otherwise refuses, such as `--discard-uncommitted`, `--adopt-drifted` or `--leave-target`. Each names the loss it accepts; there is no blanket override. See [destructive operations](../explanation/destructive-operations.md). |
+
+## Facts
+
+A **fact** is a statement of what the refs show, listed beside a state in `rwv status`, a refusal and the `facts` of `--json`. A fact never selects a choice or changes what a verb does; it is evidence for the operator's decision.
+
+| Fact | What it says |
+|---|---|
+| `rewritten` | A superseded tip is recorded for the branch: a fetch moved its upstream or push branch off a tip the branch still holds, which is how a rewrite of the remote's history shows. |
+| `landed` | The branch is an ancestor of the branch it lands into. |
+| `pinned-by` | Another project's live lock pins the commits, so they are not unpinned. |
+| `shared` | Other live weave branches declare the member branch, so a landing into it moves them too. |
+| `pin-landed` | The pin is on the branch it lands into. |
+| `checkout` | The member was left detached because its branch is checked out in another workspace, named. |
+| `patch-equivalent` | The unlanded commits carry changes equivalent to commits on the branch they land into, commit by commit or as one squashed change; it names them. It is evidence for a confirmation such as `--discard-unlanded` or `--reset-to-target` and never replaces it. |
+| `ahead`, `behind` | How many commits the branch holds that its push branch lacks, and the reverse. |
 
 ## Related
 

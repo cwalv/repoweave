@@ -1423,7 +1423,7 @@ A member's checkout, or the project repo's, is not where the checked-out project
 | `project detached` | C30: return the project repo to a branch, or start one carrying the edits | `rwv switch <b>` | here | moves only what alignment moves |
 | `project detached` | C30: return the project repo to a branch, or start one carrying the edits | `rwv branch create <W> --target <T>`; `rwv branch create <W> --declared` | here | moves only what alignment moves |
 
-**Where this sits.** [Clone topology](../explanation/joints/clone-topology.md); [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
+**Where this sits.** [Alignment](../explanation/joints/alignment.md); [Clone topology](../explanation/joints/clone-topology.md); [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md); [Shared refs and drift](../explanation/joints/shared-refs-drift.md).
 
 #### `on-branch`
 

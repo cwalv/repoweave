@@ -229,8 +229,11 @@ one.
 - [workweave-lifecycle](./workweave-lifecycle.md) — what happens at each
   stage of a workweave's existence: creation flags, working state, the
   retire contract, and deletion semantics.
-- [sync-semantics](./sync-semantics.md) — what happens when a sync runs
-  between two workspaces on the tree; the full direction-pair contract.
+- [records and modes](./branch-records.md) — the record that names each
+  workweave branch's target.
+- [landing](./landing.md) — what one landing edge composes and moves.
+- [sync-semantics](./sync-semantics.md) — taking the target's work into a
+  feature; the other direction of the pair.
 - [clone-topology](./clone-topology.md) — the ephemeral-branch
   convention is invariant I3 in the tier-0 topology spec; the
   hierarchy's worktree-sharing model is the physical artifact those

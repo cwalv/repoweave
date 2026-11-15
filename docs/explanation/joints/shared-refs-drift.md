@@ -446,9 +446,9 @@ commit is intact, and only a workspace's record of what it holds and its files l
 
 ## Related joints
 
-- [sync-semantics](./sync-semantics.md) — sync's Phase 3 disk
-  reconciliation runs the same classifier as `rwv doctor --fix` post
-  Phase-2.
+- [sync-semantics](./sync-semantics.md) and [landing](./landing.md) — both
+  read drift in the checkouts they move with the same classifier as
+  `rwv doctor --fix`, and refresh safe-class drift before judging edits.
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree of
   workspaces that share each repo's refs, one branch per workspace.
 - [clone-topology](./clone-topology.md) — the moved-from tip the

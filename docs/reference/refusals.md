@@ -273,7 +273,7 @@ The others follow.
 | `feature`, for `rwv member set-branch` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `feature`, for `rwv branch create` | use another name | — | here | nothing changes |
 
-**Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
+**Where this sits.** [Alignment](../explanation/joints/alignment.md); [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ### `publish`
 
@@ -388,7 +388,7 @@ The others follow.
 | `moved mid-operation` | put back every ref the operation moved, then run it again from the new tips | `rwv abort`; `rwv land` with the flags the stopped landing was started with | here | `rwv abort` moves only what the operation moved, from the tips it wrote; a branch someone else moved stays where they left it |
 | `moved mid-operation` | end the landing, putting back the source and leaving the target as it stands, the landing's tips in it included | `rwv abort --leave-target` | here | each tip the landing wrote in the target is kept as a backup first where no branch reaches it |
 
-**Where this sits.** [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
+**Where this sits.** [Records and modes](../explanation/joints/branch-records.md); [Landing](../explanation/joints/landing.md); [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md); [Formats](./formats.md).
 
 ### `history`
 
@@ -416,7 +416,7 @@ The others follow.
 | `contradicted` | integrate by the setting the branch records | rerun without `--history` | here | nothing changes |
 | `not fast-forward` | C36: take the target's new work in first | `rwv sync` | the workspace with that feature | by the target's setting; `rwv abort` undoes it |
 
-**Where this sits.** [Formats](./formats.md) states the `history` keys; [Sync semantics](../explanation/joints/sync-semantics.md).
+**Where this sits.** [Formats](./formats.md) states the `history` keys; [History and lineage](../explanation/joints/history-and-lineage.md).
 
 ### `protected`
 
@@ -1160,7 +1160,7 @@ whole operation back or, where it cannot, refuses before anything moves, naming
 what is in the way and the command that ends the operation. Waiting is only an exit if the operation is genuinely still
 running.
 
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
+**Where this sits.** [Stops and abort](../explanation/joints/stops-and-abort.md).
 
 ### `op-parked`
 
@@ -1175,7 +1175,7 @@ to roll the whole operation back. The route line for a parked operation names
 the refusal that stopped the phase where that refusal has its own token, so you may be sent to
 a more specific entry than this one.
 
-**Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
+**Where this sits.** [Stops and abort](../explanation/joints/stops-and-abort.md).
 
 ### `partial-run-aborted`
 

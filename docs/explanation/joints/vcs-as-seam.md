@@ -224,10 +224,11 @@ driver would conflict: they settle `rwv.lock` themselves. A rebase replays
 each commit as a three-way merge, so the hold matters to a `linear` `rwv
 sync` as much as to a merge.
 
-**Used by** [sync-semantics](./sync-semantics.md)'s Phase 1' to keep
-`rwv.lock` out of the merge inputs. The lock is regenerated from
-manifest tips in Phase 3, so carrying user lock-edits through a rebase
-would only produce noise. See
+**Used by** the replays of `rwv sync` and `rwv land`
+([history and lineage](./history-and-lineage.md#rebasing-and-what-it-keeps)) to keep
+`rwv.lock` out of the merge inputs. The relock records the lock after the
+member rebases, so carrying user lock-edits through a rebase would only
+produce noise. See
 [lock-as-derived](./lock-as-derived.md) for why this is structurally
 right.
 
