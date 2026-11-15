@@ -107,6 +107,18 @@ its removal, or a backward pin, refuses unless the operator names the member
 `projects/<p>`. `entry_changes` and `judge_entry_changes` compute them from the
 merged manifest.
 
+The source's pins are `W`'s committed lock overlaid with `Plan::relocked`,
+which `Sides::relocks` selects before any judgment from the checkouts ahead of
+their pins (`CheckoutAhead`): an `owned` or `fork` member whose checkout `T`'s
+pin does not reach. `Sides::our_pin` reads the overlay, so `entry_changes`, the
+carried-pin and lineage judgments and `plan_realigned` read the same pins; the
+op record journals the overlay as `take_in.relocked`, which `relock_landing`
+overlays on the source's lock before the three-way merge, and each entry is
+reported `Relocked`. A checkout `T`'s pin reaches, and every `dependency` or
+`reference` checkout, keeps `W`'s committed pin. The `target` `member changes`
+consent prints the landing as typed (`landing_as_started`) with each change's
+`--allow-member-change`.
+
 `Moves` is how each receiving branch moves, recorded in the op record:
 `InCheckout`, `AsRef`, `InPlace`, `Enters`, `Follows`.
 

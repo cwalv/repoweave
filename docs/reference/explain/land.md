@@ -1158,6 +1158,33 @@ Schema:
           }
         },
         {
+          "description": "The source's checkout of `path`, `now`, recorded in place of the pin `was` the source's lock committed: it holds commits the target's pin lacks.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "relocked"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
           "description": "A pin the landing moved backward, named by `--allow-member-change`.",
           "type": "object",
           "required": [
@@ -2464,9 +2491,9 @@ Put everything back after a stopped landing:
 rwv abort
 ```
 
-The landing writes no relock commit of the source's own: where its source's lock is behind a member's tip, it prints
-`<workspace>/<member>: lock behind HEAD by <n> commits — the landing records <tip>`
-and the one project commit it lands records that tip. That commit, where it is not a merge commit, reads:
+The landing writes no relock commit of the source's own. Where an `owned` or `fork` member's checkout is ahead of the pin the source's lock commits and holds commits the target's pin lacks, it prints
+`<member>: lock behind HEAD by <n> commits — the landing records <tip> in place of the pin <pin>`
+and the one project commit it lands records that tip; the refusals and the member changes it reports are judged against that tip too. A checkout the target's pin already reaches brings nothing to land, so its pin lands as the source committed it: a pin put back by `rwv member pin` lands as named. A `dependency` or `reference` member's pin lands as committed whatever its checkout holds, since it moves only by name; `rwv status` reports that checkout as `pin` `ahead`. That commit, where it is not a merge commit, reads:
 
 ```
 lock: auto-relock after sync from <source>

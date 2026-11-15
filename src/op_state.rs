@@ -595,6 +595,14 @@ pub enum LandingReport {
         was: CommitId,
         now: CommitId,
     },
+    /// A source checkout `now` the landing records in place of the pin
+    /// `was` the source's lock committed, `commits` beyond it.
+    Relocked {
+        repo: RepoKey,
+        was: CommitId,
+        now: CommitId,
+        commits: Option<usize>,
+    },
     /// A pin moved backward by name.
     Repinned {
         repo: RepoKey,

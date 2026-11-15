@@ -166,8 +166,10 @@ The plan is written to the owner record's `take_in`: `sync_from` names `T`,
 each planned member's path its receiving branch `U`, that branch's tip and
 how it moves (in its checkout, as a ref and perhaps created, created for a
 member `T` lacks, or followed with nothing moving),
-`source_tip` the source's project tip, and `relocked` the tip of each
-member the source's lock was behind, read once before anything moved;
+`source_tip` the source's project tip, and `relocked` the checkout tip of
+each `owned` or `fork` member the source's lock was behind whose tip `T`'s
+pin does not reach, read once before anything moved and the same pins the
+landing judged (`Plan::relocked`, `docs/internals/landing.md`);
 no relock commit of the source's own is written. Replay composes each planned member onto its tip and nothing
 else; relock merges pins three ways against the merge base of `source_tip`
 and `T`'s tip, each planned member at its composed tip, and records every

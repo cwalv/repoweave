@@ -289,7 +289,7 @@ src/switch.rs	name no-such-branch	-	2
 src/switch.rs	name reserved	-	1
 src/switch.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/symlink.rs	(untokened:environment-passthrough)	-	1
-src/sync.rs	(untokened:environment-passthrough)	-	9
+src/sync.rs	(untokened:environment-passthrough)	-	8
 src/sync.rs	(untokened:internal-invariant)	-	14
 src/sync.rs	(untokened:tally)	-	3
 src/sync.rs	abort-in-its-workspace	-	2

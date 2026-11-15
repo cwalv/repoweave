@@ -1987,6 +1987,12 @@ every_scenario!(
     landing_writes_no_relock_of_its_own(scenarios::ProjectLands::Merge),
     a_refused_landing_leaves_a_lock_behind_as_it_stood,
     a_landing_records_the_tip_of_a_member_it_does_not_move,
+    a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::Seat { retire: false }),
+    a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::Seat { retire: true }),
+    a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::SeatJson),
+    a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::Primary),
+    a_landing_records_new_work_over_a_pin_put_back,
+    a_pin_put_back_by_name_is_restored_by_its_printed_choice,
     parallel_retire_fetch,
     dc11_drift_before_dirt,
     moved_and_edited(scenarios::MovedAndEditedEnd::Stash),
@@ -6656,6 +6662,31 @@ fn a_landing_writes_no_relock_of_its_own() {
 #[test]
 fn a_landing_records_the_tip_of_a_member_it_does_not_move() {
     runner::run(scenarios::a_landing_records_the_tip_of_a_member_it_does_not_move())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_lands_a_pin_put_back_by_name() {
+    for at in [
+        scenarios::PutBack::Seat { retire: false },
+        scenarios::PutBack::Seat { retire: true },
+        scenarios::PutBack::SeatJson,
+        scenarios::PutBack::Primary,
+    ] {
+        runner::run(scenarios::a_landing_lands_a_pin_put_back_by_name(at))
+            .assert_fully_decided_green();
+    }
+}
+
+#[test]
+fn a_landing_records_new_work_over_a_pin_put_back() {
+    runner::run(scenarios::a_landing_records_new_work_over_a_pin_put_back())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_pin_put_back_by_name_is_restored_by_its_printed_choice() {
+    runner::run(scenarios::a_pin_put_back_by_name_is_restored_by_its_printed_choice())
         .assert_fully_decided_green();
 }
 

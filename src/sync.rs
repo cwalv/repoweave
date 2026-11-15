@@ -8,10 +8,8 @@
 use crate::check::UnparseableProjectKind;
 use crate::cli::consent::DiscardUnpublishedConsent;
 use crate::diagnosis::{Report, State};
-use crate::lock::generate_lock;
 use crate::manifest::{
-    LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath, ResolvedLockFile,
-    WorkweaveName,
+    LockFile, Manifest, Project, ProjectName, RepoKey, RepoOperand, RepoPath, WorkweaveName,
 };
 use crate::op_state::{self, OpId, OpVerb, OwnerHeader, OwnerRecord, SavepointKey};
 use crate::parallel::{run_in_parallel, OutputMode};
@@ -738,6 +736,14 @@ pub enum LandingReportOutput {
         was: CommitId,
         now: CommitId,
     },
+    /// The source's checkout of `path`, `now`, recorded in place of the
+    /// pin `was` the source's lock committed: it holds commits the target's
+    /// pin lacks.
+    Relocked {
+        path: String,
+        was: CommitId,
+        now: CommitId,
+    },
     /// A pin the landing moved backward, named by `--allow-member-change`.
     RePinned {
         path: String,
@@ -860,6 +866,11 @@ impl LandingReportOutput {
                 backup: backup.clone(),
             },
             op_state::LandingReport::Remapped { repo, was, now } => Self::Remapped {
+                path: repo.to_string(),
+                was: was.clone(),
+                now: now.clone(),
+            },
+            op_state::LandingReport::Relocked { repo, was, now, .. } => Self::Relocked {
                 path: repo.to_string(),
                 was: was.clone(),
                 now: now.clone(),
@@ -1017,6 +1028,20 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                      project commit pinned, already on the target",
                     was.short(),
                     now.short()
+                );
+            }
+            op_state::LandingReport::Relocked {
+                repo,
+                was,
+                now,
+                commits,
+            } => {
+                eprintln!(
+                    "  {repo}: lock behind HEAD by {} commits — the landing records {} in place \
+                     of the pin {}",
+                    display_count(*commits),
+                    now.short(),
+                    was.short()
                 );
             }
             op_state::LandingReport::Repinned { repo, was, now } => {
@@ -3744,11 +3769,6 @@ struct PreconditionOutcome {
     snapshot: SourceSnapshot,
     /// CWD's parsed project (manifest + lock, if present).
     cwd_project: Project,
-    /// Human name of the CWD workspace, used in the lock-behind lines.
-    cwd_workspace_name_str: String,
-    /// CWD repos whose committed lock is behind HEAD: their tips are
-    /// journaled at op start and the landing's project commit records them.
-    cwd_lock_behind: Vec<RepoRelation>,
     /// Each `owned` or `fork` member's receiving-branch tip.
     plan: crate::land::Plan,
 }
@@ -3972,6 +3992,7 @@ fn run_preconditions_after_acquire(
     cwd_project_name: &ProjectName,
     dest: Option<(&Path, &Path)>,
     dest_workspace_name: &str,
+    started_as: &[String],
 ) -> anyhow::Result<PreconditionOutcome> {
     let mut report = landing.judged.clone();
     let mut unjudged: Option<anyhow::Error> = None;
@@ -4076,10 +4097,17 @@ fn run_preconditions_after_acquire(
         }
         None => None,
     };
-    let cwd_lock_behind: Vec<RepoRelation> = cwd_class
+    let ahead: Vec<crate::land::CheckoutAhead> = cwd_class
         .relations
         .into_iter()
         .filter(|r| r.relation == LockRelation::Ahead)
+        .filter_map(|r| {
+            Some(crate::land::CheckoutAhead {
+                pin: r.lock_pin?.id().clone(),
+                checkout: r.tip?.id().clone(),
+                repo: r.repo_path,
+            })
+        })
         .collect();
     let sides = [
         (cwd_workspace_name_str.as_str(), cwd_project.lock.as_ref()),
@@ -4096,7 +4124,18 @@ fn run_preconditions_after_acquire(
             );
         }
     }
-    let plan = match crate::land::judge(landing, history, cwd_workspace_dir, retire, &mut report) {
+    let source = crate::land::Source {
+        typed: started_as,
+        ahead: &ahead,
+    };
+    let plan = match crate::land::judge(
+        landing,
+        history,
+        cwd_workspace_dir,
+        retire,
+        &source,
+        &mut report,
+    ) {
         Ok(plan) => plan,
         Err(e) => {
             hold(Err(e), &mut report);
@@ -4207,8 +4246,6 @@ fn run_preconditions_after_acquire(
     Ok(PreconditionOutcome {
         snapshot,
         cwd_project,
-        cwd_workspace_name_str,
-        cwd_lock_behind,
         plan,
     })
 }
@@ -4402,7 +4439,6 @@ fn guard_and_mark<'a>(
         resumes,
     } = op;
 
-    let emit_text = handler.emit_text();
     let cwd_workspace_dir = cwd_ctx.active_path().to_path_buf();
     let cwd_project_name = cwd_ctx.require_bound_project()?.clone();
     let cwd_project_dir = project_dir(&cwd_workspace_dir, &cwd_project_name);
@@ -4565,6 +4601,7 @@ fn guard_and_mark<'a>(
             .as_deref()
             .zip(dest_workspace_dir.as_deref()),
         &source_workspace_name,
+        &started_as,
     );
     for report in &refreshed {
         emit_landing_report(handler, report);
@@ -4572,8 +4609,6 @@ fn guard_and_mark<'a>(
     let PreconditionOutcome {
         snapshot,
         cwd_project,
-        cwd_workspace_name_str,
-        cwd_lock_behind,
         plan,
     } = match precondition_result {
         Ok(v) => v,
@@ -4745,56 +4780,6 @@ fn guard_and_mark<'a>(
         );
     }
 
-    // The pins of each member the source's lock is behind are read once,
-    // before anything moves, and journaled: the landing's project commit
-    // records them, and no relock commit of the source's own is written.
-    let mut relocked = std::collections::BTreeMap::new();
-    if !cwd_lock_behind.is_empty() {
-        let workweave_dir = match &cwd_ctx.checkout {
-            Checkout::Workweave { dir, .. } => Some(dir.as_path()),
-            Checkout::Primary { .. } => None,
-        };
-        let lock = match generate_lock(
-            &cwd_project.manifest,
-            cwd_ctx.primary_path(),
-            workweave_dir,
-            true,
-        ) {
-            Ok(lock) => lock,
-            Err(e) => {
-                for (dir, id) in &project_anchors {
-                    delete_savepoint(project_vcs.as_ref(), dir, id);
-                }
-                for (vcs, dir, id) in &member_anchors {
-                    delete_savepoint(vcs.as_ref(), dir, id);
-                }
-                release_start(&acquired);
-                return Err(crate::untokened!(
-                    EnvironmentPassthrough,
-                    "the tips of {}'s members could not be read, so the op did not start and \
-                     nothing was changed: {e:#}",
-                    cwd_workspace_dir.display(),
-                ));
-            }
-        };
-        for behind in &cwd_lock_behind {
-            if let Some(entry) = lock.get_entry(&behind.repo_path) {
-                relocked.insert(behind.repo_path.clone(), entry.version.id().clone());
-            }
-        }
-        if emit_text {
-            for line in op_start_relock_lines(
-                &cwd_lock_behind,
-                &lock,
-                &cwd_workspace_dir,
-                &cwd_project.manifest,
-                &cwd_workspace_name_str,
-            ) {
-                eprintln!("{line}");
-            }
-        }
-    }
-
     let mut take_in = op_state::TakeInRecord {
         sync_from: Some(op_state::SyncFrom::Target(landing.target.to_string())),
         source_tip: Some(
@@ -4804,7 +4789,7 @@ fn guard_and_mark<'a>(
                 .id()
                 .clone(),
         ),
-        relocked,
+        relocked: plan.relocked.clone(),
         allow_member_change: landing
             .allow_member_change
             .iter()
@@ -4853,9 +4838,10 @@ fn guard_and_mark<'a>(
             commits: commits.clone(),
         });
     for report in plan
-        .absent_pins
+        .relocks
         .iter()
         .cloned()
+        .chain(plan.absent_pins.iter().cloned())
         .chain(beyond_pin)
         .chain(plan.landed_changes.iter().cloned())
     {
@@ -6139,42 +6125,6 @@ pub(crate) fn parked_note(verb: op_state::OpVerb) -> String {
          Fix the source, then `{resume}` — or `rwv abort` to roll the whole op back.",
         resume = op_state::resume_command(verb),
     )
-}
-
-/// The landing's per-repo lines for each member its source's lock is behind:
-/// the tip the landing's project commit records for it, and how many
-/// commits that is past the pin the lock held.
-fn op_start_relock_lines(
-    behind: &[RepoRelation],
-    relocked: &ResolvedLockFile,
-    workspace_dir: &Path,
-    manifest: &Manifest,
-    workspace_name: &str,
-) -> Vec<String> {
-    behind
-        .iter()
-        .filter_map(|r| {
-            let pinned = &relocked.get_entry(&r.repo_path)?.version;
-            let relocked_over = manifest
-                .get_entry(&r.repo_path)
-                .zip(r.lock_pin.as_ref())
-                .and_then(|(entry, from)| {
-                    vcs_for(entry.vcs_type)
-                        .count_commits_in_range(
-                            &workspace_dir.join(r.repo_path.as_path()),
-                            from,
-                            pinned,
-                        )
-                        .ok()
-                });
-            Some(format!(
-                "{workspace_name}/{}: lock behind HEAD by {n} commits — the landing records {pin}",
-                r.repo_path,
-                n = display_count(relocked_over),
-                pin = pinned.id().short(),
-            ))
-        })
-        .collect()
 }
 
 /// A commit count for an operator line, or `?` when the count could not be

@@ -6,6 +6,21 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### A landing lands a pin put back by name
+
+`rwv land` recorded every member checkout ahead of the feature's lock at its
+tip, so a pin put back with `rwv member pin <m> <rev> --commit` landed the tip
+instead, after the refusal had shown `<rev>` and `--allow-member-change` had
+consented to it. Now a landing records a checkout over the committed pin only
+for an `owned` or `fork` member whose checkout holds commits the target's pin
+lacks, reporting it as `<member>: lock behind HEAD by <n> commits — the landing
+records <tip> in place of the pin <pin>` (`relocked` under `--json`); every
+other member lands at the pin the feature committed, a `dependency` or
+`reference` member's always. The refusal, the reported member changes and the
+landed lock read the same pins. The `--allow-member-change` consent printed by
+`target` `member changes` keeps the flags the landing was run with, such as
+`--retire`.
+
 ### The `.rwv-fetched` file is no longer written
 
 Nothing read the per-remote fetch times it held. A file an earlier release left in a store is harmless and is neither read nor removed.

@@ -449,6 +449,12 @@ pub enum Claim {
         member: Repo,
         mark: &'static str,
     },
+    /// `site` pins `member` at exactly the commit `mark` names.
+    PinAt {
+        site: LockSite,
+        member: Repo,
+        mark: &'static str,
+    },
     /// The lock of the project commit `rev` at `at` pins `member` at a
     /// commit whose subject is `subject` and that `member`'s checkout at `at`
     /// reaches from `reached_from`: a commit a rebase replayed there, never
@@ -596,6 +602,12 @@ pub enum Claim {
     ManifestLists {
         at: Place,
         rev: &'static str,
+        members: &'static [Repo],
+    },
+    /// Each of `members` has a pin the step's landing report says it lands,
+    /// in text or in `--json`, and every such pin is the one `site` holds.
+    ReportedPinsLanded {
+        site: LockSite,
         members: &'static [Repo],
     },
 }
@@ -1447,6 +1459,58 @@ impl Outcome<'_> {
             _ => Ok(()),
         }
     }
+}
+
+/// Each pin a landing's report says a member lands at: a named re-pin, a
+/// pin entry change, or a relock of its checkout, read from `--json`'s
+/// `reports` where the output opens with an envelope, else from its lines.
+fn reported_landed_pins(output: &str) -> Vec<(Repo, String)> {
+    let member_of = |path: &str| {
+        Repo::MEMBERS
+            .into_iter()
+            .find(|repo| repo.rel_path() == path)
+    };
+    if output.trim_start().starts_with('{') {
+        let envelope = serde_json::Deserializer::from_str(output)
+            .into_iter::<serde_json::Value>()
+            .next()
+            .and_then(Result::ok)
+            .unwrap_or_default();
+        return envelope["reports"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|report| match report["kind"].as_str() {
+                Some("re-pinned" | "relocked") => true,
+                Some("entry-changed") => report["field"] == "pin",
+                _ => false,
+            })
+            .filter_map(|report| {
+                Some((
+                    member_of(report["path"].as_str()?)?,
+                    report["now"].as_str()?.to_owned(),
+                ))
+            })
+            .collect();
+    }
+    output
+        .lines()
+        .filter_map(|line| {
+            let (path, said) = line.trim_start().split_once(": ")?;
+            let member = member_of(path)?;
+            let pin = if let Some(rest) = said.strip_prefix("re-pinned ") {
+                rest.split_whitespace().nth(2)?
+            } else if let Some(rest) = said.strip_prefix("pin: ") {
+                rest.split_whitespace().nth(2)?
+            } else {
+                said.split_once("the landing records ")?
+                    .1
+                    .split_whitespace()
+                    .next()?
+            };
+            Some((member, pin.to_owned()))
+        })
+        .collect()
 }
 
 fn rendered(out: &std::process::Output) -> String {
@@ -2535,6 +2599,37 @@ impl Run<'_> {
                     Err(format!("{} is not a directory", dir.display()))
                 }
             }
+            Claim::ReportedPinsLanded { site, members } => {
+                let pins = after
+                    .pins
+                    .get(site)
+                    .ok_or_else(|| format!("{site:?} holds no lock"))?;
+                let reported = reported_landed_pins(output);
+                for member in *members {
+                    let said: Vec<&String> = reported
+                        .iter()
+                        .filter(|(m, _)| m == member)
+                        .map(|(_, pin)| pin)
+                        .collect();
+                    if said.is_empty() {
+                        return Err(format!(
+                            "the landing reported no pin for {}:\n{output}",
+                            member.name()
+                        ));
+                    }
+                    let held = pins
+                        .get(member)
+                        .ok_or_else(|| format!("{site:?} has no pin for {}", member.name()))?;
+                    if let Some(other) = said.iter().find(|pin| !held.starts_with(pin.as_str())) {
+                        return Err(format!(
+                            "the landing reported {} landing at {other}, and {site:?} pins \
+                             {held}:\n{output}",
+                            member.name()
+                        ));
+                    }
+                }
+                Ok(())
+            }
             Claim::ManifestLists { at, rev, members } => {
                 let dir = sb.checkout(at, Repo::Proj);
                 let shown = sb.git(&dir, &["show", &format!("{rev}:rwv.toml")]);
@@ -2861,6 +2956,22 @@ impl Run<'_> {
                         member.name()
                     )),
                     Err(_) => Ok(()),
+                }
+            }
+            Claim::PinAt { site, member, mark } => {
+                let pin = after
+                    .pins
+                    .get(site)
+                    .and_then(|pins| pins.get(member))
+                    .ok_or_else(|| format!("{site:?} has no pin for {}", member.name()))?;
+                let sha = self.mark(mark)?;
+                if pin == sha {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{site:?} pins {} at {pin}, not at {mark} ({sha})",
+                        member.name()
+                    ))
                 }
             }
             Claim::PinsReplayed {

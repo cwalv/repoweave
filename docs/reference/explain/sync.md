@@ -966,6 +966,33 @@ Schema:
           }
         },
         {
+          "description": "The source's checkout of `path`, `now`, recorded in place of the pin `was` the source's lock committed: it holds commits the target's pin lacks.",
+          "type": "object",
+          "required": [
+            "kind",
+            "now",
+            "path",
+            "was"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "relocked"
+              ]
+            },
+            "now": {
+              "$ref": "#/definitions/CommitId"
+            },
+            "path": {
+              "type": "string"
+            },
+            "was": {
+              "$ref": "#/definitions/CommitId"
+            }
+          }
+        },
+        {
           "description": "A pin the landing moved backward, named by `--allow-member-change`.",
           "type": "object",
           "required": [

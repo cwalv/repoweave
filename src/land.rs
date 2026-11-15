@@ -94,6 +94,12 @@ pub struct Plan {
     pub absent_pins: Vec<crate::op_state::LandingReport>,
     /// Each change to `T`'s entries `--allow-member-change` named.
     pub landed_changes: Vec<crate::op_state::LandingReport>,
+    /// Each member whose checkout the landing records in place of `W`'s
+    /// committed pin, at that checkout's commit: the pins every judgment
+    /// here read and the relock writes.
+    pub relocked: BTreeMap<RepoPath, CommitId>,
+    /// One report per member in `relocked`.
+    pub relocks: Vec<crate::op_state::LandingReport>,
     /// The repos composed by a merge commit, first parent the receiving
     /// branch, rather than rebased onto it.
     pub merged: BTreeSet<RepoKey>,
@@ -117,6 +123,22 @@ pub struct Receiving {
     pub branch: RawRefName,
     pub tip: CommitId,
     pub moves: Moves,
+}
+
+/// A source checkout whose commit descends from the pin `W`'s lock commits
+/// for it.
+#[derive(Debug, Clone)]
+pub struct CheckoutAhead {
+    pub repo: RepoPath,
+    pub pin: CommitId,
+    pub checkout: CommitId,
+}
+
+/// How the landing was typed: the words of its `rwv land`, and the
+/// checkouts ahead of their pins it judges.
+pub struct Source<'a> {
+    pub typed: &'a [String],
+    pub ahead: &'a [CheckoutAhead],
 }
 
 impl Plan {
@@ -609,6 +631,7 @@ pub(crate) struct Sides {
     pub(crate) their_lock: Option<LockFile>,
     pub(crate) base_lock: Option<LockFile>,
     pub(crate) history: PinHistory,
+    relocked: BTreeMap<RepoPath, CommitId>,
 }
 
 impl Sides {
@@ -631,11 +654,49 @@ impl Sides {
             their_lock: lock_at(vcs, dir, target_tip),
             base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, dir, b)),
             history: PinHistory::of(vcs, dir, target_tip)?.since(head),
+            relocked: BTreeMap::new(),
         })
     }
 
     fn our_pin(&self, path: &RepoPath) -> Option<CommitId> {
-        pin_of(self.our_lock.as_ref(), path)
+        self.relocked
+            .get(path)
+            .cloned()
+            .or_else(|| pin_of(self.our_lock.as_ref(), path))
+    }
+
+    /// The checkouts the landing records over `W`'s committed pins: an
+    /// `owned` or `fork` member's, where it holds commits `T`'s pin lacks.
+    /// A checkout `T`'s pin already reaches brings nothing, and a
+    /// `dependency` or `reference` member's pin moves only by name.
+    fn relocks(
+        &self,
+        ahead: &[CheckoutAhead],
+        source_root: &Path,
+    ) -> Vec<crate::op_state::LandingReport> {
+        ahead
+            .iter()
+            .filter_map(|ahead| {
+                let entry = self.ours.get_entry(&ahead.repo)?;
+                if !matches!(entry.role, Role::Owned | Role::Fork) {
+                    return None;
+                }
+                let vcs = vcs_for(entry.vcs_type);
+                let dir = source_root.join(ahead.repo.as_path());
+                let brought = self.their_pin(&ahead.repo).is_none_or(|theirs| {
+                    !vcs.is_ancestor(&dir, &rev(&ahead.checkout), &rev(&theirs))
+                        .unwrap_or(false)
+                });
+                brought.then(|| crate::op_state::LandingReport::Relocked {
+                    repo: RepoKey::Member(ahead.repo.clone()),
+                    was: ahead.pin.clone(),
+                    now: ahead.checkout.clone(),
+                    commits: vcs
+                        .count_commits_in_range(&dir, &rev(&ahead.pin), &rev(&ahead.checkout))
+                        .ok(),
+                })
+            })
+            .collect()
     }
 
     fn their_pin(&self, path: &RepoPath) -> Option<CommitId> {
@@ -803,6 +864,7 @@ pub fn judge(
     one_run: Option<History>,
     source_root: &Path,
     retire: bool,
+    source: &Source<'_>,
     report: &mut Report,
 ) -> anyhow::Result<Plan> {
     let vcs = project_vcs();
@@ -814,7 +876,7 @@ pub fn judge(
         report.add(unparseable_target(landing, vcs, &dir, &label));
         return Ok(Plan::default());
     };
-    let sides = Sides::read(
+    let mut sides = Sides::read(
         vcs,
         &dir,
         Manifest::from_path(&dir.join(Manifest::FILE_NAME))?,
@@ -822,7 +884,19 @@ pub fn judge(
         &landing.target_tip,
         theirs,
     )?;
-    let (landed_changes, inapplicable) = judge_entry_changes(landing, &sides, source_root, report)?;
+    let relocks = sides.relocks(source.ahead, source_root);
+    for relock in &relocks {
+        if let crate::op_state::LandingReport::Relocked {
+            repo: RepoKey::Member(path),
+            now,
+            ..
+        } = relock
+        {
+            sides.relocked.insert(path.clone(), now.clone());
+        }
+    }
+    let (landed_changes, inapplicable) =
+        judge_entry_changes(landing, &sides, source_root, source.typed, report)?;
     let off_alignment = judge_source_members(
         source_root,
         &landing.project,
@@ -843,6 +917,8 @@ pub fn judge(
     let as_mode = landing.target_mode;
     let mut plan = Plan {
         landed_changes,
+        relocked: sides.relocked.clone(),
+        relocks,
         ..Plan::default()
     };
     let project_scoped = |state: State| {
@@ -932,7 +1008,7 @@ fn plan_realigned(sides: &Sides, source_root: &Path, plan: &mut Plan) -> anyhow:
         if plan.receiving.contains_key(path) || sides.theirs.get_entry(path).is_none() {
             continue;
         }
-        let Some(mine) = pin_of(sides.our_lock.as_ref(), path) else {
+        let Some(mine) = sides.our_pin(path) else {
             continue;
         };
         let theirs = pin_of(sides.their_lock.as_ref(), path);
@@ -1031,6 +1107,8 @@ enum Route<'a> {
         feature: &'a BranchName,
         candidates: &'a [String],
         consent: &'a [String],
+        /// The landing's `rwv land` as typed.
+        typed: &'a [String],
     },
     /// `resume`: the stopped landing's continue, spelled for its workspace.
     Resumed { resume: &'a str },
@@ -1234,6 +1312,7 @@ fn judge_entry_changes(
     landing: &Landing,
     sides: &Sides,
     source_root: &Path,
+    typed: &[String],
     report: &mut Report,
 ) -> anyhow::Result<(Vec<crate::op_state::LandingReport>, Option<anyhow::Error>)> {
     let vcs = project_vcs();
@@ -1261,6 +1340,7 @@ fn judge_entry_changes(
             feature: &landing.feature,
             candidates: &candidates,
             consent: &consent,
+            typed,
         };
         for change in unnamed {
             report.add(judge_change(
@@ -1365,6 +1445,7 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
         their_lock: None,
         base_lock: None,
         history: PinHistory::of(vcs, &dir, resumed.target_tip)?.since(&head),
+        relocked: BTreeMap::new(),
     };
     let changes = entry_changes(resumed.project, &sides, source_root, None);
     if let Some(refused) = inapplicable(resumed.added, &changes, resumed.target) {
@@ -1491,12 +1572,13 @@ fn judge_change(
         .bind("<m>", &change.repo)
         .checkout(dir)
         .by_verb("land");
-    let (feature, candidates, consent) = match route {
+    let (feature, candidates, consent, typed) = match route {
         Route::Fresh {
             feature,
             candidates,
             consent,
-        } => (feature, candidates, consent),
+            typed,
+        } => (feature, candidates, consent, typed),
         Route::Resumed { resume } => {
             return judging
                 .bind_list("<resume>", resume.split_whitespace())
@@ -1506,7 +1588,10 @@ fn judge_change(
         }
     };
     let mut forms: Vec<Form> = Vec::new();
-    let mut judging = judging.bind("<W>", feature).bind_each("<changed>", consent);
+    let mut judging = judging
+        .bind("<W>", feature)
+        .bind_each("<changed>", consent)
+        .bind_list("<landing>", without_consent(typed));
     if let Some(first) = candidates.first() {
         lines.push(format!(
             "--target candidates whose entries match: {}",
@@ -1540,6 +1625,20 @@ fn judge_change(
     judging.listing(lines).only_forms(&forms).judge(vcs)
 }
 
+/// `typed`, an `rwv land`, without the `--allow-member-change` it gave.
+fn without_consent(typed: &[String]) -> Vec<&str> {
+    let mut words = Vec::new();
+    let mut each = typed.iter();
+    while let Some(word) = each.next() {
+        if word == "--allow-member-change" {
+            each.next();
+        } else {
+            words.push(word.as_str());
+        }
+    }
+    words
+}
+
 /// A member only `W` lists enters at `W`'s pin; where its receiving branch
 /// exists nowhere, the landing creates it there.
 fn plan_added_member(
@@ -1566,7 +1665,7 @@ fn plan_added_member(
     ) else {
         return Ok(());
     };
-    let Some(pin) = pin_of(sides.our_lock.as_ref(), path) else {
+    let Some(pin) = sides.our_pin(path) else {
         return Ok(());
     };
     let home = home_remote(entry, vcs, dir);
@@ -1860,10 +1959,7 @@ fn judge_member(
         home_remote(entry, vcs, dir).as_ref(),
     )? {
         Newer::Tip(tip) => (tip.id().clone(), false),
-        Newer::Nowhere => match pin
-            .clone()
-            .or_else(|| pin_of(sides.our_lock.as_ref(), path))
-        {
+        Newer::Nowhere => match pin.clone().or_else(|| sides.our_pin(path)) {
             Some(at) if vcs.resolve_revision(dir, at.as_str()).is_ok() => (at, true),
             _ => return Ok(()),
         },

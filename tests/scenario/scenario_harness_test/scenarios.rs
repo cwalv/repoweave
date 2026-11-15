@@ -9074,6 +9074,224 @@ pub fn a_landing_records_the_tip_of_a_member_it_does_not_move() -> Scenario {
     )
 }
 
+/// Where a landing of pins put back by name runs, and how it reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PutBack {
+    /// A seat, its landing refused, then the printed consent run.
+    Seat { retire: bool },
+    /// A seat landing with the consent spelled, under `--json`.
+    SeatJson,
+    /// A feature in the primary, its landing refused, then the printed
+    /// consent run.
+    Primary,
+}
+
+/// `app` is pinned back by name behind its branch's tip, and `docs`, a
+/// dependency, follows a branch of its own and is pinned back on it: the
+/// landing lands both pins as committed and reports exactly what it commits.
+/// In the primary `docs` is a checkout fast-forwarded by hand past its pin,
+/// which a landing does not relock.
+pub fn a_landing_lands_a_pin_put_back_by_name(at: PutBack) -> Scenario {
+    let mut steps = vec![
+        Step::forge(Forge::Commit {
+            repo: Repo::Docs,
+            branch: "v2",
+            mark: "docs-v2-1",
+        }),
+        Step::forge(Forge::Commit {
+            repo: Repo::Docs,
+            branch: "v2",
+            mark: "docs-v2-2",
+        }),
+        Step::forge(Forge::Commit {
+            repo: Repo::Docs,
+            branch: "main",
+            mark: "docs-2",
+        }),
+    ];
+    steps.extend(publish_app_and_project("app-1"));
+    steps.extend(publish_app_and_project("app-2"));
+    let place = match at {
+        PutBack::Primary => {
+            steps.extend([
+                Step::rwv(&a(), &["branch", "create", "feat", "--target", "main"])
+                    .expect(Exit::Succeeds),
+                Step::git(&a(), Repo::Docs, &["fetch", "-q", "origin"]),
+                Step::git(
+                    &a(),
+                    Repo::Docs,
+                    &["merge", "-q", "--ff-only", "origin/main"],
+                ),
+            ]);
+            a()
+        }
+        PutBack::Seat { .. } | PutBack::SeatJson => {
+            steps.extend([
+                Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+                create("w"),
+                Step::rwv(&ww("w"), &["member", "set-branch", DOCS, "v2"]).expect(Exit::Succeeds),
+                Step::rwv(&ww("w"), &["member", "pin", DOCS, "HEAD~1", "--commit"])
+                    .may_rewind(&[Repo::Docs])
+                    .expect(Exit::Succeeds),
+            ]);
+            ww("w")
+        }
+    };
+    steps.extend([
+        Step::rwv(&place, &["member", "pin", APP, "HEAD~1", "--commit"])
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::rwv(&place, &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Judged(Repo::App, State::PinAhead))
+            .claim(Claim::Judged(Repo::Docs, State::PinAhead)),
+    ]);
+    let landed = match at {
+        PutBack::SeatJson => Step::rwv(
+            &place,
+            &[
+                "land",
+                "--json",
+                "--allow-member-change",
+                APP,
+                "--allow-member-change",
+                DOCS,
+            ],
+        ),
+        PutBack::Seat { retire } => {
+            let land: &[&str] = if retire {
+                &["land", "--retire"]
+            } else {
+                &["land"]
+            };
+            steps.push(
+                Step::rwv(&place, land)
+                    .expect(Exit::refuses(Repo::App, State::TargetMemberChanges))
+                    .claim(Claim::Judged(Repo::Docs, State::TargetMemberChanges)),
+            );
+            if retire {
+                Step::rwv_printed(&place, "rwv land --retire --allow-member-change")
+            } else {
+                Step::rwv_printed(&place, "rwv land --allow-member-change")
+            }
+        }
+        PutBack::Primary => {
+            steps.push(
+                Step::rwv(&place, &["land"])
+                    .expect(Exit::refuses(Repo::App, State::TargetMemberChanges)),
+            );
+            Step::rwv_printed(&place, "rwv land --allow-member-change")
+        }
+    };
+    let mut landed = landed
+        .may_rewind(&[Repo::App])
+        .expect(Exit::Succeeds)
+        .claim(Claim::ReportedPinsLanded {
+            site: main_lock(),
+            members: &[Repo::App],
+        })
+        .claim(Claim::PinAt {
+            site: main_lock(),
+            member: Repo::App,
+            mark: "app-1",
+        });
+    landed = match at {
+        PutBack::Primary => landed.claim(Claim::PinLacks {
+            site: main_lock(),
+            member: Repo::Docs,
+            mark: "docs-2",
+        }),
+        _ => landed.claim(Claim::PinAt {
+            site: main_lock(),
+            member: Repo::Docs,
+            mark: "docs-v2-1",
+        }),
+    };
+    if at == (PutBack::Seat { retire: true }) {
+        landed = landed.claim(Claim::WorkweaveGone(ww("w")));
+    }
+    steps.push(landed);
+    Scenario {
+        name: "a landing lands a pin put back by name",
+        seed: Seed::default().role(Repo::Docs, Role::Dependency),
+        steps,
+    }
+}
+
+/// A pin put back by name whose checkout then gains a commit of its own:
+/// the landing records the checkout, saying so in one line naming the pin
+/// the seat committed and the commit it records in its place.
+pub fn a_landing_records_new_work_over_a_pin_put_back() -> Scenario {
+    let mut steps = publish_app_and_project("app-1");
+    steps.extend(publish_app_and_project("app-2"));
+    steps.extend([
+        create("w"),
+        Step::rwv(&ww("w"), &["member", "pin", APP, "HEAD~1", "--commit"])
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::commit(&ww("w"), Repo::App, "w-app-3"),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "lock behind HEAD by 2 commits — the landing records",
+            ))
+            .claim(Claim::OutputContains("in place of the pin"))
+            .claim(Claim::ReportedPinsLanded {
+                site: main_lock(),
+                members: &[Repo::App],
+            })
+            .claim(Claim::PinAt {
+                site: main_lock(),
+                member: Repo::App,
+                mark: "w-app-3",
+            }),
+    ]);
+    scenario("a landing records new work over a pin put back", steps)
+}
+
+/// A pin put back by name refuses the landing; the choice that puts the
+/// target's pin back, run as printed, is the one step on, and the landing
+/// then lands the target's pin. A checkout fast-forwarded by hand to the
+/// target's tip, its pin never moved, lands the target's pin unrefused.
+pub fn a_pin_put_back_by_name_is_restored_by_its_printed_choice() -> Scenario {
+    let mut steps = publish_app_and_project("app-1");
+    steps.extend(publish_app_and_project("app-2"));
+    steps.extend([
+        create("w"),
+        create("v"),
+        Step::rwv(&ww("w"), &["member", "pin", APP, "HEAD~1", "--commit"])
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"]).expect(Exit::refuses(Repo::App, State::TargetMemberChanges)),
+        Step::rwv_printed(&ww("w"), "rwv member pin local/remotes/app")
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::rwv(&ww("w"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::PinAt {
+                site: main_lock(),
+                member: Repo::App,
+                mark: "app-2",
+            }),
+        Step::commit(&a(), Repo::App, "app-3"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&ww("v"), Repo::App, &["merge", "-q", "--ff-only", "main"]),
+        Step::commit(&ww("v"), Repo::Lib, "v-lib"),
+        Step::rwv(&ww("v"), &["land", "--history", "merge"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("local/remotes/app: lock behind HEAD"))
+            .claim(Claim::PinAt {
+                site: main_lock(),
+                member: Repo::App,
+                mark: "app-3",
+            }),
+    ]);
+    scenario(
+        "a pin put back by name is restored by its printed choice",
+        steps,
+    )
+}
+
 /// A landing refused at its preconditions, with the seat's lock behind its
 /// members and an uncommitted `rwv.lock` beside it, leaves the seat exactly
 /// as it stood: no relock was written or committed.
@@ -29632,26 +29850,23 @@ pub fn release_line_hotfix_changes_a_member_the_line_leaves_on_main() -> Scenari
         Step::rwv(&ww("h1"), &["land", "--retire"])
             .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
             .claim(Claim::OutputContains(
-                "rwv land --allow-member-change local/remotes/docs",
+                "rwv land --retire --allow-member-change local/remotes/docs",
             ))
             .claim(Claim::LocalStateUnchanged(a())),
-        Step::rwv(
-            &ww("h1"),
-            &["land", "--retire", "--allow-member-change", DOCS],
-        )
-        .expect(Exit::Succeeds)
-        .claim(Claim::WorkweaveGone(ww("h1")))
-        .claim(Claim::Contains {
-            at: a(),
-            repo: Repo::Docs,
-            rev: "stable-docs",
-            mark: "hotfix-docs",
-        })
-        .claim(Claim::OnBranch {
-            at: a(),
-            repo: Repo::Docs,
-            branch: "main",
-        }),
+        Step::rwv_printed(&ww("h1"), "rwv land --retire --allow-member-change")
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("h1")))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Docs,
+                rev: "stable-docs",
+                mark: "hotfix-docs",
+            })
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Docs,
+                branch: "main",
+            }),
     ]);
     scenario(
         "release line: a hotfix changing a member the line leaves on main",

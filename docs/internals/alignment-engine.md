@@ -85,7 +85,9 @@ is chosen without a guess: several copies and no home remote holding one is
    at the pin (`NotOnDeclaredBranch`);
 4. `E` behind the pin: the branch, fast-forwarded (`fast_forward_to`);
 5. otherwise the branch as it is, which includes `E` ahead of or diverged
-   from the pin.
+   from the pin. Alignment records nothing for an `E` ahead: `rwv lock`
+   records it, and a landing only for an `owned` or `fork` member whose `E`
+   holds commits `T`'s pin lacks (`docs/internals/landing.md`).
 
 A member with `Pin::None` sits on `E` as found, or stays where it is where
 none is found; `Pin::Unreachable` stays where it is. In every case a pin moves

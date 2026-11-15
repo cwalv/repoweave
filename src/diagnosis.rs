@@ -3246,7 +3246,7 @@ impl Form {
             },
             Self::C31 => &FormRow {
                 choice: C::C31,
-                steps: &[Rwv("rwv land --allow-member-change <changed>")],
+                steps: &[Step::Recorded("<landing> --allow-member-change <changed>")],
                 at: W::WithFeature,
                 shipped: true,
             },
@@ -5439,6 +5439,10 @@ fn spelled(form: Form, vcs: &dyn Vcs, vcs_name: &str) -> String {
                     None if *line == "<landing>" => {
                         "`rwv land` with the flags the stopped landing was started with".to_owned()
                     }
+                    None if line.starts_with("<landing> ") => format!(
+                        "`rwv land` with the flags it was run with, and `{}`",
+                        &line["<landing> ".len()..]
+                    ),
                     None => format!(
                         "`{}`, against the stopped operation's workspace",
                         line.replace("<abort>", "rwv abort")

@@ -34,6 +34,28 @@ receiving branch's, is the newer of it and its upstream as last fetched, so a
 target behind its upstream takes the upstream in, fast-forward only, and the landing
 reports what it took in.
 
+## The source's lock and its checkouts
+
+The feature's lock is what lands, with one addition: a checkout holding work
+that was never locked. Where an `owned` or `fork` member's checkout is ahead of
+the pin the feature's lock commits, and holds commits the target's pin lacks,
+the landing records that checkout in place of the committed pin, printing
+`<member>: lock behind HEAD by <n> commits — the landing records <tip> in place
+of the pin <pin>`. Every judgment the landing makes reads that tip: the member
+changes it refuses or reports, the lineage rule, and the lock it commits, so
+what the refusal shows, what `--allow-member-change` consents to and what lands
+are one pin.
+
+A checkout the target's pin already reaches brings nothing to land, and its pin
+lands as the feature committed it. So a pin put back by name, with
+`rwv member pin <m> <rev> --commit`, lands at `<rev>` while the checkout stays at
+its branch's tip; where `<rev>` is behind the target's pin, that is a backward
+pin the landing names. A `dependency` or `reference` member's pin lands as the
+feature committed it whatever its checkout holds: it moves only by name or by
+`rwv update --remote`. The landing prints nothing for such a checkout;
+`rwv status` and `rwv doctor` report it as `pin` `ahead`, and `rwv lock --commit`
+records it.
+
 A member the feature did not move is not touched. `dependency` and `reference` members
 are never moved: they take the feature's pin where the feature changed it, which the
 branch they sit on in the target must reach, else the target's. Roles bound change in
