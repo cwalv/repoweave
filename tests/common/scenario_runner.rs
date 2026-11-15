@@ -291,6 +291,8 @@ pub enum Exit {
     /// The process ended with exactly this status. For rwv it is never 1:
     /// rwv's status 1 is a refusal, and names what refused.
     Code(i32),
+    /// `rwv doctor` reported findings: status 1, and a finding line printed.
+    Findings,
     Undecided,
 }
 
@@ -1339,6 +1341,22 @@ impl Outcome<'_> {
                     ));
                 }
                 refusal.printed_in(output)
+            }
+            Exit::Findings => {
+                if self.code != Some(1) {
+                    return Err(format!(
+                        "expected findings, exit status 1; got {:?}:\n{output}",
+                        self.code
+                    ));
+                }
+                if output
+                    .lines()
+                    .any(|l| l.starts_with("[error: ") || l.starts_with("[warning: "))
+                {
+                    Ok(())
+                } else {
+                    Err(format!("expected a finding line:\n{output}"))
+                }
             }
             Exit::Code(1) if self.by_rwv => Err(
                 "rwv's exit status 1 is a refusal: expect Exit::Refuses naming what refused"

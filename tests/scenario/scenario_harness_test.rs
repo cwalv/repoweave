@@ -1201,6 +1201,9 @@ every_scenario!(
     j06_a_published_feature_is_renamed,
     j08_a_second_feature_stacked_on_the_first,
     j09_an_experiment_that_never_landed_is_thrown_away,
+    j10_a_second_machine_takes_the_project,
+    j11_an_ordinary_repository_becomes_a_project,
+    j12_a_hand_edited_manifest_converges,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9035,39 +9038,60 @@ fn a_feature_in_the_primary_survives_main_moving_and_lands() {
     runner::run(scenarios::feature_in_primary_while_main_moves()).assert_fully_decided_green();
 }
 
-fn every_journey() -> Vec<common::scenario_steps::Journey> {
-    vec![
-        scenarios::j01_two_repo_change(),
-        scenarios::j02_pick_up_a_colleagues_landing(),
-        scenarios::j03_a_landing_stops_on_a_conflict_and_is_finished(),
-        scenarios::j04_a_stopped_landing_is_abandoned(),
-        scenarios::j05_a_landing_loses_a_race(),
-        scenarios::j06_a_published_feature_is_renamed(),
-        scenarios::j08_a_second_feature_stacked_on_the_first(),
-        scenarios::j09_an_experiment_that_never_landed_is_thrown_away(),
-    ]
+/// Each journey ends green on its documented path, and leaving out the one
+/// step its `fault` names is what its end check reports: every unmet claim
+/// is after an end step.
+macro_rules! journey_tests {
+    ($($name:ident),* $(,)?) => {
+        fn journey_names() -> std::collections::BTreeSet<String> {
+            [$(stringify!($name)),*].into_iter().map(str::to_owned).collect()
+        }
+
+        $(
+            #[test]
+            fn $name() {
+                let name = scenarios::$name().name;
+                let (faulty, end) = scenarios::$name().seeded();
+                let report = runner::run(faulty);
+                assert!(
+                    !report.unmet.is_empty(),
+                    "{name}: the fault left the end check green:\n{report}"
+                );
+                for (label, why) in &report.unmet {
+                    assert!(
+                        end.contains(label),
+                        "{name}: the fault reddened `{label}` before the end check: {why}\n{report}"
+                    );
+                }
+                runner::run(scenarios::$name().scenario()).assert_fully_decided_green();
+            }
+        )*
+    };
 }
 
-/// The path a journey takes ends green, and leaving one step of it out is
-/// what its end check reports: every unmet claim is after an end step.
+journey_tests!(
+    j01_two_repo_change,
+    j02_pick_up_a_colleagues_landing,
+    j03_a_landing_stops_on_a_conflict_and_is_finished,
+    j04_a_stopped_landing_is_abandoned,
+    j05_a_landing_loses_a_race,
+    j06_a_published_feature_is_renamed,
+    j08_a_second_feature_stacked_on_the_first,
+    j09_an_experiment_that_never_landed_is_thrown_away,
+    j10_a_second_machine_takes_the_project,
+    j11_an_ordinary_repository_becomes_a_project,
+    j12_a_hand_edited_manifest_converges,
+);
+
 #[test]
-fn every_journey_ends_green_and_its_end_check_reddens_under_its_fault() {
-    for journey in every_journey() {
-        let name = journey.name;
-        let (faulty, end) = journey.seeded();
-        let report = runner::run(faulty);
-        assert!(
-            !report.unmet.is_empty(),
-            "{name}: the fault left the end check green:\n{report}"
-        );
-        for (label, why) in &report.unmet {
-            assert!(
-                end.contains(label),
-                "{name}: the fault reddened `{label}` before the end check: {why}\n{report}"
-            );
-        }
-    }
-    for journey in every_journey() {
-        runner::run(journey.scenario()).assert_fully_decided_green();
-    }
+fn every_journey_constructor_has_a_test() {
+    let journeys: std::collections::BTreeSet<String> = scenario_constructors()
+        .into_iter()
+        .filter(|name| {
+            let mut chars = name.chars();
+            chars.next() == Some('j') && chars.next().is_some_and(|c| c.is_ascii_digit())
+        })
+        .collect();
+    assert!(journeys.contains("j01_two_repo_change"), "{journeys:?}");
+    assert_eq!(journeys, journey_names());
 }

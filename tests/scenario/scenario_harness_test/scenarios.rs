@@ -30365,23 +30365,30 @@ fn clean_end(at: Place) -> Step {
 
 /// A change to two members made in a workweave, landed with `--retire` and
 /// published, as the tutorial and the landing how-to teach it.
+fn two_repo_change_published() -> Vec<Step> {
+    let workweave = ww("welcome");
+    vec![
+        documented_create("welcome"),
+        Step::commit(&workweave, Repo::Lib, "welcome-lib"),
+        Step::commit(&workweave, Repo::App, "welcome-app"),
+        Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]
+}
+
 pub fn j01_two_repo_change() -> Journey {
     let workweave = ww("welcome");
+    let path = two_repo_change_published();
+    let fault = path.len() - 1;
     Journey {
         name: "j01: a two-repo change from a new feature to a published main",
         seed: Seed::default(),
-        path: vec![
-            documented_create("welcome"),
-            Step::commit(&workweave, Repo::Lib, "welcome-lib"),
-            Step::commit(&workweave, Repo::App, "welcome-app"),
-            Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
-            publishes_records(Step::rwv(&a(), &["push"]))
-                .pushes(Remote::origin(Repo::App), "main")
-                .pushes(Remote::origin(Repo::Lib), "main")
-                .pushes(Remote::origin(Repo::Proj), "main")
-                .expect(Exit::Succeeds),
-        ],
-        fault: 4,
+        path,
+        fault,
         end: vec![
             clean_end(a())
                 .claim(Claim::RemoteContains {
@@ -30809,6 +30816,144 @@ pub fn j09_an_experiment_that_never_landed_is_thrown_away() -> Journey {
             Step::rwv(&a(), &["backup", "list"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("proj--try")),
+        ],
+    }
+}
+
+/// After a published change, a second machine takes the project and reaches
+/// the same state: every member at its pin, `main` active.
+pub fn j10_a_second_machine_takes_the_project() -> Journey {
+    let mut path = two_repo_change_published();
+    path.push(Step::new_machine(Machine::B).expect(Exit::Succeeds));
+    let fault = path.len() - 2;
+    let mut end = clean_end(b());
+    for member in Repo::MEMBERS {
+        end = end.claim(Claim::AtPin {
+            at: b(),
+            repo: member,
+        });
+    }
+    for (member, mark) in [(Repo::App, "welcome-app"), (Repo::Lib, "welcome-lib")] {
+        end = end
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(b(), Repo::Proj, "main".to_owned()),
+                member,
+                mark,
+            })
+            .claim(Claim::Contains {
+                at: b(),
+                repo: member,
+                rev: "HEAD",
+                mark,
+            });
+    }
+    Journey {
+        name: "j10: a second machine takes the project and reaches the same state",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            end.claim(Claim::Presents {
+                at: b(),
+                project: Repo::Proj,
+            })
+            .claim(Claim::OnBranch {
+                at: b(),
+                repo: Repo::Proj,
+                branch: "main",
+            }),
+            Step::rwv(&b(), &["status"]).expect(Exit::Succeeds),
+        ],
+    }
+}
+
+/// An ordinary repository, which has no project description, is refused as
+/// a project and taken as one with the printed choice; machine B then lists
+/// two members, publishes, and machine A takes the result.
+pub fn j11_an_ordinary_repository_becomes_a_project() -> Journey {
+    let path = vec![
+        Step::new_machine(Machine::B).expect(Exit::Succeeds),
+        Step::rwv(&b(), &["clone", "url:origin:docs"])
+            .expect(Exit::refuses_kind(RefusalKind::NotAProject))
+            .claim(Claim::OutputContains("--init-manifest")),
+        Step::rwv_printed_quoted(&b(), "rwv clone ", "--init-manifest").expect(Exit::Succeeds),
+        Step::rwv(
+            &b(),
+            &["member", "add", "url:origin:app", "--project", "docs"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(
+            &b(),
+            &["member", "add", "url:origin:lib", "--project", "docs"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&b(), &["push", "--project", "docs"])
+            .pushes(Remote::origin(Repo::Docs), "main")
+            .pushes(Remote::origin(Repo::Docs), RECORDS_BRANCH)
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["clone", "url:origin:docs"]).expect(Exit::Succeeds),
+    ];
+    let fault = 4;
+    Journey {
+        name: "j11: an ordinary repository is taken as a project and published",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(b()),
+            clean_end(a()),
+            Step::rwv(&a(), &["status", "--project", "docs"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/app"))
+                .claim(Claim::OutputContains("local/remotes/lib")),
+        ],
+    }
+}
+
+/// The manifest is edited by hand to name another branch for `app` and to
+/// drop `docs`; recording it converges the checkouts, and the orphaned
+/// clone is removed with the printed choice.
+pub fn j12_a_hand_edited_manifest_converges() -> Journey {
+    let app_main = declared_branch_text(Repo::App, "main");
+    let app_v1 = declared_branch_text(Repo::App, "v1");
+    let path = vec![
+        Step::forge(Forge::Commit {
+            repo: Repo::App,
+            branch: "v1",
+            mark: "app-v1",
+        }),
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &app_main, &app_v1),
+        Step::drop_manifest_entry(&a(), Repo::Proj, Repo::Docs),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["doctor", "--all"])
+            .expect(Exit::Findings)
+            .claim(Claim::FindingsOnly("orphaned-clone")),
+        Step::rwv_printed_quoted(&a(), "rwv member remove", "--delete").expect(Exit::Succeeds),
+    ];
+    let fault = path.len() - 1;
+    Journey {
+        name: "j12: a hand-edited manifest converges",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::App,
+                    branch: "v1",
+                })
+                .claim(Claim::AtPin {
+                    at: a(),
+                    repo: Repo::App,
+                })
+                .claim(Claim::ManifestLists {
+                    at: a(),
+                    rev: "main",
+                    members: &[Repo::App, Repo::Lib],
+                }),
+            Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
         ],
     }
 }
