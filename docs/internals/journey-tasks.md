@@ -53,12 +53,14 @@ workspace and no branch of the change remains on machine A; a clean end.
 
 **Start:** the shared world; on machine A a change to `server` is in progress in a
 spare workspace and committed there. Meanwhile the colleague has published a change to
-`protocol` and one to `web` into `main`.
+`protocol` and one to `web` into `main`, and in the same landing added a fourth
+repository, `docs`, to the project.
 **Task:** Get the colleague's changes into your own copy of the project, then finish
 your in-progress change so that `main` holds yours on top of theirs, and publish.
 **Check:** hosting `main` of every repository holds both the colleague's commits and
-the operator's, in that order; the hosting project's lock pins every repository at its
-`main` tip; the spare workspace is gone; a clean end.
+the operator's, in that order; the hosting project's description lists `docs` and its
+lock pins every repository at its `main` tip; `~/work` has a `docs` checkout at its
+pin; the spare workspace is gone; a clean end.
 
 ### J03 A landing stops on a conflict; finish it
 
@@ -232,3 +234,16 @@ lock pins both; no unfinished operation anywhere; the workspace is gone; a clean
 landing began.
 **Check:** `main` of every repository is where it was before; the workspace still
 holds its commits; no unfinished operation; a clean end.
+
+### J20 A repository with a nested repository: take in a colleague's change to it
+
+**Start:** the shared world, except that `server` holds a nested repository at
+`vendor/lib`, whose own hosting service holds a `main` with two commits and which
+`server` records at the first. On machine A a spare workspace has a commit in `web`.
+The colleague has published a change to `server` that moves the nested repository to its
+second commit.
+**Task:** Take in the colleague's change, keeping your own work, and bring yours into
+`main`; the nested repository must end up where the colleague put it. Publish.
+**Check:** `server`'s nested repository is at the second commit in `~/work` and in
+the hosting service's record; hosting `main` of `web` holds the operator's commit;
+the spare workspace is gone; a clean end.
