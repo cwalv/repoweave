@@ -28586,7 +28586,7 @@ pub fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter(history: &'static
             .claim(Claim::ManifestLists {
                 at: ww("w"),
                 rev: "HEAD",
-                members: &[Repo::App, Repo::Docs],
+                members: &[Repo::App],
             }),
     ]);
     scenario(
@@ -31986,5 +31986,109 @@ pub fn j20_a_colleague_moves_a_nested_repository() -> Journey {
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("submodule behind")),
         ],
+    }
+}
+
+/// A member is added following a branch of its own and pinned back by name,
+/// and `server`'s pin is put back too; the landing names the backward pin,
+/// takes the printed consent, and lands both as committed.
+pub fn j07_add_a_member_change_its_branch_and_pin_it_back() -> Journey {
+    let w = ww("docs");
+    let main_pins = LockSite::Checkout(a(), Repo::Proj, "main".to_owned());
+    let published = LockSite::remote_main(Repo::Proj);
+    let path = vec![
+        Step::rwv(&a(), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+        Step::forge(Forge::Commit {
+            repo: Repo::Docs,
+            branch: "v2",
+            mark: "docs-v2-1",
+        }),
+        Step::forge(Forge::Commit {
+            repo: Repo::Docs,
+            branch: "v2",
+            mark: "docs-v2-2",
+        }),
+        Step::commit(&a(), Repo::App, "app-2"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+        documented_create("docs"),
+        Step::rwv(
+            &w,
+            &["member", "add", "url:origin:docs", "--role", "dependency"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&w, &["member", "set-branch", DOCS, "v2"]).expect(Exit::Succeeds),
+        Step::rwv(&w, &["member", "pin", DOCS, "HEAD~1", "--commit"])
+            .may_rewind(&[Repo::Docs])
+            .expect(Exit::Succeeds),
+        Step::rwv(
+            &w,
+            &["member", "pin", &Repo::App.rel_path(), "HEAD~1", "--commit"],
+        )
+        .may_rewind(&[Repo::App])
+        .expect(Exit::Succeeds),
+        Step::rwv(&w, &["land", "--retire"])
+            .expect(Exit::refuses(Repo::App, State::TargetMemberChanges)),
+        Step::rwv_printed(&w, "rwv land --retire --allow-member-change")
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::ReportedPinsLanded {
+                site: main_pins,
+                members: &[Repo::App],
+            }),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+    ];
+    let fault = path.len() - 1;
+    Journey {
+        name: "j07: a member is added, follows another branch, is pinned back, and lands",
+        seed: Seed::default(),
+        start: 8,
+        holds: vec![
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("app-2"))
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Docs),
+                    branch: "v2",
+                    mark: "docs-v2-2",
+                }),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("local/remotes/docs")),
+        ],
+        path,
+        fault,
+        end: vec![clean_end(a())
+            .claim(Claim::PinFile {
+                site: published.clone(),
+                member: Repo::Docs,
+                path: "docs-v2-1.txt",
+                has: "docs-v2-1",
+                present: true,
+            })
+            .claim(Claim::PinFile {
+                site: published.clone(),
+                member: Repo::Docs,
+                path: "docs-v2-2.txt",
+                has: "docs-v2-2",
+                present: false,
+            })
+            .claim(Claim::PinFile {
+                site: published,
+                member: Repo::App,
+                path: "app-2.txt",
+                has: "app-2",
+                present: false,
+            })
+            .claim(Claim::WorkweaveGone(w))],
     }
 }

@@ -147,13 +147,14 @@ one `try-1` had; a clean end.
 ### J07 Add a repository, point it at another branch, pin a dependency back
 
 **Start:** the shared world; a fourth repository, `docs`, exists on the hosting
-service with a `main` and a branch `v2`; `server`'s `main` has two commits.
-**Task:** Make `docs` part of the project, following its `v2` branch. Then make the
-project use the older of `server`'s two commits instead of its newest. Do both as one
-change to the project, put it in `main`, and publish.
-**Check:** the hosting project's `main` lists `docs` with branch `v2` and its lock
-pins `docs` at `v2`'s tip and `server` at its older commit; `~/work` has `docs` on its
-`v2` branch and `server` at the older commit; a clean end.
+service with a `main` and a branch `v2` of two commits, and is not part of the project;
+`server`'s `main` has two commits, and the project records the newer.
+**Task:** Make `docs` part of the project, following its `v2` branch but at the commit
+before `v2`'s tip. Make the project use the older of `server`'s two commits instead of
+its newest. Do both as one change to the project, put it in `main`, and publish.
+**Check:** the hosting project's `main` lists `docs` with branch `v2`; its lock pins
+`docs` at `v2`'s older commit and `server` at its older commit; no spare workspace
+remains; a clean end.
 
 ### J08 A second feature stacked on the first
 
