@@ -386,6 +386,7 @@ fn kind_filter_admits_an_integration_issue_kind_and_json_fails_on_it() {
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(
         stdout.contains("[warning: tool-missing] npm-workspaces: npm is not on PATH")
+            && stdout.contains("package-lock.json, which it writes, does not exist")
             && !stdout.contains("orphaned-savepoint"),
         "the text view lists the admitted issue and no other kind; got:\n{stdout}"
     );
