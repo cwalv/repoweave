@@ -2377,8 +2377,59 @@ pub(crate) fn judge_removed_stores(
     workspace: &Path,
     discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<()> {
+    let stores = stores_removed_with(vcs, dest, removed, repo, &cause.situation())?;
+    judge_stores(vcs, dest, &stores, removed, repo, cause, workspace, discard)
+}
+
+/// [`judge_removed_stores`] for a linked checkout of `store` at `checkout`
+/// that no longer stands: the stores `store` keeps for it go with its record.
+pub(crate) fn judge_stores_kept_for_gone(
+    vcs: &dyn Vcs,
+    store: &Path,
+    checkout: &Path,
+    repo: &str,
+    cause: RemovalCause,
+    workspace: &Path,
+    discard: Option<DiscardUnpublishedConsent>,
+) -> anyhow::Result<()> {
     let situation = cause.situation();
-    let stores = stores_removed_with(vcs, dest, removed, repo, &situation)?;
+    let kept = vcs
+        .stores_kept_for(store, checkout)
+        .with_context(|| {
+            format!(
+                "{repo}: {situation}, but the stores kept for its checkout could not be listed; \
+                 refusing to remove them while their unpublished work could not be ruled out"
+            )
+        })
+        .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?;
+    let stores: Vec<(Option<PathBuf>, PathBuf)> = kept
+        .into_iter()
+        .map(|kept| (Some(kept.clone()), kept))
+        .collect();
+    judge_stores(
+        vcs,
+        checkout,
+        &stores,
+        StoresRemoved::Nested,
+        repo,
+        cause,
+        workspace,
+        discard,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn judge_stores(
+    vcs: &dyn Vcs,
+    dest: &Path,
+    stores: &[(Option<PathBuf>, PathBuf)],
+    removed: StoresRemoved,
+    repo: &str,
+    cause: RemovalCause,
+    workspace: &Path,
+    discard: Option<DiscardUnpublishedConsent>,
+) -> anyhow::Result<()> {
+    let situation = cause.situation();
     if stores.is_empty() {
         return Ok(());
     }
@@ -2386,7 +2437,7 @@ pub(crate) fn judge_removed_stores(
         StoresRemoved::OwnAndNested => "its clone holds",
         StoresRemoved::Nested => "the stores nested in its checkout hold",
     };
-    let unanswered = refresh_remotes(vcs, &stores);
+    let unanswered = refresh_remotes(vcs, stores);
     if !unanswered.is_empty() && discard.is_none() {
         crate::refuse!(
             RefusalKind::RemotesUnconfirmed,
@@ -2398,7 +2449,7 @@ pub(crate) fn judge_removed_stores(
         );
     }
     let mut held = Vec::new();
-    for (nested, store) in &stores {
+    for (nested, store) in stores {
         let found = vcs
             .held_by_no_remote(store)
             .with_context(|| {

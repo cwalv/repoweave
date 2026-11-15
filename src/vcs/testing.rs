@@ -1113,6 +1113,10 @@ impl Vcs for FakeVcs {
         unsupported("nested_stores")
     }
 
+    fn stores_kept_for(&self, _store: &Path, _checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
+        unsupported("stores_kept_for")
+    }
+
     fn pushed_range(
         &self,
         _repo: &Path,

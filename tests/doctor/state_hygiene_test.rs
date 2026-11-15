@@ -1598,3 +1598,75 @@ fn deleting_another_workweave_keeps_the_registrations_of_one_moved_away() {
         "A  staged.txt"
     );
 }
+
+/// A workweave removed by hand whose member had a submodule: the store its
+/// project clone keeps for that submodule beside the checkout's registration
+/// holds a branch no remote has, so the delete that drops the registration
+/// refuses naming it, and lets it go as printed.
+#[test]
+fn deleting_a_workweave_removed_by_hand_asks_the_submodule_stores_its_records_keep() {
+    let tmp = common::tempdir().unwrap();
+    let ws = tmp.path().join("ws");
+    std::fs::create_dir_all(ws.join("projects")).unwrap();
+    let origin = common::under(tmp.path(), "origins/acme/x.git");
+    let sub = common::under(tmp.path(), "origins/acme/sub.git");
+    std::fs::create_dir_all(origin.parent().unwrap()).unwrap();
+    common::init_bare_repo_with_commit(&origin);
+    common::init_bare_repo_with_commit(&sub);
+    let seed = tmp.path().join("seed");
+    common::git_in(
+        tmp.path(),
+        &["clone", "-q", &common::file_url(&origin), "seed"],
+    );
+    common::git_in_configured(
+        &seed,
+        &[("protocol.file.allow", "always")],
+        &["submodule", "add", "-q", &common::file_url(&sub), "sub"],
+    );
+    common::git_in(&seed, &["commit", "-qm", "add sub"]);
+    common::git_in(&seed, &["push", "-q", "origin", "HEAD:main"]);
+    for args in [
+        vec!["init", "demo"],
+        vec!["member", "add", &common::file_url(&origin)],
+        vec!["workweave", "create", "far"],
+    ] {
+        rwv_cmd()
+            .env("GIT_CONFIG_COUNT", "1")
+            .env("GIT_CONFIG_KEY_0", "protocol.file.allow")
+            .env("GIT_CONFIG_VALUE_0", "always")
+            .args(&args)
+            .current_dir(&ws)
+            .assert()
+            .success();
+    }
+    let far = tmp.path().join(".workweaves").join("demo--far");
+    let far_sub = common::under(&far, "local/acme/x").join("sub");
+    common::git_in(&far_sub, &["commit", "--allow-empty", "-qm", "side-only"]);
+    common::git_in(&far_sub, &["branch", "side"]);
+    common::git_in(&far_sub, &["reset", "-q", "--hard", "HEAD~1"]);
+    let kept = PathBuf::from(common::git_in(
+        &far_sub,
+        &["rev-parse", "--path-format=absolute", "--git-dir"],
+    ));
+    std::fs::remove_dir_all(&far).unwrap();
+
+    let out = rwv_cmd()
+        .args(["workweave", "delete", "far"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(
+        &out,
+        repoweave::refusal::RefusalKind::DroppedRepoHasUniqueCommits,
+    );
+    assert!(stderr.contains("branch side in submodule"), "{stderr}");
+    assert!(kept.is_dir());
+
+    let discard = stderr
+        .split('`')
+        .find(|quoted| quoted.ends_with("--discard-unpublished"))
+        .unwrap_or_else(|| panic!("the refusal names the discard: {stderr}"));
+    let args: Vec<&str> = discard.split_whitespace().skip(1).collect();
+    rwv_cmd().args(&args).current_dir(&ws).assert().success();
+    assert!(!kept.exists());
+}

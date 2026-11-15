@@ -4061,7 +4061,8 @@ pub(crate) fn delete_workweave_for_retire(
 
 /// Refuse the delete while a store nested in one of `workweave_dir`'s
 /// checkouts holds what no remote has, the way every removal of a checkout
-/// judges the stores it removes.
+/// judges the stores it removes. A checkout no longer standing is judged by
+/// the stores its record keeps, which go with the record.
 fn judge_nested_stores(
     ws_root: &Path,
     workweave_dir: &Path,
@@ -4074,9 +4075,10 @@ fn judge_nested_stores(
         crate::sync::RemovalCause::Retire => workweave_dir,
         _ => ws_root,
     };
-    let mut checkouts: Vec<(String, PathBuf, Box<dyn Vcs>)> = vec![(
+    let mut checkouts: Vec<(String, PathBuf, PathBuf, Box<dyn Vcs>)> = vec![(
         project_rel_path(project),
         workweave_dir.join(project_rel_dir(project)),
+        ws_root.join(project_rel_dir(project)),
         project_vcs(),
     )];
     checkouts.extend(
@@ -4086,12 +4088,27 @@ fn judge_nested_stores(
                 (
                     checkout.label(),
                     workweave_dir.join(checkout.repo_path.as_path()),
+                    ws_root.join(checkout.repo_path.as_path()),
                     checkout.vcs,
                 )
             }),
     );
-    for (label, checkout, vcs) in checkouts {
-        if !checkout.exists() || !vcs.is_repo(&checkout) {
+    for (label, checkout, canonical, vcs) in checkouts {
+        if checkout.symlink_metadata().is_err() {
+            if vcs.is_repo(&canonical) {
+                crate::sync::judge_stores_kept_for_gone(
+                    vcs.as_ref(),
+                    &canonical,
+                    &checkout,
+                    &label,
+                    cause,
+                    line_from,
+                    discard,
+                )?;
+            }
+            continue;
+        }
+        if !vcs.is_repo(&checkout) {
             continue;
         }
         crate::sync::judge_removed_stores(
@@ -4254,19 +4271,17 @@ fn delete_workweave_inner_at(
         }
     }
     refusals.into_result()?;
-    if workweave_dir.exists() {
-        judge_nested_stores(
-            ws_root,
-            &workweave_dir,
-            project,
-            &manifest,
-            match &deleter {
-                Deleter::Operator => crate::sync::RemovalCause::WorkweaveDelete(name),
-                Deleter::RetiringOp { .. } => crate::sync::RemovalCause::Retire,
-            },
-            discard_unpublished,
-        )?;
-    }
+    judge_nested_stores(
+        ws_root,
+        &workweave_dir,
+        project,
+        &manifest,
+        match &deleter {
+            Deleter::Operator => crate::sync::RemovalCause::WorkweaveDelete(name),
+            Deleter::RetiringOp { .. } => crate::sync::RemovalCause::Retire,
+        },
+        discard_unpublished,
+    )?;
 
     let rule = match feature_of(ws_root, project, &workweave_dir)? {
         Some((branch, recorded)) => Some(crate::deletion::Rule::open(crate::deletion::Request {

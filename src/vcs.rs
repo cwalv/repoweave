@@ -4091,6 +4091,14 @@ pub trait Vcs: Send + Sync {
     /// is its own store, of each linked worktree's.
     fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
+    /// The stores `store` keeps for its linked checkout at `checkout`, beside
+    /// its record of that checkout, at any depth, each as an absolute path:
+    /// what goes with the record whether or not the checkout stands.
+    ///
+    /// For git: every repository under the `modules` directory of the
+    /// checkout's worktree registration, and of each one found.
+    fn stores_kept_for(&self, store: &Path, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
+
     /// The commits of `branch` that no remote-tracking branch reaches and no
     /// superseded tip reaches, newest first: its unpushed commits.
     ///

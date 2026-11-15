@@ -4054,20 +4054,22 @@ impl Vcs for GitVcs {
             seen.insert(CanonicalPath::of(&git_dir));
             pending.push(git_dir);
         }
-        while let Some(git_dir) = pending.pop() {
-            for store in module_stores(&git_dir.join("modules")) {
-                if seen.insert(CanonicalPath::of(&store)) {
-                    nested.push(
-                        store
-                            .strip_prefix(checkout)
-                            .map(Path::to_path_buf)
-                            .unwrap_or_else(|_| store.clone()),
-                    );
-                    pending.push(store);
-                }
+        nested.extend(modules_beneath(pending, seen).into_iter().map(|store| {
+            match store.strip_prefix(checkout) {
+                Ok(rel) => rel.to_path_buf(),
+                Err(_) => store,
             }
-        }
+        }));
         Ok(nested)
+    }
+
+    fn stores_kept_for(&self, store: &Path, checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
+        Ok(match self.worktree_registration(store, checkout)? {
+            Some(registration) => {
+                modules_beneath(vec![registration], std::collections::HashSet::new())
+            }
+            None => Vec::new(),
+        })
     }
 
     fn unpushed_commits(
@@ -7813,6 +7815,24 @@ impl WorkspacePopulation for GitVcs {
             stderr: "the submodule's repository has no remote to fetch from".into(),
         }))
     }
+}
+
+/// Every repository under the `modules` directory of each of `pending`, and
+/// of each one found, at any depth, but those `seen` names.
+fn modules_beneath(
+    mut pending: Vec<PathBuf>,
+    mut seen: std::collections::HashSet<CanonicalPath>,
+) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    while let Some(git_dir) = pending.pop() {
+        for store in module_stores(&git_dir.join("modules")) {
+            if seen.insert(CanonicalPath::of(&store)) {
+                found.push(store.clone());
+                pending.push(store);
+            }
+        }
+    }
+    found
 }
 
 fn subdirectories(dir: &Path) -> Vec<PathBuf> {
