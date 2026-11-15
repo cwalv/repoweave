@@ -290,3 +290,22 @@ second commit.
 **Check:** `server`'s nested repository is at the second commit in `~/work` and in
 the hosting service's record; hosting `main` of `web` holds the operator's commit;
 the spare workspace is gone; a clean end.
+
+### J21 Turn on an editor workspace file for the project
+
+**Start:** the shared world; the project does not generate an editor workspace file
+(its description has the editor-workspace setting off).
+**Task:** Make the project generate the editor workspace file for everyone who takes
+the project, and publish that.
+**Check:** the hosting project's description has the editor-workspace setting on; the
+file the setting authors is committed with it; a clean end.
+
+### J22 Land a feature started in place from the primary
+
+**Start:** the shared world, machine A, nothing in progress.
+**Task:** Work on a new feature right in `~/work`, without a second workspace: commit
+one change in `server` and one in `protocol`, bring it into `main`, leave no trace of
+the feature's branches on this machine, and publish.
+**Check:** hosting `main` of `server` and `protocol` hold the changes and the project's
+lock pins `server` at its commit; no branch of the feature remains in the project or
+any member on machine A; a clean end.

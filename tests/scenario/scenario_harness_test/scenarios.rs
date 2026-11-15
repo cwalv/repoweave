@@ -32113,6 +32113,13 @@ pub fn j21_an_integration_is_switched_on_by_its_verb() -> Journey {
             Step::git(&a(), Repo::Proj, &["show", "origin/main:rwv.toml"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("enabled = true")),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["log", "-1", "--stat", "--format=%s", "origin/main"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("code-workspace")),
         ],
     }
 }
