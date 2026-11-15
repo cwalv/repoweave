@@ -976,6 +976,7 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    dc24_no_remote_names,
     dc23_local_verbs_offline,
     dc17_backup_namespace,
     mirror_merge_back_of_a_dependency,
@@ -8714,4 +8715,9 @@ fn backups_live_under_their_own_namespace_never_in_a_branch_listing_or_on_a_remo
 #[test]
 fn local_verbs_run_offline_and_fetch_nothing() {
     runner::run(scenarios::dc23_local_verbs_offline()).assert_fully_decided_green();
+}
+
+#[test]
+fn every_flow_runs_on_a_weave_with_no_remote_named_origin() {
+    runner::run(scenarios::dc24_no_remote_names()).assert_fully_decided_green();
 }

@@ -29321,3 +29321,80 @@ pub fn dc23_local_verbs_offline() -> Scenario {
     ]);
     scenario("dc23: local verbs run with every remote unreachable", steps)
 }
+
+pub fn dc24_no_remote_names() -> Scenario {
+    let mut steps: Vec<Step> = [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs]
+        .into_iter()
+        .map(|repo| Step::git(&a(), repo, &["remote", "rename", "origin", "upstream"]))
+        .collect();
+    steps.extend([
+        Step::add_remote(&a(), Repo::App, "fork", Remote::fork(Repo::App)),
+        Step::git(&a(), Repo::App, &["config", "remote.pushDefault", "fork"]),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w",
+                "--new-branch",
+                "feat",
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputLacks("origin")),
+        Step::commit(&ww("w"), Repo::App, "w-app"),
+        Step::commit(&ww("w"), Repo::Lib, "w-lib"),
+        Step::rwv(&ww("w"), &["lock", "--commit"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+        publishes_records(Step::rwv(&ww("w"), &["push"]))
+            .pushes(Remote::fork(Repo::App), "feat")
+            .pushes(Remote::origin(Repo::Lib), "feat")
+            .pushes(Remote::origin(Repo::Proj), "feat")
+            .may_leave_unresolved(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+        Step::rwv(&ww("w"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin"))
+            .claim(Claim::WorkweaveGone(ww("w"))),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::fork(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .may_leave_unresolved(&[Repo::App])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+        Step::rwv(&a(), &["fetch"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+        Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+        Step::rwv(&a(), &["doctor", "--all"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        create("c"),
+        Step::hand_edit(&ww("c"), Repo::App, "README", "app", "beta"),
+        Step::git(&ww("c"), Repo::App, &["commit", "-qam", "beta"]),
+        Step::rwv(&ww("c"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::hand_edit(&a(), Repo::App, "README", "app", "alpha"),
+        Step::git(&a(), Repo::App, &["commit", "-qam", "alpha"]),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("c"), &["sync"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputOnce("rwv sync --continue"))
+            .claim(Claim::OutputLacks("origin")),
+        Step::rwv(&ww("c"), &["abort"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("origin")),
+    ]);
+    Scenario {
+        name: "dc24: a weave whose remotes are named upstream and fork",
+        seed: Seed::default().forks(),
+        steps,
+    }
+}
