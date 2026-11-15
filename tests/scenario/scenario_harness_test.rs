@@ -805,6 +805,12 @@ fn a_sync_names_the_repo_whose_fetch_failed() {
 }
 
 #[test]
+fn a_member_change_taken_in_from_the_target_is_reported_as_already_there() {
+    runner::run(scenarios::a_member_change_taken_in_from_the_target_is_reported_as_already_there())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_workweave_delete_with_no_submodule_store_asks_no_remote() {
     runner::run(scenarios::workweave_removal_with_no_submodule_store_asks_no_remote(false))
         .assert_fully_decided_green();
@@ -2109,6 +2115,7 @@ every_scenario!(
     checkout_removal_asks_the_submodule_stores_of_a_workweave(scenarios::CheckoutRemovedBy::Retire),
     retire_keeps_the_only_store_of_a_landed_submodule_commit,
     sync_names_the_repo_whose_fetch_failed,
+    a_member_change_taken_in_from_the_target_is_reported_as_already_there,
     workweave_removal_with_no_submodule_store_asks_no_remote(false),
     workweave_removal_with_no_submodule_store_asks_no_remote(true),
     a_continued_landing_the_target_moved_under_offers_it_again_as_started,

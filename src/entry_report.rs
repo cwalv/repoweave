@@ -24,6 +24,7 @@ pub(crate) struct MemberChange {
     pub(crate) was: RepoEntry,
     pub(crate) now: RepoEntry,
     pub(crate) fields: Vec<FieldChange>,
+    pub(crate) in_target: bool,
 }
 
 impl MemberChange {
@@ -85,6 +86,7 @@ pub(crate) fn between(
             was: was.clone(),
             now: now.clone(),
             fields,
+            in_target: false,
         });
     }
     changes
@@ -105,6 +107,26 @@ fn published(vcs: &dyn Vcs, project_dir: &Path) -> Option<BTreeMap<String, RepoE
     let url_remote = vcs.project_url_remote(project_dir).ok()?;
     let target = vcs.push_target(&attached, url_remote.as_ref()).ok()??;
     let tip = vcs.push_branch(&attached, &target).ok()??;
+    let text = vcs
+        .read_file_at_revision(project_dir, &tip, Path::new(Manifest::FILE_NAME))
+        .ok()?;
+    Manifest::from_other_commit(&text)
+        .ok()
+        .map(|manifest| entries_of(&manifest))
+}
+
+/// The entries the branch the checked-out feature lands into carries.
+fn target_entries(
+    vcs: &dyn Vcs,
+    project_dir: &Path,
+    aligner: &Aligner,
+) -> Option<BTreeMap<String, RepoEntry>> {
+    let (_, crate::records::Record::Feature { target, .. }) = aligner.record.as_ref()? else {
+        return None;
+    };
+    let tip = vcs
+        .resolve_local_branch_tip(project_dir, &RawRefName::new(target.as_str()))
+        .ok()??;
     let text = vcs
         .read_file_at_revision(project_dir, &tip, Path::new(Manifest::FILE_NAME))
         .ok()?;
@@ -134,7 +156,14 @@ pub(crate) fn standing(
             store: true,
         },
         Some(baseline) => {
-            let changes = between(&baseline, &now);
+            let mut changes = between(&baseline, &now);
+            if let Some(target) = target_entries(vcs, project_dir, aligner) {
+                for change in &mut changes {
+                    change.in_target = target
+                        .get(change.path.as_str())
+                        .is_some_and(|entry| fields_between(entry, &change.now).is_empty());
+                }
+            }
             Standing {
                 store: changes.is_empty(),
                 changes,
@@ -207,7 +236,9 @@ pub(crate) fn render(
         ));
         let declared_follows =
             !in_feature || matches!(change.now.role, Role::Dependency | Role::Reference);
-        if declared_follows {
+        if change.in_target && in_feature {
+            out.push_str("    already on the branch it lands into; not yet published\n");
+        } else if declared_follows {
             out.push_str("    follows the merged declared branches; not yet published\n");
         } else {
             out.push_str("    a landing decides it; not yet published\n");

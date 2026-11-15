@@ -1513,6 +1513,38 @@ pub fn sync_names_the_repo_whose_fetch_failed() -> Scenario {
     )
 }
 
+/// A member change a feature takes in from the branch it lands into is
+/// reported as already there, not as one a landing decides.
+pub fn a_member_change_taken_in_from_the_target_is_reported_as_already_there() -> Scenario {
+    scenario(
+        "a member change the target already holds is not left to a landing",
+        vec![
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            create("w"),
+            Step::rwv(&a(), &["member", "set-role", LIB, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("member-changed role: owned -> fork"))
+                .claim(Claim::OutputContains(
+                    "already on the branch it lands into; not yet published",
+                ))
+                .claim(Claim::OutputLacks("a landing decides it")),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "already on the branch it lands into; not yet published",
+                ))
+                .claim(Claim::OutputLacks("a landing decides it")),
+            Step::rwv(&ww("w"), &["member", "set-role", APP, "fork"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "member-changed role: owned -> fork\n    a landing decides it; not yet published",
+                )),
+        ],
+    )
+}
+
 /// A workweave whose checkouts hold no submodule store is deleted, and
 /// retired, with every remote unreachable: nothing is asked of a remote when
 /// no store goes.
