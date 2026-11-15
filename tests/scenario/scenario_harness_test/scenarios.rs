@@ -1332,7 +1332,9 @@ pub fn stable_end_to_end() -> Scenario {
             ],
         )
         .expect(Exit::Code(3))
-        .claim(Claim::OutputContains("left: projects/proj stable: open-head")),
+        .claim(Claim::OutputContains(
+            "left: projects/proj stable: open-head",
+        )),
     ]);
     scenario("a release line from its cut to its retirement", steps)
 }
@@ -28823,17 +28825,17 @@ fn release_line(docs_on_the_line: bool) -> Vec<Step> {
         Step::commit(&a(), Repo::Lib, "lib-on-main"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &create_stable)
-        .expect(Exit::Succeeds)
-        .claim(Claim::OnBranch {
-            at: a(),
-            repo: Repo::Proj,
-            branch: "stable",
-        })
-        .claim(Claim::OnBranch {
-            at: a(),
-            repo: Repo::Lib,
-            branch: "stable-lib",
-        }),
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Proj,
+                branch: "stable",
+            })
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "stable-lib",
+            }),
         Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
         publish,
         Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
@@ -28976,7 +28978,10 @@ pub fn release_line_hotfix_changes_a_member_the_line_leaves_on_main() -> Scenari
             branch: "main",
         }),
     ]);
-    scenario("release line: a hotfix changing a member the line leaves on main", steps)
+    scenario(
+        "release line: a hotfix changing a member the line leaves on main",
+        steps,
+    )
 }
 
 pub fn release_line_bump_a_member() -> Scenario {
@@ -29085,4 +29090,146 @@ pub fn release_line_bump_every_member_with_sync() -> Scenario {
             }),
     ]);
     scenario("release line: bump every member with sync", steps)
+}
+
+/// `stable` holds `lib` on `stable-lib` at the keeping mirror, one commit
+/// past `main`'s, published; the primary is back on `main`.
+fn line_on_a_mirror(lib_is_a_dependency: bool) -> Vec<Step> {
+    let publish = if lib_is_a_dependency {
+        vec![
+            Step::rwv(&a(), &["push"])
+                .expect(Exit::refuses(Repo::Lib, State::PublishWithheld))
+                .claim(Claim::OutputContains("rwv push --repo local/remotes/lib")),
+            Step::rwv_printed(&a(), "rwv push --repo local/remotes/lib")
+                .pushes(Remote::keeping_mirror(Repo::Lib), "stable-lib")
+                .expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "stable")
+                .expect(Exit::Succeeds),
+        ]
+    } else {
+        vec![publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .pushes(Remote::keeping_mirror(Repo::Lib), "stable-lib")
+            .expect(Exit::Succeeds)]
+    };
+    let mut steps = vec![
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "create",
+                "stable",
+                "--declared",
+                "--set-new-branch",
+                "local/remotes/lib=stable-lib",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "set-url", LIB, "url:mirror-keeping:lib"])
+            .expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Lib, "line-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    steps.extend(publish);
+    steps.push(Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds));
+    steps
+}
+
+fn merge_back_by_a_landing(lib_is_a_dependency: bool) -> Vec<Step> {
+    let mut steps = line_on_a_mirror(lib_is_a_dependency);
+    steps.extend([
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "m",
+                "--new-branch",
+                "merge-stable",
+                "--target",
+                "main",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("m"), &["sync", "--from", "stable"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: member-changed url:",
+            )),
+        Step::rwv(&ww("m"), &["land"])
+            .expect(Exit::refuses(Repo::Lib, State::TargetMemberChanges))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(
+            &ww("m"),
+            &[
+                "member",
+                "set-branch",
+                LIB,
+                "main",
+                "--url",
+                "url:origin:lib",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("m"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "line-lib",
+            }),
+    ]);
+    steps
+}
+
+pub fn mirror_merge_back() -> Scenario {
+    let mut steps = merge_back_by_a_landing(false);
+    steps.push(
+        publishes_records(Step::rwv(&a(), &["push", "--branch", "main"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::Lib),
+                branch: "main",
+                mark: "line-lib",
+            }),
+    );
+    Scenario {
+        name: "mirror merge-back",
+        seed: Seed::default().mirrors(),
+        steps,
+    }
+}
+
+pub fn mirror_merge_back_of_a_dependency() -> Scenario {
+    let mut steps = line_on_a_mirror(true);
+    steps.extend([
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["merge", "-q", "--no-ff", "-m", "merge-back", "stable"],
+        ),
+        Step::rwv(&a(), &["update"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/lib: member-changed url:",
+            )),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "skipped local/remotes/lib (not pushed by default)",
+            )),
+    ]);
+    Scenario {
+        name: "mirror merge-back of a dependency",
+        seed: Seed::default().mirrors().role(Repo::Lib, Role::Dependency),
+        steps,
+    }
 }

@@ -976,6 +976,8 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    mirror_merge_back_of_a_dependency,
+    mirror_merge_back,
     release_line_bump_every_member_with_sync,
     release_line_bump_a_member,
     release_line_hotfix_changes_a_member_the_line_leaves_on_main,
@@ -8677,8 +8679,7 @@ fn a_bump_by_a_no_ff_merge_lands_into_the_held_member_branch_by_fast_forward() {
 
 #[test]
 fn a_sync_from_main_bumps_every_member_and_carries_an_entry_main_changed() {
-    runner::run(scenarios::release_line_bump_every_member_with_sync())
-        .assert_fully_decided_green();
+    runner::run(scenarios::release_line_bump_every_member_with_sync()).assert_fully_decided_green();
 }
 
 #[test]
@@ -8691,4 +8692,14 @@ fn the_stable_tracers_run_decided() {
     runner::run(scenarios::feature_off_stable()).assert_fully_decided_green();
     runner::run(scenarios::stable_end_to_end()).assert_fully_decided_green();
     runner::run(scenarios::main_change_into_stable()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_merge_back_of_a_line_on_a_mirror_publishes_the_merged_member_to_the_original() {
+    runner::run(scenarios::mirror_merge_back()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_line_of_a_dependency_on_a_mirror_is_published_by_the_printed_push_and_merged_back() {
+    runner::run(scenarios::mirror_merge_back_of_a_dependency()).assert_fully_decided_green();
 }
