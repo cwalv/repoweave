@@ -28586,7 +28586,7 @@ pub fn a_hand_ordered_manifest_keeps_a_removal_across_a_setter(history: &'static
             .claim(Claim::ManifestLists {
                 at: ww("w"),
                 rev: "HEAD",
-                members: &[Repo::App],
+                members: &[Repo::App, Repo::Docs],
             }),
     ]);
     scenario(
