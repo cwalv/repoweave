@@ -5471,6 +5471,9 @@ fn repair_uninitialized_submodules(
     project_scope: Option<&ProjectName>,
 ) {
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        if held_by_an_operation(&workweave_dir) {
+            continue;
+        }
         for (repo, entry) in loaded.manifest.iter_entries() {
             let member = workweave_dir.join(repo.as_path());
             if entry.recurse_submodules == crate::manifest::SubmoduleRecursion::Skip
@@ -6030,6 +6033,9 @@ fn repair_member_gaps(
     fix_errors: &mut Vec<String>,
 ) {
     for gap in scan_member_gaps(ctx, project_scope) {
+        if held_by_an_operation(&gap.workweave_dir) {
+            continue;
+        }
         let vcs = crate::vcs::vcs_for(gap.vcs_type);
         let abandoned = match (gap.local, gap.slot, abandon_lost_pins) {
             (true, _, _) => None,
@@ -6111,6 +6117,9 @@ fn repair_standalone_members(
     fix_errors: &mut Vec<String>,
 ) {
     for (workweave, workweave_dir, loaded) in workweaves_in_scope(ctx, project_scope) {
+        if held_by_an_operation(&workweave_dir) {
+            continue;
+        }
         for (repo, entry) in loaded.manifest.iter_entries() {
             let slot = workweave_dir.join(repo.as_path());
             if crate::workweave::is_symlinked_member(&slot) {

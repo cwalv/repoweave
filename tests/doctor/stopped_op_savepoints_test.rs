@@ -494,3 +494,20 @@ fn a_seat_that_is_away_keeps_its_lease_claim_registrations_and_savepoints() {
         assert!(!lease.exists(), "{recorded}");
     }
 }
+
+/// `--fix` elsewhere writes no checkout into a workspace an operation holds:
+/// a member checkout missing from the stopped seat stays missing until the
+/// operation ends, so what its abort finds is what the operation left.
+#[test]
+fn doctor_elsewhere_creates_no_checkout_in_a_workspace_an_operation_holds() {
+    let stopped = stop_a_sync();
+    let docs = stopped.seat.root.join("local/owner");
+    std::fs::remove_dir_all(&stopped.seat.lib).unwrap();
+    for at in [&stopped.primary.root, &stopped.sibling.root] {
+        let fixed = rwv(at, &["doctor", "--fix"]);
+        let report = common::cli::describe(&fixed);
+        assert!(!report.contains("created the worktree"), "{report}");
+        assert!(!stopped.seat.lib.exists(), "{report}");
+    }
+    assert!(docs.is_dir());
+}
