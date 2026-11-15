@@ -28144,6 +28144,35 @@ pub fn stack_remote_dependent() -> Scenario {
         Step::rwv(&ww("w1"), &["sync"])
             .expect(Exit::Succeeds)
             .claim(Claim::OutputLacks("carried")),
+        Step::rwv(&a(), &["push", "--branch", "w2"])
+            .expect(Exit::refuses(Repo::Proj, State::NameNoSuchBranch))
+            .claim(Claim::OutputContains("name no-such-branch (w2)")),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "w3",
+                "--new-branch",
+                "w3",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&ww("w3"), Repo::App, "w3-app"),
+        Step::rwv(&ww("w3"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("w3"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "w3")
+            .pushes(Remote::origin(Repo::Proj), "w3")
+            .expect(Exit::Succeeds),
+        Step::rwv(&b(), &["fetch"]).expect(Exit::Succeeds),
+        Step::rwv(&b_ww("w2"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "record: proj w2: feature onto w1 (as feature)",
+            ))
+            .claim(Claim::OutputLacks("onto main")),
     ]);
     scenario("stack: a dependent published from another machine", steps)
 }
