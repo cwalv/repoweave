@@ -1211,6 +1211,7 @@ every_scenario!(
     j17_a_retire_stops_over_unpublished_nested_work,
     j18_a_landing_killed_midway_is_finished,
     j19_a_landing_killed_midway_is_given_up,
+    j20_a_colleague_moves_a_nested_repository,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9104,6 +9105,7 @@ journey_tests!(
     j17_a_retire_stops_over_unpublished_nested_work,
     j18_a_landing_killed_midway_is_finished,
     j19_a_landing_killed_midway_is_given_up,
+    j20_a_colleague_moves_a_nested_repository,
 );
 
 #[test]

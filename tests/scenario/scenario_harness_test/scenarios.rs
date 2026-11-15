@@ -31366,3 +31366,87 @@ pub fn j17_a_retire_stops_over_unpublished_nested_work() -> Journey {
         ],
     }
 }
+
+/// A colleague moves the nested repository of `app` and publishes; the
+/// operator holds unlanded work in a workspace, takes the change in, carries
+/// on and lands.
+pub fn j20_a_colleague_moves_a_nested_repository() -> Journey {
+    let w = ww("mine");
+    let mut path = app_gains_a_submodule();
+    path.extend([
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+        Step::forge(Forge::Commit {
+            repo: Repo::Lib,
+            branch: "main",
+            mark: "lib-new",
+        }),
+        Step::new_machine(Machine::B).expect(Exit::Succeeds),
+        Step::rwv(&b(), &["update"]).expect(Exit::Succeeds),
+        Step::git(
+            &b(),
+            Repo::App,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "-q",
+            ],
+        ),
+        Step::git(&b(), Repo::App, &["-C", "sub", "fetch", "-q", "origin"]),
+        Step::git(
+            &b(),
+            Repo::App,
+            &["-C", "sub", "checkout", "-q", "origin/main"],
+        ),
+        Step::git(&b(), Repo::App, &["add", "sub"]),
+        Step::git(&b(), Repo::App, &["commit", "-qm", "app: move sub"]),
+        Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+        documented_create("mine"),
+        Step::commit(&w, Repo::Docs, "my-docs"),
+    ]);
+    let start = path.len();
+    path.extend([
+        Step::rwv(&a(), &["pull"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("it is on branch main")),
+        Step::rwv_printed_quoted(&a(), "git -C ", "checkout --detach").expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::rwv(&w, &["sync"]).expect(Exit::Succeeds),
+        Step::rwv(&w, &["land", "--retire"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Docs), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j20: a colleague's move of a nested repository is taken in and work is landed",
+        seed: Seed::default(),
+        start,
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Docs),
+                    branch: "main",
+                    mark: "my-docs",
+                })
+                .claim(Claim::WorkweaveGone(w)),
+            Step::git(&a(), Repo::App, &["-C", "sub", "log", "-1", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("lib-new")),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("submodule behind")),
+        ],
+    }
+}
