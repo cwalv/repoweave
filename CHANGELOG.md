@@ -21,10 +21,6 @@ landed lock read the same pins. The `--allow-member-change` consent printed by
 `target` `member changes` keeps the flags the landing was run with, such as
 `--retire`.
 
-### The `.rwv-fetched` file is no longer written
-
-Nothing read the per-remote fetch times it held. A file an earlier release left in a store is harmless and is neither read nor removed.
-
 ### Upgrade: finish or abort an operation in progress first
 
 An operation a release before this one left in progress cannot be resumed or
@@ -54,6 +50,20 @@ reported with `rwv workweave create <name> --project <project> --dir <dir>`,
 which names it. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other
 state an earlier release wrote and the command that migrates each part.
 
+### The `.rwv-fetched` file is no longer written
+
+Nothing read the per-remote fetch times it held. A file an earlier release left in a store is harmless and is neither read nor removed.
+
+### Upgrade: a state file from another release fails as unreadable
+
+Beside the op record, which carries a schema number, the JSON state files rwv
+keeps (the workweave marker, the workweave index, the workspace state, the
+owned-digests ledger, the op lease) carry no format number. One written by
+another release that this one cannot read fails as unreadable with the verb
+that repairs it (`rwv doctor --fix`, `rwv materialize`, or the lease's own
+exit), not with a message naming the release that wrote it. Where a wrong read
+would be dangerous, the op record's schema number says which release wrote it.
+
 ### Verbs renamed, split or removed
 
 - `rwv sync-to` is `rwv land`: it lands the checked-out feature into its target.
@@ -62,6 +72,17 @@ state an earlier release wrote and the command that migrates each part.
 - `rwv add`, `rwv remove` and `rwv role` are `rwv member add`, `member remove`
   and `member set-role`; `rwv member` also has `pin`, `set-branch`, `set-url`
   and `set-recurse-submodules`.
+- `rwv init --adopt` is removed: `rwv clone <source>` is the one verb that takes
+  a project from a remote. A repository with no `rwv.toml` refuses as
+  `not-a-project` and leaves nothing on disk; `rwv clone <source>
+  --init-manifest` writes the skeleton `rwv.toml` and its first commit instead.
+  `rwv pull --reset-to-upstream` takes no operand and resets the project repo;
+  a member resets through `rwv update --remote --reset-to-upstream <m>`, and a
+  member branch other than the one the workspace expects is `<m>:<branch>`.
+  `rwv member set-url projects/<name> <url>` records the project repo's url
+  remote. `rwv backup drop <repo>` takes names or `--all`; the bare form
+  refuses. `--set-branch` and `--set-new-branch` take `<m>=<branch>` and the
+  start is its own flag, `--pin <m>=<rev>`.
 - `rwv fetch <source>` is `rwv clone <source>`. `rwv fetch` takes no source: it
   prunes and fetches every remote of every repo, and moves no branch, checkout
   or lock.
@@ -94,6 +115,13 @@ state an earlier release wrote and the command that migrates each part.
   that would leave a commit or an uncommitted edit unpreserved.
 - `rwv push --branch <W>` pushes another weave branch; `--overwrite <repo>`
   replaces a diverged push branch after keeping its remote tip as a backup.
+
+- `rwv integration set-enabled <name> <true|false>` and `rwv integration set
+  <name> <key> <value>` write an integration's `enabled` flag and settings,
+  committing the file and its regenerated outputs; turning one off deletes
+  nothing and names `rwv materialize` as the step that strips what it authored.
+  A key the integration does not declare refuses as
+  `unknown-integration-setting`.
 
 ### Every operation that stops is resumed or rolled back the same way
 
@@ -143,6 +171,23 @@ stands.
   was deleted.
 - `cherry-pick --continue` names each path recorded by hand for the next
   commit that the ported commit records beyond its own change.
+
+### What a verb makes after its record is gone
+
+`rwv sync`, `rwv land` and `rwv pull` make the source's new member checkouts
+only once the operation's record and savepoints are gone, by the alignment
+`rwv update` runs; `rwv abort` therefore never meets a checkout the operation
+made. A kill in that tail leaves a finished operation and a workspace `rwv
+status` and `rwv doctor` name as unaligned, which `rwv update` converges.
+A `rwv land --retire` killed in its last instant leaves orphaned savepoints
+that `rwv doctor` reports and `rwv doctor --fix` clears, keeping the seat's
+pre-rebase tips as backups, and the record of the branch it deleted, which no
+reader counts and the next deletion-rule run drops. `rwv land --retire` from
+the primary applies the deletion rule to its branches like any retire. A
+published declared line is retired by `rwv branch set-mode <b> feature
+--target <T>` and then `rwv branch delete <b> --discard-unlanded
+--delete-remote-unlanded`; each refusal on the way prints the two lines as one
+choice.
 
 ### A conflict in `rwv.toml` stops with the entries it concerns
 
@@ -331,6 +376,24 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   names the carried branch as yours. A carry whose replay drops a commit
   keeps the branch's `rebased` backup past the operation; the line naming any
   other `rebased` backup says it is kept while the operation runs.
+
+### Contributor gate: the kill matrix is a named stage
+
+`scripts/ci-local.sh` no longer runs the kill matrix by default. `--stages=kill-matrix`
+runs it, and `--tier=release` is every default stage and it. Run it before a
+release and when a change touches an operation's steps, pause points or abort.
+
+### Refusals removed
+
+Removed with what they judged: `dirty-project-dir`, `foreign-workweave-in-target-dir`,
+`lock-state-mismatch`, `not-fast-forwardable`, `owned-branch-moved`,
+`project-push-withheld`, `project-repo-off-canonical-branch`,
+`receipt-revision-uncanonical`, `replace-target-holds-work`,
+`retire-not-converged`, `retire-unpruned-checkout`, `store-claims-unreadable`,
+`store-still-claimed`, `target-diverged-mid-op`, `target-lock-behind`,
+`unowned-branch-in-namespace`, `unpushable-repo-branch`, `version-is-a-pin` and
+`workweave-name-taken`. New: `not-a-project`, `unknown-integration-setting` and
+`unreadable-op-lease`.
 
 ### Git 2.36 or newer is required
 
