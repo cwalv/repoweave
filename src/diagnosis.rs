@@ -2688,7 +2688,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 126] = [
+    pub const ALL: [Form; 127] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
