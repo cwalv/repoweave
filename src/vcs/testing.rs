@@ -1334,6 +1334,14 @@ impl Vcs for FakeVcs {
         unsupported("record_checkout_moved")
     }
 
+    fn gone_checkouts_of_branch(
+        &self,
+        _repo: &Path,
+        _branch: &RawRefName,
+    ) -> Result<Vec<PathBuf>, VcsError> {
+        unsupported("gone_checkouts_of_branch")
+    }
+
     fn live_worktree_branches(&self, _repo: &Path) -> Result<Vec<RawRefName>, VcsError> {
         unsupported("live_worktree_branches")
     }

@@ -125,7 +125,7 @@ src/explain.rs	ambiguous-explain-token	-	1
 src/explain.rs	no-explain-entry	-	4
 src/feature_sync.rs	(untokened:environment-passthrough)	-	6
 src/feature_sync.rs	(untokened:owed)	-	1
-src/feature_sync.rs	checkout in another workspace	-	1
+src/feature_sync.rs	checkout in another workspace	tests/weave/workweave_idempotent_test.rs	1
 src/feature_sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	3
 src/feature_sync.rs	name no-such-branch	-	1
 src/feature_sync.rs	op-parked	-	3
@@ -298,7 +298,7 @@ src/sync.rs	(untokened:internal-invariant)	-	14
 src/sync.rs	(untokened:tally)	-	3
 src/sync.rs	abort-in-its-workspace	-	2
 src/sync.rs	checkout in a raw worktree	-	1
-src/sync.rs	checkout in another workspace	-	2
+src/sync.rs	checkout in another workspace	tests/weave/workweave_idempotent_test.rs	2
 src/sync.rs	clone-topology	-	1
 src/sync.rs	dropped-repo-has-unique-commits	tests/doctor/state_hygiene_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2

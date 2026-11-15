@@ -827,7 +827,11 @@ pub(crate) fn judge_opening(
             Checkouts::Except(here) => Some(crate::path_spelling::CanonicalPath::of(here)),
             _ => None,
         };
-        for checkout in vcs.checkouts_of_branch(dir, &raw)? {
+        let holding = vcs
+            .checkouts_of_branch(dir, &raw)?
+            .into_iter()
+            .chain(vcs.gone_checkouts_of_branch(dir, &raw)?);
+        for checkout in holding {
             if Some(crate::path_spelling::CanonicalPath::of(&checkout)) != here {
                 report.add(crate::sync::judge_checkout(
                     vcs,

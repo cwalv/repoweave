@@ -5355,6 +5355,18 @@ impl Vcs for GitVcs {
         Ok(held)
     }
 
+    fn gone_checkouts_of_branch(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Vec<PathBuf>, VcsError> {
+        Ok(Self::worktree_records(repo)?
+            .into_iter()
+            .filter(|record| record.prunable && record.branch.as_ref() == Some(branch))
+            .map(|record| record.path)
+            .collect())
+    }
+
     fn upstream_of(&self, repo: &Path, branch: &RawRefName) -> Result<Option<Upstream>, VcsError> {
         let remote = Self::config_get(repo, &format!("branch.{branch}.remote"))?;
         let merge = Self::config_get(repo, &format!("branch.{branch}.merge"))?;

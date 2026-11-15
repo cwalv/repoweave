@@ -4801,6 +4801,15 @@ pub trait Vcs: Send + Sync {
         branch: &RawRefName,
     ) -> Result<Vec<PathBuf>, VcsError>;
 
+    /// Every checkout of `repo`'s store registered as having `branch`
+    /// checked out whose directory is gone: a checkout the VCS still counts
+    /// as holding the branch, which [`Vcs::checkouts_of_branch`] leaves out.
+    fn gone_checkouts_of_branch(
+        &self,
+        repo: &Path,
+        branch: &RawRefName,
+    ) -> Result<Vec<PathBuf>, VcsError>;
+
     /// The remote branch the VCS records for the local branch `branch`,
     /// checked out or not, or `None` when it records none.
     fn upstream_of(&self, repo: &Path, branch: &RawRefName) -> Result<Option<Upstream>, VcsError>;

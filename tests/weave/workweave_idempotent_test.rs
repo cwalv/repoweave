@@ -17,6 +17,7 @@ use predicates::prelude::*;
 use std::path::Path;
 
 use crate::common;
+use repoweave::diagnosis::State;
 
 fn rwv() -> Command {
     common::rwv()
@@ -529,6 +530,52 @@ fn workweave_create_succeeds_after_rm_rf_leaves_stale_git_registration() {
 /// the deletion rule keeps the branch with its commits and says so with status
 /// 3, and `branch delete --discard-unlanded` is the consent that backs it up and
 /// deletes it.
+/// A workweave whose directory was removed by hand still holds its branch:
+/// opening that branch in a new workweave refuses, naming the state and the
+/// verb that frees it, and after the printed verb a create succeeds.
+#[test]
+fn opening_the_branch_of_a_removed_workweave_refuses_and_its_printed_delete_clears_it() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "gone"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    std::fs::remove_dir_all(tmp.path().join(".workweaves/web-app--gone")).unwrap();
+
+    let out = rwv()
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "again",
+            "--branch",
+            "web-app--gone",
+        ])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stderr = common::cli::refused(&out, State::CheckoutInAnotherWorkspace);
+    assert!(
+        stderr.contains("rwv workweave delete gone --project web-app"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("fatal:"), "{stderr}");
+
+    rwv()
+        .args(["workweave", "delete", "gone", "--project", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "again"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+}
+
 #[test]
 fn workweave_delete_keeps_a_branch_whose_commits_have_not_landed() {
     let tmp = common::tempdir().unwrap();

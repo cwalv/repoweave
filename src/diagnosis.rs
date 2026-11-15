@@ -879,7 +879,8 @@ impl State {
                 axis: Axis::Checkout,
                 name: "in another workspace",
                 means: "a workweave's checkout derives from the clone, named; or the \
-                        branch is checked out there, the primary's own checkout included",
+                        branch is checked out there, the primary's own checkout included, or \
+                        was and the directory is gone, the workweave still holding it",
                 refused_by: "`rwv member remove --delete` in the primary, and replay's prune \
                              of a dropped member there; `rwv branch delete`, `rwv switch` and \
                              `rwv workweave create --branch`, for a project branch checked out \

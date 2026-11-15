@@ -158,7 +158,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there, the primary's own checkout included | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, `rwv switch` and `rwv workweave create --branch`, for a project branch checked out in another workspace |
+| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there, the primary's own checkout included, or was and the directory is gone, the workweave still holding it | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, `rwv switch` and `rwv workweave create --branch`, for a project branch checked out in another workspace |
 | `in a raw worktree` | a worktree no workweave records derives from the clone, named by path; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in a raw worktree |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
