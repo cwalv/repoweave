@@ -87,6 +87,31 @@ fn set_role_commits_the_role_and_leaves_another_hand_edit_of_the_file_uncommitte
 }
 
 #[test]
+fn a_member_verb_commits_the_generated_files_an_integration_writes_into_a_new_directory() {
+    let w = two_members();
+    let manifest_path = project(&w).join("rwv.toml");
+    let mut text = manifest(&w);
+    text.push_str("\n[integrations.gita]\nenabled = true\n");
+    std::fs::write(&manifest_path, text).unwrap();
+    git_in(project(&w), &["add", "rwv.toml"]);
+    git_in(project(&w), &["commit", "-qm", "enable gita"]);
+
+    succeeded(&run(&w, &["member", "set-role", LIB, "fork"]));
+
+    assert!(project(&w).join("gita/repos.csv").is_file());
+    let status = git_in(
+        project(&w),
+        &["status", "--porcelain", "--untracked-files=all"],
+    );
+    assert_eq!(
+        status, "",
+        "the commit left a generated file behind:\n{status}"
+    );
+    let tracked = git_in(project(&w), &["ls-tree", "-r", "--name-only", "HEAD"]);
+    assert!(tracked.contains("gita/repos.csv"), "{tracked}");
+}
+
+#[test]
 fn set_recurse_submodules_commits_the_setting() {
     let w = two_members();
     let before = commits(&w);

@@ -295,6 +295,36 @@ impl CommitMessage {
     }
 }
 
+/// The paths of `dirty`, a status listing, that a commit carries: each one in
+/// `authored` (and, with `manifest`, `rwv.lock` and `rwv.toml`), and, for an
+/// untracked directory the listing collapses to `dir/`, the authored files
+/// under it.
+pub(crate) fn authored_among(
+    project_dir: &Path,
+    dirty: &[String],
+    authored: &BTreeSet<String>,
+    manifest: bool,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    for path in dirty {
+        let own = authored.contains(path.as_str())
+            || (manifest && (path == LockFile::FILE_NAME || path == Manifest::FILE_NAME));
+        if own {
+            found.push(path.clone());
+        } else if path.ends_with('/') {
+            found.extend(
+                authored
+                    .iter()
+                    .filter(|file| {
+                        file.starts_with(path.as_str()) && project_dir.join(file).is_file()
+                    })
+                    .cloned(),
+            );
+        }
+    }
+    found
+}
+
 /// The tracked files of the project repo with uncommitted changes outside
 /// `rwv.lock`, `rwv.toml` and `authored`: edits no rwv commit carries.
 pub(crate) fn unrelated_edits(
@@ -371,17 +401,12 @@ fn commit_lock_file(
     let dirty = vcs
         .dirty_file_names(project_dir)
         .context("failed to read project repo status")?;
-    let carried = |path: &str| {
-        path == LockFile::FILE_NAME || path == Manifest::FILE_NAME || authored.contains(path)
-    };
-
+    let carried: Vec<String> = authored_among(project_dir, &dirty, authored, true)
+        .into_iter()
+        .filter(|path| path != LockFile::FILE_NAME)
+        .collect();
     let mut paths = vec![LockFile::FILE_NAME];
-    paths.extend(
-        dirty
-            .iter()
-            .map(String::as_str)
-            .filter(|path| *path != LockFile::FILE_NAME && carried(path)),
-    );
+    paths.extend(carried.iter().map(String::as_str));
 
     let message = match &pending.message {
         CommitMessage::Generated => build_commit_message(

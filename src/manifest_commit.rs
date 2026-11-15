@@ -127,10 +127,7 @@ pub(crate) fn commit(change: &MemberCommit<'_>) -> anyhow::Result<bool> {
         let dirty = vcs
             .dirty_file_names(dir)
             .context("failed to read project repo status")?;
-        let carried: Vec<String> = dirty
-            .into_iter()
-            .filter(|path| change.authored.contains(path.as_str()))
-            .collect();
+        let carried = crate::lock::authored_among(dir, &dirty, change.authored, false);
         if !carried.is_empty() {
             let refs: Vec<&str> = carried.iter().map(String::as_str).collect();
             vcs.stage_paths(dir, &refs)
