@@ -98,7 +98,9 @@ nothing could be landed into. Then, under an op record:
    presents stays where that project has it.
 5. **Retire** (`--retire`). The workweave is removed, and the deletion rule
    decides each of the feature's branches: one that landed is deleted, one
-   that did not survives and is listed with its reason. When the workweave
+   that did not survives and is listed with its reason. From the primary
+   nothing is removed, and the rule applies to the branches of the feature
+   it landed. When the workweave
    was the directory the verb ran in, the last line names the workspace to
    continue in.
 
@@ -2492,9 +2494,9 @@ rwv abort
 ```
 
 The landing writes no relock commit of the source's own. Where an `owned` or `fork` member's checkout is ahead of the pin the source's lock commits and holds commits the target's pin lacks, it prints
-`<member>: lock behind HEAD by <n> commits — the landing records <tip> in place of the pin <pin>`
+`<member>: lock behind HEAD by <count> — the landing records <tip> in place of the pin <pin>`, the count spelled `1 commit` or `3 commits`,
 and the one project commit it lands records that tip; the refusals and the member changes it reports are judged against that tip too. A checkout the target's pin already reaches brings nothing to land, so its pin lands as the source committed it: a pin put back by `rwv member pin` lands as named. A `dependency` or `reference` member's pin lands as committed whatever its checkout holds, since it moves only by name; `rwv status` reports that checkout as `pin` `ahead`. That commit, where it is not a merge commit, reads:
 
 ```
-lock: auto-relock after sync from <source>
+lock: relock for the landing of <source>
 ```
