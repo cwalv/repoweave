@@ -1497,7 +1497,6 @@ fn gita_is_opt_in() {
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("github/chatly")).unwrap();
     std::fs::create_dir_all(root.join("projects/no-gita")).unwrap();
-    std::fs::create_dir_all(root.join("projects/with-gita")).unwrap();
 
     let server_dir = root.join(SERVER_PATH);
     init_repo(&server_dir);
@@ -1537,6 +1536,7 @@ fn gita_is_opt_in() {
     );
 
     // 2. Opt-in: gita is generated
+    std::fs::create_dir_all(root.join("projects/with-gita")).unwrap();
     write_manifest(
         &root.join("projects/with-gita"),
         &[(SERVER_PATH, SERVER_URL)],
