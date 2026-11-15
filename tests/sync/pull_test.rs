@@ -432,3 +432,24 @@ fn pull_reset_to_upstream_refuses_an_emptied_upstream_manifest_before_it_moves()
 fn pull_merge_upstream_refuses_an_emptied_upstream_manifest_before_it_moves() {
     pull_refuses_an_upstream_whose_manifest_does_not_parse("", &["pull", "--merge-upstream"]);
 }
+
+#[test]
+fn a_pull_that_merges_a_drop_it_cannot_prune_says_which_checkout_it_kept_and_why() {
+    let weave = weave();
+    weave.git_project(&["config", "user.email", "t@t.com"]);
+    weave.git_project(&["config", "user.name", "T"]);
+    weave.git_project(&["commit", "--allow-empty", "-m", "local work"]);
+    weave.forge_project_commit(Some("[repositories]\n".to_owned()), None);
+    std::fs::write(weave.member().join("scratch.txt"), "untracked\n").unwrap();
+
+    let out = weave.rwv(&["pull", "--merge-upstream"]);
+
+    let text = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(
+        text.contains(&format!(
+            "{MEMBER}: prune skipped: {MEMBER}: edits dirty\n    scratch.txt\n"
+        )),
+        "{text}"
+    );
+    assert!(weave.member().join("scratch.txt").is_file());
+}
