@@ -55,12 +55,17 @@ Each flag lifts one clause and names what it gives up:
 | `--discard-unlanded` | clause 1, the landed condition | the tip of each branch it deletes, as a backup; a detached HEAD's commits |
 | `--discard-uncommitted` | the dirt refusal | each checkout's uncommitted edits as a commit on its HEAD, then the backup |
 | `--delete-remote` | nothing: it also deletes each push branch of what belongs that has landed on the target's remote-tracking branch | its tip, locally |
-| `--delete-remote-unlanded <repo>` | the landed condition on that repo's push branch, an open pull request head included; needs `--discard-unlanded`; never the push branch of a declared-mode project branch | its tip, as a backup; leased to the fetched tip |
+| `--delete-remote-unlanded <repo>` | the landed condition on that repo's push branch, an open pull request head included; needs `--discard-unlanded`; never the push branch of a declared-mode project branch (record it as a feature first) | its tip, as a backup; leased to the fetched tip |
 | `--discard-unpublished` | the stores' refusal below | nothing: it goes with the store, and lists what went |
 
 No flag lifts clause 2 or 4. A pinned branch survives `--discard-unlanded`, and a branch
 with dependents is refused outright, since its dependents would be left targeting
 nothing. Remote deletes never run unless named, and never on a declared branch.
+
+A declared line that is being given up unlanded is first recorded as a feature
+(`rwv branch set-mode <W> feature --target <T>`), which makes it an ordinary branch
+the flags above apply to. The survivor a plain delete leaves (`open-head`) and the
+`protected` `declared mode` refusal print both steps.
 
 ## A workweave's removal
 
