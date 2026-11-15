@@ -612,6 +612,16 @@ pub enum Claim {
     },
 }
 
+/// Whether a commit's subject line is the prescribed message: the whole line,
+/// or the message followed by a space or a colon and more text. A body or a
+/// trailer on later lines is not in the subject line at all.
+pub fn subject_matches(line: &str, prescribed: &str) -> bool {
+    line == prescribed
+        || line
+            .strip_prefix(prescribed)
+            .is_some_and(|rest| rest.starts_with([' ', ':']))
+}
+
 impl Claim {
     /// The commit marks this claim looks for: a commit it names by the
     /// subject it was made with.
@@ -2120,12 +2130,12 @@ impl Run<'_> {
         if out.status.success()
             && String::from_utf8_lossy(&out.stdout)
                 .lines()
-                .any(|line| line == subject)
+                .any(|line| subject_matches(line, subject))
         {
             Ok(())
         } else {
             Err(format!(
-                "{} at {rev} holds no commit with the subject '{subject}'",
+                "{} at {rev} holds no commit whose subject line is or begins with '{subject}'",
                 dir.display()
             ))
         }

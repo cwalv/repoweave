@@ -31462,11 +31462,36 @@ pub fn j11_an_ordinary_repository_becomes_a_project() -> Journey {
         fault,
         end: vec![
             clean_end(b()),
-            clean_end(a()),
-            Step::rwv(&a(), &["status", "--project", "docs"])
+            Step::rwv(&b(), &["status", "--project", "docs"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("local/remotes/app"))
-                .claim(Claim::OutputContains("local/remotes/lib")),
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::Docs),
+                    branch: "main",
+                    path: "rwv.toml",
+                    has: "local/remotes/app",
+                    present: true,
+                })
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::Docs),
+                    branch: "main",
+                    path: "rwv.toml",
+                    has: "local/remotes/lib",
+                    present: true,
+                })
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::Docs),
+                    branch: "main",
+                    path: "rwv.lock",
+                    has: "local/remotes/app",
+                    present: true,
+                })
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::Docs),
+                    branch: "main",
+                    path: "rwv.lock",
+                    has: "local/remotes/lib",
+                    present: true,
+                }),
         ],
     }
 }

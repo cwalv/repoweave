@@ -69,7 +69,9 @@ RWV_JOURNEY=j03 SANDBOX=<root> cargo test --release --features test-pause --test
 ```
 
 It is the task's **Check**: refs, pins, records, published state, no operation in
-progress, doctor clean. A claim about a commit finds it by its subject, so a task that
+progress, doctor clean. A claim about a commit finds it by its subject line, which must be the prescribed
+message or begin with it followed by a space or a colon (a body or trailers on later
+lines are ignored); so a task that
 wants a commit the agent makes identified says its message (J01, J08), and one that
 wants content checked says the file and its text (J14 to J16). A test reads each journey's `holds` list on
 its built start state, so a start state that lacks what its task text presupposes
@@ -96,7 +98,8 @@ spare workspace and committed there. Meanwhile the colleague has
 published a change to `protocol` into `main`, and in the same landing added a
 fourth repository, `docs`, to the project.
 **Task:** Get the colleague's changes into your own copy of the project, then finish
-your in-progress change so that `main` holds yours on top of theirs, and publish.
+your in-progress change so that `main` holds yours on top of theirs, and publish. Leave
+no spare workspace behind.
 **Check:** hosting `main` of `protocol` holds the colleague's commit and `server`'s the
 operator's; the hosting project's description lists `docs` and its
 lock pins every repository at its `main` tip; `~/work` has a `docs` checkout at its
@@ -108,6 +111,7 @@ pin; the spare workspace is gone; a clean end.
 to `server` that writes a different line to the same line of `README`. The first
 has been brought into `main`.
 **Task:** Bring the second one into `main` as well, keeping the line of the second.
+Leave no spare workspace behind.
 **Check:** `main`'s `README` in `server` holds the second workspace's line; the
 history of `server` holds both commits; the second workspace is gone; no unfinished
 operation anywhere; a clean end.
@@ -162,7 +166,8 @@ remains; a clean end.
 workspace, with a commit in `server`.
 **Task:** Start a second feature `b`, which needs `a`'s commit, so that it begins from
 the first feature rather than from `main`. Make a commit in `protocol` for `b`, with the message `b-lib`. Bring
-`a` into `main`, then `b`, and publish.
+`a` into `main`, then `b`, and publish. Leave no spare workspace and no branch of `a`
+or `b` behind.
 **Check:** hosting `main` of `server` holds `a`'s commit, hosting `main` of `protocol`
 holds `b`'s commit; the project's history shows `a`'s change before `b`'s; both
 workspaces are gone; no branch of `a` or `b` remains on machine A; a clean end.
@@ -195,8 +200,7 @@ team's project set up.
 and `protocol` as its code repositories, and publish what you set up so machine A can
 take it from there.
 **Check:** the hosting `docs` has a description listing `server` and `protocol` and a
-lock pinning both; machine A, setting the project up from the hosting service, ends
-in the state machine B has; both clean ends.
+lock pinning both; machine B ends clean.
 
 ### J12 A hand-edited description converges
 
@@ -215,7 +219,8 @@ and lock agree with the checkouts; a clean end.
 `main` (in `server`, `welcome.txt` reads `helo, world`), and the project records them.
 **Task:** Start a line of releases at that state for `server` and `protocol` so fixes
 to the released version can go in without taking `main`'s newer work; the third
-repository keeps following `main`. Publish the line.
+repository keeps following `main`. The team calls the line `stable`, and its branches
+`v1` for `server` and `protov1` for `protocol`. Publish the line.
 **Check:** the hosting service has a project branch `stable` whose description names
 `v1` for `server` and `protov1` for `protocol`, each at the release commit, and the
 third repository on `main`; the record of `stable` is published as a line that follows those branches; a
@@ -227,7 +232,7 @@ clean end.
 one commit in `server`.
 **Task:** The released `welcome.txt` in `server` reads `helo, world`; it should read
 `hello, world`. Fix it for the released version only, put the fix in the line and
-publish it, and leave `main` alone.
+publish it, and leave `main` alone. Leave no spare workspace behind.
 **Check:** hosting `v1` of `server` has `welcome.txt` reading `hello`, hosting `main`
 of `server` still reads `helo`; hosting `stable` pins `server` at the fixed commit; no spare workspace remains;
 the project's `main` is where it was; a clean end.
@@ -237,9 +242,10 @@ the project's `main` is where it was; a clean end.
 **Start:** as J14 after the hotfix is published.
 **Task:** The same fix is needed on `main`: its `welcome.txt` reads `helo, world`. Take
 the fix over from the release line without dragging along anything else of the line,
-and publish.
+and publish. Leave no spare workspace behind.
 **Check:** hosting `main` of `server` has `welcome.txt` reading `hello` and keeps its
-own newer commit; the project's `main` lock pins `server` there; a clean end.
+own newer commit; the project's `main` lock pins `server` there; no spare workspace
+remains; a clean end.
 
 ### J16 Retire a release line
 

@@ -9358,6 +9358,10 @@ fn every_commit_subject_an_end_check_searches_for_is_in_the_task_text() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/internals/journey-tasks.md"),
     )
     .unwrap();
+    assert!(
+        doc.contains("or begin with it followed by a space or a colon"),
+        "the task-list doc states how a prescribed subject is matched"
+    );
     let mut checked = 0;
     for name in journey_names() {
         let id = name.split('_').next().unwrap();
@@ -9390,4 +9394,15 @@ fn every_commit_subject_an_end_check_searches_for_is_in_the_task_text() {
         checked >= 4,
         "the walk found {checked} subjects; J01 and J08 alone have four"
     );
+}
+
+#[test]
+fn a_prescribed_subject_matches_its_line_with_trailing_text_but_not_a_longer_word() {
+    use common::scenario_runner::subject_matches;
+    assert!(subject_matches("b-lib", "b-lib"));
+    assert!(subject_matches("b-lib Co-Authored-By: Someone", "b-lib"));
+    assert!(subject_matches("b-lib: add the field", "b-lib"));
+    assert!(!subject_matches("b-library", "b-lib"));
+    assert!(!subject_matches("add b-lib", "b-lib"));
+    assert!(!subject_matches("", "b-lib"));
 }
