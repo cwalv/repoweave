@@ -9290,3 +9290,47 @@ fn check_a_journey_end_state() {
     let sandbox = Sandbox::attach(root.into());
     common::scenario_runner::check_in(&sandbox, name, end).assert_fully_decided_green();
 }
+
+/// A commit the agent makes after the start state is found by the mark-free
+/// end check through its subject, so the journey's task text must say the
+/// subject.
+#[test]
+fn every_commit_subject_an_end_check_searches_for_is_in_the_task_text() {
+    use common::scenario_runner::Action;
+    let doc = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/internals/journey-tasks.md"),
+    )
+    .unwrap();
+    let mut checked = 0;
+    for name in journey_names() {
+        let id = name.split('_').next().unwrap();
+        let heading = format!("### J{}", &id[1..]);
+        let section = doc
+            .split("\n### ")
+            .find(|section| format!("### {section}").starts_with(&heading))
+            .unwrap_or_else(|| panic!("no task text for {id}"));
+        let journey = journey_by_id(id).unwrap();
+        let made_by_the_agent: Vec<&str> = journey.path[journey.start..]
+            .iter()
+            .filter_map(|step| match &step.action {
+                Action::Commit { mark, .. } | Action::CommitFile { mark, .. } => Some(*mark),
+                _ => None,
+            })
+            .collect();
+        for step in &journey.end {
+            for mark in step.expect.claims.iter().flat_map(|claim| claim.marks()) {
+                if made_by_the_agent.contains(&mark) {
+                    checked += 1;
+                    assert!(
+                        section.contains(&format!("`{mark}`")),
+                        "{id}: the end check searches for the subject `{mark}`, which the task text does not give"
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        checked >= 4,
+        "the walk found {checked} subjects; J01 and J08 alone have four"
+    );
+}

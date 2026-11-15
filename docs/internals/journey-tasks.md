@@ -304,7 +304,8 @@ file the setting authors is committed with it; a clean end.
 
 **Start:** the shared world, machine A, nothing in progress.
 **Task:** Work on a new feature right in `~/work`, without a second workspace: commit
-one change in `server` and one in `protocol`, bring it into `main`, leave no trace of
+one change in `server` and one in `protocol` (the commits' messages are `pay-app` and
+`pay-lib`), bring it into `main`, leave no trace of
 the feature's branches on this machine, and publish.
 **Check:** hosting `main` of `server` and `protocol` hold the changes and the project's
 lock pins `server` at its commit; no branch of the feature remains in the project or

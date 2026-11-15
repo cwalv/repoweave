@@ -612,6 +612,25 @@ pub enum Claim {
     },
 }
 
+impl Claim {
+    /// The commit marks this claim looks for: a commit it names by the
+    /// subject it was made with.
+    pub fn marks(&self) -> Vec<&'static str> {
+        match self {
+            Claim::Contains { mark, .. }
+            | Claim::Lacks { mark, .. }
+            | Claim::RemoteContains { mark, .. }
+            | Claim::PinContains { mark, .. }
+            | Claim::PinLacks { mark, .. }
+            | Claim::PinAt { mark, .. }
+            | Claim::BackedUp { mark, .. }
+            | Claim::NoBackup { mark, .. } => vec![mark],
+            Claim::PinsReplayed { subject, .. } => vec![subject],
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// What is left at a marker's path after a tamper.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MarkerState {
