@@ -1037,3 +1037,120 @@ fn init_takes_no_adopt_flag() {
         .stderr(predicate::str::contains("unexpected argument '--adopt'"));
     assert!(!ws.join("projects/foo").exists());
 }
+
+// ============================================================================
+// `rwv clone <source> --init-manifest`: a repository that holds no rwv.toml
+// ============================================================================
+
+/// A bare repo holding a README and no `rwv.toml`.
+fn plain_repo(parent: &Path, name: &str) -> std::path::PathBuf {
+    let bare = make_repo_with_commit(parent, name);
+    let work = parent.join(format!("{name}-work"));
+    common::git_in(&work, &["rm", "-q", "rwv.toml"]);
+    common::git_in(&work, &["commit", "-qm", "drop the manifest"]);
+    common::git_in(&work, &["push", "-q", "origin", "main"]);
+    bare
+}
+
+/// The line the refusal prints between backticks that starts with `rwv clone`.
+fn printed_clone_line(stderr: &str) -> Vec<String> {
+    let line = stderr
+        .split('`')
+        .find(|piece| piece.starts_with("rwv clone ") && piece.ends_with("--init-manifest"))
+        .unwrap_or_else(|| panic!("no printed `rwv clone ... --init-manifest` in:\n{stderr}"));
+    line.split_whitespace().map(str::to_owned).collect()
+}
+
+fn clone_refused(ws: &Path, source: &str) -> String {
+    let out = rwv()
+        .args(["clone", source])
+        .current_dir(ws)
+        .output()
+        .unwrap();
+    common::cli::refused(&out, repoweave::refusal::RefusalKind::NotAProject)
+}
+
+#[test]
+fn clone_of_a_repo_with_no_manifest_refuses_leaves_nothing_and_its_printed_line_makes_it_a_project()
+{
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = plain_repo(tmp.path(), "plain");
+    let source = common::file_url(&bare);
+
+    let first = clone_refused(&ws, &source);
+    let again = clone_refused(&ws, &source);
+
+    assert_eq!(first, again, "a retry refuses the same way");
+    assert!(
+        !ws.join("projects/plain").exists(),
+        "nothing was left on disk"
+    );
+    assert!(!ws.join(".rwv-active").exists());
+    let line = printed_clone_line(&first);
+    assert_eq!(line, ["rwv", "clone", source.as_str(), "--init-manifest"]);
+
+    rwv().args(&line[1..]).current_dir(&ws).assert().success();
+
+    let project = ws.join("projects/plain");
+    assert_eq!(commit_count(&project), "3");
+    assert_eq!(
+        common::git_in(&project, &["diff", "--name-only", "HEAD~1", "HEAD"]),
+        ".gitattributes\nrwv.toml"
+    );
+    assert_eq!(
+        common::git_in(&project, &["show", "HEAD:.gitattributes"]),
+        "rwv.lock merge=rwv-lock"
+    );
+    assert_eq!(
+        common::git_in(
+            &project,
+            &["status", "--porcelain", "--untracked-files=all"]
+        ),
+        ""
+    );
+    assert_eq!(
+        std::fs::read_to_string(ws.join(".rwv-active"))
+            .unwrap()
+            .trim(),
+        "plain"
+    );
+}
+
+#[test]
+fn clone_of_an_empty_repo_refuses_and_its_printed_line_makes_the_first_commit() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_bare_repo(tmp.path(), "unborn");
+    let source = common::file_url(&bare);
+
+    let refused = clone_refused(&ws, &source);
+
+    assert!(!ws.join("projects/unborn").exists());
+    let line = printed_clone_line(&refused);
+    rwv().args(&line[1..]).current_dir(&ws).assert().success();
+    let project = ws.join("projects/unborn");
+    assert_eq!(commit_count(&project), "1");
+    assert_eq!(tree_at(&project, "HEAD"), [".gitattributes", "rwv.toml"]);
+}
+
+#[test]
+fn init_manifest_on_a_repo_that_has_a_manifest_is_inapplicable_and_leaves_nothing() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_empty_workspace(tmp.path());
+    let bare = make_repo_with_commit(tmp.path(), "proper");
+    let source = common::file_url(&bare);
+
+    let out = rwv()
+        .args(["clone", &source, "--init-manifest"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+
+    let stderr = common::cli::refused(&out, repoweave::refusal::RefusalKind::InapplicableFlag);
+    assert!(
+        stderr.contains(&format!("Run `rwv clone {source}`.")),
+        "{stderr}"
+    );
+    assert!(!ws.join("projects/proper").exists());
+}

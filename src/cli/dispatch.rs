@@ -919,6 +919,7 @@ pub fn run() -> anyhow::Result<()> {
         }
         Some(Commands::Clone {
             source,
+            init_manifest,
             allow_non_empty_dir,
             no_reference,
             jobs,
@@ -938,6 +939,7 @@ pub fn run() -> anyhow::Result<()> {
                 &selection,
                 jobs,
                 output,
+                init_manifest,
                 activate::ActivateOptions { no_materialize },
             )?;
         }

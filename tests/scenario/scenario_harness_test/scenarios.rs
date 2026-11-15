@@ -2587,7 +2587,7 @@ pub fn fork_remote_missing() -> Scenario {
                 .may_leave_unresolved(&[Repo::Lib])
                 .claim(Claim::OutputContains("local/remotes/lib: pin unreachable"))
                 .claim(Claim::OutputContains(
-                    "choices:\n  choose where it pushes and pulls",
+                    "choices:\n  add a remote for `<url>`, under a name no remote has",
                 )),
         ],
     }

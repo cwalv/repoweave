@@ -193,7 +193,7 @@ pub fn init(
 
 /// Refuse before anything is written when a commit made from `dir` would have
 /// no author to record.
-fn judge_commit_identity(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> anyhow::Result<()> {
+pub(crate) fn judge_commit_identity(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> anyhow::Result<()> {
     if vcs
         .has_commit_identity(dir)
         .context("failed to read the commit identity")?
@@ -206,6 +206,28 @@ fn judge_commit_identity(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> anyhow::Resul
          commit. Nothing was written. Configure one (`{}`), then run it again.",
         vcs.hint(crate::vcs::VcsAction::SetCommitIdentity)
     ))
+}
+
+/// Make the cloned repo at `project_dir`, which holds no `rwv.toml`, a project:
+/// write the skeleton `rwv.toml` and the lock driver's attribute line, and
+/// commit those and nothing else.
+pub(crate) fn make_cloned_repo_a_project(
+    vcs: &dyn crate::vcs::Vcs,
+    project_dir: &Path,
+    source: &str,
+) -> anyhow::Result<()> {
+    std::fs::write(project_dir.join(Manifest::FILE_NAME), Manifest::SKELETON)
+        .with_context(|| format!("failed to write {}", Manifest::FILE_NAME))?;
+    let mut written = BTreeSet::from([PathBuf::from(Manifest::FILE_NAME)]);
+    if crate::lock_driver::declare_in_working_copy(vcs, project_dir)? {
+        written.insert(PathBuf::from(vcs.lock_driver_declaration_file()));
+    }
+    commit_written(
+        vcs,
+        project_dir,
+        &written,
+        &format!("clone --init-manifest {source}"),
+    )
 }
 
 /// Commit `written` (relative to `project_dir`) and nothing else, as far as

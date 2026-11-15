@@ -106,6 +106,7 @@ A clone that left any member exits with status `3` ([Exit status](#exit-status))
 
 | Flag | Effect |
 |---|---|
+| `--init-manifest` | The repository holds no `rwv.toml` (an empty one included): write the skeleton `rwv.toml` and the lock merge driver's attribute line (`rwv.lock merge=rwv-lock`), commit those and nothing else as one commit (the first, for an empty repository), then clone as usual. A repository that already has an `rwv.toml` refuses (`inapplicable-flag`). Without the flag, a repository that has none refuses (`not-a-project`), leaving nothing on disk, and prints this exact line |
 | `--allow-non-empty-dir` | Clone into a non-empty directory that is not a workspace |
 | `--no-reference` | Skip cloning repositories with `role = "reference"`; they are not listed |
 | `-j N` | Parallel per-repo workers (default: `min(nproc, 8)`; `-j 1` for serial execution) |

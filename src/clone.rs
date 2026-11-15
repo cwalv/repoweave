@@ -103,6 +103,7 @@ pub fn run_clone(
     selection: &MemberSelection,
     jobs: usize,
     output: OutputMode,
+    init_manifest: bool,
     activation: ActivateOptions,
 ) -> anyhow::Result<()> {
     let project_vcs = project_vcs();
@@ -127,6 +128,9 @@ pub fn run_clone(
             crate::workspace::describe_existing(&project_dir)
         );
     }
+    if init_manifest {
+        crate::init::judge_commit_identity(project_vcs.as_ref(), workspace_root)?;
+    }
     if output.is_json() {
         eprintln!("rwv clone: cloning project '{name}'");
     } else {
@@ -143,6 +147,35 @@ pub fn run_clone(
                 project_dir.display()
             )
         })?;
+
+    let has_manifest = project_dir
+        .join(crate::manifest::Manifest::FILE_NAME)
+        .exists();
+    match (has_manifest, init_manifest) {
+        (true, false) => {}
+        (true, true) => {
+            std::fs::remove_dir_all(&project_dir)
+                .with_context(|| format!("failed to remove {}", project_dir.display()))?;
+            crate::refuse!(
+                RefusalKind::InapplicableFlag,
+                "`--init-manifest` writes the `rwv.toml` a repository lacks, and {source} has \
+                 one. Nothing was left on disk. Run `rwv clone {source}`."
+            );
+        }
+        (false, false) => {
+            std::fs::remove_dir_all(&project_dir)
+                .with_context(|| format!("failed to remove {}", project_dir.display()))?;
+            crate::refuse!(
+                RefusalKind::NotAProject,
+                "{source} holds no `rwv.toml`, so it is not a project (an empty repository \
+                 holds none). Nothing was left on disk. To make it one, run `rwv clone \
+                 {source} --init-manifest`."
+            );
+        }
+        (false, true) => {
+            crate::init::make_cloned_repo_a_project(project_vcs.as_ref(), &project_dir, source)?;
+        }
+    }
 
     crate::branch::record_trunk(project_vcs.as_ref(), &name, &project_dir).with_context(|| {
         format!(

@@ -852,14 +852,11 @@ fn the_choice_an_unreachable_pin_prints_adds_the_remote_that_holds_the_commit() 
     assert!(!after.contains("pin unreachable"), "{after}");
 }
 
-#[cfg(unix)]
 #[test]
 fn the_choice_a_withheld_project_push_prints_publishes_it_to_the_remote_chosen() {
-    use std::os::unix::fs::PermissionsExt;
     let weave = Weave::new();
     let hook = weave.ws.project_bare.join("hooks").join("pre-receive");
-    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    common::write_executable(&hook, "#!/bin/sh\nexit 1\n");
     let open = weave.scratch("open.git");
     init_bare(&open);
     common::git_in(

@@ -45,12 +45,17 @@ its pin.
 ## Invocation
 
 ```
-rwv clone <source> [--allow-non-empty-dir] [--no-reference]
+rwv clone <source> [--init-manifest] [--allow-non-empty-dir] [--no-reference]
           [-j <N>] [--json] [--no-materialize]
 ```
 
 - `<source>` — full clone URL (`file://` for a local remote) or
   `<registry>/<owner>/<repo>` shorthand.
+- `--init-manifest` — the repository holds no `rwv.toml` (an empty one
+  included): write the skeleton `rwv.toml` and the lock merge driver's
+  attribute line, commit those and nothing else as one commit (the first, for an
+  empty repository), then clone as usual. Refused (`inapplicable-flag`) for a
+  repository that has an `rwv.toml`.
 - `--allow-non-empty-dir` — clone into a non-empty directory that is not
   already a workspace (normally an error).
 - `--no-reference` — skip repos with `role: reference` (useful when mirrors
@@ -841,6 +846,9 @@ rwv clone github/owner/myproject --json | jq -r '.left[].path'
   project you meant, `rwv update --project X` brings up its members in place;
   otherwise run `rwv clone <source>` in an empty directory, which becomes a
   weave of its own.
+- *`<source>` holds no `rwv.toml`, so it is not a project* (`not-a-project`) —
+  the repository is not a project. Nothing was left on disk; the line it
+  prints, `rwv clone <source> --init-manifest`, makes it one.
 - *no repoweave workspace found and … is not empty* — the current directory
   is not a workspace; use `--allow-non-empty-dir` to clone here anyway.
 - *is a plain path, which names no remote* — spell a local remote as

@@ -132,6 +132,9 @@ pub enum Commands {
     Clone {
         /// Project to clone: a URL (`file://` for a local remote) or `<registry>/<owner>/<repo>` shorthand
         source: String,
+        /// The repository holds no `rwv.toml`: write the skeleton one and the lock merge driver's attribute line, and commit those as one commit (the first, for an empty repository), then clone as usual. Refused for a repository that has an `rwv.toml`
+        #[arg(long)]
+        init_manifest: bool,
         /// Clone into a non-empty directory that is not a workspace
         #[arg(long)]
         allow_non_empty_dir: bool,

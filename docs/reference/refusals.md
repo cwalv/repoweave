@@ -1080,6 +1080,20 @@ checkout.
 **Exits.** Move it aside and re-run the command the message names. Nothing
 was written.
 
+### `not-a-project`
+
+**Condition.** `rwv clone <source>` cloned a repository that holds no `rwv.toml`,
+or holds no commit at all.
+
+**Why.** A project is a repository that carries its `rwv.toml`. `clone` does not
+guess that a repository is meant to become one, so it refuses, removes the clone
+it made, and leaves nothing on disk.
+
+**Exits.** To make the repository a project, run the line the refusal prints,
+`rwv clone <source> --init-manifest`: it writes the skeleton `rwv.toml` and the
+lock merge driver's attribute line, commits those and nothing else (the
+repository's first commit when it was empty), then clones as usual.
+
 ### `occupied-bootstrap-dir`
 
 **Condition.** The bootstrap target is neither a workspace nor empty, and no

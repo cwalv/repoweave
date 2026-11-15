@@ -192,6 +192,8 @@ pub enum RefusalKind {
     UnspellableDirectoryName,
     /// The project directory name is taken.
     ProjectDirOccupied,
+    /// A repository named as a project holds no `rwv.toml`.
+    NotAProject,
     /// The name would nest a project inside a project.
     NestedProjectName,
     /// A project directory holds the pre-TOML manifest and nothing rwv reads.
