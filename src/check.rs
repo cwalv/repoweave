@@ -11479,13 +11479,16 @@ struct ReportLine {
 /// Whether `dir` is stopped in a VCS operation of a workspace that records
 /// an operation of its own: its HEAD and edits are that operation's until it
 /// ends.
-fn stopped_in_recorded_operation(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> bool {
-    vcs.mid_operation(dir).is_some()
-        && crate::workspace::WorkspaceContext::resolve_unbound(dir)
-            .ok()
-            .is_some_and(|ctx| {
-                matches!(crate::op_state::read_owner(ctx.active_path()), Ok(Some(_)))
-            })
+/// Whether the workspace the checkout at `dir` belongs to holds an
+/// operation's record or lease, readable or not: what the operation's abort
+/// restores of the checkout is left as it stands.
+fn held_by_an_operation(dir: &Path) -> bool {
+    crate::workspace::WorkspaceContext::resolve_unbound(dir)
+        .ok()
+        .is_some_and(|ctx| {
+            crate::op_state::OwnerRecord::path_in(ctx.active_path()).exists()
+                || crate::op_state::LeaseRecord::path_in(ctx.active_path()).exists()
+        })
 }
 
 fn collect_doctor_violations(
@@ -11735,9 +11738,7 @@ fn collect_doctor_violations(
             continue;
         }
 
-        if crate::git::repo_is_dirty(repo_abs) == Some(false)
-            || stopped_in_recorded_operation(vcs, repo_abs)
-        {
+        if crate::git::repo_is_dirty(repo_abs) == Some(false) || held_by_an_operation(repo_abs) {
             continue;
         }
         let project_repo = project_repos.contains(repo_abs);
