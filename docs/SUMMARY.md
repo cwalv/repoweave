@@ -13,6 +13,7 @@
 - [Run a command across repos](./how-to/run-a-command-across-repos.md)
 - [Create a feature workweave](./how-to/create-feature-workweave.md)
 - [Bring workweave work home](./how-to/bring-workweave-work-home.md)
+- [Maintain a release line](./how-to/maintain-a-release-line.md)
 - [Recover from a sync conflict](./how-to/recover-from-sync-conflict.md)
 - [Resume or abort a mid-op sync](./how-to/resume-or-abort-mid-op-sync.md)
 - [Push a cross-repo feature](./how-to/push-cross-repo-feature.md)

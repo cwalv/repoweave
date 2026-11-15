@@ -4,7 +4,7 @@
 
 If your project spans more than one repo — or even a single `owned` member repo paired with a `projects/<name>/` coordination envelope, read-only `reference` repos for study, and isolated parallel agent workweaves — you've probably felt at least one of these: a setup README that drifts away from what people actually clone; cross-cutting scripts, manifests, and decision records with no obvious home; a publish-and-reinstall cycle every time a shared library changes; no way to say *exactly* this set of revisions was running in production on a given day; two coding agents colliding in the same checkout or explaining the repository topology every new session.
 
-repoweave is a coordination layer that addresses those without merging the repos. A committable manifest lists which repos belong to the project — whether ten polyrepo services or one `owned` member repo alongside `reference` dependencies. A single lock pins every revision for reproducibility. One command (`rwv clone <url>`) clones the project and every repo it lists. Workweaves give you isolated parallel cross-repo work — or an agent sandbox with transactional landing (`rwv land --retire`) and one-command rollback (`rwv abort`) — without disturbing the primary. The repos themselves stay independent.
+repoweave is a coordination layer that addresses those without merging the repos. A committable manifest lists which repos belong to the project — whether ten polyrepo services or one `owned` member repo alongside `reference` dependencies. A single lock pins every revision for reproducibility. One command (`rwv clone <url>`) clones the project and every repo it lists. Every change is made in a **workweave** — an isolated copy of the whole workspace on its own branch — and brought home with `rwv land --retire`, which composes the work onto its target, records every repo's new revision in one project commit, and deletes the workweave; a landing that stops on a conflict is resumed with `--continue` or taken back whole with `rwv abort`. The repos themselves stay independent.
 
 **Start where you are:** [Shared workspaces for polyrepo teams](docs/explanation/lenses/workspace.md) · [Monorepo speed without migration](docs/explanation/lenses/monorepo.md) · [Parallel sandboxes for agents](docs/explanation/lenses/agent.md)
 
@@ -15,9 +15,11 @@ A monorepo eliminates most of the coordination pain — at the cost of vendoring
 - **A committable manifest and lock.** `projects/<name>/rwv.toml` lists the repos; `rwv.lock` pins every revision. `sha256sum rwv.lock` is the multi-repo equivalent of `git rev-parse HEAD`.
 - **One command reproduces the workspace.** `rwv clone <url>` clones the project and every repo it lists at its pinned commit, surfaces ecosystem workspace files at the weave root where they apply, and runs install commands. For toolchain pins, env activation, or full OS-level reproduction, drop a `.mise.toml` / `.envrc` / `devcontainer.json` into the project repo (they're cross-cutting artifacts) — `rwv clone` carries them with everything else. See [adjacent-tools](docs/adjacent-tools.md).
 - **A dedicated `projects/<name>/` envelope for intent and cross-cutting artifacts.** Keeping `rwv.toml`, `rwv.lock`, deliberative design records, issue trackers, `CLAUDE.md`, operational scripts, k8s manifests, devcontainer configs, `.mise.toml` toolchain pins, and Nix flakes in `projects/<name>/` gives them versioned correspondence with your code without polluting any product repository's commit history or public landing page — and they come along on every `rwv clone`.
-- **Isolated parallel work via workweaves.** `git worktree` extended across N repos, with per-workweave `node_modules` / `.venv` / `target` and automatic copy-on-write file sharing where the filesystem supports reflinks. Use for feature branches, PR review, or agent sandboxes — the primary weave stays undisturbed.
+- **Isolated parallel work via workweaves.** `git worktree` extended across N repos, with per-workweave `node_modules` / `.venv` / `target` and automatic copy-on-write file sharing where the filesystem supports reflinks. Use for feature branches, PR review, hotfixes on a release line, or agent sandboxes — the primary weave stays undisturbed.
+- **Landing as one verb.** `rwv land` composes the workweave onto the branch its record lands into as that branch's `history` setting says (`linear`, `merge` or `ff-only`), records every member's tip in one project commit, and fast-forwards the target. `rwv sync` takes the target's newer work into a workweave first when you want to test against it. `rwv pull` takes in a teammate's published work and aligns every repo to the pins it holds; `rwv push` publishes members first and the project last.
+- **Branches and release lines without special support.** A weave branch is a **feature** (work that lands into a target) or **declared** (members follow the branches its `rwv.toml` names). A release line is a declared branch; hotfixes are workweaves that land into it. See [maintain a release line](docs/how-to/maintain-a-release-line.md).
 - **A bounded surface for automation.** `rwv prime` advertises the workspace; `rwv explain <verb>` returns a markdown bundle with the verb's JSON Schema embedded; `rwv setup claude` wires `SessionStart`/`PreCompact` context hooks and `WorktreeCreate`/`WorktreeRemove` lifecycle hooks so `claude --worktree` provisions a full multi-repo workweave; roles surface repo change-resistance as machine-readable metadata (`reference` repos are physically read-only — their tracked files carry no write bits; `dependency` repos are writable but conventionally off-limits and excluded from `rwv push` by default). Together they give an agent harness everything it needs to drive the workspace without scraping help text.
-- **Built-in failure recovery and drift repair.** Every `rwv sync` and `rwv land` records savepoint refs under `refs/rwv/pre-op/<id>` so `rwv abort` can restore every touched repo to its exact pre-operation state; `rwv doctor` detects and repairs workspace drift (`--fix`); destructive overrides require explicit, narrowly scoped flags that name what they give up (`--reset-to-target <repo>`, `rwv abort --leave-target`).
+- **Built-in failure recovery and drift repair.** Every `rwv sync`, `rwv land` and merging `rwv pull` takes savepoints first, so a stop on a conflict ends in `--continue` or in `rwv abort`, which restores every touched repo to its exact pre-operation state and keeps whatever it discards as a backup; `rwv doctor` detects workspace drift and `--fix` repairs what a verb can; destructive overrides are narrowly scoped flags that name what they give up (`--discard-unlanded`, `--reset-to-upstream`).
 - **Near-zero exit cost.** Member repos stay ordinary git clones at `<registry>/<owner>/<repo>/` with untouched history, while `rwv.lock` and ecosystem workspace files live in `projects/<name>/` and surface at the weave root via symlinks. Delete each workweave with `rwv workweave delete` first, which removes its worktrees from the clones; then deleting `projects/`, `.rwv-active`, and the root symlinks leaves plain standalone git clones behind — you can walk away from `rwv` at any time without migrating your repositories back out. Two traces stay in the clones: a `reference` member's tracked files have no write bits until you restore them (`chmod -R u+w <member>`, or `attrib -R <member>\* /S` on Windows), and the refs under `refs/rwv/` that keep recovery points remain until you drop them: backups (`rwv backup drop`), and any savepoint an operation stopped mid-way still holds until `rwv abort` or `--continue` ends it.
 
 Where your repos share a language (Rust + Rust, TS + TS, Go + Go, ...), the generated workspace files mean cross-repo imports resolve locally — a change in a shared library is immediately visible to its consumer with no publish step. Internal-only repos (typical in proprietary projects) can drop semver maintenance entirely; for repos that publish externally, the dance amortizes to external-release cadence rather than firing on every dev iteration. See the [monorepo lens](docs/explanation/lenses/monorepo.md) for the full cadence story.
@@ -72,42 +74,45 @@ rm ~/.local/bin/rwv ~/.local/bin/rwv-each
 
 ```bash
 mkdir my-workspace && cd my-workspace
-rwv clone github/chatly/web-app   # clone project + all its repos at their pins, activate, install
+rwv clone github/chatly/web-app
 ```
 
-That single command clones the project repo, reads its `rwv.toml` manifest, clones every listed repo to its canonical path (`github/chatly/server/`, etc.) at the commit `rwv.lock` pins, activates the project (surfacing ecosystem workspace files like `package.json`, `go.work`, `Cargo.toml` at the weave root via symlinks), and runs install hooks. You are ready to work.
+That single command clones the project repo, reads its `rwv.toml` manifest, clones every listed repo to its canonical path (`github/chatly/server/`, etc.) at the commit `rwv.lock` pins, activates the project (surfacing ecosystem workspace files like `package.json`, `go.work`, `Cargo.toml` at the weave root via symlinks), and runs install hooks. `rwv status` shows each repo against its pin.
+
+**Making a change — in a workweave:**
 
 ```bash
-# edit across repos freely — cross-package imports resolve locally
-cd github/chatly/server
-# ... make changes and commit ...
-npm test --workspaces             # from weave root — tests span all repos
-
-rwv lock --commit -m "lock: update after payment feature"   # record repo SHAs over their pins in projects/web-app/rwv.lock and commit
+rwv workweave create payments
+cd ../.workweaves/web-app--payments
+git -C github/chatly/server commit --allow-empty -m "server: payments"
+rwv land --retire
 ```
+
+The workweave sits beside the weave root at `<parent>/.workweaves/<project>--<name>/`, on a feature branch that lands into the branch the weave had checked out. `rwv land --retire` composes its commits onto that target, records every repo's new revision in one project commit, fast-forwards the target, and deletes the workweave. Your shell is left in a directory that no longer exists, so `cd` back to the weave root.
+
+**Taking in the team's work and publishing yours:**
+
+```bash
+rwv pull
+rwv push
+```
+
+`rwv pull` fetches, fast-forwards the project branch to its upstream, and aligns every member to the pins the pulled lock holds. `rwv push` publishes the member repos first, then the branch's record, then the project repo, so no teammate pulls a lock that names an unpublished commit. Until then `rwv pull` and `rwv status` report a pin the remote does not hold as `pin off remote`.
 
 **Starting a new project from scratch (Day 0)** — see [create a project](docs/how-to/create-a-project.md) for the full walkthrough:
 
 ```bash
 mkdir my-workspace && cd my-workspace
-rwv init web-app                                                             # commits rwv.toml, .gitattributes and the workspace file
+rwv init tooling
+rwv member set-url projects/tooling https://github.com/chatly/tooling.git
 rwv member add https://github.com/chatly/server.git
-rwv member add https://github.com/chatly/shared-types.git --role dependency   # commits the entry with the member's first pin
-git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
+rwv member add https://github.com/chatly/shared-types.git --role dependency
 rwv push
 ```
 
-**Working in an isolated workweave (parallel features, PR review, or agent sandboxes):**
+`rwv init` commits `rwv.toml`; each `rwv member add` clones the repo, commits the entry with the member's first pin, and re-runs the ecosystem integrations.
 
-```bash
-rwv workweave create payments    # creates isolated working copy with git worktrees
-cd ../.workweaves/web-app--payments
-# independent branches, node_modules, .venv — primary weave is undisturbed
-# ... commit changes across member repos ...
-rwv land --retire                     # rebase onto parent, auto-relock, fast-forward parent, and delete workweave
-```
-
-(Workweaves live at `<parent>/.workweaves/<project>--<name>/`, a sibling of the weave root by default — so `../.workweaves/...` from the weave root.)
+[The tutorial](docs/tutorial.md) walks this through end to end, including a landing that stops, with disposable local repositories.
 
 ### Commands
 
@@ -130,7 +135,7 @@ rwv land --retire                     # rebase onto parent, auto-relock, fast-fo
 | `rwv status` | Show per-repo state: branch, tip, lock entry, relation, mid-op state. `--json` for machine-readable output |
 | `rwv log [<range>] [--against <W>]` | Run the VCS's log in every repo for a range in its own syntax. `--against <W>` lists the commits HEAD holds beyond weave branch `<W>`'s pins, per repo, with `--diff` for the diff; `--json` for machine-readable output |
 | `rwv sync` | Take the target's new work into a feature: each member from the branch it lands on, then the project branch, then the relock, each repo integrated as the target's `history` setting says (`--history linear\|merge\|ff-only` for one run where it records none); `--from <branch>` merges another weave branch in; `--reset-to-target <repo>` moves a repo to what it lands on, keeping a backup. Work built on another lineage is refused before anything moves |
-| `rwv land` | Land the feature into its target (3-step: compose CWD onto the target by the target's `history` setting → auto-relock → FF-advance target). `--history <h>` for one run where the target records none; `--retire` deletes the workweave on success. Bare `rwv land` auto-targets the parent recorded in `.rwv-workweave` |
+| `rwv land` | Land the feature into the branch its record lands into: compose this workspace onto it by the target's `history` setting, record every member's tip in one project commit, fast-forward the target. `--target <T>` lands into another branch for one run, `--history <h>` supplies a setting where the target records none, `--retire` deletes the workweave on success, `--continue` resumes a stopped landing |
 | `rwv abort` | Roll an in-flight `sync` or `land` back to its savepoints in every workspace it touched; run it from any of them |
 | `rwv branch <set-mode\|list>` | Record how a weave branch is used, `feature` onto a `--target` branch or `declared`, or list the weave branches with their records. `init`, `clone` and `workweave create` record the branch they make or leave checked out; `update`, `pull`, `lock`, `sync`, `land` and `push` refuse a branch with no record |
 | `rwv backup <list\|drop\|prune>` | List the backups rwv keeps before a step that would leave a commit or an edit unpreserved (`workweave delete --discard-*`, and `abort`, which keeps what it resets in one slot per branch and per checkout), drop them by name, or prune those a branch already reaches. A drop that would leave a commit some project's lock pins unreachable is refused |
@@ -194,9 +199,9 @@ cd ../.workweaves/web-app--fix-auth
 rwv land --retire
 ```
 
-`rwv land --retire` runs a three-step landing: composes the workweave's commits onto the parent's current tip as the parent's `history` setting says (`rwv branch set-history linear` rebases, `merge` makes a merge commit), auto-relocks the workweave, then fast-forwards the parent to the new tip and deletes the workweave on success. Every landing is abortable: savepoints at `refs/rwv/pre-op/<id>` let `rwv abort` roll both workspaces back to their exact pre-op state.
+`rwv land --retire` composes the workweave's commits onto the branch its record lands into as that branch's `history` setting says (`rwv branch set-history linear` rebases, `merge` makes a merge commit), records the workweave's member tips in the landing's one project commit, then fast-forwards the target and deletes the workweave on success. Every landing is abortable: `rwv abort` rolls both workspaces back to their exact pre-operation state.
 
-Multiple agents can work in parallel — one workweave each. The first landing is a clean fast-forward; subsequent ones are composed onto the primary's new state by its `history` setting during `rwv land --retire` (or explicitly via `rwv sync` in a feature workweave if you want to run tests against the combined state before landing).
+Multiple agents can work in parallel — one workweave each. The first landing is a clean fast-forward; later ones are composed onto the target's new state by its `history` setting during `rwv land --retire` (or explicitly via `rwv sync` in a feature workweave if you want to run tests against the combined state before landing).
 
 - [How to hand a task to an agent](docs/how-to/hand-task-to-agent.md) — discover the workspace, drive verbs via `rwv explain`, selector grammar
 - [Bring workweave work home](docs/how-to/bring-workweave-work-home.md) — land semantics, `--retire`, and conflict resolution
@@ -207,8 +212,8 @@ Multiple agents can work in parallel — one workweave each. The first landing i
 
 Full docs at **[cwalv.github.io/repoweave](https://cwalv.github.io/repoweave/)**, or browse the source:
 
-- **New here?** [tutorial.md](docs/tutorial.md) — clone a project, make changes, lock, workweave
-- **Task-shaped recipes:** [how-to/index.md](docs/how-to/index.md) — add a repo, create a workweave, push a cross-repo feature, hand off to an agent, release a package
+- **New here?** [tutorial.md](docs/tutorial.md) — clone a project, change it in a workweave, land, publish, recover from a stop
+- **Task-shaped recipes:** [how-to/index.md](docs/how-to/index.md) — add a repo, create a workweave, push a cross-repo feature, maintain a release line, hand off to an agent, release a package
 - **Command & format lookup:** [reference/cli.md](docs/reference/cli.md) — all verbs, flags, file formats, roles, glossary, and integrations
 - **The "why":** [explanation/lenses/workspace.md](docs/explanation/lenses/workspace.md) — workspace, monorepo, and agent lenses; plus [explanation/index.md](docs/explanation/index.md) for joints and cross-cutting concepts
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md) — how to report bugs, request integrations, and ask design questions

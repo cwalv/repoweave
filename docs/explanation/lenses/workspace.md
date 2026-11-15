@@ -94,7 +94,11 @@ Releases and milestones are represented at the project layer by branches and tag
 
 `sha256sum rwv.lock` is the project fingerprint. Two machines with the same checksum pin identical source for every repo in the project, though either may have committed past its pins (`rwv status` shows such a repo as `ahead`). This is the multi-repo analog of `git rev-parse HEAD` on a monorepo.
 
-The lock file is *derived state*: produced by `rwv lock`, `rwv update --remote`, or `rwv sync`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which revision), and regenerated whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why the lock is always derived.
+The lock file is *derived state*: recorded by `rwv lock`, `rwv land`, `rwv sync`, `rwv update --remote` and `rwv member pin`, not edited by hand. It is committed to the project repo so it has a history (you can trace exactly when which repo was at which revision), and regenerated whenever the cross-repo state changes. See [lock-as-derived](../joints/lock-as-derived.md) for why the lock is always derived.
+
+## Branches: features and declared lines
+
+The project repo has branches, and so does every member. A project branch is recorded in one of two modes. A **feature** is work that lands into a target branch: its `owned` and `fork` members sit on branches named after it, and `rwv land` brings it home. A **declared** branch is one whose members follow the branches its own `rwv.toml` entries name; the branch a fresh `rwv clone` checks out starts as `declared`, and a release line is one. A branch carries its own `rwv.toml` and its own `rwv.lock`, so `rwv switch <branch>` puts the project repo and every member on the revisions that branch pins, and `rwv branch list` shows each branch with its mode. A branch that has no record is refused by the verbs that align, lock, land or publish, until `rwv branch set-mode` records one: rwv never guesses how a branch is used. See [maintain a release line](../../how-to/maintain-a-release-line.md).
 
 ## Provenance: the registry/owner/repo path
 

@@ -32,6 +32,7 @@ mod doctor_schema_conformance_test;
 mod e2e_tutorial_test;
 mod explain_sub_kind_test;
 mod explain_test;
+mod front_door_recipes_test;
 mod help_snapshot_test;
 mod install_routes_doc_claims_test;
 mod override_flag_migration_test;

@@ -64,7 +64,7 @@ In a monorepo, "the tip" is a single SHA. In a polyrepo, "the tip" is a moving t
 
 repoweave's answer is the project repo and its lock. `rwv.lock` captures the git revision of every member repo at an exact 40-character SHA, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`) live alongside it in `projects/<name>/` to pin external package dependencies. `sha256sum rwv.lock` is the cross-repo git fingerprint: two operators with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv clone` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
 
-Branches and tags in the project repo each carry their own committed `rwv.lock`. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; a release tag's lock names the set that shipped. Stable cross-repo tips are defined at the project layer, not invented per-repo (see [lock-as-derived](../joints/lock-as-derived.md)). A fix-forward CI model becomes natural — CI advances the lock on a vetted branch as integration tests pass, downstream consumers fast-forward to the new lock.
+Branches and tags in the project repo each carry their own committed `rwv.lock`. A `main` branch's lock points at one set of cross-repo tips; a `stable` branch's lock points at a vetted set; a release tag's lock names the set that shipped. Stable cross-repo tips are defined at the project layer, not invented per-repo (see [lock-as-derived](../joints/lock-as-derived.md)). A **release line** is the same idea made durable: a project branch recorded `declared`, whose entries name a branch of their own for the members that must not follow `main`. Hotfixes are workweaves that land into it, and fixes port between lines with `rwv cherry-pick` ([maintain a release line](../../how-to/maintain-a-release-line.md)). A fix-forward CI model becomes natural — CI advances the lock on a vetted branch as integration tests pass, downstream consumers fast-forward to the new lock.
 
 ## Workweaves: isolation without silos
 
@@ -85,12 +85,12 @@ Workweaves can be nested — `rwv workweave create` run from inside a workweave 
 
 In a monorepo, "merging your feature back to trunk" is one operation. In a polyrepo, it's N operations across N repositories — each with its own conflict potential.
 
-repoweave's sync surface is a direction-explicit verb pair:
+repoweave's surface is a direction-explicit verb pair:
 
-- **`rwv sync`** — a feature takes in the new work of the branch it lands into: each member from the branch it will land on, then the project branch, then the relock, as the target's `history` setting says: under `linear`, the feature's own commits land on top; under `merge`, the target's work is merged in. Only CWD changes. Use this to pull work in (e.g., take primary's new commits into a feature workweave before landing); work built on a line the target has left is refused before anything moves.
-- **`rwv land`** — CWD's committed state lands in the target workspace. CWD first takes the target's state in as the target's `history` setting says (a rebase under `linear`, a merge commit under `merge`); the landing's one project commit records CWD's member tips, then the target fast-forwards to CWD's new tip. Both workspaces change; use this to push work out (e.g., land a feature workweave's commits into primary).
+- **`rwv sync`** — a feature takes in the new work of the branch it lands into: each member from the branch it will land on, then the project branch, then the relock, as the target's `history` setting says (under `linear` the feature's own commits end up on top; under `merge` the target's work is merged in). Only the workspace you run it in changes. Use it to build and test against what landed since you started; work built on a line the target has left is refused before anything moves.
+- **`rwv land`** — the feature lands into its target. The workspace first composes its commits onto the target as the `history` setting says (a rebase under `linear`, a merge commit under `merge`, a refusal under `ff-only` where a rebase is needed); one project commit records every member's tip; then the target fast-forwards. Both workspaces change.
 
-`rwv land` runs a phase machine: first, **Phase 1'** aligns the project repo (replaying CWD's unique project commits onto the named workspace's project tip with the target's `rwv.lock` held through the replay, and, once the members are rebased, each replayed commit pinning what their rebases made of the commits it pinned, and reconciling member checkouts if `rwv.toml` changed); second, **Phase 2** advances the member repos to the named workspace's lock targets as the target's `history` setting says (fast-forward, rebase or merge); third, **Phase 3** regenerates `rwv.lock` from the post-Phase-2 manifest tips; a final step fast-forwards the target workspace to CWD's converged tips.
+Every refusal is judged before anything moves, and a landing that stops on a conflict keeps its record: `rwv land --continue` resumes it, `rwv abort` takes it back whole. `rwv pull` and `rwv push` move the same work between machines: pull takes in what the team published, push publishes members first and the project repo last.
 
 `rwv.lock` is never merged as text. rwv's own merges and replays recompute it fresh every time, and a `git merge` you run by hand merges it through the lock merge driver `rwv init` and `rwv clone` set up, pin by pin, leaving a conflict rather than picking a side when pins diverge. A project repo not set up that way is refused by every verb that writes it, naming `rwv doctor --fix`. See [sync semantics](../joints/sync-semantics.md) and [lock-as-derived](../joints/lock-as-derived.md).
 
@@ -109,7 +109,7 @@ repoweave is a coordination layer, not a VCS wrapper. Two things follow from tha
 
 **Global visibility, local control.** `rwv status`, `rwv doctor` give a bird's-eye view across N repos — branches, tips, lock relations, drift detection. You don't have to round-robin through repositories to find out where things stand.
 
-But ordinary git commands stay first-class. `git commit`, `git branch`, `git push` work in each member repo exactly as they always do. repoweave doesn't try to wrap them with `rwv commit` or `rwv branch` — those wrappers would be all friction and no signal.
+Ordinary VCS commands stay first-class inside each member repo: `git commit`, `git log`, `git diff` work exactly as they always do, and rwv wraps none of them. What rwv adds is the project layer: `rwv branch` and `rwv switch` move the project repo and every member together, because a branch of the weave is not a branch of one repo.
 
 For *coordinated* cross-repo operations where the value is in the coordination — role-aware push policy, lock-precondition checks, manifest-aware ordering — `rwv push` earns its keep. For ad-hoc bulk operations where the coordination is just "do this in each repo," `rwv each` — a plugin, not a core verb — is the right shape. See [verb-vs-composition](../joints/verb-vs-composition.md) for the design principle and [run a command across repos](../../how-to/run-a-command-across-repos.md) for canonical recipes.
 
@@ -119,9 +119,9 @@ The gita integration is an opt-in alternative for users who prefer a dedicated m
 
 `rwv lock` snapshots every member repo's git `HEAD` into `projects/<name>/rwv.lock`, while ecosystem lockfiles (`Cargo.lock`, `package-lock.json`, `uv.lock`, etc.) are maintained alongside it in `projects/<name>/` by integration install hooks. Committed together in the project repo, they pin both layers — which commit of each member repo and which versions of external dependencies — so reproducing the project repo's commit reproduces the whole world.
 
-This is monorepo atomic-ness without monorepo storage cost. The commit-and-lock dance is two phases (commit each repo, then `rwv lock --commit`), not atomic the way a single monorepo commit is, but the result is the same: a coherent point-in-time snapshot of the entire system.
+This is monorepo atomic-ness without monorepo storage cost. Committing each repo and recording the lock are two phases, not atomic the way a single monorepo commit is, but a landing does both: `rwv land` records every member's tip in the project commit it makes, and the result is the same coherent point-in-time snapshot of the entire system.
 
-For projects where this matters more than the two-phase commit is worth, scripting it as a single command is straightforward — `rwv lock` is idempotent and `rwv lock --commit` makes the lock commit a single step.
+Outside a landing, `rwv lock` is idempotent and `rwv lock --commit` makes recording the lock a single step.
 
 ## The exporter tax: sharing a slice
 
@@ -142,7 +142,7 @@ A useful heuristic for staying inside the monorepo-ergonomics envelope:
 Examples of things this rules out by analogy:
 
 - **You can't cherry-pick between sibling branches of a monorepo subtree to share work** without going through trunk. Likewise, don't cross-pick between sibling workweaves. Coordinate via the shared parent (sync up, then sync down).
-- **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch with a matched branch across every member repo, made repo by repo with git; conceptually it's the same operation.
+- **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch: `rwv branch create <name>` makes the project branch and a matched branch in every `owned` and `fork` member in one step.
 
 The heuristic is a guideline, not a hard rule. Two patterns worth being explicit about:
 
@@ -162,7 +162,7 @@ These are *guidelines*, not enforced constraints. The tool warns where it can (s
 
 ## The shape, in one paragraph
 
-Workspace wiring eliminates the development-time version dance: edit a library, test its consumer, no bump or publish needed. `rwv.lock` captures the cross-repo state as a single fingerprint. Workweaves give you isolated parallel work without losing project context — your feature, the PR you're reviewing, the agent's sandbox, all coexist with the primary weave undisturbed. `rwv sync` and `rwv land` move work between workspaces with the lock as the authoritative target — absorbing incoming state in one direction, landing outgoing commits in the other. Underneath, repoweave is a coordination layer: it manages multi-repo state but stays out of your VCS workflow, so `git` keeps its first-class role.
+Workspace wiring eliminates the development-time version dance: edit a library, test its consumer, no bump or publish needed. `rwv.lock` captures the cross-repo state as a single fingerprint. Workweaves give you isolated parallel work without losing project context — your feature, the PR you're reviewing, the agent's sandbox, all coexist with the primary weave undisturbed. `rwv sync` and `rwv land` move work between workspaces — absorbing incoming state in one direction, landing outgoing commits in the other — and `rwv abort` takes a stopped one back. Underneath, repoweave is a coordination layer: it manages multi-repo state but stays out of per-repo history, so your VCS keeps its first-class role.
 
 ## Related
 

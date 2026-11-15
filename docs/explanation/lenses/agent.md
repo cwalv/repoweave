@@ -95,6 +95,10 @@ Three properties make this pattern work:
 2. **Project context preserved.** Unlike "clone a repo into a tempdir," the agent sees the *full* workspace — every repo at the project's lock, with `package.json` workspaces / `go.work` / `Cargo.toml [workspace]` wired up. Cross-repo imports work, integration tests work, the agent's refactors can span repos.
 3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor log --against main --diff`) before running `rwv land --retire` from inside the workweave. `land` lands the workweave's feature into its target — composed in the workweave, then fast-forwarded into the primary. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the target fast-forwards to the workweave's tip.
 
+### When an agent's landing stops
+
+A landing that meets a conflict stops with exit status `1`, keeps the workweave, and records the operation. `rwv status` names it and the two commands that end it, and with `--json` each repo the operation stopped in carries `mid_op`. The agent resolves the named file, marks it resolved, and runs `rwv land --continue`; or it runs `rwv abort`, which restores every repo either workspace touched and keeps whatever it discards as a backup, so nothing the agent did is lost. `rwv doctor` reports an operation left half-done as `stale-op-state` and repairs nothing about it: another process may be resolving it.
+
 ### Dedicated long-lived agent workweaves
 
 The pattern generalizes to a *semi-persistent* agent workweave: a workspace that lives across many agent sessions, acting as the gravity well where agent work consolidates before the human decides to bring it all the way home to primary.

@@ -1,6 +1,6 @@
 # How-to guides
 
-Task-shaped recipes. Each page leads with the command; the conceptual model is in the [explanation](../explanation/index.md) section.
+Task-shaped recipes. Each page leads with the command; the conceptual model is in the [explanation](../explanation/index.md) section. A first end-to-end session is the [tutorial](../tutorial.md): clone, pull, work in a workweave, land, push, and recover from a stopped landing.
 
 ## Day-to-day
 
@@ -13,7 +13,8 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 ## Cross-repo features
 
 - [Create a feature workweave](./create-feature-workweave.md) — isolated cross-repo workspace and ephemeral branches
-- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv land --retire` and manual landing ceremony
+- [Bring workweave work home](./bring-workweave-work-home.md) — `rwv land --retire`, the target's `history` setting, and landing in two steps
+- [Maintain a release line](./maintain-a-release-line.md) — cut a declared line, land hotfixes into it, port fixes between lines, retire it
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving conflicts and resuming with `--continue`
 - [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspecting the op record, `--continue`, and `rwv abort` savepoint rollback
 - [Push a cross-repo feature](./push-cross-repo-feature.md) — `rwv push`, role policy, and lock-precondition recovery
@@ -26,7 +27,7 @@ Task-shaped recipes. Each page leads with the command; the conceptual model is i
 
 ## Recovery
 
-- [Reconcile repos with the lock](./reconcile-repos.md) — `rwv status`, `rwv doctor --locked`, and `rwv update` repair
+- [Reconcile repos with the lock](./reconcile-repos.md) — `rwv status`, `rwv doctor --locked`, pins, and `rwv update` repair
 - [Regenerate ecosystem workspace files](./regenerate-ecosystem-files.md) — `rwv doctor --fix` to re-author, `rwv materialize` to settle drift and run hooks
 - [Upgrade to a new rwv on an existing weave](./upgrade-rwv.md) — clearing marker, manifest, and lock refusals in order when upgrading `rwv`, and the pre-flat branch refusal
 

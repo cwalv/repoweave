@@ -1,154 +1,183 @@
 # Tutorial
 
-A first walkthrough of repoweave: join a project, make a change across repos, lock the state. Single path, no choice points. For task-shaped recipes (workweaves, sync, release, agent handoff), see the [how-to guides](./how-to/index.md).
+A first session with repoweave: join a project, take in a teammate's work, change two repos in a workweave, land the change, publish it, and recover when a landing stops. One path, no choice points. For task-shaped recipes, see the [how-to guides](./how-to/index.md).
 
-> **Note:** `chatly/web-app` is a fictional organization used across these docs. To run every command on your machine with disposable local repositories, expand the setup block below first.
+> **Note:** `chatly/web-app` is a fictional organization used across these docs. To run every command on your machine against disposable local repositories, run the setup block below first. It redirects `HOME`, so your own git configuration stays untouched, and it points `https://github.com/chatly/` at local bare repositories.
 
 <details>
-<summary>Run this tutorial locally with disposable bare repos</summary>
+<summary>Run this tutorial locally with disposable repositories</summary>
 
 ```bash
-# Create bare "remote" repositories in /tmp/chatly-remotes
-mkdir -p /tmp/chatly-remotes && cd /tmp/chatly-remotes
-for repo in protocol server web; do
-  git init --bare -b main "${repo}.git"
-done
-git init --bare -b main web-app.git
-
-# Seed the member repos and the web-app project manifest in a temporary bootstrap weave
-mkdir -p /tmp/chatly-seed && cd /tmp/chatly-seed
-rwv init web-app
-git -C projects/web-app remote add origin /tmp/chatly-remotes/web-app.git
-for repo in protocol server web; do
-  git clone "/tmp/chatly-remotes/${repo}.git" "/tmp/chatly-remotes/work-${repo}"
-  git -C "/tmp/chatly-remotes/work-${repo}" commit --allow-empty -m "initial ${repo}"
-  git -C "/tmp/chatly-remotes/work-${repo}" push -u origin main
-  rwv member add "file:///tmp/chatly-remotes/${repo}.git"
-done
-git -C projects/web-app push -u origin main
-rm -rf /tmp/chatly-seed
+export SANDBOX=$(mktemp -d) && export HOME=$SANDBOX/home && mkdir -p $HOME
+git config --global user.name Tutorial && git config --global user.email tutorial@example.com
+git config --global init.defaultBranch main && git config --global protocol.file.allow always
+git config --global url."file://$SANDBOX/remotes/chatly/".insteadOf https://github.com/chatly/
+for repo in protocol server web web-app; do git init -q --bare $SANDBOX/remotes/chatly/$repo.git; done
+for repo in protocol server web; do git clone -q https://github.com/chatly/$repo.git $SANDBOX/work-$repo 2>/dev/null; git -C $SANDBOX/work-$repo commit -q --allow-empty -m "initial $repo"; git -C $SANDBOX/work-$repo push -q origin main; done
+mkdir $SANDBOX/seed && cd $SANDBOX/seed && rwv init web-app
+rwv member set-url projects/web-app https://github.com/chatly/web-app.git
+for repo in protocol server web; do rwv member add https://github.com/chatly/$repo.git; done
+rwv push && cd $SANDBOX
 ```
 
-When running the steps below against this bootstrap, substitute `file:///tmp/chatly-remotes/web-app.git` for `https://github.com/chatly/web-app.git` (or `github/chatly/web-app`) in `rwv clone`, and `local/chatly-remotes/server` for `github/chatly/server`. The bootstrap repos hold no build files, so skip the build command in Step 3.
+The commands below run unchanged against it. The repositories hold no build files, so skip the build command in step 3.
 
 </details>
 
 ## 1. Clone the project
 
-You have a fresh machine. Someone else already created the project. You want to reproduce their environment:
+You have a fresh machine and the project already exists:
 
 ```bash
 mkdir ~/work && cd ~/work
 rwv clone github/chatly/web-app
 ```
 
-What happens:
-
-1. Clones `projects/web-app/` from `https://github.com/chatly/web-app.git`.
-2. Reads `projects/web-app/rwv.toml` to get the repo list.
-3. Clones each repo to its canonical path: `github/chatly/server/`, `github/chatly/web/`, `github/chatly/protocol/`, and checks out the commit recorded in `rwv.lock`.
-4. Activates `web-app` — updates `~/work/.rwv-active`, verifies integration files in `projects/web-app/`, surfaces symlinks to `~/work/`, and runs integration install hooks.
-
-The result:
+`rwv clone` clones `projects/web-app/` from `https://github.com/chatly/web-app.git`, reads its `rwv.toml` for the member list, clones each member to its canonical path (`github/chatly/server/`, `github/chatly/web/`, `github/chatly/protocol/`) at the commit `rwv.lock` pins, activates `web-app`, and runs the integration install hooks.
 
 ```
 ~/work/
-├── github/chatly/server/             # regular clone
-├── github/chatly/web/                # regular clone
-├── github/chatly/protocol/           # regular clone
-├── projects/web-app/                 # project repo (clone)
-│   ├── .gitattributes
-│   ├── rwv.toml
-│   ├── rwv.lock
-│   └── web-app.code-workspace        # generated workspace file
-├── web-app.code-workspace -> projects/web-app/web-app.code-workspace   # symlink
+├── github/chatly/server/             # ordinary clone
+├── github/chatly/web/                # ordinary clone
+├── github/chatly/protocol/           # ordinary clone
+├── projects/web-app/                 # project repo
+│   ├── rwv.toml                      # which repos, with what roles
+│   └── rwv.lock                      # the commit pinned for each
 └── .rwv-active                       # "web-app"
 ```
 
-`rwv clone` places each member at the commit `rwv.lock` pins and lists any member it cannot place — one the lock has no entry for, or whose pinned commit no ref in the clone reaches. Such a member is cloned at the tip of its declared branch, and `rwv clone` exits with status 3 instead of 0. It never advances a pin to an upstream branch tip, and it writes no `rwv.lock`; `rwv member pin` or `rwv update --remote` gives a member the lock does not cover its first pin. To advance existing repos to their remote branch tips: `rwv update --remote`.
+The exit status says whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned or its pinned commit is unreachable. `rwv clone` never moves a pin and writes no `rwv.lock`.
 
-## 2. Get the latest
+`rwv status` shows each member's branch, its tip, the commit the lock pins, and how the two relate:
 
 ```bash
-rwv update --remote
+rwv status
 ```
 
-**`rwv update --remote` is the form that gets the latest.** It advances each member repo to the branch HEAD configured in `rwv.toml` (`branch = "main"`) on the remote, and re-snapshots `rwv.lock`. Equivalent in spirit to `cargo update` or `npm update` — pull the new world, re-pin.
+The project repo is on `main`, and `rwv status` ends by saying how `main` is used: `main: declared`. A **declared** branch is one whose members follow the branches `rwv.toml` names for them. The other mode is a **feature**, a branch that lands into a target; the next steps use one.
 
-Compare:
+## 2. Take in the team's work
 
-| Verb | What it does | Mutates lock? |
-|---|---|---|
-| `rwv update` | Clone members missing on disk, align each present member to its pinned SHA | No — never advances a pin, and a member the lock does not cover is left where it is |
-| `rwv update --remote` | Advance to tracked branch HEADs, record the advanced tips in the lock | Yes |
-| `rwv lock` | Record current local HEADs over their pins, no network | Yes |
-
-`rwv fetch` downloads every remote's new commits and moves no branch, checkout, or lock. When a teammate pushes a new `rwv.lock`, `rwv pull` takes in the project branch and then runs `rwv update`, so your members land on their new pins.
-
-If you forget which to run: `update --remote` to get the latest, `update` to reproduce a pinned state, `lock` to checkpoint local state.
-
-## 3. Make a change
-
-You can edit any repo right where it lives — `github/chatly/server/` is a regular git clone checked out on the branch declared in `rwv.toml` (`main`):
+While you were setting up, a teammate landed a change and published it. `rwv pull` brings it in:
 
 ```bash
-cd github/chatly/server
-# ... edit code ...
-git add -A
-git commit -m "server: add welcome message"
+rwv pull
 ```
 
-> **Tip — isolated feature branches:** Keep canonical clones in the primary weave on their tracked branch (`branch` in `rwv.toml`). When you want an isolated branch across one or more repos, create a workweave (`rwv workweave create welcome-message`) and land it back with `rwv land --retire` — see [create a feature workweave](./how-to/create-feature-workweave.md).
+`rwv pull` fetches, fast-forwards the project branch to its upstream, and then aligns every member to the pins the pulled lock holds. It reports what it took in. A project branch that diverged from its upstream is refused unless `--merge-upstream` merges it or `--reset-to-upstream` moves it to its upstream. `rwv fetch` only downloads: it moves no branch, checkout, or pin.
 
-Ecosystem workspace wiring means a change in `github/chatly/protocol` is immediately visible to `github/chatly/server` without a publish step:
+## 3. Change two repos in a workweave
+
+Work happens in a **workweave**: an isolated copy of the whole workspace, with its own checkouts, its own `node_modules`, `.venv` and `target`, and its own branch. Your primary weave stays as it is.
 
 ```bash
+rwv workweave create welcome-message
+cd ../.workweaves/web-app--welcome-message
+```
+
+The workweave sits beside the weave root, at `<parent>/.workweaves/<project>--<name>/`. Its project repo is on a feature branch named `web-app--welcome-message` that lands into `main`, and each `owned` or `fork` member is on a branch of the same name. Commit in each member as you always do:
+
+```bash
+cd github/chatly/protocol
+echo "welcome: string" > welcome.txt && git add -A && git commit -m "protocol: add the welcome field"
+cd ../server
+echo "serve the welcome" > welcome.txt && git add -A && git commit -m "server: add the welcome message"
+cd ../../..
+```
+
+Ecosystem workspace wiring means a change in `protocol` is visible to `server` without a publish step: `cargo test --workspace`, `npm test --workspaces` or `go test ./...` from the workweave root builds the local clones.
+
+List what will land, per repo, beyond what `main` pins:
+
+```bash
+rwv log --against main
+```
+
+## 4. Take in newer work, then land
+
+Meanwhile the teammate published again. Pull it into the primary weave, and have `main` say how it accepts landings that need more than a fast-forward; that setting is recorded once, in the primary weave:
+
+```bash
+(cd ~/work && rwv pull && rwv branch set-history linear)
+```
+
+`linear` replays your commits on top of the target's; `merge` joins them with a merge commit; `ff-only` refuses unless the target's tip is already in your feature. No setting is assumed: a landing that needs one refuses until a branch records it, and `rwv land --history linear` supplies it for one run.
+
+`rwv sync` takes that new work into your feature:
+
+```bash
+rwv sync
+```
+
+`rwv sync` takes in the branch your feature lands into, each member first, then the project branch, then the relock. Only your workweave changes. Then land it and retire the workweave:
+
+```bash
+rwv land --retire
 cd ~/work
-cargo test --workspace             # or: npm test --workspaces, go test ./...
 ```
 
-The cross-repo build resolves imports to the local clones, not to a registry. Edit, test, iterate — no version dance.
+`rwv land` composes the workweave's commits onto the target, records every member's tip in the landing's one project commit, fast-forwards the target, and `--retire` deletes the workweave once everything landed. Where something did not land the workweave is kept or a branch survives, and the exit status is `3`. Your shell is left in a directory that no longer exists, hence the `cd`.
 
-## 4. Lock and push the state
+## 5. Publish
 
-To checkpoint the cross-repo git state into `projects/web-app/rwv.lock`:
-
-```bash
-cd ~/work
-rwv lock --commit
-```
-
-`rwv lock` reads the current 40-character commit SHA from each member repo's `HEAD` and writes `projects/web-app/rwv.lock`, moving each pin forward only. `--commit` commits it in `projects/web-app/` in the same step, together with `rwv.toml` when that has uncommitted changes; without `--commit`, run `rwv lock` and then `git -C projects/web-app commit`. Every lock entry records the 40-character commit SHA `HEAD` points to — never a branch or tag name.
-
-Now push the member repo commits and the updated project lock together:
+Landing moves `main` in your weave only. `rwv push` publishes it:
 
 ```bash
 rwv push
 ```
 
-`rwv push` pushes every `owned` and `fork` member repo first, then the branch's record, and only pushes `projects/web-app/` after all member pushes succeed — so no teammate ever pulls a `rwv.lock` referencing an unpushed member commit. It refuses before pushing anything while `projects/web-app/` has uncommitted changes, or while a member repo holds a commit `rwv.lock` does not pin.
+`rwv push` pushes every `owned` and `fork` member first, then the branch's record, and the project repo last, so no teammate pulls an `rwv.lock` that names a commit nobody published.
 
-`sha256sum projects/web-app/rwv.lock` is the project fingerprint: two machines with the same checksum pin the same commit in every member repo, which is the state a fresh `rwv clone` reproduces. A pin is not a checkout — a member committed past its pin shows as `ahead` in `rwv status` until `rwv lock` records it.
+## 6. When a landing stops
 
-Anyone else can now reproduce your exact state:
+Two workweaves edit the same line of the same file:
 
 ```bash
-mkdir ~/work-ci && cd ~/work-ci
-rwv clone github/chatly/web-app
+rwv workweave create alpha && rwv workweave create beta
+echo alpha > ../.workweaves/web-app--alpha/github/chatly/server/shared.txt && git -C ../.workweaves/web-app--alpha/github/chatly/server add -A && git -C ../.workweaves/web-app--alpha/github/chatly/server commit -qm "server: alpha"
+echo beta > ../.workweaves/web-app--beta/github/chatly/server/shared.txt && git -C ../.workweaves/web-app--beta/github/chatly/server add -A && git -C ../.workweaves/web-app--beta/github/chatly/server commit -qm "server: beta"
+(cd ../.workweaves/web-app--alpha && rwv land --retire)
 ```
 
-The exit status tells a CI job whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned (`rwv.lock` has no entry for it) or its pinned commit is unreachable. A CI job also runs `rwv doctor --kind tool-missing` after it: a missing ecosystem tool is only a warning to `rwv clone`, and this check exits non-zero for it. A checkout that does not stand at its pin is reported by `rwv doctor` as [`pin`](reference/doctor-findings.md#pin).
+The second landing meets the first one's change and stops on the conflict:
+
+```bash
+cd ../.workweaves/web-app--beta
+rwv land
+```
+
+`rwv land` keeps the workweave, records the operation, and names the repository and the file. `rwv status` opens with the operation and the two commands that end it. Resolve the file in the named repository, mark it resolved, and run `rwv land --continue`; it resumes where it stopped and skips what already converged. Or take everything back:
+
+```bash
+rwv abort
+```
+
+`rwv abort` restores every repository either workspace touched to where it stood before the landing began. It keeps anything it discards, your resolutions included, as a backup, so nothing is lost: `rwv backup list` shows them. From the weave root, `rwv workweave delete beta` removes the workweave. Its branch holds a commit that has not landed, so the branch stays, `rwv workweave delete` lists it, and the exit status is `3`; `rwv branch delete web-app--beta --discard-unlanded` deletes it, keeping its tip as a backup first.
+
+## 7. Pins and drift
+
+A pin is where the lock says a member belongs; it is not a checkout. A member committed past its pin shows as `ahead` in `rwv status` until a lock records it, and `rwv land` records it for the workweave it lands. Three verbs move pins:
+
+| Verb | What it does |
+|---|---|
+| `rwv update` | Clone missing members and align each to its pin. Writes no lock |
+| `rwv update --remote` | Advance each member to its branch tip on the remote and record the tips in the lock |
+| `rwv member pin <repo> <rev>` | Pin one member at a commit you choose, forward or backward |
+
+`rwv doctor` checks the weave for drift: orphaned or dangling files, a checkout that disagrees with its pin, a missing ecosystem tool, an operation left half-done. `rwv doctor --fix` repairs what a verb can repair, and every finding names its kind in [Doctor findings](./reference/doctor-findings.md).
+
+```bash
+rwv doctor
+```
+
+`sha256sum projects/web-app/rwv.lock` is the project fingerprint: two machines with the same checksum pin the same commit in every member.
 
 ## Where to go next
 
-You've seen the day-to-day path: clone, update, edit, lock. Common follow-ups have their own how-tos:
-
-- **Cross-repo branches and isolation:** [create a feature workweave](./how-to/create-feature-workweave.md)
-- **Review someone else's PR locally:** [review a PR with a workweave](./how-to/review-pr-with-workweave.md)
-- **Add a repo, including brownfield adoption:** [add a repo](./how-to/add-a-repo.md)
-- **Release a package:** [release a package](./how-to/release-a-package.md)
-- **Coordinated push across repos:** [push a cross-repo feature](./how-to/push-cross-repo-feature.md)
-- **Switch the active project:** [switch projects](./how-to/switch-projects.md)
+- **Branches and release lines:** [maintain a release line](./how-to/maintain-a-release-line.md)
+- **Cross-repo features and landing:** [create a feature workweave](./how-to/create-feature-workweave.md), [bring workweave work home](./how-to/bring-workweave-work-home.md)
+- **Stops:** [recover from a sync conflict](./how-to/recover-from-sync-conflict.md), [resume or abort a mid-op sync](./how-to/resume-or-abort-mid-op-sync.md)
+- **Review someone else's PR:** [review a PR with a workweave](./how-to/review-pr-with-workweave.md)
 - **Hand a task to an agent:** [hand task to agent](./how-to/hand-task-to-agent.md)
 
-For the model behind the tool, start with the [introduction](./introduction.md) and the three lenses ([workspace](./explanation/lenses/workspace.md), [monorepo](./explanation/lenses/monorepo.md), [agent](./explanation/lenses/agent.md)). For lookup-shaped material, see [reference/cli](./reference/cli.md).
+For the model behind the tool, start with the [introduction](./introduction.md) and the three lenses ([workspace](./explanation/lenses/workspace.md), [monorepo](./explanation/lenses/monorepo.md), [agent](./explanation/lenses/agent.md)).
