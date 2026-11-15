@@ -38,7 +38,7 @@ another workspace, a header line prints ahead of the table: verb, op id,
 phase, age, and the owning workspace, followed by the two remedies
 (`--continue` from the owning workspace, or `rwv abort`). This is the same
 disclosure the in-flight refusal makes on a conflicting mutation — `status`
-surfaces it read-only, so a clean `git status` in every repo is not mistaken
+surfaces it read-only, so a clean working tree in every repo is not mistaken
 for "no op in progress".
 
 Below the table, `status` prints what stands apart, reading refs as last

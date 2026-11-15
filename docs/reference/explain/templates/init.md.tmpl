@@ -39,7 +39,7 @@ project directory inside the existing workspace.
 2. Bootstraps the workspace skeleton if CWD is empty.
 3. Resolves the weave root from CWD.
 4. Creates `projects/<name>/`.
-5. Runs `git init` in the new directory.
+5. Initializes a repository in the new directory (for git, `git init`).
 6. Writes a skeletal `rwv.toml` (a bare `[repositories]` table).
 7. Sets up the lock merge driver: `rwv.lock merge=rwv-lock` in
    `.gitattributes`, and `merge.rwv-lock.driver` naming `rwv lock
@@ -64,7 +64,7 @@ project is not activated.
 rwv init <name> [--provider <registry/owner>]
 ```
 
-- `<name>` — project name. Creates `projects/<name>/` with `git init` and a
+- `<name>` — project name. Creates `projects/<name>/` as a new repository (for git, `git init`) with a
   skeletal `rwv.toml`.
 - `--provider <registry/owner>` — configure a git remote for the new project
   repo. Format: `<registry>/<owner>` (e.g., `github/myorg`). The remote URL

@@ -3900,13 +3900,13 @@ fn check_vocabulary_and_spelling(root: &Path, help_pages: &[(String, String)]) -
 /// generated schemas, `docs/reference/cli.md` and `--help`. A word is allowed
 /// where its sentence or parenthesis says it is git's: after "for git" or
 /// "(git:" with no sentence end or closing parenthesis between, or inside a
-/// code span, or a quoted string on one line, that opens with `git `. Elsewhere the text names what the
+/// code span opening with `git ` (itself labeled the same way), or a quoted string on one line, that opens with `git `. Elsewhere the text names what the
 /// operator sees in words any VCS shares and leaves the backend's spelling to
 /// `Vcs::hint`.
 ///
 /// **Not covered**: a git word the regex does not list (`HEAD`, `detached`,
 /// `rebase`, `ours`, `theirs`), "the index" alone, which the workweave index
-/// also is, a `git ...` span with no label, the reference pages other than
+/// also is, the reference pages other than
 /// `cli.md`, and prose pages under `docs/how-to/`, where git commands are the
 /// subject.
 fn check_published_text_has_no_git_words(
@@ -3956,33 +3956,33 @@ fn check_published_text_has_no_git_words(
                 .to_owned(),
         );
     }
+    let labeled = |head: &str| {
+        let window_start = head.char_indices().rev().nth(160).map_or(0, |(i, _)| i);
+        let clause_start = [". ", ".\n", ")"]
+            .iter()
+            .filter_map(|end| head.rfind(end).map(|i| i + end.len()))
+            .max()
+            .unwrap_or(0);
+        let window = head[window_start.max(clause_start)..]
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        window.contains("for git") || window.contains("(git:")
+    };
     for text in &texts {
         for m in words.find_iter(&text.text) {
             let head = &text.text[..m.start()];
-            let window_start = head.char_indices().rev().nth(160).map_or(0, |(i, _)| i);
-            let clause_start = [". ", ".\n", ")"]
-                .iter()
-                .filter_map(|end| head.rfind(end).map(|i| i + end.len()))
-                .max()
-                .unwrap_or(0);
-            let window = head[window_start.max(clause_start)..]
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-                .to_lowercase();
-            let span_start = head.rfind('`');
-            let in_git_span = head.matches('`').count() % 2 == 1
-                && span_start.is_some_and(|i| text.text[i + 1..].starts_with("git "));
             let line_head = &head[head.rfind('\n').map_or(0, |i| i + 1)..];
             let in_git_string = line_head.matches('"').count() % 2 == 1
                 && line_head
                     .rfind('"')
                     .is_some_and(|i| line_head[i + 1..].starts_with("git "));
-            if in_git_span
-                || in_git_string
-                || window.contains("for git")
-                || window.contains("(git:")
-            {
+            let in_git_span = head.matches('`').count() % 2 == 1
+                && head
+                    .rfind('`')
+                    .is_some_and(|i| text.text[i + 1..].starts_with("git "));
+            if in_git_string || in_git_span || labeled(head) {
                 continue;
             }
             let line = head.matches('\n').count() + 1;
@@ -3992,6 +3992,23 @@ fn check_published_text_has_no_git_words(
                  and spell git's word after \"for git\"",
                 text.name,
                 m.as_str()
+            ));
+        }
+        for (at, _) in text.text.match_indices("`git ") {
+            let head = &text.text[..at];
+            if head.matches('`').count() % 2 == 1 {
+                continue;
+            }
+            let line_head = &head[head.rfind('\n').map_or(0, |i| i + 1)..];
+            let in_string = line_head.matches('"').count() % 2 == 1;
+            if in_string || labeled(head) {
+                continue;
+            }
+            let line = head.matches('\n').count() + 1;
+            findings.push(format!(
+                "published-text: {}:{line} has a `git ...` code span no label covers; spell it \
+                 after \"for git\" or \"(git:\", or let a printed `VCS action (git: ...)` carry it",
+                text.name
             ));
         }
     }
@@ -8834,7 +8851,8 @@ mod tests {
     }
 
     /// An explain template, a schema description and a `--help` page are held
-    /// to the words rule; a word after "for git" and a `git ...` span pass.
+    /// to the words rule; a word after "for git" and a labeled `git ...` span pass,
+    /// an unlabeled `git ...` span is reported.
     #[test]
     fn git_words_in_published_text_are_reported() {
         let tmp = crate::tempdir().expect("tempdir");
@@ -8867,7 +8885,8 @@ mod tests {
                 && combined.contains("schemas/x.json:1 says `index entry`")
                 && combined.contains("docs/reference/cli.md:1 says `Unstage`")
                 && combined.contains("rwv x --help:3 says `stage`")
-                && errors.len() == 6,
+                && combined.contains("x.md.tmpl:5 has a `git ...` code span no label covers")
+                && errors.len() == 7,
             "got:\n{combined}"
         );
     }

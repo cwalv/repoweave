@@ -834,9 +834,9 @@ rwv push -j 4
   lacks. Take them in first, by the printed choice.
 - *`<member>: pin unpinned`* — the member holds the commits listed beyond its
   pin, which nothing else holds. Run `rwv lock --commit` to record them, or move
-  the repo's branch back to its pin without detaching it: `git branch <name>`
-  to keep the commits it moves off, then `git reset --keep <lock commit>`. A
-  `git checkout` of the lock commit detaches HEAD, which push refuses.
+  the repo's branch back to its pin without detaching it: for git, `git branch <name>`
+  to keep the commits it moves off, then `git reset --keep <lock commit>`; a
+  checkout of the lock commit detaches HEAD, which push refuses.
 - *`<member>: pin none`* — the lock has no entry for the member. `rwv member pin
   <member> <rev> --commit` gives it one.
 - *`<member>: pin behind`* or *`pin diverged`* — the checkout is behind its pin,

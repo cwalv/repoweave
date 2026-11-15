@@ -11,7 +11,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
   - Each member repo has a `role` (`owned`, `fork`, `dependency`, `reference`): `owned` and `fork` are read-write and included in `rwv push`; `dependency` is included in ecosystem workspace files and workweave branches but skipped by `rwv push`; `reference` is excluded from ecosystem workspace files and checked out with read-only tracked regular files (write bits removed).
 
 - **Workweave**: An isolated parallel workspace at `.workweaves/<project>--<name>/` (sibling of the weave root by default) for a single task or agent.
-  - Every member repo (plus `projects/<project>/`) is materialized as a `git worktree` of the canonical weave-root clone attached to the ephemeral branch `<project>--<name>` (with `role = "reference"` tracked regular files set read-only). `rwv workweave create` also runs the integration install hooks in it (`--no-materialize` skips them); inside a workweave the authoring verbs run no hooks, and `rwv materialize` does.
+  - Every member repo (plus `projects/<project>/`) is materialized as a linked checkout (for git, `git worktree`) of the canonical weave-root clone attached to the ephemeral branch `<project>--<name>` (with `role = "reference"` tracked regular files set read-only). `rwv workweave create` also runs the integration install hooks in it (`--no-materialize` skips them); inside a workweave the authoring verbs run no hooks, and `rwv materialize` does.
   - Carries a `.rwv-workweave` marker recording `{primary, project, parent}` (mutually exclusive with `.rwv-active`, which is primary-only).
 
 - **Lock & sync**: `rwv.lock` pins every member repo to a commit SHA (never a tag or branch name).
@@ -21,7 +21,7 @@ CWD is not inside a weave or workweave. Below is a compact overview of how `rwv`
 ## Common pitfalls
 
 - **Weave-root ecosystem files are symlinks into `projects/<active>/`**: In hybrid files (`Cargo.toml`, `package.json`, `pyproject.toml`, `go.work`), hand-authored keys outside the rwv-owned marker region are preserved across regeneration. Edits inside the rwv-owned region are overwritten when `rwv member add`, `rwv member remove`, `rwv member set-role`, `rwv update --remote`, or `rwv doctor --fix` regenerates the file (`rwv activate` only moves symlinks and never clobbers file content).
-- **Don't run `git worktree add` directly**: Always use `rwv workweave create <name>` so all member repos, workweave branches, and `.rwv-workweave` markers stay consistent.
+- **Don't create a linked checkout directly** (for git, `git worktree add`): Always use `rwv workweave create <name>` so all member repos, workweave branches, and `.rwv-workweave` markers stay consistent.
 - **A workweave's minted branch is not published**: `rwv push` refuses a project branch named `<project>--<name>` (`name` minted), the name `rwv workweave create` gives a workweave made without a branch of its own. Give the work a branch to publish it.
 - **Don't `chmod` or edit `reference` repos in place**: Tracked regular files in `reference` repos carry no write bit. To promote a repo for editing, run `rwv member set-role <path> owned` (or `fork`), which updates `rwv.toml`, regenerates ecosystem files, and restores write bits.
 

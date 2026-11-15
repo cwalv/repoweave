@@ -5,7 +5,7 @@
 Create, delete, or list workweaves for a project. A workweave is a parallel
 working directory that materializes every repo in the project's manifest
 (including the project repo itself). Every `owned` and `fork` repo, and the
-project repo, becomes a `git worktree` checkout of the canonical weave-root
+project repo, becomes a linked checkout (for git, `git worktree`) of the canonical weave-root
 clone on the branch `{project}--{name}`; a `dependency` or `reference` repo is
 checked out detached at its pin. A `reference` repo's tracked files carry no write
 bit, here and in the primary: every verb that writes or moves a member's files
@@ -107,7 +107,7 @@ the workweave, another parent or no marker) is refused as `name` `taken`,
 listing what differs, and changes nothing.
 
 **What `create` writes:**
-1. One `git worktree` per member repo (plus the project repo), at
+1. One linked checkout (for git, `git worktree`) per member repo (plus the project repo), at
    `{workweave}/{repo-path}/`: the project repo on the workweave's branch (or detached), a member of a
    feature that is `owned` or `fork` on a branch of the same name at its pin,
    and every other member detached at its pin. A branch of the chosen name

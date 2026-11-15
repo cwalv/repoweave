@@ -59,7 +59,7 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   checks the branch out, so each file holds the moved tip's content and the
   move's other files are refreshed. The set-aside record is based on the tip
   the files held, so it holds the edits alone; the report prints the command
-  that merges them back onto the moved tip (`git stash apply <stash>`). The
+  that merges them back onto the moved tip (for git, `git stash apply <stash>`). The
   two flags conflict.
 - `--merge-edited-drift` (refused without `--fix`) widens `--fix` for a checkout whose branch moved
   under it and that holds files both that move and an edit here changed, or
@@ -122,7 +122,7 @@ weave-local for them to bind to:
 - A workweave's `projects/<project>/` is a **linked worktree** of primary's
   clone, so `refs/heads/*` is one physical ref database shared by every
   weave. git keeps only `HEAD` and `refs/worktree/*` per worktree
-  (`git rev-parse --git-path refs/heads` from inside a workweave resolves
+  (for git, `git rev-parse --git-path refs/heads` from inside a workweave resolves
   into primary's `.git`). A per-weave view of these refs would be a shadow of
   the shared store, not a separate store.
 - The registry that records which workweaves exist is one file, kept in the

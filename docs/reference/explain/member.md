@@ -75,7 +75,7 @@ every member verb's commit and as they are, named in one line.
 Clones always land at the **canonical path** under the primary weave root,
 regardless of whether `rwv member add` is invoked from inside a workweave. This
 reflects the shared-clone topology: member repos are global infrastructure,
-with `git worktree` providing per-workweave isolation. (See
+with a linked checkout (for git, `git worktree`) providing per-workweave isolation. (See
 `rwv explain workweave` for the workweave topology model.)
 
 If a clone already exists on disk at the canonical path and one of its remotes
@@ -100,7 +100,7 @@ honored; `--adopt` and `--new` fetch nothing, and so does a new member added wit
 #### Workweave-aware worktree materialization
 
 When `rwv member add` is invoked from inside a workweave, it also creates a
-`git worktree` for the new repo inside the workweave directory. The
+linked checkout (for git, `git worktree`) for the new repo inside the workweave directory. The
 ephemeral branch follows the standard `{project}--{workweave}` naming
 convention (matching `rwv workweave create`) — flat, with no third component
 derived from the source branch. `rwv workweave delete` deletes it along with the rest of the workweave's
@@ -165,13 +165,13 @@ and plans what gets created from them.
 
 - **A domain registry** (`github`, `gitlab`, `bitbucket`) needs `owner` and
   `repo`. Nothing is created remotely — rwv has no HTTP client — so the
-  member is `git init`'d locally and its remote is set to the minted URL as
+  member is initialized locally (for git, `git init`) and its remote is set to the minted URL as
   an intent. `rwv member add github/acme/fresh --new` and `rwv member add github --new
   --param owner=acme --param repo=fresh` are equivalent.
 - **`local`** needs `root`, `owner`, and `repo`. Creation is two-sided: rwv
   creates a **bare** repository at `<root>/<owner>/<repo>` and clones the
-  member from it, so the member's remote is real from birth and `git push
-  -u` works immediately. `root` must already exist (rwv creates
+  member from it, so the member's remote is real from birth and publishing
+  it works immediately (for git, `git push -u`). `root` must already exist (rwv creates
   `<root>/<owner>/<repo>`, not `<root>` itself) and must be outside the
   weave. A relative `root` resolves against the directory rwv runs in — the
   `-C` or `-w` directory when one is given — and the manifest records the
@@ -290,7 +290,7 @@ Clone from a local bare repository:
 rwv member add file:///srv/repos/myorg/lib.git
 ```
 
-Create a repo at a registry that hosts it (member `git init`'d locally,
+Create a repo at a registry that hosts it (member initialized locally (for git, `git init`),
 remote set to the minted URL as an intent):
 
 ```
