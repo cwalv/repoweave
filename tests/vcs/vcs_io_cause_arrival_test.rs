@@ -1,15 +1,13 @@
-//! The io cause behind a `VcsError::Io` must reach the operator, not just sit
-//! in the enum.
+//! The io cause behind an io failure must reach the operator, not just sit in
+//! the error.
 //!
-//! `VcsError::Io` holds the failing `io::Error`; whether an operator ever sees
-//! it depends on the render, and every surface between the enum and the
-//! terminal is free to drop it. Asserting the enum holds the source proves
-//! nothing about that, so the load-bearing test here drives a real unreadable
-//! file through the real binary and reads both operator renders.
-//!
-//! The fixture puts a *directory* where `.gitattributes` belongs. Any read
-//! failure other than not-found takes the same arm; a directory takes it for
-//! every user including root, which `chmod 000` does not.
+//! Whether an operator ever sees the cause depends on the render, and every
+//! surface between the error and the terminal is free to drop it. The
+//! fixture puts a *directory* where `.gitattributes` belongs: any read
+//! failure other than not-found takes the same arm, and a directory takes it
+//! for every user including root, which `chmod 000` does not. The VCS reads
+//! the attribute in force and treats a file it cannot read as absent, so the
+//! failure arises where `doctor --fix` reads the file to rewrite it.
 
 use std::path::{Path, PathBuf};
 
@@ -23,7 +21,7 @@ fn make_workspace(parent: &Path, name: &str) -> PathBuf {
 }
 
 /// Workspace whose one project, on an unborn branch, has an unreadable
-/// `.gitattributes`, so `lock_driver_setup` returns `VcsError::Io`.
+/// `.gitattributes`.
 fn workspace_with_unreadable_gitattributes(root: &Path) {
     let repo_path = "github/acme/server";
     let repo = root.join(repo_path);
@@ -47,107 +45,22 @@ fn workspace_with_unreadable_gitattributes(root: &Path) {
     std::fs::create_dir(project_dir.join(".gitattributes")).unwrap();
 }
 
-/// Split a rendered `VcsError::Io` at the boundary between its context
-/// sentence and the io cause. `None` means nothing follows the context —
-/// the operator was handed rwv's own sentence and no statement of what
-/// actually went wrong.
-fn io_cause(rendered: &str) -> Option<&str> {
-    rendered
-        .split_once(".gitattributes: ")
-        .map(|(_, cause)| cause)
-        .filter(|cause| !cause.trim().is_empty())
-}
-
 #[test]
-fn doctor_surfaces_the_io_cause_in_both_renders() {
+fn doctor_fix_names_the_io_cause_of_a_gitattributes_it_cannot_rewrite() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
     workspace_with_unreadable_gitattributes(&root);
-
-    let json_out = common::rwv()
-        .args(["doctor", "--json"])
-        .current_dir(&root)
-        .output()
-        .unwrap();
-    let json: serde_json::Value =
-        serde_json::from_slice(&json_out.stdout).expect("doctor --json must emit valid JSON");
-
-    let violation = json["violations"]
-        .as_array()
-        .expect("violations must be an array")
-        .iter()
-        .find(|v| v["kind"] == "lock-merge-driver-unreadable")
-        .unwrap_or_else(|| {
-            panic!(
-                "fixture did not produce an unreadable .gitattributes; without it this \
-                 test asserts nothing. doctor --json said:\n{json:#}"
-            )
-        });
-
-    let wire_error = violation["error"]
-        .as_str()
-        .expect("violation must carry a rendered error");
-    let cause = io_cause(wire_error).unwrap_or_else(|| {
-        panic!("--json dropped the io cause; operator got only: {wire_error:?}")
-    });
-
-    let human = String::from_utf8(
-        common::rwv()
-            .arg("doctor")
-            .current_dir(&root)
-            .output()
-            .unwrap()
-            .stdout,
-    )
-    .unwrap();
-    assert!(
-        human.contains("failed to read the lock merge driver setup"),
-        "human render lost the finding entirely:\n{human}"
-    );
-    assert!(
-        io_cause(&human).is_some_and(|human_cause| human_cause.starts_with(cause)),
-        "human render dropped the io cause {cause:?} that --json carried:\n{human}"
-    );
-}
-
-/// `--fix` cannot ground a write in a read it cannot perform. It must defer to
-/// the same report-only finding plain `doctor` raises rather than attempting
-/// the write anyway and layering a second, error-severity finding for the
-/// same unreadable file on top of it.
-#[test]
-fn doctor_fix_defers_to_the_same_report_only_finding_as_plain_doctor() {
-    let tmp = common::tempdir().unwrap();
-    let root = make_workspace(tmp.path(), "ws");
-    workspace_with_unreadable_gitattributes(&root);
-
-    let plain = common::rwv()
-        .arg("doctor")
-        .current_dir(&root)
-        .output()
-        .unwrap();
-    assert!(
-        plain.status.success(),
-        "plain doctor should exit 0 on a report-only finding:\n{}",
-        String::from_utf8_lossy(&plain.stdout)
-    );
 
     let fix = common::rwv()
         .args(["doctor", "--fix"])
         .current_dir(&root)
         .output()
         .unwrap();
-    let fix_stdout = String::from_utf8(fix.stdout).unwrap();
+    let printed = common::cli::describe(&fix);
     assert!(
-        fix.status.success(),
-        "doctor --fix must not exit non-zero over a finding it cannot act on:\n{fix_stdout}"
-    );
-    assert!(
-        !fix_stdout.contains("failed to set up the lock merge driver"),
-        "doctor --fix attempted a write it could not ground in a read:\n{fix_stdout}"
-    );
-    assert!(
-        fix_stdout.contains("failed to read the lock merge driver setup"),
-        "doctor --fix dropped the report-only finding plain doctor raises:\n{fix_stdout}"
+        printed.contains("failed to set up the lock merge driver")
+            && printed.contains(".gitattributes: Is a directory"),
+        "the operator got no cause for the failure:\n{printed}"
     );
 }
 

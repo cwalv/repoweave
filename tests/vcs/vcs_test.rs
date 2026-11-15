@@ -912,7 +912,7 @@ fn every_driver_an_earlier_release_assigned_the_lock_is_superseded() {
     for text in [
         "rwv.lock merge=rwv-ours\n",
         "rwv.lock merge=ours\n",
-        "*.png binary\nrwv.lock merge=ours\nrwv.lock merge=rwv-lock\n",
+        "*.png binary\nrwv.lock merge=rwv-lock\nrwv.lock merge=ours\n",
     ] {
         let dir = init_repo();
         commit_attributes(dir.path(), text);
@@ -922,6 +922,13 @@ fn every_driver_an_earlier_release_assigned_the_lock_is_superseded() {
             "{text:?}"
         );
     }
+}
+
+#[test]
+fn a_superseded_line_the_current_one_outranks_is_not_in_force() {
+    let dir = init_repo();
+    commit_attributes(dir.path(), "rwv.lock merge=ours\nrwv.lock merge=rwv-lock\n");
+    assert_eq!(setup(dir.path()).declaration, LockDriverPart::Current);
 }
 
 #[test]
