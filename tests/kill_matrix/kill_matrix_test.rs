@@ -1689,7 +1689,13 @@ fn endings(shape: &Shape, phase: Phase, point: &str) -> Vec<Ending> {
     endings
 }
 
+const STAGE: &str = "scripts/ci-local.sh --stages=kill-matrix";
+
 fn run_shape(id: &str) {
+    if std::env::var("RWV_KILL_MATRIX").as_deref() != Ok("run") {
+        println!("kill matrix cells skipped: they run in `{STAGE}`");
+        return;
+    }
     let shape = shape(id);
     let reference = reference_end(shape);
     let reference = reference.as_str();
@@ -1932,5 +1938,27 @@ fn the_cells_are_exactly_where_the_shapes_reach_the_points() {
     assert!(
         without_a_cell.is_empty() && never_reached.is_empty(),
         "reached and not in POINTS: {without_a_cell:#?}\nin POINTS and not reached: {never_reached:#?}"
+    );
+}
+
+#[test]
+fn without_the_stage_a_shape_test_returns_at_once_naming_it() {
+    let began = std::time::Instant::now();
+    let out = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "kill_matrix_test::cherry_pick", "--nocapture"])
+        .env_remove("RWV_KILL_MATRIX")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(stdout.contains(STAGE), "{stdout}");
+    assert!(
+        stdout.contains("test kill_matrix_test::cherry_pick ... ok"),
+        "{stdout}"
+    );
+    assert!(
+        began.elapsed() < std::time::Duration::from_secs(30),
+        "{:?}",
+        began.elapsed()
     );
 }

@@ -1361,6 +1361,10 @@ fn each_tier_names_itself_and_its_stages_on_the_terminal_line() {
             "landing",
             "All checks passed (tier: landing; stages: windows,apple,test-ambient-autocrlf).",
         ),
+        (
+            "release",
+            "All checks passed (tier: release; stages: check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,kill-matrix).",
+        ),
     ] {
         let fixture = fixture_repo();
         let out = run_ci_local(
@@ -1384,7 +1388,9 @@ fn unknown_tier_is_refused_naming_the_valid_tiers() {
         assert!(!out.status.success(), "{arg} should be refused");
         let tier = arg.trim_start_matches("--tier=");
         assert!(
-            stderr_of(&out).contains(&format!("unknown tier: {tier} (valid: seat,landing)")),
+            stderr_of(&out).contains(&format!(
+                "unknown tier: {tier} (valid: seat,landing,release)"
+            )),
             "{}",
             stderr_of(&out)
         );
@@ -1420,7 +1426,8 @@ fn tier_and_stages_together_are_refused_naming_both() {
             "{stderr}"
         );
         assert!(
-            stderr.contains("Usage: ") && stderr.contains("--tier=seat|landing | --stages="),
+            stderr.contains("Usage: ")
+                && stderr.contains("--tier=seat|landing|release | --stages="),
             "{stderr}"
         );
         assert!(
@@ -1492,4 +1499,56 @@ fn the_test_stages_run_on_half_the_cores_and_never_fewer_than_four() {
 #[test]
 fn a_callers_test_thread_count_is_the_one_the_test_stages_use() {
     assert_eq!(test_threads_handed("32", Some("3")), vec!["3"; 3]);
+}
+
+const KILL_MATRIX_HEADER: &str = "--test kill_matrix (every cell)";
+
+/// The cells cost a quarter of an hour, so no default run and no tier but
+/// release reaches them; the stage names itself when asked for.
+#[test]
+fn only_the_named_stage_and_the_release_tier_run_the_kill_matrix() {
+    let stub = stub_bin_dir();
+    for (args, runs) in [
+        (&[][..], false),
+        (&["--tier=seat"][..], false),
+        (&["--tier=landing"][..], false),
+        (&["--tier=release"][..], true),
+        (&["--stages=kill-matrix"][..], true),
+    ] {
+        let fixture = fixture_repo();
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            args,
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        assert_eq!(
+            stdout_of(&out).contains(KILL_MATRIX_HEADER),
+            runs,
+            "{args:?}:\n{}",
+            stdout_of(&out)
+        );
+    }
+}
+
+/// The cells run only where the script says so, in the one stage built for
+/// them.
+#[test]
+fn the_kill_matrix_stage_alone_turns_the_cells_on() {
+    let script = std::fs::read_to_string(ci_local_sh()).unwrap();
+    assert_eq!(
+        script.matches("RWV_KILL_MATRIX=run").count(),
+        2,
+        "one comment, one use"
+    );
+    let stage = script
+        .split("if run_stage kill-matrix; then")
+        .nth(1)
+        .and_then(|rest| rest.split("\nfi\n").next())
+        .expect("a kill-matrix stage");
+    assert!(
+        stage.contains("env RWV_KILL_MATRIX=run cargo test"),
+        "{stage}"
+    );
 }

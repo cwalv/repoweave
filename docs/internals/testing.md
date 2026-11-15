@@ -407,7 +407,7 @@ Gates, scans, and summaries are tested like the code they guard:
 ## The gate and its tiers
 
 `scripts/ci-local.sh` with no argument is the full gate, and it is what CI,
-the release gate and the pre-push hook run. Two named tiers split it:
+the release gate and the pre-push hook run. Two named tiers split it, and a third adds the kill matrix:
 
 - `scripts/ci-local.sh --tier=seat` runs the stages a change is most likely
   to redden and the ones whose output it must commit — `check`, `test`,
@@ -425,6 +425,15 @@ the full gate in its own checkout, since those are exactly what the landing
 stages catch. A tier run's terminal line names the tier and its stages, so
 its log never reads as a full gate's. `--tier` and `--stages` are refused
 together.
+
+The kill matrix is not in the full gate. `scripts/ci-local.sh
+--stages=kill-matrix` runs its cells (about a quarter of an hour) and sets
+`RWV_KILL_MATRIX=run`, without which each shape test returns at once and prints
+the stage that runs it; `--tier=release` is every default stage and
+`kill-matrix`. Run it before a release and when a change touches an
+operation's steps, pause points or abort. The source test that `POINTS` matches
+the source, and the test that every point a shape passes has a cell or a
+`same_as` entry, stay in the `test` stage.
 
 Every stage that runs the suite hands it `RUST_TEST_THREADS`: half the
 host's cores, never fewer than four (or every core, on a smaller host), unless

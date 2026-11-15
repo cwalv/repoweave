@@ -796,7 +796,9 @@ error code — the type-level rules of §6.3 fail the suite if they are relaxed.
 `cargo clippy -D warnings`, `cargo fmt --check`, then the explain-artifact drift
 gate. With no argument it runs every default stage; `--tier=seat` and
 `--tier=landing` split those stages between iterating on a change and landing
-it (`docs/internals/testing.md`). `.github/workflows/ci.yml` runs that same
+it (`docs/internals/testing.md`); `--stages=kill-matrix`, which `--tier=release` adds,
+runs the kill matrix, to be run before a release and when a change touches an
+operation's steps, pause points or abort. `.github/workflows/ci.yml` runs that same
 script, with no argument; a separate Windows job
 runs `cargo check` and `cargo clippy` only, because the suite assumes symlinks,
 permission bits and signals.

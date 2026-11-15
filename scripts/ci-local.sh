@@ -4,10 +4,17 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--tier=seat|landing | --stages=check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,windows-wine,git-floor]
+# Usage: scripts/ci-local.sh [--tier=seat|landing|release | --stages=check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,kill-matrix,windows-wine,git-floor]
 #
-# With no argument, runs all stages in the order above but the last two — the
+# With no argument, runs all stages in the order above but the last three — the
 # full gate, which CI, the release gate and the pre-push hook invoke.
+# kill-matrix runs only when named, or by --tier=release, which is every default
+# stage and kill-matrix: it runs tests/kill_matrix's cells, each verb killed at
+# each pause point it passes and then continued and aborted, which take about
+# a quarter of an hour. Run it before a release and when a change touches an
+# operation's steps, pause points or abort. The test stages do not run those
+# cells: the binary's shape tests return at once, naming this stage, unless
+# RWV_KILL_MATRIX=run, which this stage sets.
 # windows-wine runs only when named: it is scripts/windows-wine.sh, which
 # downloads several GB on first use and reports reds that belong to Wine
 # rather than to the code. git-floor runs only when named too: it runs the
@@ -75,10 +82,10 @@ fi
 export RUST_TEST_THREADS
 
 ALL_STAGES=(check windows apple test test-ambient-autocrlf no-test-pause clippy doc fmt drift)
-OPT_IN_STAGES=(windows-wine git-floor)
+OPT_IN_STAGES=(kill-matrix windows-wine git-floor)
 KNOWN_STAGES=("${ALL_STAGES[@]}" "${OPT_IN_STAGES[@]}")
 SEAT_STAGES=(check test no-test-pause clippy doc fmt drift)
-TIERS=(seat landing)
+TIERS=(seat landing release)
 
 join_by_comma() {
     local IFS=,
@@ -99,10 +106,13 @@ for s in "${ALL_STAGES[@]}"; do
     is_one_of "$s" "${SEAT_STAGES[@]}" || LANDING_STAGES+=("$s")
 done
 
+RELEASE_STAGES=("${ALL_STAGES[@]}" kill-matrix)
+
 usage() {
     printf 'Usage: %s [--tier=%s | --stages=%s]\n' "$0" "$(IFS='|'; echo "${TIERS[*]}")" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
     printf '  seat: %s\n' "$(join_by_comma "${SEAT_STAGES[@]}")" >&2
     printf '  landing: %s\n' "$(join_by_comma "${LANDING_STAGES[@]}")" >&2
+    printf '  release: %s\n' "$(join_by_comma "${RELEASE_STAGES[@]}")" >&2
     printf '  also valid in --stages, not run by default: %s\n' "$(join_by_comma "${OPT_IN_STAGES[@]}")" >&2
 }
 
@@ -127,6 +137,7 @@ for arg in "$@"; do
     case "$arg" in
         --tier=seat) tier=seat stages_csv="$(join_by_comma "${SEAT_STAGES[@]}")" ;;
         --tier=landing) tier=landing stages_csv="$(join_by_comma "${LANDING_STAGES[@]}")" ;;
+        --tier=release) tier=release stages_csv="$(join_by_comma "${RELEASE_STAGES[@]}")" ;;
         --tier=*)
             printf 'unknown tier: %s (valid: %s)\n' "${arg#--tier=}" "$(join_by_comma "${TIERS[@]}")" >&2
             exit 1
@@ -290,6 +301,11 @@ if run_stage drift; then
         printf 'explain artifacts changed by regeneration — commit them (this check compares the regenerated docs/reference/explain, docs/reference/schemas, docs/reference/prime, docs/reference/refusals.md, docs/reference/doctor-findings.md and docs/internals/refusal-census.tsv against the index; it does not inspect files the generator does not write; an entry of doctor-findings.md that the state-to-choices table generates is changed in the table, not in the page)\n' >&2
         exit "$status"
     }
+fi
+
+if run_stage kill-matrix; then
+    header "cargo test --release --no-fail-fast --features test-pause --test kill_matrix (every cell)"
+    with_symlinked_tmpdir env RWV_KILL_MATRIX=run cargo test --release --no-fail-fast --features test-pause --test kill_matrix
 fi
 
 if run_stage windows-wine; then
