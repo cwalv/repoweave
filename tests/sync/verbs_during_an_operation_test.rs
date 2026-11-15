@@ -45,6 +45,8 @@ fn sample(spelling: &str) -> Option<Vec<&'static str>> {
             vec!["member", "set-recurse-submodules", DOCS, "true"]
         }
         "member set-role" => vec!["member", "set-role", DOCS, "reference"],
+        "integration set-enabled" => vec!["integration", "set-enabled", "gita", "true"],
+        "integration set" => vec!["integration", "set", "static-files", "files", "[]"],
         "member set-url" => vec!["member", "set-url", DOCS, "file:///nowhere/docs.git"],
         "pull" => vec!["pull"],
         "push" => vec!["push"],
