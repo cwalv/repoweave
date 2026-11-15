@@ -41,14 +41,14 @@ Commit the edit and the files it generated with git (`git -C projects/web-app ad
 
 ## Commit and publish the project repository
 
-`projects/web-app/` is an ordinary git repository, and everything above is already committed: `rwv init` committed `rwv.toml`, `.gitattributes` and the workspace file, and each `rwv member add` committed `rwv.lock`, `rwv.toml` and the integration files it regenerated. Add a remote and publish:
+`projects/web-app/` is an ordinary git repository, and everything above is already committed: `rwv init` committed `rwv.toml`, `.gitattributes` and the workspace file, and each `rwv member add` committed `rwv.lock`, `rwv.toml` and the integration files it regenerated. Record where it publishes and publish:
 
 ```bash
-git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
+rwv member set-url projects/web-app https://github.com/chatly/web-app.git
 rwv push
 ```
 
-`rwv push` publishes the project repo to its url remote: the remote `rwv init --provider`, `rwv init --adopt` or `rwv clone` created it with, else its only remote. With several remotes and none recorded, a branch that has no push remote of its own has no push target, and `rwv push` refuses it (`push-branch` `no push target`) before pushing anything.
+`rwv push` publishes the project repo to its url remote: the remote `rwv member set-url projects/<name>`, `rwv init --provider` or `rwv clone` recorded, else its only remote. With several remotes and none recorded, a branch that has no push remote of its own has no push target, and `rwv push` refuses it (`push-branch` `no push target`) before pushing anything; `rwv member set-url projects/<name> <url>` records one.
 
 Teammates and CI can now clone and materialize the entire workspace with one command:
 

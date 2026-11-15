@@ -8,7 +8,7 @@ rwv init web-app
 rwv member add https://github.com/chatly/server.git --role owned
 rwv member add https://github.com/chatly/client.git --role owned
 rwv member add https://github.com/vendor/codec.git --role dependency
-git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
+rwv member set-url projects/web-app https://github.com/chatly/web-app.git
 rwv push
 ```
 
@@ -68,10 +68,10 @@ To start from the exact commits the superproject's gitlinks pinned rather than f
 
 ### 5. Publish the project repository
 
-Add the project repo's remote, then publish with `rwv push`, which sends the members' branches, the branch's record and the project branch:
+Record the project repo's remote, then publish with `rwv push`, which sends the members' branches, the branch's record and the project branch:
 
 ```bash
-git -C projects/web-app remote add origin https://github.com/chatly/web-app.git
+rwv member set-url projects/web-app https://github.com/chatly/web-app.git
 rwv push
 ```
 

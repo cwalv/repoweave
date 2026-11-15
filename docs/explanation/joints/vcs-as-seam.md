@@ -89,7 +89,7 @@ The roles are:
 | Role | What it is |
 |---|---|
 | **Url remote** of a member | the remote that has the member's `url`. The seam finds it by the url, however the clone spells it; a clone that lacks it gets one before a verb fetches, named by the url's owner segment (a repo with no remote yet takes the VCS's first name). A name another url already holds refuses as `name` taken. |
-| **Url remote** of the project repo | the remote `rwv clone`, `rwv init --adopt` or `rwv init --provider` created it with, recorded in the clone's own configuration; else its only remote while it has exactly one; else none. The project has no member url to find it by. |
+| **Url remote** of the project repo | the remote `rwv clone`, `rwv init --provider` or `rwv member set-url projects/<name>` recorded, recorded in the clone's own configuration; else its only remote while it has exactly one; else none. The project has no member url to find it by. |
 | **Push target** | where a branch publishes, in the VCS's own order: the branch's push remote, the repo's default push remote, the remote the branch takes in from, and last the url remote. A branch with none has no push target. |
 | **Home remote** | where a new branch is taken from: the remote the operator configured for it, else the url remote. |
 | **Upstream**, **push branch** | the remote branch a branch takes in from, and the same-named branch on its push target. |

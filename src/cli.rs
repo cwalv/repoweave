@@ -970,9 +970,9 @@ pub enum MemberAction {
         #[arg(long)]
         no_materialize: bool,
     },
-    /// Change a member's url, and relink the branch the member sits on to the new url's remote
+    /// Change a member's url, and relink the branch the member sits on to the new url's remote; for `projects/<name>`, record the remote at the url as the project repo's url remote
     SetUrl {
-        /// Path of the repo, as `rwv.toml` lists it
+        /// Path of the repo, as `rwv.toml` lists it, or `projects/<name>` for the project repo
         repo: String,
         /// The new url
         url: String,

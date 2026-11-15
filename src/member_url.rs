@@ -185,6 +185,9 @@ pub fn run_set_url(
     ctx: &WorkspaceContext,
     opts: crate::activate::ActivateOptions,
 ) -> anyhow::Result<()> {
+    if let Ok(crate::manifest::RepoOperand::Project(project)) = repo.parse() {
+        return run_set_project_url(&project, url, ctx);
+    }
     let loaded = Loaded::open(ctx, VERB)?;
     let member = RepoPath::new(repo)?;
     let new: RepoUrl = url.parse()?;
@@ -196,6 +199,31 @@ pub fn run_set_url(
     refusals.into_result()?;
     let step = step.expect("an unrefused judgment has a step");
     step.finish(ctx, &loaded, &member, new, opts)
+}
+
+/// Record `url`'s remote as the project repo's url remote, adding the remote
+/// when the repo has none for it. Nothing in `rwv.toml` changes: the project
+/// repo is not a member.
+fn run_set_project_url(
+    project: &crate::manifest::ProjectName,
+    url: &str,
+    ctx: &WorkspaceContext,
+) -> anyhow::Result<()> {
+    let project_dir = crate::workspace::project_dir(ctx.active_path(), project);
+    if !project_dir.exists() {
+        return Err(crate::untokened!(
+            Owed,
+            "{}: no project repo on disk at {}",
+            crate::manifest::RepoOperand::Project(project.clone()),
+            project_dir.display()
+        ));
+    }
+    let clone_url = clone_url(&url.parse()?)?;
+    let vcs = crate::vcs::project_vcs();
+    let remote = crate::url_remote::ensure(vcs.as_ref(), project, VERB, &project_dir, &clone_url)?;
+    vcs.record_project_url_remote(&project_dir, &remote)?;
+    eprintln!("rwv {VERB}: projects/{project}: url remote {remote} ({clone_url})");
+    Ok(())
 }
 
 pub(crate) fn merge_refusal(refusals: &mut Report, error: anyhow::Error) -> anyhow::Result<()> {

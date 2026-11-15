@@ -880,3 +880,60 @@ fn the_choice_a_withheld_project_push_prints_publishes_it_to_the_remote_chosen()
     assert!(pushed.status.success(), "{}", text(&pushed.stderr));
     assert!(ref_of(&open, "refs/heads/main").is_some());
 }
+
+#[test]
+fn member_set_url_on_the_project_repo_records_its_url_remote_so_a_second_remote_does_not_unset_it()
+{
+    let weave = Weave::new();
+    let other = weave.scratch("other.git");
+    init_bare(&other);
+    common::git_in(
+        weave.project(),
+        &["remote", "add", "other", &common::file_url(&other)],
+    );
+    common::git_in(weave.project(), &["branch", "--unset-upstream"]);
+    commit(&weave.member(), "work");
+    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    assert!(refused.contains("push-branch no push target"), "{refused}");
+
+    let set = weave.rwv(&[
+        "member",
+        "set-url",
+        "projects/alpha",
+        &common::file_url(&other),
+    ]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    assert_eq!(
+        common::git_in(weave.project(), &["config", "rwv.url-remote"]),
+        "other"
+    );
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+    assert!(ref_of(&other, "refs/heads/main").is_some());
+}
+
+#[test]
+fn member_set_url_on_the_project_repo_adds_the_remote_when_the_repo_has_none_for_the_url() {
+    let weave = Weave::new();
+    let fresh = weave.scratch("fresh.git");
+    init_bare(&fresh);
+    let before = names(&weave.project());
+
+    let set = weave.rwv(&[
+        "member",
+        "set-url",
+        "projects/alpha",
+        &common::file_url(&fresh),
+    ]);
+    assert!(set.status.success(), "{}", text(&set.stderr));
+
+    let recorded = common::git_in(weave.project(), &["config", "rwv.url-remote"]);
+    assert!(!before.contains(&recorded), "{recorded} in {before:?}");
+    let held = remotes(&weave.project());
+    assert!(
+        held.contains(&(recorded, common::file_url(&fresh))),
+        "{held:?}"
+    );
+}

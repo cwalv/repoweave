@@ -34,6 +34,8 @@ two spellings: without `--new` the branch must exist (else `name`
 `no-such-branch`, naming `rwv fetch` and `--new`); with `--new` it must exist
 nowhere (else `name` `exists`) and is created at the pin or at `--at`. Entry
 changes are reported as `member-changed` until the push branch carries them.
+`member set-url projects/<name> <url>` records the remote at the url as the
+project repo's url remote, adding the remote when the repo has none for it.
 `member add` of a registered member refuses a `--role` or
 `--no-recurse-submodules` that disagrees with the entry, naming the setter.
 
