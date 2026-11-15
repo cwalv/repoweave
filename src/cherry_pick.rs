@@ -389,7 +389,7 @@ impl NotPorted {
             if let Some(role) = &self.role {
                 bindings.insert("<role>", role.clone());
             }
-            text.push_str(&crate::diagnosis::choices_text(vcs, &[form], &bindings));
+            text.push_str(&crate::diagnosis::next_text(vcs, &[form], &bindings));
         }
         text
     }

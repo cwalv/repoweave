@@ -1643,7 +1643,7 @@ impl Aligner {
         if let Some(line) = self.record_change_line(verb)? {
             let mut report = crate::diagnosis::Report::default();
             report.add(line);
-            eprint!("{}", report.render(verb));
+            eprint!("{}", report.render_completed(verb));
         }
         Ok(())
     }

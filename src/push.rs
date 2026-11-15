@@ -2139,7 +2139,7 @@ fn publish(
             if output == OutputMode::Text {
                 let mut fact = Report::default();
                 fact.add(line);
-                eprint!("{}", fact.render("push"));
+                eprint!("{}", fact.render_completed("push"));
             }
         }
     }

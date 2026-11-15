@@ -384,7 +384,7 @@ pub fn run_status(
                     &project.manifest,
                 );
                 entry_changes.push_str(&crate::entry_report::render(
-                    "status", ctx, aligner, &standing,
+                    "status", ctx, aligner, &standing, true,
                 ));
             }
             if let Some(line) = project_line(&pname, &project_dir, aligner) {

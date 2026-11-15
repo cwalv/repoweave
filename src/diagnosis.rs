@@ -4499,6 +4499,10 @@ impl Report {
     }
 
     fn body(&self, prefix: &str) -> String {
+        self.body_listing(prefix, true)
+    }
+
+    fn body_listing(&self, prefix: &str, list_choices: bool) -> String {
         let mut out = String::new();
         for judged in self.ordered() {
             out.push_str(&format!("{prefix}{}\n", judged.headline()));
@@ -4510,7 +4514,12 @@ impl Report {
             out.push_str(&format!("{note}\n"));
         }
         let choices = self.choices();
-        if !choices.is_empty() {
+        if !list_choices {
+            let next = choices.iter().find_map(|(_, _, lines)| lines.first());
+            if let Some(line) = next {
+                out.push_str(&format!("next: {line}\n"));
+            }
+        } else if !choices.is_empty() {
             out.push_str("choices:\n");
             for (phrase, at, lines) in choices {
                 match at {
@@ -4534,6 +4543,22 @@ impl Report {
             format!("rwv {verb}: ")
         };
         let mut out = self.body(&prefix);
+        out.push('\n');
+        for kind in self.kinds() {
+            out.push_str(&format!("rwv explain {}\n", kind.token()));
+        }
+        out
+    }
+
+    /// What a verb that completed prints for its judged lines: no choices
+    /// block, and the first choice's command as one `next:` line.
+    pub fn render_completed(&self, verb: &str) -> String {
+        let prefix = if verb.is_empty() {
+            "rwv: ".to_owned()
+        } else {
+            format!("rwv {verb}: ")
+        };
+        let mut out = self.body_listing(&prefix, false);
         out.push('\n');
         for kind in self.kinds() {
             out.push_str(&format!("rwv explain {}\n", kind.token()));
@@ -4565,6 +4590,20 @@ pub fn choices_text(
         return out;
     }
     format!("choices:\n{out}")
+}
+
+/// What a verb that completed prints for `forms`: the first command as one
+/// `next:` line, or nothing where no form has shipped.
+pub fn next_text(
+    vcs: &dyn Vcs,
+    forms: &[Form],
+    bindings: &BTreeMap<&'static str, String>,
+) -> String {
+    choices(vcs, forms, bindings)
+        .iter()
+        .find_map(|choice| choice.run.first())
+        .map(|line| format!("next: {line}\n"))
+        .unwrap_or_default()
 }
 
 /// The choices `forms` print, as a `--json` record carries them.

@@ -1179,7 +1179,7 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                         .only_forms(&[crate::diagnosis::Form::C7PushBranch])
                         .judge(vcs.as_ref()),
                 );
-                eprint!("{}", ahead.render("land"));
+                eprint!("{}", ahead.render_completed("land"));
             }
         }
     }
@@ -3216,11 +3216,7 @@ fn left_behind_text(left: &op_state::LeftBehind) -> String {
         out.push_str(&format!("    {} {}\n", commit.id.short(), commit.subject));
     }
     let (forms, bindings) = left_behind_choices(left);
-    out.push_str(&crate::diagnosis::choices_text(
-        vcs.as_ref(),
-        forms,
-        &bindings,
-    ));
+    out.push_str(&crate::diagnosis::next_text(vcs.as_ref(), forms, &bindings));
     out
 }
 

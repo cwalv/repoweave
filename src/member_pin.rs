@@ -195,7 +195,7 @@ fn report_lines(lines: Vec<Judged>) {
     for line in lines {
         report.add(line);
     }
-    eprint!("{}", report.render("member pin"));
+    eprint!("{}", report.render_completed("member pin"));
 }
 
 /// Where the checkout stands against the pin it was just given, when that is

@@ -1186,7 +1186,7 @@ fn align_checkouts(
     }
     if !left.is_empty() {
         if output == OutputMode::Text {
-            outln!("{}", left.render(verb).trim_end_matches('\n'));
+            outln!("{}", left.render_completed(verb).trim_end_matches('\n'));
         }
         run.judged = left.output();
     }

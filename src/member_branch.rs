@@ -655,7 +655,7 @@ pub(crate) fn align_member(
         }
     }
     if !report.is_empty() {
-        eprint!("{}", report.render(verb));
+        eprint!("{}", report.render_completed(verb));
     }
     Ok(notes)
 }

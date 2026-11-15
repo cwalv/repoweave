@@ -693,7 +693,7 @@ fn commit_addition(
                     .bind("<m>", repo_path.as_str())
                     .judge(vcs),
             );
-            eprint!("{}", report.render("member add"));
+            eprint!("{}", report.render_completed("member add"));
         }
     }
     Ok(())

@@ -61,7 +61,7 @@ impl Relinking {
             Relinking::To(relink) => Some(relink.describe(member)),
             Relinking::Unfetched { branch, url } => Some(format!(
                 "{member}: '{branch}' relinks to {url} once a fetch finds it there\n{}",
-                crate::diagnosis::choices_text(
+                crate::diagnosis::next_text(
                     vcs,
                     &[crate::diagnosis::Form::C33],
                     &Default::default()

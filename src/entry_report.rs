@@ -189,6 +189,7 @@ pub(crate) fn render(
     ctx: &WorkspaceContext,
     aligner: &Aligner,
     standing: &Standing,
+    list_choices: bool,
 ) -> String {
     use crate::diagnosis::Form;
     let mut out = String::new();
@@ -252,6 +253,13 @@ pub(crate) fn render(
         if !unpushed.is_empty() {
             onto_new.push(Form::C15);
         }
+        if !list_choices {
+            let text = crate::diagnosis::choices_text(vcs.as_ref(), &onto_new, &bindings);
+            if let Some(line) = text.lines().find_map(|l| l.strip_prefix("    ")) {
+                out.push_str(&format!("next: {line}\n"));
+            }
+            continue;
+        }
         let onto_new_text = crate::diagnosis::choices_text(vcs.as_ref(), &onto_new, &bindings);
         let mut forms: Vec<Form> = Vec::new();
         let mut restores = String::new();
@@ -295,7 +303,7 @@ pub(crate) fn report(
 ) -> Standing {
     let vcs = crate::vcs::project_vcs();
     let standing = standing(vcs.as_ref(), project_dir, aligner, manifest);
-    eprint!("{}", render(verb, ctx, aligner, &standing));
+    eprint!("{}", render(verb, ctx, aligner, &standing, false));
     if relinking {
         relink(verb, ctx, &standing);
     }
