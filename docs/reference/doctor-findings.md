@@ -665,9 +665,10 @@ kept at `projects/<project>/.rwv-workweave-index` stands, the name is read from
 that file, so run the fix before anything removes it. A workweave no index
 lists takes the name its directory's name `<project>--<name>` spells. One whose
 name nothing records is reported with the verb that names it,
-`rwv workweave create <name> --project <project> --dir <dir>` run from its
-parent, which writes the name into the marker and records the workweave as it
-stands. Run `--fix` from the primary weave: from inside the workweave the
+`rwv -C <primary> workweave create <name> --project <project> --dir <dir>`,
+which writes the name into the marker and records the workweave as it
+stands. While an operation holds the primary, the lines that end it are
+printed before it, in the order they run. Run `--fix` from the primary weave: from inside the workweave the
 marker refuses before any verb dispatches, naming `rwv -C <primary> doctor
 --fix`.
 

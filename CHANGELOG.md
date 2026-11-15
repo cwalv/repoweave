@@ -46,9 +46,21 @@ release wrote, the markers of workweaves made with `--dir` outside the
 workweave container included, reading it from the workweave index that release
 kept at `projects/<project>/.rwv-workweave-index`; it then rebuilds the index
 into the project clone and removes that file. A workweave no record names is
-reported with `rwv workweave create <name> --project <project> --dir <dir>`,
-which names it. [Upgrade rwv](docs/how-to/upgrade-rwv.md) lists the other
-state an earlier release wrote and the command that migrates each part.
+reported with `rwv -C <primary> workweave create <name> --project <project>
+--dir <dir>`, which names it, after the lines that end any operation holding
+the primary. While an operation's record stands, no `rwv doctor --fix`
+anywhere in the weave drops its savepoints: the workspaces it reads for
+records are the primary, every workweave an index records and every
+workspace a checkout of the project clone is registered in, and where one
+cannot be read it keeps every savepoint and says why. The primary's `rwv
+doctor --all` names each workweave whose own checkout still holds the earlier
+keys or merge-driver line (`unmigrated-workweave`) with `rwv -C <workweave>
+doctor --fix`. Set the trunk's history (`rwv -C <primary> branch set-history
+<h>`) once its records are in place, before any workweave lands; a merge base
+naming the earlier keys reads as the rename makes it, so a workweave forked
+before the upgrade changes no history by landing. [Upgrade
+rwv](docs/how-to/upgrade-rwv.md) gives the order the steps run in and the
+command that migrates each part.
 
 ### The `.rwv-fetched` file is no longer written
 
