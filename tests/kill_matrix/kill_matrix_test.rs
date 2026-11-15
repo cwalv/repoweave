@@ -133,8 +133,8 @@ fn parks() -> Exit {
     Exit::refuses_kind(RefusalKind::OpParked)
 }
 
-fn parks_on_the_manifest() -> Exit {
-    Exit::refuses(Repo::Proj, State::UnparseableProjectMidOperation)
+fn parks_on_the_replayed_manifest() -> Exit {
+    Exit::refuses(Repo::Proj, State::EditsReplayDiffers)
 }
 
 fn seat_ahead_of_a_moved_main(history: &'static str) -> Vec<Step> {
@@ -449,7 +449,7 @@ pub(super) const SHAPES: &[Shape] = &[
         at: seat_w,
         target: None,
         stop: Some(Stop {
-            exit: parks_on_the_manifest,
+            exit: parks_on_the_replayed_manifest,
             fix: settle_manifest,
         }),
         abort_after: "op-savepoint-taken",
@@ -559,7 +559,7 @@ pub(super) const SHAPES: &[Shape] = &[
         at: seat_w,
         target: None,
         stop: Some(Stop {
-            exit: parks_on_the_manifest,
+            exit: parks_on_the_replayed_manifest,
             fix: settle_manifest,
         }),
         abort_after: "claimed",

@@ -230,6 +230,7 @@ src/plugins.rs	(untokened:environment-passthrough)	-	1
 src/plugins.rs	unknown-verb	tests/vcs/vcs_tool_floor_test.rs	1
 src/project_merge.rs	(untokened:internal-invariant)	-	2
 src/project_merge.rs	(untokened:owed)	-	1
+src/project_merge.rs	edits replay differs	-	1
 src/project_merge.rs	op-parked	-	1
 src/project_merge.rs	unparseable-project mid-operation	-	1
 src/project_merge.rs	untracked-collision	-	1

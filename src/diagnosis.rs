@@ -483,6 +483,7 @@ pub enum State {
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
     EditsCommitMidOperation,
+    EditsReplayDiffers,
     CheckoutInAnotherWorkspace,
     CheckoutInRawWorktree,
     PushBranchDiverged,
@@ -579,7 +580,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 89] = [
+    pub const ALL: [State; 90] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMovedAndEdited,
@@ -590,6 +591,7 @@ impl State {
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
         Self::EditsCommitMidOperation,
+        Self::EditsReplayDiffers,
         Self::CheckoutInAnotherWorkspace,
         Self::CheckoutInRawWorktree,
         Self::PushBranchDiverged,
@@ -1231,20 +1233,32 @@ impl State {
                         holds the file; continuing makes the resolved file part of that \
                         commit, which the replay wrote and nothing has published. A resolved \
                         file that parses under a working file that differs and does not parse \
-                        stops here too, before anything is committed. Under linear history the \
-                        replayed tip whose `rwv.toml` parses stops here too where it differs \
-                        from the merge of the values of the merge base, the commit replayed \
-                        onto and the branch's tip before the replay, each entry that differs \
-                        listed; an entry both sides changed differently keeps the tip's value",
+                        stops here too, before anything is committed",
                 refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
                              first read what the merge or replay produced, and their \
                              `--continue` while the resolved `rwv.toml` does not parse; `rwv \
                              abort` runs",
                 offers: &[
-                    Form::KeepTextMerge,
-                    Form::StageOwnManifest,
                     Form::StageParsingManifest,
                     Form::ResumeWithManifest,
+                    Form::AbortOperation,
+                ],
+                verb_offers: &[],
+            },
+            Self::EditsReplayDiffers => &StateRow {
+                axis: Axis::Edits,
+                name: "replay differs",
+                means: "under linear history the replay finished and the replayed tip's \
+                        `rwv.toml` parses, but differs from the merge of the values of the \
+                        merge base, the commit replayed onto and the branch's tip before the \
+                        replay, each entry that differs listed; an entry both sides changed \
+                        differently keeps the tip's value. Nothing is committed until the \
+                        file is settled",
+                refused_by: "`rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they \
+                             first read what the replay produced; `rwv abort` runs",
+                offers: &[
+                    Form::KeepTextMerge,
+                    Form::StageOwnManifest,
                     Form::AbortOperation,
                 ],
                 verb_offers: &[],

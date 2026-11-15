@@ -91,6 +91,7 @@ The others follow.
 | `rwv.toml or rwv.lock uncommitted` | the project repo's only uncommitted changes are to `rwv.toml` or `rwv.lock`, or either is not yet tracked | `rwv push`; `rwv switch`, and `rwv branch create` for an `rwv.lock` where the branch starts at another commit than the checked-out one. In a detached project repo the choice is `rwv branch create`, which carries both files |
 | `lock unresolved` | the project repo's `rwv.lock` is conflicted: a merge, rebase or copy the lock merge driver could not settle left it conflicted with both pins marked, or a driver that could not run left one side in the working file with the conflict recorded only by the VCS. Resolve it to the pins you mean and mark it resolved | every verb resolved for a project, until it is resolved; `rwv doctor` and `rwv abort` run |
 | `commit mid-operation` | the project repo is in the middle of a merge, rebase, cherry-pick or revert, named, with each path still conflicted listed. A commit made there now would become that operation's commit, concluding it with only what the commit carries. The operation ends by its own continue, which commits what you marked resolved, or by its abort | every verb that commits the project repo: the `rwv member` and `rwv branch` setters, `rwv lock --commit`, `rwv doctor --fix`, and `rwv sync`, `rwv land`, `rwv pull`, `rwv cherry-pick` and `rwv update --remote` as they start; each operation's own `--continue` and `rwv abort` run |
+| `replay differs` | under linear history the replay finished and the replayed tip's `rwv.toml` parses, but differs from the merge of the values of the merge base, the commit replayed onto and the branch's tip before the replay, each entry that differs listed; an entry both sides changed differently keeps the tip's value. Nothing is committed until the file is settled | `rwv sync`, `rwv land` and `rwv pull --merge-upstream` when they first read what the replay produced; `rwv abort` runs |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
 
@@ -141,6 +142,9 @@ The others follow.
 | `commit mid-operation` | let the operation that stopped go on, committing what you marked resolved | the stopped operation's `--continue` | here | it stops again while any path is conflicted |
 | `commit mid-operation` | abandon the operation that stopped | `rwv abort`, against the stopped operation's workspace | here | `rwv abort` moves only what the operation moved, back to where it found it |
 | `commit mid-operation` | C32: finish or abandon the operation in progress first | VCS action (git: `git -C <checkout> status`) | the checkout | rwv moves nothing until it ends |
+| `replay differs` | keep the text merge as the VCS made it | the stopped operation's `--continue --keep text-merge` | here | writes nothing; the text merge is not judged again in this operation |
+| `replay differs` | edit rwv.toml into what you mean and mark it resolved, then continue | VCS action (git: `git -C <checkout> add -- <paths>`); the stopped operation's `--continue` | the checkout | the resolved file is taken whole and not judged again |
+| `replay differs` | abandon the operation that stopped | `rwv abort`, against the stopped operation's workspace | here | `rwv abort` moves only what the operation moved, back to where it found it |
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md); [Sync semantics](../explanation/joints/sync-semantics.md).
 

@@ -961,14 +961,13 @@ fn unparseable_result_saying(
     error: &dyn std::fmt::Display,
     lines: &[String],
 ) -> anyhow::Error {
-    use crate::diagnosis::ChoiceId as C;
     let file = dir.join(Manifest::FILE_NAME).display().to_string();
     let parse_error = format!("{error:#}");
-    let settled_by = match produced {
-        Produced::ReplayDiffers => [C::StageParsingManifest, C::ResumeWithManifest],
-        _ => [C::KeepTextMerge, C::StageOwnManifest],
+    let state = match produced {
+        Produced::ReplayDiffers => crate::diagnosis::State::EditsReplayDiffers,
+        _ => crate::diagnosis::State::UnparseableProjectMidOperation,
     };
-    let judging = crate::diagnosis::State::UnparseableProjectMidOperation
+    let judging = state
         .of(repo)
         .project_repo()
         .subject(file)
@@ -980,8 +979,7 @@ fn unparseable_result_saying(
         .bind_list("<paths>", [Manifest::FILE_NAME])
         .bind_list("<resume>", resume.split_whitespace())
         .bind_list("<abort>", ["rwv", "abort"])
-        .checkout(dir)
-        .without(&settled_by);
+        .checkout(dir);
     judging.judge(vcs).refused()
 }
 

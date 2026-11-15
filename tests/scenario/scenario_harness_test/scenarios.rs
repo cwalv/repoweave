@@ -12308,7 +12308,7 @@ fn the_resolved_tip_kept(step: Step) -> [Step; 2] {
     [
         step.expect(Exit::refuses(
             Repo::Proj,
-            State::UnparseableProjectMidOperation,
+            State::EditsReplayDiffers,
         ))
         .may_strand(&[Repo::Proj])
         .claim(Claim::OutputContains(
@@ -22683,7 +22683,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
         Step::rwv(&ww("w"), start)
             .expect(Exit::refuses(
                 Repo::Proj,
-                State::UnparseableProjectMidOperation,
+                State::EditsReplayDiffers,
             ))
             .claim(Claim::OutputContains(moved))
             .claim(Claim::OutputContains("--keep text-merge"))
@@ -22713,7 +22713,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
     let stands = |step: Step| {
         step.expect(Exit::refuses(
             Repo::Proj,
-            State::UnparseableProjectMidOperation,
+            State::EditsReplayDiffers,
         ))
         .claim(Claim::OutputContains(moved))
         .claim(Claim::OutputContains("--keep text-merge"))
@@ -22867,7 +22867,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
             steps.extend([Step::rwv(&ww("w"), resume)
                 .expect(Exit::refuses(
                     Repo::Proj,
-                    State::UnparseableProjectMidOperation,
+                    State::EditsReplayDiffers,
                 ))
                 .claim(Claim::OutputContains("not the tip the replay wrote"))]);
             "a hand amend of the replayed tip meets the guard"
@@ -22916,7 +22916,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
                     Step::rwv_printed_exactly(&ww("w"), bare)
                         .expect(Exit::refuses(
                             Repo::Proj,
-                            State::UnparseableProjectMidOperation,
+                            State::EditsReplayDiffers,
                         ))
                         .claim(Claim::OutputContains(moved))
                         .claim(Claim::OutputContains("--keep text-merge")),
@@ -23223,7 +23223,7 @@ pub fn a_replay_rwv_settled_still_checks_its_tip(verb: TipVerb) -> Scenario {
     steps.extend([Step::rwv(&ww("w"), &[resume, "--continue"])
         .expect(Exit::refuses(
             Repo::Proj,
-            State::UnparseableProjectMidOperation,
+            State::EditsReplayDiffers,
         ))
         .claim(Claim::OutputContains("wrote the merge of both sides"))
         .claim(Claim::OutputContains(
@@ -23266,7 +23266,7 @@ pub fn a_hand_settled_replay_lands_a_target_change_only_by_consent() -> Scenario
         Step::rwv(&ww("w"), &["land", "--continue"])
             .expect(Exit::refuses(
                 Repo::Proj,
-                State::UnparseableProjectMidOperation,
+                State::EditsReplayDiffers,
             ))
             .may_strand(&[Repo::Proj])
             .claim(Claim::OutputContains(
@@ -24441,7 +24441,7 @@ pub fn a_carried_dependent_whose_rwv_toml_differs_is_not_moved() -> Scenario {
         Step::rwv(&ww("w2"), &["sync"])
             .expect(Exit::refuses(
                 Repo::Proj,
-                State::UnparseableProjectMidOperation,
+                State::EditsReplayDiffers,
             ))
             .claim(Claim::OutputContains(
                 "local/remotes/app recurse-submodules: absent in the text merge",
@@ -26048,7 +26048,7 @@ pub fn doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places() -> Sce
                 .expect(Exit::Succeeds),
             Step::rwv(&at, &["sync", "--history", "linear"]).expect(Exit::refuses(
                 Repo::Proj,
-                State::UnparseableProjectMidOperation,
+                State::EditsReplayDiffers,
             )),
             Step::rwv(&at, &["doctor"])
                 .expect(Exit::Succeeds)

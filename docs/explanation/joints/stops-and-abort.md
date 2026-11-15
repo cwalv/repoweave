@@ -43,7 +43,7 @@ the operation left it.
 |---|---|---|
 | conflict | a merge, rebase or copy in one checkout conflicted; the stop names the checkout | resolve it, mark it resolved, `--continue`; or `rwv abort` |
 | `rwv.toml` conflict | the project repo's `rwv.toml` is unmerged; each entry in conflict is listed with both values | `--continue --keep yours` or `--keep incoming`, which takes that side for every entry in conflict; or edit `rwv.toml` into what you mean, mark it resolved, then `--continue`; or `rwv abort` |
-| check stop | the VCS merged `rwv.toml` as text without a conflict, and the result differs from the merge of both sides' values, or does not parse (`unparseable-project` `mid-operation`) | mark an `rwv.toml` that parses resolved, then `--continue`; `--continue --keep text-merge` marks the VCS's text merge resolved as it stands; or `rwv abort` |
+| check stop | the VCS merged `rwv.toml` as text without a conflict, and the result differs from the merge of both sides' values (under `linear`, `edits` `replay differs`), or does not parse (`unparseable-project` `mid-operation`) | mark an `rwv.toml` that parses resolved, then `--continue`; `--continue --keep text-merge` marks the VCS's text merge resolved as it stands; or `rwv abort` |
 | lost race | a landing's target or receiving branch moved since the landing read it (`target` `moved mid-operation`) | `rwv abort` only; `--continue` refuses it |
 | crash | the process died anywhere | `--continue` or `rwv abort`; a `--continue` that finds its work done ends the operation |
 
