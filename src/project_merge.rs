@@ -435,7 +435,6 @@ pub(crate) struct ProjectMerge<'a> {
     pub(crate) project: &'a ProjectName,
     pub(crate) verb: &'static str,
     pub(crate) resume: String,
-    pub(crate) jobs: usize,
     pub(crate) opts: ActivateOptions,
     pub(crate) message: String,
     /// Which side the checkout holds: the other is merged in.
@@ -872,26 +871,12 @@ impl ProjectMerge<'_> {
 
     fn settle(&self, vcs: &dyn Vcs, dir: &Path, manifest: &Manifest) -> anyhow::Result<()> {
         let root = self.ctx.active_path();
-        let missing: Vec<String> = manifest
+        let whole = manifest
             .iter_entries()
-            .filter(|(path, _)| !root.join(path.as_path()).exists())
-            .map(|(path, _)| path.to_string())
-            .collect();
-        if !missing.is_empty() {
-            let selection = crate::member_selection::MemberSelection::new(
-                crate::selector::RepoFilter::parse(&[], &missing)?,
-                false,
-            );
-            crate::update::update_members(
-                self.ctx,
-                &selection,
-                self.jobs,
-                crate::parallel::OutputMode::Text,
-                self.opts,
-            )?
-            .tail?;
+            .all(|(path, _)| root.join(path.as_path()).exists());
+        if whole {
+            crate::add_remove::settle_manifest(self.ctx, self.project, None, &[], self.opts)?;
         }
-        crate::add_remove::settle_manifest(self.ctx, self.project, None, &[], self.opts)?;
         let authored = crate::activate::owned_paths(root, self.project, manifest);
         let dirty = vcs.dirty_file_names(dir)?;
         let carried: Vec<&str> = dirty

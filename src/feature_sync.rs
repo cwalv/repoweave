@@ -1592,7 +1592,6 @@ fn act(
                 project: &sync.project,
                 verb: "sync",
                 resume: crate::op_state::resume_command_at(OpVerb::Sync, sync.ctx.active_path()),
-                jobs: sync.jobs,
                 opts: crate::activate::ActivateOptions::default(),
                 message: format!("Merge {} into {}", sync.source_name(), sync.branch),
                 head: Parent::First,

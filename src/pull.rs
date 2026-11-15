@@ -242,7 +242,6 @@ pub fn run_pull(
             },
             resumed: None,
             activation,
-            jobs,
         },
         (_, Some((op, project, record))) => {
             if project != project_name {
@@ -255,13 +254,13 @@ pub fn run_pull(
                 flags: Flags::default().recorded(&record),
                 resumed: Some((op, record)),
                 activation,
-                jobs,
             }
         }
         (Take::Continue, None) => unreachable!("a continue resumes an op"),
     };
     let project = take_in_project(ctx, &project_name, output, &how)?;
 
+    crate::test_pause::point("aligning-source");
     let run = update_members(ctx, selection, jobs, output, activation)?;
     if output.is_json() {
         PullJsonOutput {
@@ -292,7 +291,6 @@ struct How {
     flags: Flags,
     resumed: Option<(Op, TakeInRecord)>,
     activation: ActivateOptions,
-    jobs: usize,
 }
 
 /// Every repo a merge or reset may move: the project repo and each member
@@ -706,7 +704,6 @@ fn merge_project(
             project,
             verb: "pull",
             resume: crate::op_state::resume_command_at(OpVerb::Pull, ctx.active_path()),
-            jobs: how.jobs,
             opts: how.activation,
             message: format!("Merge the upstream of {attached} into {attached}"),
             head: crate::lock_merge::Parent::Second,
