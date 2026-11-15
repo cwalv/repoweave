@@ -507,10 +507,11 @@ between sandboxes), each branch's tree listing (without `rwv.lock` and
 lock text. Abort leaves the backups as captured but for the slots it keeps,
 named per shape. Each shape also has one cell holding its operation (stopped
 where it stops, else killed at the point its abort-phase cells start from) in
-which `rwv doctor --fix` runs in the primary and in a detached seat the
-operation does not touch before the abort, which must end as the plain abort
-does: a repair run elsewhere in the weave leaves an operation what its abort
-restores from. Steps run with no standing allowance: the killed verb, its
+which `rwv doctor --fix` runs in the primary of its weave and in a detached
+seat there the operation does not touch before the abort, which must end as
+the plain abort does: a repair run elsewhere in the weave leaves an operation
+what its abort restores from. `DOCTOR_ELSEWHERE_CANNOT_FAIL` names the shapes
+whose cell cannot tell the two apart, each with the measurement that says why. Steps run with no standing allowance: the killed verb, its
 continue and its abort are given only the pins they rewind and the declared
 branches they restore or rewrite, per shape. A point a verb passes before it
 has written its record has a rerun in place of a continue. A point it passes

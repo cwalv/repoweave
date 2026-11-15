@@ -1232,33 +1232,48 @@ fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
     }
 }
 
+/// The primary of the weave the shape's operation runs in.
+fn weave_of(shape: &Shape) -> Place {
+    Place::Primary((shape.at)().machine().expect("a shape runs on a machine"))
+}
+
 /// The seat [`Ending::AbortAfterDoctorElsewhere`] runs `rwv doctor --fix` in,
 /// which no shape's operation touches: detached, so it lands into nothing.
 const BYSTANDER: &str = "bystander";
 
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
-    let mut steps = match ending {
-        Ending::AbortAfterDoctorElsewhere => vec![Step::rwv(
-            &a(),
-            &[
-                "workweave",
-                "create",
-                "--project",
-                "proj",
-                BYSTANDER,
-                "--detach",
-                "main",
-            ],
-        )
-        .expect(Exit::Succeeds)],
-        _ => Vec::new(),
-    };
-    match (ending, &shape.stop) {
-        (Ending::AbortAfterDoctorElsewhere, Some(stop)) => {
+    let mut steps = Vec::new();
+    match ending {
+        Ending::AbortAfterDoctorElsewhere => {
             steps.extend((shape.setup)());
             steps.extend(holding(shape));
+            steps.push(
+                Step::rwv(
+                    &weave_of(shape),
+                    &[
+                        "workweave",
+                        "create",
+                        "--project",
+                        "proj",
+                        BYSTANDER,
+                        "--detach",
+                        "main",
+                    ],
+                )
+                .expect(Exit::Succeeds),
+            );
             steps.push(Step::capture("before"));
-            steps.push(run_of(shape, (stop.exit)(), shape.start));
+            match &shape.stop {
+                Some(stop) => steps.push(run_of(shape, (stop.exit)(), shape.start)),
+                None => {
+                    let at = (shape.at)();
+                    steps.push(settled(
+                        shape,
+                        Step::rwv_paused(&at, shape.start, point, "held"),
+                    ));
+                    steps.push(Step::kill("held"));
+                }
+            }
         }
         _ => steps.extend(until_stopped(shape, phase, point)),
     }
@@ -1276,7 +1291,10 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
             true,
         )),
         Ending::AbortAfterDoctorElsewhere => {
-            for at in [a(), ww(BYSTANDER)] {
+            let machine = weave_of(shape)
+                .machine()
+                .expect("a shape runs on a machine");
+            for at in [weave_of(shape), Place::ww(machine, BYSTANDER)] {
                 steps.push(settled(
                     shape,
                     Step::rwv(&at, &["doctor", "--fix"]).expect(Exit::Succeeds),
@@ -1907,6 +1925,26 @@ fn cell_runs(shape: &Shape) -> Vec<(&'static str, Phase, Ending)> {
     runs
 }
 
+/// Shapes whose [`Ending::AbortAfterDoctorElsewhere`] cell cannot tell a
+/// doctor that drops the operation's savepoints from one that keeps them, and
+/// why: measured by dropping the live set and listing `refs/rwv/` before the
+/// doctor runs and after.
+const DOCTOR_ELSEWHERE_CANNOT_FAIL: &[(&str, &str)] = &[
+    (
+        "land_linear_waiting",
+        "waiting on the other landing's claim it has filed no savepoint: refs/rwv/ is empty \
+         in every repo before the doctor runs",
+    ),
+    (
+        "pull_merge_upstream",
+        "its one recorded point is op-savepoint-taken, where only the project's \
+         refs/rwv/pre-op/<id>/checkout/main stands and nothing has moved: the doctor drops it \
+         and the abort, which has nothing to put back, ends the same",
+    ),
+    ("pull_merge_upstream_adding", "as pull_merge_upstream"),
+    ("update_remote_merge_upstream", "as pull_merge_upstream"),
+];
+
 /// What [`Ending::AbortAfterDoctorElsewhere`] names the place the shape holds
 /// its operation at: [`STOPPED`] for a shape that stops, else the point it is
 /// killed at.
@@ -2036,8 +2074,9 @@ fn every_shape_has_a_test_and_a_cell() {
     }
 }
 
-/// Every shape is killed once holding its operation, at its `abort_after`,
-/// and aborted after `rwv doctor --fix` has run elsewhere in the weave.
+/// Every shape holds its operation once, and is aborted after `rwv doctor
+/// --fix` has run elsewhere in its weave; the shapes whose cell cannot fail
+/// are named, each one real.
 #[test]
 fn every_shape_aborts_once_after_a_doctor_fix_elsewhere() {
     for shape in SHAPES {
@@ -2053,6 +2092,10 @@ fn every_shape_aborts_once_after_a_doctor_fix_elsewhere() {
             "{}",
             shape.id
         );
+    }
+    for (id, why) in DOCTOR_ELSEWHERE_CANNOT_FAIL {
+        assert!(!why.is_empty());
+        shape(id);
     }
 }
 
