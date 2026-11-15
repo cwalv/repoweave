@@ -54,6 +54,8 @@ backstop unnecessary.
   behind `rwv sync` and `rwv land`: what each phase persists, its re-entry
   rule, abort's slots, the `rwv.toml` stops, and the git realization of each
   mechanism.
+- [journey-tasks](./journey-tasks.md) — the operator tasks written as outcomes with a mechanical
+  end-state check each; the journey tests and the usability probe share them.
 - [concurrency](./concurrency.md) — the budget for judging interference
   concerns: git's correctness effort as goal and ceiling, the two tiers of
   state (including the claim that serializes fetches into one object store),
