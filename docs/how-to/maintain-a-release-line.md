@@ -41,7 +41,7 @@ rwv land --retire
 cd ~/work
 ```
 
-`rwv land` fast-forwards `v1` and `stable`, and `--retire` deletes the workweave. Publishing is a separate step; `--branch` publishes a branch that is not the one checked out:
+`rwv land` fast-forwards `v1` and `stable`, and `--retire` deletes the workweave, and the last line names where to continue. Publishing is a separate step; `--branch` publishes a branch that is not the one checked out:
 
 ```bash
 rwv push --branch stable
@@ -49,7 +49,7 @@ rwv push --branch stable
 
 `rwv push` publishes the members' branches before the project branch, so the line never names a commit nobody can fetch.
 
-To review the fix as a pull request first, record the lock in the workweave and publish it before landing: `rwv lock --commit`, then `rwv push` publishes `hotfix1` for `server` (a member pull request into `v1`) and for the project repo (a project pull request into `stable`). A landing then needs only `rwv land --retire` and `rwv push --branch stable`, or the forge's merge followed by `rwv pull`.
+To review the fix as a pull request first, record the lock in the workweave and publish it before landing: `rwv lock --commit`, then `rwv push` (a push before the lock pins what the member now holds is refused with `pin unpinned`, which prints that same `rwv lock --commit`) publishes `hotfix1` for `server` (a member pull request into `v1`) and for the project repo (a project pull request into `stable`). A landing then needs only `rwv land --retire` and `rwv push --branch stable`, or the forge's merge followed by `rwv pull`.
 
 A member the line leaves on `main` is not part of the hotfix, and a landing names every change it makes to the target's member entries. To change one, declare a branch for it in the hotfix workweave first (`rwv member set-branch github/chatly/web webv1 --new`) and land with `rwv land --allow-member-change github/chatly/web`.
 
@@ -92,13 +92,20 @@ The merge's first parent is the line's, so the landing passes the lineage rule. 
 
 ## Retire the line
 
-From `main`, a line that has shipped its last fix is deleted in two steps, since its published branch holds commits `main` does not:
+From `main`, a line that has shipped its last fix is deleted by the deletion rule, which keeps a branch whose published copy still holds commits `main` does not:
 
 ```bash
-rwv branch delete stable --target main --discard-unlanded
+rwv branch delete stable --target main
 ```
 
-`rwv branch delete` keeps a branch whose published copy still holds unlanded commits and lists why (`open-head`, exit status `3`). Delete `origin/stable` where the remote is managed (a forge setting), run `rwv fetch`, and the delete above removes `stable` locally, keeping its tip as a backup first (`rwv backup list`). The line's member branches, `v1` and `protov1`, stay: a declared branch is never deleted by rwv.
+The line is kept and listed (`open-head`, exit status `3`), and the listing prints the next step. To give the line up unlanded, record it as a feature, which makes it an ordinary branch, then delete it with its published copy. The delete keeps its tip as a backup first (`rwv backup list`):
+
+```bash
+rwv branch set-mode stable feature --target main
+rwv branch delete stable --discard-unlanded --delete-remote-unlanded projects/web-app
+```
+
+The line's member branches, `v1` and `protov1`, stay: once `stable` is a feature they are ordinary branches, and a delete never touches a branch a live line still declares.
 
 ## Related
 

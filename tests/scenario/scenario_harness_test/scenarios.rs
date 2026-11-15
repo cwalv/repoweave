@@ -2228,6 +2228,7 @@ pub fn worktree_add_force_on_weave_branch() -> Scenario {
                     Repo::App,
                     State::AlignmentOnBranchWithStrayCommits,
                 ))
+                .claim(Claim::OutputLacks("cherry-pick -x"))
                 .claim(Claim::LocalStateUnchanged(a())),
             Step::rwv_printed_filling(
                 &ww("wt"),

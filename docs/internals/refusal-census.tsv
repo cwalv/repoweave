@@ -95,7 +95,7 @@ src/cherry_pick.rs	unparseable-project commit	-	1
 src/cherry_pick.rs	untracked-collision	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
-src/cli/dispatch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
+src/cli/dispatch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	3
 src/cli/dispatch.rs	malformed-workweave-address	-	2
 src/cli/dispatch.rs	no-such-workweave	-	2
 src/cli/dispatch.rs	stale-registry-entry	tests/doctor/state_hygiene_test.rs	2

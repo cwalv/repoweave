@@ -147,11 +147,8 @@ recipe_release_line() {
   run "$page" 'rwv fetch'
   expect "v1 holds main's commit" git -C github/chatly/server cat-file -e origin/v1:moved-on.txt
   rwv switch main >/dev/null 2>&1
-  rwv branch delete stable --target main --discard-unlanded >/dev/null 2>&1
-  [ $? -eq 3 ] || fail "retire before the remote copy is gone must exit 3"
-  git -C "$SANDBOX/remotes/chatly/web-app.git" branch -D stable >/dev/null 2>&1 || fail "forge delete"
-  rwv fetch >/dev/null 2>&1
-  run "$page" 'rwv branch delete stable --target main --discard-unlanded'
+  run_stops "$page" 'rwv branch delete stable --target main'
+  run "$page" 'rwv branch set-mode stable feature --target main'
   expect "stable is gone" test -z "$(rwv branch list 2>&1 | grep ' stable ')"
   expect "v1 stays" git -C github/chatly/server rev-parse --verify -q v1
   [ -z "${EXPLORE:-}" ] || . "$EXPLORE"
