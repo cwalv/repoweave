@@ -16,12 +16,11 @@ named beside each one was right in every case. A name survives the edit that
 moves it; a number does not, and a number nobody can date cannot even be shown
 to be stale.
 
-**Counts and file lengths in this document are verified at commit `af405e1`.**
-Those are the claims a symbol cannot carry — how many modules there are, how
-long a file is, how many of a thing exist — so they are dated instead, the same
-convention [`docs/internals/branch-model.md`](docs/internals/branch-model.md)
-uses for its own citations. A count here means "true at `af405e1`"; re-derive
-before trusting one against a later tree.
+**Counts in this document are verified at commit `8e727620`.** Those are the
+claims a symbol cannot carry — how many modules there are, how many of a thing
+exist — so they are dated instead. A count here means "true at `8e727620`";
+re-derive before trusting one against a later tree. File lengths are not
+stated: they moved by thousands of lines within one release.
 
 The residue, stated where the rule is: a symbol that is renamed leaves this
 document wrong in a way that greps clean, because the old name simply stops
@@ -57,7 +56,7 @@ on disk that a later invocation reads and resumes (§5).
 ## 2. Module map
 
 One library crate (`repoweave`, `src/lib.rs`) and three programs. `src/lib.rs` is
-a flat list of 34 `pub mod` declarations — there is no internal layering
+a flat list of 81 `mod` declarations at `8e727620` — there is no internal layering
 enforced by the module tree, so the grouping below is by role, not by
 visibility.
 
@@ -67,24 +66,25 @@ visibility.
 | `rwv-each` | `src/bin/rwv-each/main.rs` | `[[bin]]` in `Cargo.toml` |
 | `generate-explain` | `src/bin/generate-explain.rs` | `[[example]]` in `Cargo.toml`, so `cargo install` never installs it |
 
-`src/main.rs` is thirteen lines whose entire body is
-`repoweave::cli::dispatch::run()`. The emptiness is load-bearing and documented
-at `src/main.rs`: a `[[bin]]` is a separate crate from the `[lib]`, so any
-logic placed there could only reach the library through `pub` items. Keeping it
-empty is what lets the consent tokens in `src/cli/consent.rs` stay
+`src/main.rs` is a shim: its whole body runs
+`repoweave::cli::dispatch::run_and_report` on a thread with one stack size on
+every platform. It holds no logic, and that is load-bearing and documented at
+`src/main.rs`: a `[[bin]]` is a separate crate from the `[lib]`, so any logic
+placed there could only reach the library through `pub` items. Keeping it empty
+is what lets the consent tokens in `src/cli/consent.rs` stay
 `pub(in crate::cli)` (§6.1).
 
 ### Entry and addressing
 
 | Module | Owns |
 |---|---|
-| `cli` (`src/cli.rs`, 563) | The clap type tree: `Cli` and `Commands`. |
+| `cli` (`src/cli.rs`) | The clap type tree: `Cli` and `Commands`. |
 | `cli::consent` (`src/cli/consent.rs`) | The consent tokens and the `DriftConsent` either/or enum, each token minted only from its named flag by a `pub(in crate::cli)` `from_flag`. |
-| `cli::operand` (`src/cli/operand.rs`) | `Operand`, a path argument as argv spelled it, and `InvocationDir`, the resolved directory it is read from; `Operand::locate` and the `InvocationDir` mint are `pub(in crate::cli)`. `SourceArg` is argv's spelling of a `SyncSource`. |
+| `cli::operand` (`src/cli/operand.rs`) | `Operand`, a path argument as argv spelled it, and `InvocationDir`, the resolved directory it is read from; `Operand::locate` and the `InvocationDir` mint are `pub(in crate::cli)`. |
 | `cli::dispatch` (`src/cli/dispatch.rs`) | `run()` — argv interception, parse, the single resolution point, and the verb match. |
-| `workspace` (`src/workspace.rs`, 5171) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. `WorkweaveMarker` (`src/workspace/marker.rs`) and `RootObservation::require_exclusive` with the identity payloads it produces (`src/workspace/root_identity.rs`) each sit in a child module holding nothing else that sets their private fields, so the compiler admits one literal. |
-| `registry` (`src/registry.rs`, 685) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here and compared only by `names_same_remote`; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one; `recorded_remote`, which reads a clone's configured remote as one. Unrelated to integrations despite the name. |
-| `selector` (`src/selector.rs`, 438) | The shared `--role` / `--repo` filter grammar. |
+| `workspace` (`src/workspace.rs`) | `WorkspaceContext` and its `resolve`; `Checkout`; `Resolution`; the `.rwv-active` / `.rwv-workweave` marker constants. `WorkweaveMarker` (`src/workspace/marker.rs`) and `RootObservation::require_exclusive` with the identity payloads it produces (`src/workspace/root_identity.rs`) each sit in a child module holding nothing else that sets their private fields, so the compiler admits one literal. |
+| `registry` (`src/registry.rs`) | Host-to-local-prefix mapping. `Registry` trait; `CloneUrl`, the only URL a `Vcs` method hands git, constructed only here and compared only by `names_same_remote`; `resolve_to_clone_info`, which turns a manifest `url` or CLI source, shorthand included, into one; `recorded_remotes`, which reads a clone's configured remotes as ones. Unrelated to integrations despite the name. |
+| `selector` (`src/selector.rs`) | The shared `--role` / `--repo` filter grammar. |
 | `member_selection` (`src/member_selection.rs`) | `MemberSelection`: the members `--role` and `--repo` name, less the `reference` members under `--no-reference`. Built once where the flags parse, and asked by every step of a verb, so no step covers a member another step left out. |
 | `exit_status` (`src/exit_status.rs`) | `CompletedWithRemainder`, the error that ends a verb with exit status `3`: it finished, and part of the work is left to the operator. `run_and_report` in `src/cli/dispatch.rs` maps it to the status after the verb has printed what it left. |
 
@@ -93,23 +93,23 @@ empty is what lets the consent tokens in `src/cli/consent.rs` stay
 | Module | Owns |
 |---|---|
 | `naming` (`src/naming.rs`) | The flat-address grammar — the `--` weave separator and the `+` segment escape — and the name types it constrains: `ProjectName`, `WorkweaveName`, `RefNameError`, `validate_ref_name`, the one-segment renderings `ProjectName::flat` and `WorkweaveId::flat` (typed `FlatProjectName` and `FlatAddress`, which nothing else can construct), and the two seams that recover an identity from what it renders — `workweave_name_in` for a caller holding the project, `resolve_flat_address` for one holding only what an operator typed. **No `use crate::` anywhere in the file**; every consumer reaches down to it. `manifest`, `vcs` and `workspace` re-export the names they used to own, so their public paths are unchanged. |
-| `manifest` (`src/manifest.rs`, 3152) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
-| `lock` (`src/lock.rs`, 392) | Snapshotting member HEADs into `rwv.lock`. |
+| `manifest` (`src/manifest.rs`) | `Manifest`, `LockFile`, `Project`, and the newtypes `RepoPath`, `RepoEntry`, `Role`, `RepoUrl`. `ProjectName` and `WorkweaveName` are re-exports from `naming`. |
+| `lock` (`src/lock.rs`) | Snapshotting member HEADs into `rwv.lock`. |
 | `repin` (`src/repin.rs`) | The `Rwv-Repin` record of a re-pin by name: `Naming`, `Repin`'s one-line format, and `commit` / `commit_merge`, the only callers of the seam's commit operations, which derive each record from the lock change itself. `unmerged` reads it back with `recorded`. [`docs/internals/repin-record.md`](docs/internals/repin-record.md). |
-| `workweave` (`src/workweave.rs`, 4294) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
+| `workweave` (`src/workweave.rs`) | Workweave create / delete / list / log, and member birth (`birth_ephemeral_worktree`, `materialize_member`). |
 | `workweave_index` (`src/workweave_index.rs`) | The workweave index a project clone keeps in the directory its worktrees share: the basedir setting and, per workweave, its path and the workspace it was forked from. Converts an index an earlier release kept at the old path. |
-| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `TouchedWorkspaces`, `acquire_op`; and `OpId`, `SavepointKey` and `SyncStrategy`: the two record fields the engine also reads, and the key a savepoint is filed under. |
-| `owned_state` (`src/owned_state.rs`, 1025) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
+| `op_state` (`src/op_state.rs`) | The in-flight-operation record: `OpVerb`, `OpPhase`, `OwnerRecord`, `TouchedWorkspaces`, `acquire_op`; and `OpId` and `SavepointKey`, the key a savepoint is filed under (`Op`, `LandTarget`, `LandInPlace`). The record carries a schema number, `OP_RECORD_SCHEMA`, whose wire shape a test pins by digest. [`docs/internals/op-state.md`](docs/internals/op-state.md). |
+| `owned_state` (`src/owned_state.rs`) | The attested-generation ledger `.rwv-owned-digests` (`OWNED_DIGESTS_FILE`,): what rwv last accepted for each fully-owned generated file, and the inputs a generation read. Consumed by `activate`, `check`, `workweave` and the cargo integration. |
 | `durable_file` (`src/durable_file.rs`) | The one whole-file publish path: `replace` (overwrite) and `create_new` (refuse an occupied target), both temp-then-fsync-then-publish. A state file reaches it only through `StatePath`. |
 | `liveness` (`src/liveness.rs`) | The one answer to whether a process still holds a file: an advisory lock the kernel drops with the process, and where the filesystem has none a pid and host the next process on that host can check. Temps, short claims and the git-dir scratch owner (`Scratch`, `src/git/scratch.rs`) all ask it. |
 | `state_file` (`src/state_file.rs`) | `StateFile`, the closed list of files rwv keeps as its own record, and `StatePath`, where one lives. A `StatePath` is not `AsRef<Path>` and hands out no path, so no path-taking write accepts it; its `publish`, `create` and `claim` are the writes, and each goes through `durable_file`. |
 
 ### Verbs
 
-`activate`, `add_remove`, `check` (`rwv doctor`, 8712 lines — the largest
+`activate`, `add_remove`, `check` (`rwv doctor`, the largest
 module), `init`, `push`, `status`, `sync`, `prime`, `setup`, `explain`. Each
 owns one verb's orchestration and its `--json` envelope type (§7). `sync`
-(6779) additionally owns the phase machine (§5).
+additionally owns the phase machine (§5).
 
 The verbs that take a project in, or move it forward, are split across modules
 by what they may change. Of these only `update_remote` writes `rwv.lock`, and
@@ -131,18 +131,38 @@ the rest read it.
 | `names` (`src/names.rs`) | The Names rule: `judge_feature_names`, the one judgment that a feature's `owned` and `fork` member branches are no live branch's declared branch and no other project's feature's, run where a feature is written, opened, aligned or published. |
 | `backup` (`src/backup.rs`) | `rwv backup list`, `drop` and `prune`, and the pin rule that refuses a drop leaving a live pin of any project reached by nothing. The git spelling stays in `src/git/backup.rs`. |
 
+The verbs that land work, take a target in or settle a member's entry are the
+branching half of the tree. Each owns its own judgment and shares its
+machinery with the others through the modules below.
+
+| Module | Owns |
+|---|---|
+| `land` (`src/land.rs`) | `rwv land`'s resolution and judgment: `resolve` and `read_target` find the feature's record, its target, `T`'s tip and the workspace that has `T`; `judge` plans each member's receiving branch and every refusal the landing owes, before the phase machine composes anything. [`docs/internals/landing.md`](docs/internals/landing.md). |
+| `feature_sync` (`src/feature_sync.rs`) | `rwv sync`: a feature takes in the branch its record lands into, or any weave branch merges another's history with `--from`; each refusal is judged before anything moves. |
+| `lineage` (`src/lineage.rs`) | The lineage rule: `judge_by_history` returns a `Verdict`, passing when the receiving branch contains the work's base, the newest commit of its first-parent chain a lock in the target's history pinned. `PinHistory` is every pin each member had through every parent. |
+| `lock_merge` (`src/lock_merge.rs`) | `merge_pins`, the pure three-way merge of a project's pins over the base's lock, each parent's lock and the merged `rwv.toml`, which every caller that joins two project histories reads. |
+| `lock_driver` (`src/lock_driver.rs`) | The lock merge driver the VCS runs for `rwv.lock` in a merge rwv does not make, its setup, and the refusals that hold every verb off a project whose setup or lock it leaves unsettled. |
+| `project_merge` (`src/project_merge.rs`) | The project merge: computed as a tree first (`Vcs::tree_merges`), the member set read from it, members merged, dropped checkouts pruned after every member merged, the project commit written last with the relock. |
+| `stack`, `remap` (`src/stack.rs`, `src/remap.rs`) | Dependents carried along a rewrite of their target's branches, parents first and all composed before any branch moves; and the pins of a rebased project branch mapped through the member rebases. |
+| `landing_claim` (`src/landing_claim.rs`) | The claim a landing holds on its target for the life of its operation, in the project clone's store. |
+| `merge_upstream` (`src/merge_upstream.rs`) | `--merge-upstream` and `--reset-to-upstream` for `pull` and `update --remote`, run under the op record. |
+| `cherry_pick` (`src/cherry_pick.rs`) | `rwv cherry-pick`: one project commit ported onto the checked-out feature, each `owned` or `fork` member's range copied, then the project commit with the relock. |
+| `set_history`, `member_branch`, `member_pin`, `member_settings`, `member_url`, `lock_commit`, `manifest_commit` | The setters: `branch set-history`, `member set-branch`, `pin`, `set-role`, `set-recurse-submodules`, `set-url`, and `lock --commit`'s commit of a hand-edited `rwv.toml`. Each commits only its own change, so every other uncommitted edit to the project repo stays where it stands. `manifest::edit` is the one writer of `rwv.toml` text. |
+| `declarations`, `entry_report`, `pins`, `unmerged` | What the live weave branches declare (read by Protection, Names and alignment alike); the member-entry changes a workspace stands in; where a checkout stands against its pin and the live locks pinning a member; and the merges in a pushed range that joined pins without joining the member. |
+| `commit_guard`, `cli::during_op` | No commit of the project repo while an operation is in flight there; and the table of the verbs that run while an operation is recorded in a workspace, every other verb refusing there. |
+
 ### Seams and shared machinery
 
 | Module | Owns |
 |---|---|
-| `vcs` (`src/vcs.rs`, 3439) | The `Vcs` trait, its witness and destroy-proof types, and `VcsError`. §6.1. |
-| `git` (`src/git.rs`, 3869) | The one implementor, `GitVcs`, plus `git_command()`. |
-| `integration` (`src/integration.rs`, 618) | The `Integration` trait, `IntegrationContextBase` and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` the trait returns. §6.2. |
+| `vcs` (`src/vcs.rs`) | The `Vcs` trait, its witness and destroy-proof types, and `VcsError`. §6.1. |
+| `git` (`src/git.rs`) | The one implementor, `GitVcs`, plus `git_command()`. |
+| `integration` (`src/integration.rs`) | The `Integration` trait, `IntegrationContextBase` and `IntegrationContext`; the finding vocabulary `Issue` / `IssueKind` / `MemberIncompatibility` the trait returns. §6.2. |
 | `integrations/` | Eight built-in implementors plus `merge.rs`, the managed-file merge engine they share. |
-| `integration_runner` (`src/integration_runner.rs`, 867) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
-| `plugins` (`src/plugins.rs`, 759) | External-subcommand discovery and dispatch. §6.4. |
+| `integration_runner` (`src/integration_runner.rs`) | The lifecycle driver: enablement, error containment, and the six entry points that call the trait. |
+| `plugins` (`src/plugins.rs`) | External-subcommand discovery and dispatch. §6.4. |
 | `tool_program` (`src/tool_program.rs`) | `ToolProgram`: one `PATH` lookup, absolutized, that the install hooks, go-work and plugin dispatch spawn from. `rwv each` has its own, because that binary never names the library. |
-| `parallel` (`src/parallel.rs`, 676) | Bounded per-repo fan-out for the network-bound verbs. |
+| `parallel` (`src/parallel.rs`) | Bounded per-repo fan-out for the network-bound verbs. |
 | `share` (`src/share.rs`) | Placing a member's tracked files from the repository's other workspaces by reflink or hardlink, with byte-exact verification and repair. [`docs/internals/member-population.md`](docs/internals/member-population.md). |
 | `settle` (`src/settle.rs`) | The permissions a member's tracked files hold for its role, and re-sharing after a member moves. Same document. |
 | `diagnosis` (`src/diagnosis.rs`) | The state-to-choices table — axes, their states, every choice and each spelling of it with its Where and whether its verb has shipped — and `Report`, the refusal of the repos a verb judged, rendered from that table to the terminal, to `--json` and to the refusals page. [`docs/internals/refusal-kinds.md`](docs/internals/refusal-kinds.md). |
@@ -219,8 +239,9 @@ All durable rwv state is files. There is no database and no cache directory.
 | `.rwv-workweave` | `WORKWEAVE_MARKER_FILE`, `src/workspace.rs` | each workweave root | A workweave's only identity file: `{primary, project, name, parent}`; the name is the marker's own, so an index rebuild finds every workweave a linked checkout of the project clone sits in. Restored from the index and the worktree relation when missing or disagreeing (`src/workspace/reconcile.rs`). |
 | `rwv-workweave-index` | `StateFile::WorkweaveIndex`, `src/state_file.rs` | the project clone's common dir (`Vcs::store_of`) | The primary's inverse view: the basedir setting and, per workweave, `{path, parent}`, the record of `parent` a marker is restored from. A file of the old name at `projects/<project>/` (`StateFile::OldPathWorkweaveIndex`) is read by nothing as the index: verbs refuse it as `unreadable-workweave-index` and `rwv doctor --fix` rebuilds the index from the markers and removes it. |
 | `rwv-workweave-index.lock` | `StateFile::IndexClaim`, `src/workweave_index.rs` | beside the index | The claim every edit of the index holds (`IndexClaim::hold`). |
+| `.rwv-landing.lock` | `StateFile::LandingClaim`, `src/landing_claim.rs` | `rwv-landings/` in the project clone's store (`Vcs::store_of`) | The claim a landing holds on its target branch from before it reads the target's tips until it releases it; it names the op and the workspace holding the op's record. [`docs/internals/landing.md`](docs/internals/landing.md). |
 | `.rwv-fetch.lock` | `StateFile::FetchClaim`, `src/fetch_claim.rs` | a member's or the project clone's store (`Vcs::store_of`) | The claim every pruning fetch into that store holds (`FetchClaim::hold`). |
-| `.rwv-fetched` | `StateFile::FetchRecord`, `src/fetch_claim.rs` | beside `.rwv-fetch.lock` | When rwv's pruning fetch of each remote into the store last completed, written under the fetch claim; `push --dry-run` reads it for the age of the refs it judged. |
+| `.rwv-fetched` | `StateFile::FetchRecord`, `src/fetch_claim.rs` | beside `.rwv-fetch.lock` | When rwv's pruning fetch of each remote into the store last completed, written under the fetch claim. No verb reads it: a verb that judges on refs as last fetched prints no age for them. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |
@@ -338,12 +359,16 @@ above are pinned by `tests/process/concurrency_boundaries_test.rs`.
 
 ## 5. The sync phase machine
 
-`sync` and `land` are one machine. `src/sync.rs` exposes two verb entry
-points, `run_sync` and `run_sync_to`, each handed the `OutputMode` the
-dispatcher resolved. Text runs the machine under a text handler, and JSON under
-the envelope one, which sorts the outcomes the workers recorded into manifest
-order. Every route delegates to one
-private driver, `run_machine`.
+`land` runs the phase machine. `src/sync.rs` exposes its entry points,
+`run_land` and `land_json_run`, each handed the `OutputMode` the dispatcher
+resolved: text runs the machine under a text handler, and JSON under the
+envelope one. Both delegate to one private driver, `run_machine`. `rwv sync`
+does not run it: `feature_sync::run_sync` takes a branch's target in by
+judging first and then acting, and `pull` and `update --remote` with
+`--merge-upstream` or `--reset-to-upstream` (`src/merge_upstream.rs`) and
+`cherry-pick` run their own steps. All of them file the same op record and
+savepoints, so `--continue` and `rwv abort` read the record whichever verb
+wrote it.
 
 ### Shape
 
@@ -377,8 +402,8 @@ fn drive(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 
 (`src/sync.rs`.) `run_phase` is a four-arm match; each arm calls
 one phase function and returns the next phase, with `None` terminal.
-`next_after_relock` is where plain `sync` and `land` diverge —
-`sync` terminates after relock, `land` continues to advance-target.
+`next_after_relock` ends the operation for every verb but `land`, which
+continues to advance-target.
 
 Per phase: `run_replay`, `run_relock`,
 `run_advance_target`, `run_retire`.
@@ -387,11 +412,15 @@ Per phase: `run_replay`, `run_relock`,
 
 `run_replay` (`src/sync.rs`) runs Phase 1', the project repo, before it
 touches any member checkout. It then loads the manifest that replay
-produced and decides the member set against it: `materialize_missing_repo`
-for a member that manifest names, the source's lock names, and CWD lacks;
-then the Phase 2 fan-out over the member repos; then `prune_dropped_repo`
-for a member the pre-op manifest named and the replayed one does not. The
-pre-op manifest is read at the project repo's savepoint, so a `--continue`
+produced and decides the member set against it. Replay makes no checkout: a
+member that manifest names and CWD lacks replays nothing and keeps its pin
+through the relock, and gets its checkout from the alignment of CWD that runs
+once the record and savepoints are gone, so `rwv abort`, which restores refs
+and nothing else, never meets a checkout the op made. After the Phase 2
+fan-out over the member repos, `prune_dropped_repo` removes a member the
+pre-op manifest named and the replayed one does not, behind the store-removal
+judgment ([`docs/internals/store-removal.md`](docs/internals/store-removal.md)).
+The pre-op manifest is read at the project repo's savepoint, so a `--continue`
 weighs the same set the interrupted run did. In a workweave the prune takes
 the checkout out of the primary's clone through `release_checkout`
 (`src/workweave.rs`), the same release `delete_workweave` runs for each
@@ -482,9 +511,13 @@ publishes commits the fold first (`Store::write`).
 
 Every `Vcs` savepoint method takes a `SavepointKey`
 (`src/op_state.rs`): `Op(OpId)` for the workspace the op replayed in,
-`SyncToTarget(OpId)` for a `land` target's repos, whose ref leaf carries a
+`LandTarget(OpId)` for a `land` target's repos, whose ref leaf carries a
 `-target` suffix because a worktree pair shares one ref store and the first
-restore would otherwise drop the ref the second needs. `OpId` is nanoseconds
+restore would otherwise drop the ref the second needs, and `LandInPlace(OpId)`
+for a checkout in a third workspace that holds a receiving branch the landing
+fast-forwards in place. Under a key there is one savepoint per ref the
+operation may move, a checkout's or a branch's, which `abort` restores by
+compare-and-swap. `OpId` is nanoseconds
 since epoch, minted by `OpId::new_now()` and read back only through its
 validated parse, which refuses an id ending in that suffix.
 
@@ -501,9 +534,9 @@ reach it two ways: `vcs_for(VcsType)` (`src/vcs.rs`) returning
 `GitVcs` elsewhere. `manifest::VcsType` has one variant today; `jj`, `sl` and
 `hg` appear only in the trait's doc comment.
 
-The trait divides at a banner (`src/vcs.rs`) into a pre-branch-model
-half and the branch model proper. The second half is the part that carries
-architecture rather than mechanism: **every ref write is one of four kinds —
+The trait divides at a banner (`src/vcs.rs`) into the mechanism half and the
+branch model proper. The second half is the part that carries architecture
+rather than mechanism: **every ref write is one of four kinds —
 MOVE, ATTACH, DESTROY, DESTROY-STORE — and each method takes the proof its kind
 requires.** The proof is a value that cannot be forged:
 
@@ -523,10 +556,12 @@ requires.** The proof is a value that cannot be forged:
   `Vcs::delete_branch` deletes only at that tip, so a branch that moved since is
   left. `Vcs::reset_attached_ref_keeping` takes a `BackupWitness`: a reset that
   leaves a tip is representable only when a backup of that tip provably exists.
-- **Found branches.** `FoundBranch` is the branch §2.1 of the branch model
-  found in a store, with the revision a birth would start it at; a worktree is
-  born only on one, so a birth derives its branch from the store rather than
-  from an independent name.
+- **Found branches.** `FoundBranch` is the branch the alignment engine found
+  in a store, with the revision a birth would start it at; a worktree is born
+  only on one, so a birth derives its branch from the store rather than from an
+  independent name. `Departure` (`src/alignment.rs`) is the matching proof for a
+  checkout leaving its attachment: minted only after the stray set of the move
+  was read.
 - **The fetch claim.** `Vcs::fetch_pruning` takes a `&FetchClaim`
   (`src/fetch_claim.rs`), which only `FetchClaim::hold` constructs, so a
   pruning fetch into an object store without the claim on it is not
@@ -544,6 +579,25 @@ bare string. `compile_fail` doctests pin this.
 A commit carries key/value **annotations** beside its message:
 `commit_only` and `commit_merge` take `&[Annotation]`, and
 `annotation_values` reads one commit's values under a key (git: trailers).
+
+**The capabilities the branching work added to the seam** (relative to
+`477979a2`, as of `8e727620`; the full list is the trait, and
+[`docs/internals/vcs-backend-contract.md`](docs/internals/vcs-backend-contract.md)
+states what each capability requires of a second backend):
+
+| Capability | Methods |
+|---|---|
+| Roles of remotes, as opaque handles | `url_remote`, `add_url_remote`, `project_url_remote`, `record_project_url_remote`, `home_remote`, `push_target`, `push_target_of`, `own_push_remote`, `push_branch`, `branch_push_targets`, `upstream`, `upstream_of`, `remote_copies`, `recorded_urls` |
+| Facts computed from ancestry | `relation`, `reached_by_remote`, `reached_by_no_branch`, `unpushed_commits`, `unpushed_beyond`, `pushed_range`, `held_by_no_remote`, `patch_equivalents`, `merge_bases`, `merge_base_against`, `first_parent_chain`, `on_first_parents`, `ancestry`, `commits_beyond`, `commits_excluding`, `commits_changing`, `stray_commits`, `log` |
+| Commits and refs with no working tree | `write_commit`, `files_at`, `file_versions`, `advance_branch_ref`, `advance_records`, `records_branch`, `records_tip`, `publish_records`, `record_conflict` |
+| History-changing operations | `rebase`, `replayed`, `record_replayed`, `copy_replayed`, `take_rewritten`, `forget_replays`, `merge_as_refs`, `commit_merge`, `start_merge`, `end_merge`, `copy_commit`, `continue_copy`, `copied_from`, `copied_into`, `conflict_picks`, `conflict_sides`, `tree_merges` |
+| Operations in progress | `mid_operation`, `branch_under_rebase`, `rebase_in_flight`, `merge_in_flight`, `copy_in_flight`, `merging_commits`, `cancel_in_flight_op`, `ending_stopped` |
+| Savepoints and backups per ref | `create_ref_savepoint`, `ref_savepoints`, `drop_ref_savepoint`, `plan_ref_restore`, `execute_ref_restore`, `plan_checkout_restore`, `execute_checkout_restore`, `create_backup`, `write_backup`, `list_backups`, `drop_backup`, `keep_in_slot`, `backup_edits`, `backup_unpreserved_head`, `show_kept` |
+| Checkouts and stores | `store_of`, `private_dir`, `main_checkout`, `checkouts_of_branch`, `checkout_recorded_elsewhere`, `record_checkout_moved`, `nested_stores`, `materialize_worktree_detached` |
+| Working copy | `carry_edits_onto`, `check_out_branch`, `set_edits_aside`, `set_back`, `snapshot_edits`, `copy_uncommitted`, `uncompared_paths`, `unmerged_paths` |
+| Lock driver | `lock_driver_setup`, `declare_lock_driver_in`, `define_lock_driver`, `lock_driver_declaration_file` |
+| Operator text | `hint`, printed as "VCS action (git: ...)" |
+| Tool readiness | `minimum_release`, `tool_readiness` |
 
 `VcsError` carries a `kind()` of stable kebab-case tags and a
 serializable mirror, `VcsErrorOutput`, for `--json`.
@@ -595,13 +649,12 @@ this seam, and that residue in full, is
 
 ### 6.2 `Integration`
 
-`pub trait Integration` (`src/integration.rs`) is fourteen methods at
-`c812509`: five required (`name`, `default_enabled`, `activate`,
-`deactivate`, `check`) and nine defaulted (`detection_manifests`,
+`pub trait Integration` (`src/integration.rs`) is fifteen methods at
+`8e727620`: five required (`name`, `default_enabled`, `activate`,
+`deactivate`, `check`) and ten defaulted (`tool`, `detection_manifests`,
 `settings_keys`, `activate_hook`, `fit_to_host`, `generated_files`,
 `managed_files`, `verify`, `owned_paths_on_disk`, `member_incompatibility`).
-A tenth defaulted method, `tool`, has since been added: the one CLI an
-integration shells out to, declared by `DrivesTool`.
+`tool` is the one CLI an integration shells out to, declared by `DrivesTool`.
 
 Two of them are the materialization path, not authoring. `activate_hook`
 runs the ecosystem's install tool and returns a `HookOutcome`: `Done`, or
@@ -640,7 +693,7 @@ because the two halves are easy to confuse:
   built only there (`IntegrationContextBase::new`, `build_context`).
 - **`integration_runner.rs`** precomputes the on-disk detection cache
   (`build_detection_cache`,), filters by enablement, and drives seven
-  entry points at `c812509` — `run_activations`, `run_checks`,
+  entry points at `8e727620` — `run_activations`, `run_checks`,
   `run_verifications`, `run_member_incompatibilities`,
   `run_activate_hooks`, `run_host_fits`, `run_deactivations`. It does
   **not** own the list: callers pass `&[&dyn Integration]`.
@@ -732,7 +785,7 @@ top-level struct — `StatusJsonOutput` (`src/status.rs`), `CloneJsonOutput`
 (`src/clone.rs`), `FetchJsonOutput` (`src/fetch.rs`), `PullJsonOutput`
 (`src/pull.rs`), `UpdateJsonOutput` (`src/update.rs`),
 `UpdateRemoteJsonOutput` (`src/update_remote.rs`), `PushJsonOutput`
-(`src/push.rs`), `SyncJsonOutput` (`src/sync.rs`), `SyncToJsonOutput`, and
+(`src/push.rs`), `SyncJsonOutput` and `LandJsonOutput` (`src/sync.rs`), and
 `DoctorJsonOutput` (`src/check.rs`) — each pinning its own schema URL. Both
 of `rwv doctor`'s report renderers, the text report and `build_doctor_json`,
 take only the `DoctorFindings` its findings pipeline returns.
@@ -774,10 +827,8 @@ tree against the index, so it cannot pass with an uncommitted regeneration.
 
 Three tiers.
 
-- **Unit tests in `src/`** — 26 of the 36 files directly under `src/` carry
-  `#[cfg(test)] mod tests`. The exceptions are `check.rs`, `cli.rs`,
-  `explain.rs`, `init.rs`, `integration.rs`, `lock.rs`, `schema_url.rs` and
-  `update.rs`, plus `lib.rs` and `main.rs`, which hold no logic.
+- **Unit tests in `src/`** — most modules carry `#[cfg(test)]` tests beside
+  the code they pin.
 - **Integration tests** — `tests/<area>/*.rs`, each a module of its area's
   binary (`tests/<area>/main.rs`), driving the `rwv` executable across the
   process boundary via `assert_cmd`. `tests/common/mod.rs`
@@ -786,6 +837,14 @@ Three tiers.
 - **Contract helpers** — `tests/common/contract.rs` encodes the hybrid
   file-ownership regressions once, as free functions taking activate/deactivate
   closures, so every integration is held to the same four shapes.
+
+Two harnesses drive whole operations rather than single verbs: the scenario
+harness (`tests/scenario`, steps built in `tests/common/scenario_steps.rs`),
+whose steps assert a refusal by the state it names, and the kill matrix
+(`tests/kill_matrix`), which kills each verb that records an operation at every
+pause point it passes (`src/test_pause.rs`, compiled only under the `test-pause`
+feature) and checks that `--continue` and `rwv abort` each end in the state an
+unkilled run or the pre-operation state holds. [`docs/internals/testing.md`](docs/internals/testing.md).
 
 Two families are worth naming because they pin *documents* rather than code:
 `doc_claims_*_test.rs` asserts that published claims match behavior, and

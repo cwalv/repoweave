@@ -558,10 +558,13 @@ top-level directory containing `projects/` and canonical member clones; **member
 repo** (not "manifest repo" or "constituent repo") for an `rwv.toml`
 `[repositories]` entry; **project repo** for `projects/<name>/`; **workweave**
 (or **seat** when referring to an agent's persistent checkout) for an isolated
-parallel workspace; and distinguish **materialize** (populating member
-checkouts and ecosystem state via `rwv materialize`, `rwv sync`, or `rwv
-workweave create`) from **activate** (switching `.rwv-active` and root-level
-ecosystem symlinks via `rwv activate`, which moves no checkout: `--update` is the
+parallel workspace; and distinguish **materialize** (settling drift and running
+the integrations' install hooks for the project a checkout presents, via
+`rwv materialize`, `rwv activate` or `rwv workweave create`; it moves no pin and
+no checkout) from **align** (placing each member where the checked-out branch's
+record, entries and lock say, via `rwv update`, `rwv switch` or `rwv branch
+create`) from **activate** (switching `.rwv-active` and root-level ecosystem
+symlinks via `rwv activate`, which moves no checkout: `--update` is the
 spelling that aligns members first).
 
 ### American spelling

@@ -7,6 +7,20 @@ and operators; the enforcement mechanism is in
 `tests/source/destructive_ops_audit_test.rs`, which inventories every call
 site and fails the build when one is added without an audit.
 
+## What authorizes a destruction
+
+rwv destroys a ref only under a warrant proving that nothing becomes
+unpreserved: the deletion rule's landed clause after a pruning fetch (every
+commit on the branch is reached by the branch it lands into, and no live lock
+pins a commit only it reaches), a backup holding what the ref held, or a
+named consent. Who made a ref is not recorded and is never a reason: rwv
+deletes by what a ref holds, not by who created it. An override that loses
+nothing may waive several refusals at once; one that destroys names each repo
+it destroys in. A member's attachment follows the checked-out branch's mode,
+and only an aligning verb changes it, only when clean and never leaving
+anything unpreserved. rwv moves a branch off a fast-forward only to its own
+upstream, by name, keeping a backup.
+
 ## The policy
 
 Three rules, in order of priority:

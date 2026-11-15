@@ -91,7 +91,7 @@ rwv land --retire
 
 `rwv land` composes ww2's work onto the target's new tip by itself, so the `rwv sync` step is only for building and testing ww2 against ww1's landed work before it lands. It takes in the branch ww2's record lands into, by the target's `history` setting: under `linear` ww2's work is rebased onto the target's tip, under `merge` the target's work is merged in.
 
-`rwv.lock` is recomputed rather than merged; see [Sync semantics](../explanation/joints/sync-semantics.md) for how `rwv.lock` is excluded during replay.
+`rwv.lock` records the commit each member is pinned at on the branch. Across a landing rwv computes it from the member merges and never asks you to resolve it by hand; see [Lock as derived](../explanation/joints/lock-as-derived.md).
 
 ## Saying how the target accepts landings
 
@@ -138,6 +138,6 @@ A branch of the workweave that has not landed on the branch the workweave's reco
 - [Recover from a sync conflict](./recover-from-sync-conflict.md) — resolving project or member-repo conflicts during `sync` or `land`
 - [Resume or abort a mid-op sync](./resume-or-abort-mid-op-sync.md) — inspecting the op record, `--continue` rules, and `rwv abort` recovery
 - [Workweave lifecycle](../explanation/joints/workweave-lifecycle.md) — creation, landing, and deletion contracts
-- [Sync semantics](../explanation/joints/sync-semantics.md) — phase ordering, lock exclusion, and savepoints
-- [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — parent tracking and one-hop landing
-- [Lock as derived](../explanation/joints/lock-as-derived.md) — why `rwv.lock` is regenerated rather than merged
+- [Sync semantics](../explanation/joints/sync-semantics.md) — branch to branch, the target's history setting, phases and savepoints
+- [Workweave hierarchy](../explanation/joints/workweave-hierarchy.md) — the record that says where a branch lands, and the workweave a branch was created from as provenance
+- [Lock as derived](../explanation/joints/lock-as-derived.md) — how `rwv.lock` is written from member HEADs and computed across a merge
