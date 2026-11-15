@@ -1101,6 +1101,10 @@ impl Vcs for FakeVcs {
         unsupported("held_by_no_remote")
     }
 
+    fn holds_only_what_it_fetched(&self, _repo: &Path) -> Result<bool, VcsError> {
+        unsupported("holds_only_what_it_fetched")
+    }
+
     fn ending_stopped(&self, _repo: &Path, _stopped: crate::vcs::MidOperation) -> String {
         unsupported("ending_stopped")
     }

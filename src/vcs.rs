@@ -4074,6 +4074,24 @@ pub trait Vcs: Send + Sync {
     /// of those refs does not list it.
     fn held_by_no_remote(&self, repo: &Path) -> Result<Vec<HeldAlone>, VcsError>;
 
+    /// Whether everything `repo`'s store holds came from its remotes and
+    /// nothing was made in it: [`Vcs::held_by_no_remote`] is empty, it holds
+    /// no ref but branches and remote-tracking branches (no tag, nothing set
+    /// aside, no backup or savepoint), and its
+    /// record of where its checkout stood reaches back to the store's first
+    /// entry and names only clones, checkouts and resets, each to a commit
+    /// its remote-tracking branches reach as last fetched. False where that
+    /// record is missing, expired in part, or names anything else; a commit,
+    /// amend, merge, rebase, pull, cherry-pick or patch applied there counts
+    /// as made in it.
+    ///
+    /// For git: refs under `refs/heads/` and `refs/remotes/` alone, and the
+    /// store's `logs/HEAD`, whose first entry's old id is the
+    /// null id and each of whose messages begins `clone: `, `checkout: ` or
+    /// `reset: `, its new ids reached by the configured remotes'
+    /// remote-tracking refs.
+    fn holds_only_what_it_fetched(&self, repo: &Path) -> Result<bool, VcsError>;
+
     /// The branch `checkout` stood on before HEAD last left it, or `None`
     /// where the VCS does not know of one.
     ///

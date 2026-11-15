@@ -4016,6 +4016,10 @@ impl Vcs for GitVcs {
         Self::held_by_no_remote_tracking(&Self::work_dir_for_store(repo))
     }
 
+    fn holds_only_what_it_fetched(&self, repo: &Path) -> Result<bool, VcsError> {
+        Self::holds_only_what_it_fetched_at(&Self::work_dir_for_store(repo))
+    }
+
     fn ending_stopped(&self, repo: &Path, stopped: crate::vcs::MidOperation) -> String {
         let ending = match stopped {
             crate::vcs::MidOperation::Bisect => "bisect reset".to_owned(),
@@ -7709,6 +7713,8 @@ impl WorkspacePopulation for GitVcs {
         Self::run(
             [
                 "update-ref",
+                "-m",
+                "checkout: moving to the recorded commit",
                 "--no-deref",
                 "HEAD",
                 submodule.commit.as_str(),

@@ -2366,7 +2366,9 @@ pub(crate) enum StoresRemoved {
 /// holds what no remote has, judged against its remotes as they answer now.
 /// A remote that does not answer refuses too: what it holds cannot be
 /// confirmed. `discard` lets both go, naming what goes. No remote is asked
-/// where the removal removes no store.
+/// where the removal removes no store, nor for a nested store that holds only
+/// what it fetched ([`Vcs::holds_only_what_it_fetched`]): no remote's answer
+/// changes what removing that one loses.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn judge_removed_stores(
     vcs: &dyn Vcs,
@@ -2440,6 +2442,15 @@ fn judge_stores(
     discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<()> {
     let situation = cause.situation();
+    let fetched_only = |nested: &Option<PathBuf>, store: &Path| {
+        nested.is_some() && vcs.holds_only_what_it_fetched(store).unwrap_or(false)
+    };
+    let stores: Vec<(Option<PathBuf>, PathBuf)> = stores
+        .iter()
+        .filter(|(nested, store)| !fetched_only(nested, store))
+        .cloned()
+        .collect();
+    let stores = stores.as_slice();
     if stores.is_empty() {
         return Ok(());
     }

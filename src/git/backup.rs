@@ -320,6 +320,64 @@ impl GitVcs {
         Ok(held)
     }
 
+    pub(super) fn holds_only_what_it_fetched_at(repo: &Path) -> Result<bool, VcsError> {
+        if !Self::held_by_no_remote_tracking(repo)?.is_empty() {
+            return Ok(false);
+        }
+        let refs = Self::run(["for-each-ref", "--format=%(refname)"], repo)?;
+        if refs.lines().any(|refname| {
+            !refname.starts_with(REMOTE_TRACKING_ROOT) && !refname.starts_with("refs/heads/")
+        }) {
+            return Ok(false);
+        }
+        let log = Self::run_trimmed(
+            [
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "logs/HEAD",
+            ],
+            repo,
+        )?;
+        let Ok(log) = std::fs::read_to_string(&log) else {
+            return Ok(false);
+        };
+        let mut moved_to = Vec::new();
+        for (n, entry) in log.lines().enumerate() {
+            let Some((line, message)) = entry.split_once('\t') else {
+                return Ok(false);
+            };
+            let mut ids = line.split(' ');
+            let (Some(old), Some(new)) = (ids.next(), ids.next()) else {
+                return Ok(false);
+            };
+            let reaches_back = n > 0 || old.bytes().all(|b| b == b'0');
+            let moved_by_checkout = ["clone: ", "checkout: ", "reset: "]
+                .iter()
+                .any(|kind| message.starts_with(kind));
+            if !reaches_back || !moved_by_checkout {
+                return Ok(false);
+            }
+            moved_to.push(new.to_owned());
+        }
+        if moved_to.is_empty() {
+            return Ok(false);
+        }
+        let remotes = Self::run(["remote"], repo)?;
+        let mut walk = vec!["rev-list".to_owned(), "-n1".to_owned()];
+        walk.extend(moved_to);
+        walk.push("--not".to_owned());
+        walk.extend(
+            remotes
+                .lines()
+                .map(str::trim)
+                .filter(|r| !r.is_empty())
+                .map(|r| format!("--glob={REMOTE_TRACKING_ROOT}{r}/*")),
+        );
+        walk.push("--".to_owned());
+        Ok(Self::run_trimmed(walk, repo)?.is_empty())
+    }
+
     pub(super) fn holds_unreached(
         repo: &Path,
         tip: &CommitId,

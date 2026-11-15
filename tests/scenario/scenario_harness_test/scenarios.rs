@@ -839,6 +839,86 @@ pub fn store_removal_of_a_clone_whose_remote_is_gone() -> Scenario {
     )
 }
 
+/// What the operator did in a workweave checkout's submodule store before
+/// its remote stopped answering.
+#[derive(Debug, Clone, Copy)]
+pub enum InTheSubmodule {
+    Nothing,
+    Committed,
+    SetEditsAside,
+    Tagged,
+    ExpiredItsHeadLog,
+}
+
+/// A workweave whose checkout of `app` has a submodule `sub`, the submodule's
+/// remote unreachable. A submodule store that holds only what it fetched,
+/// nothing made in it, is judged without its remote, and the workweave is
+/// deleted, or retired, with the network down; anything made or kept there,
+/// or a store whose record of where it stood does not reach back, takes the
+/// fetch, and the delete refuses while the remote does not answer.
+pub fn a_workweave_removal_judges_an_untouched_submodule_store_offline(
+    done: InTheSubmodule,
+    retire: bool,
+) -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.push(create("w"));
+    let at = ww("w");
+    match done {
+        InTheSubmodule::Nothing => {}
+        InTheSubmodule::Committed => steps.extend([
+            Step::git(
+                &at,
+                Repo::App,
+                &[
+                    "-C",
+                    "sub",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "made-here",
+                ],
+            ),
+            Step::git(&at, Repo::App, &["-C", "sub", "checkout", "-q", "HEAD~1"]),
+        ]),
+        InTheSubmodule::SetEditsAside => steps.extend([
+            Step::hand_edit(&at, Repo::App, "sub/README", "lib", "hours of work"),
+            Step::git(&at, Repo::App, &["-C", "sub", "stash", "push", "-q"]),
+        ]),
+        InTheSubmodule::Tagged => {
+            steps.push(Step::git(&at, Repo::App, &["-C", "sub", "tag", "mine"]))
+        }
+        InTheSubmodule::ExpiredItsHeadLog => steps.push(Step::git(
+            &at,
+            Repo::App,
+            &["-C", "sub", "reflog", "expire", "--expire=now", "--all"],
+        )),
+    }
+    steps.push(Step::unreachable(Remote::origin(Repo::Lib)));
+    let verb = match retire {
+        true => {
+            steps.push(Step::commit(&at, Repo::Proj, "w-proj"));
+            Step::rwv(&at, &["land", "--retire"])
+        }
+        false => Step::rwv(&a(), &["workweave", "delete", "w"]),
+    };
+    steps.push(match done {
+        InTheSubmodule::Nothing => verb
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("w"))),
+        _ => verb
+            .expect(Exit::refuses_kind(RefusalKind::RemotesUnconfirmed))
+            .claim(Claim::DirStands(
+                Machine::A,
+                ".workweaves/proj--w/local/remotes/app",
+            )),
+    });
+    scenario(
+        "a workweave removal judges an untouched submodule store offline",
+        steps,
+    )
+}
+
 /// The verbs that remove a checkout of a member holding a nested repository
 /// committed as a gitlink no `.gitmodules` entry describes.
 #[derive(Debug, Clone, Copy)]

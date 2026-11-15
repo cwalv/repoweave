@@ -842,6 +842,72 @@ fn a_retire_over_a_gitlink_no_gitmodules_describes() {
 }
 
 #[test]
+fn an_untouched_submodule_store_lets_the_workweave_delete_offline() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::Nothing,
+            false,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_untouched_submodule_store_lets_the_retire_offline() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::Nothing,
+            true,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_commit_made_in_the_submodule_takes_the_fetch() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::Committed,
+            false,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn edits_set_aside_in_the_submodule_take_the_fetch() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::SetEditsAside,
+            false,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_tag_in_the_submodule_takes_the_fetch() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::Tagged,
+            false,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_expired_submodule_head_log_takes_the_fetch() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::ExpiredItsHeadLog,
+            false,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1820,6 +1886,30 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::Nothing,
+        false
+    ),
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::Nothing,
+        true
+    ),
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::Committed,
+        false
+    ),
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::SetEditsAside,
+        false
+    ),
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::Tagged,
+        false
+    ),
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::ExpiredItsHeadLog,
+        false
+    ),
     removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::MemberRemoveDelete),
     removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::WorkweaveDelete),
     removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::Retire),
