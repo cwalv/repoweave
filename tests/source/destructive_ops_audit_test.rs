@@ -383,14 +383,14 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git.rs",
         pattern: "\"checkout\"",
-        count: 4,
+        count: 5,
         callers: &[],
         justification: "The bare `checkout()` that used to head this list is \
             DELETED: fetch and update had already moved to \
             the branch-model primitives below, which classify what HEAD is \
             before writing anything, and with its last \
             caller gone the method went with the rest of the old surface. \
-            What remains is four sites, none of which can reposition a \
+            What remains is five sites, none of which can reposition a \
             checkout without first saying which kind of ref write it is \
             performing. \
             (1) set_detached_head: the branch-model ATTACH/MOVE primitive \
@@ -432,7 +432,13 @@ const ALLOWLIST: &[Allowed] = &[
             nothing moved, a move that would overwrite modified paths; no -f. \
             It takes the Departure proof, which for the project repo's own \
             move keeps a detached HEAD's unreachable commits as a backup \
-            first.",
+            first. \
+            (5) follow_recorded_commit: moves a submodule's checkout to the \
+            commit its member records (`checkout --detach <commit>`, no -f), \
+            only where that checkout is on no branch, holds no edits by its \
+            own status, and stands on a commit another ref of its store \
+            holds, so nothing it leaves is lost; anything else is left with a \
+            line.",
     },
     Allowed {
         file: "git.rs",

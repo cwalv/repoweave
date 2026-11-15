@@ -310,8 +310,11 @@ fn the_advised_update_gives_a_canonical_clone_without_module_data_its_submodules
     assert!(findings(&weave.primary).is_empty());
 }
 
+/// The commit a member's pull recorded for its submodule, which its copy
+/// lacked, is fetched by `rwv update` and the canonical clone's own checkout
+/// of the submodule, detached and clean, follows it.
 #[test]
-fn update_brings_a_commit_the_canonical_copy_lacks_without_moving_its_checkout() {
+fn update_brings_a_commit_the_canonical_copy_lacks_and_moves_its_checkout_to_it() {
     let weave = weave();
     let member = weave.add();
     let canonical = weave.canonical(&member);
@@ -332,11 +335,16 @@ fn update_brings_a_commit_the_canonical_copy_lacks_without_moving_its_checkout()
         out.contains(&format!("{member}/{SUB}: submodule fetched")),
         "{out}"
     );
-    assert_eq!(
+    assert!(
+        out.contains(&format!("{member}/{SUB}: submodule moved to")),
+        "{out}"
+    );
+    assert_ne!(
         git(&canonical.join(SUB), &["rev-parse", "HEAD"]),
         checked_out,
-        "the canonical clone's own checkout of the submodule is not moved"
+        "the canonical clone's own checkout of the submodule follows its member"
     );
+    assert_eq!(git(&canonical, &["status", "--porcelain"]), "");
     rwv(&seat, &["doctor", "--fix"]);
     assert_eq!(
         common::read_normalized(seat.join(&member).join(SUB).join("lib.txt")),

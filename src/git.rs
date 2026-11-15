@@ -7736,7 +7736,8 @@ impl WorkspacePopulation for GitVcs {
                 submodule.commit.short()
             ));
         }
-        if let Ok(branch) = Self::run_trimmed(["symbolic-ref", "-q", "--short", "HEAD"], &dest) {
+        if let Ok(full) = Self::run_trimmed(["symbolic-ref", "-q", "HEAD"], &dest) {
+            let branch = full.strip_prefix(LOCAL_BRANCH_NAMESPACE).unwrap_or(&full);
             return left(format!("it is on branch {branch}"));
         }
         if !self.dirty_file_names(&dest)?.is_empty() {
@@ -7746,7 +7747,7 @@ impl WorkspacePopulation for GitVcs {
         {
             return left(format!(
                 "it stands on {}, which nothing else in its store holds",
-                &head[..head.len().min(12)]
+                commit_id_printed(&head, &["rev-parse", "HEAD"], &dest)?.short()
             ));
         }
         Self::run(
