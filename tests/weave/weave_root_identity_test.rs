@@ -631,7 +631,9 @@ fn doctor_fix_ignores_a_conflicted_root_of_another_workspace() {
 
 /// A tree carrying both files that the registry does not name — what an
 /// out-of-band `cp -r` of a workweave produces — is report-only. Its identity
-/// is disputed, and deleting either file would be a guess.
+/// is disputed, and deleting either file would be a guess. The copy holds
+/// work of its own here; a clean copy is removed whole by the duplicate-name
+/// fix.
 #[test]
 fn doctor_fix_leaves_an_unregistered_both_files_tree_alone() {
     let tmp = common::tempdir().unwrap();
@@ -643,6 +645,7 @@ fn doctor_fix_leaves_an_unregistered_both_files_tree_alone() {
     let copy = ww.parent().unwrap().join("demo--copy");
     copy_dir(&ww, &copy);
     std::fs::write(copy.join(".rwv-active"), "demo\n").unwrap();
+    std::fs::write(copy.join("projects/demo/mine.txt"), "work").unwrap();
 
     let out = rwv()
         .args(["doctor", "--fix"])
