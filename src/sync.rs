@@ -2445,6 +2445,30 @@ fn judge_stores(
     discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<()> {
     let situation = cause.situation();
+    let mut dirty = Report::default();
+    for (nested, store) in stores {
+        let Some(nested) = nested else {
+            continue;
+        };
+        if store.join(".git").symlink_metadata().is_err() {
+            continue;
+        }
+        let files = vcs
+            .dirty_file_names(store)
+            .with_context(|| {
+                format!(
+                    "{repo}: {situation}, but the status of {} could not be read",
+                    nested.display()
+                )
+            })
+            .map_err(|e| crate::refusal::refusing(RefusalKind::UnreadableStatus, e))?;
+        let label = format!("{repo} in submodule {}", nested.display());
+        if let Some(judged) = crate::diagnosis::judge_edits_as_found(vcs, label, store, files, None)
+        {
+            dirty.add(judged);
+        }
+    }
+    dirty.into_result()?;
     let fetched_only = |nested: &Option<PathBuf>, store: &Path| {
         nested.is_some() && vcs.holds_only_what_it_fetched(store).unwrap_or(false)
     };

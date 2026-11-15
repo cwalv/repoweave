@@ -945,6 +945,38 @@ pub fn a_workweave_removal_judges_an_untouched_submodule_store_offline(
     )
 }
 
+/// Edits in a workweave checkout's submodule its member is told to ignore
+/// (`submodule.<name>.ignore = all`) still refuse the delete that would remove
+/// them, judged in the submodule itself, with choices run there.
+pub fn workweave_delete_refuses_edits_in_an_ignored_submodule() -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.extend([
+        create("w"),
+        Step::hand_edit(&ww("w"), Repo::App, "sub/README", "lib", "hours of work"),
+        Step::git(
+            &ww("w"),
+            Repo::App,
+            &["config", "submodule.sub.ignore", "all"],
+        ),
+        Step::git(&ww("w"), Repo::App, &["status", "--porcelain"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("sub")),
+        Step::rwv(&a(), &["workweave", "delete", "w"])
+            .expect(Exit::refuses(Repo::App, State::EditsDirty))
+            .claim(Claim::OutputContains(
+                "local/remotes/app in submodule sub: edits dirty",
+            ))
+            .claim(Claim::DirStands(
+                Machine::A,
+                ".workweaves/proj--w/local/remotes/app",
+            )),
+    ]);
+    scenario(
+        "a workweave delete refuses edits in an ignored submodule",
+        steps,
+    )
+}
+
 /// Where a commit only another checkout of a submodule's store holds is made.
 #[derive(Debug, Clone, Copy)]
 pub enum DetachedWorktreeOf {
