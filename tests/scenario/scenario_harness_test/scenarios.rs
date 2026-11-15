@@ -30633,6 +30633,38 @@ pub fn dc26_migration() -> Scenario {
     )
 }
 
+/// A landing into the target's own checkout journals the alignment of every
+/// member, and takes back off the journal each one the alignment left where it
+/// stood: `lib`, which the landing does not touch, moved by hand after the
+/// landing is held at its end, is not the landing's to put back.
+pub fn an_in_place_landing_aborts_around_a_member_it_did_not_move() -> Scenario {
+    scenario(
+        "an in-place landing aborts around a member it did not move",
+        vec![
+            create("w"),
+            Step::git(&a(), Repo::Proj, &["switch", "-q", "--detach"]),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv_paused(
+                &ww("w"),
+                &["land", "--history", "linear"],
+                "landed",
+                "landing",
+            ),
+            Step::kill("landing"),
+            Step::hand_commit(&a(), Repo::Lib, "main", &[("by-hand.txt", "by hand\n")]),
+            Step::rwv(&ww("w"), &["abort"])
+                .expect(Exit::Succeeds)
+                .may_strand(&[Repo::App, Repo::Proj])
+                .may_rewind(&[Repo::App, Repo::Proj])
+                .may_restore(&[Repo::App, Repo::Proj])
+                .may_rewrite(&[Repo::App, Repo::Proj])
+                .claim(Claim::OutputContains("local/remotes/app: restored")),
+            Step::git(&a(), Repo::Lib, &["show", "HEAD:by-hand.txt"])
+                .claim(Claim::OutputContains("by hand")),
+        ],
+    )
+}
+
 pub fn schema_history() -> Scenario {
     let lib_main = declared_branch_text(Repo::Lib, "main");
     let lib_old = lib_main.replace("branch =", "version =");

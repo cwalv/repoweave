@@ -1249,6 +1249,7 @@ every_scenario!(
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
     dc07_crash_convergence(scenarios::CrashVerb::SetMode),
     dc07_crash_convergence(scenarios::CrashVerb::MemberSetBranch),
+    an_in_place_landing_aborts_around_a_member_it_did_not_move,
     schema_history,
     dc26_migration,
     dc24_no_remote_names,
@@ -9094,6 +9095,12 @@ fn every_flow_runs_on_a_weave_with_no_remote_named_origin() {
 #[test]
 fn a_weave_an_earlier_release_wrote_refuses_naming_its_fix_and_the_fix_converges() {
     runner::run(scenarios::dc26_migration()).assert_fully_decided_green();
+}
+
+#[test]
+fn an_in_place_landing_aborts_around_a_member_it_did_not_move() {
+    runner::run(scenarios::an_in_place_landing_aborts_around_a_member_it_did_not_move())
+        .assert_fully_decided_green();
 }
 
 #[test]
