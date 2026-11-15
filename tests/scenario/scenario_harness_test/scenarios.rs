@@ -9249,6 +9249,46 @@ pub fn a_landing_records_new_work_over_a_pin_put_back() -> Scenario {
     scenario("a landing records new work over a pin put back", steps)
 }
 
+/// A pin put back by name whose checkout a hand fast-forward then took past
+/// the target's pin, with the landing moving nothing: the checkout is what
+/// the landing judges, reports and records, so no backward change is
+/// refused or consented to that the lock would not hold.
+pub fn a_landing_judges_the_checkout_it_records() -> Scenario {
+    scenario(
+        "a landing judges the checkout it records",
+        vec![
+            create("w"),
+            Step::rwv(&ww("w"), &["member", "pin", LIB, "HEAD~1", "--commit"])
+                .may_rewind(&[Repo::Lib])
+                .expect(Exit::Succeeds),
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "main",
+                mark: "forge-lib",
+            }),
+            Step::git(&ww("w"), Repo::Lib, &["fetch", "-q", "origin"]),
+            Step::git(
+                &ww("w"),
+                Repo::Lib,
+                &["merge", "-q", "--ff-only", "origin/main"],
+            ),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("target member changes"))
+                .claim(Claim::ReportedPinsLanded {
+                    site: main_lock(),
+                    members: &[Repo::Lib],
+                })
+                .claim(Claim::PinAt {
+                    site: main_lock(),
+                    member: Repo::Lib,
+                    mark: "forge-lib",
+                }),
+        ],
+    )
+}
+
 /// A pin put back by name refuses the landing; the choice that puts the
 /// target's pin back, run as printed, is the one step on, and the landing
 /// then lands the target's pin. A checkout fast-forwarded by hand to the
