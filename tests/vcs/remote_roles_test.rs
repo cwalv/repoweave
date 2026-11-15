@@ -767,6 +767,33 @@ fn the_choice_a_foreign_upstream_prints_stops_the_branch_taking_in_from_the_othe
 }
 
 #[test]
+fn the_choice_a_foreign_upstream_of_the_project_repo_names_the_branch_it_stops() {
+    let weave = Weave::new();
+    let project = weave.project();
+    common::git_in(&project, &["push", "origin", "main:release"]);
+    common::git_in(&project, &["fetch", "origin"]);
+    common::git_in(&project, &["branch", "--set-upstream-to", "origin/release"]);
+    commit(&weave.member(), "work");
+    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    assert!(
+        refused.contains("push-branch foreign upstream (main takes in from origin/release)"),
+        "{refused}"
+    );
+    let run = printed_git_line(
+        &refused,
+        "stop `main` taking in from the branch of another name",
+        "",
+    );
+    assert_eq!(run.len(), 1, "{refused}");
+    run_git_line(&run[0]);
+
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+}
+
+#[test]
 fn the_choices_no_push_target_prints_each_give_the_branch_a_push_target() {
     let build = || {
         let weave = Weave::new();
