@@ -47,7 +47,7 @@ pub(crate) fn find(
     Ok(match vcs.url_remote(dir, url)? {
         UrlRemote::Present(remote) => Found::Present(remote),
         UrlRemote::Absent(absent) => Found::Missing(absent),
-        UrlRemote::NameTaken(taken) => Found::Taken(judge_taken(vcs, repo, verb, &taken)),
+        UrlRemote::NameTaken(taken) => Found::Taken(judge_taken(vcs, repo, verb, dir, &taken)),
     })
 }
 
@@ -56,6 +56,7 @@ pub(crate) fn judge_taken(
     vcs: &dyn Vcs,
     repo: impl fmt::Display,
     verb: &'static str,
+    dir: &Path,
     taken: &RemoteNameTaken,
 ) -> Judged {
     State::NameTaken
@@ -65,6 +66,8 @@ pub(crate) fn judge_taken(
             "{} holds {}, not {}",
             taken.remote, taken.holds, taken.wanted
         )])
+        .checkout(dir)
+        .bind("<url>", &taken.wanted)
         .by_verb(verb)
         .judge(vcs)
 }

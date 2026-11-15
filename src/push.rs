@@ -2195,7 +2195,7 @@ fn publish(
                 .checkout(&pushed.project_dir)
                 .listing(message.lines())
                 .bind("<b>", pushed.branch.as_str())
-                .only(&[ChoiceId::C7, ChoiceId::C17])
+                .only(&[ChoiceId::C7, ChoiceId::SetPublishRemote])
                 .judge(pvcs),
         );
         withheld.note(format!(
@@ -2360,11 +2360,9 @@ fn gate_reachability(
                     ])
                     .bind("<target>", target)
                     .only_forms(&[Form::C7PushTarget, Form::C27]),
-                None => {
-                    withheld
-                        .listing([listing])
-                        .only(&[ChoiceId::C7, ChoiceId::C27, ChoiceId::C17])
-                }
+                None => withheld
+                    .listing([listing])
+                    .only(&[ChoiceId::C7, ChoiceId::C27]),
             }
             .judge(vcs),
         );

@@ -202,6 +202,20 @@ pub(crate) fn judge(vcs: &dyn Vcs, subject: &Subject<'_>, standing: &Standing) -
         judging = judging.bind("<b>", declared);
     }
     judging = judging.bind("<repo>", subject.repo);
+    if matches!(
+        standing,
+        Standing::ForeignUpstream { .. } | Standing::NoPushTarget
+    ) {
+        judging = judging.bind("<b>", subject.branch);
+    }
+    if let Standing::NoPushTarget = standing {
+        let remotes = vcs.recorded_urls(subject.checkout).unwrap_or_default();
+        judging = judging.listing(
+            remotes
+                .iter()
+                .map(|recorded| format!("remote {} has {}", recorded.remote, recorded.url)),
+        );
+    }
     if subject.member && subject.why.is_some() {
         let operand = format!("{}:{}", subject.repo, subject.branch);
         judging = judging.bind("<m>", &operand).bind("<repo>", &operand);

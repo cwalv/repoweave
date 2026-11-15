@@ -234,9 +234,12 @@ fn a_name_another_url_holds_refuses_the_fetch_before_it_adds_or_fetches_anything
         "{stderr}"
     );
     assert!(
-        stderr.contains("choose where it pushes and pulls"),
+        stderr.contains(
+            "add a remote for `https://example.com/acme/a.git`, under a name no remote has"
+        ),
         "{stderr}"
     );
+    assert!(!stderr.contains("pushDefault"), "{stderr}");
     assert!(stderr.ends_with("rwv explain name\n"), "{stderr}");
     assert_eq!(remotes(&weave.member()), before, "no remote was added");
     assert_eq!(
@@ -279,7 +282,7 @@ fn a_refused_name_reaches_json_as_the_name_axis_taken_with_its_choice() {
     assert_eq!(line["state"], "taken");
     assert_eq!(
         line["choices"][0]["phrase"],
-        "choose where it pushes and pulls"
+        "add a remote for `https://example.com/acme/a.git`, under a name no remote has"
     );
 }
 
@@ -361,9 +364,11 @@ fn a_project_branch_with_no_upstream_and_several_remotes_none_recorded_has_no_pu
         "{stderr}"
     );
     assert!(
-        stderr.contains("choose where it pushes and pulls"),
+        stderr.contains("set the remote this repo publishes to"),
         "{stderr}"
     );
+    assert!(stderr.contains("remote origin has "), "{stderr}");
+    assert!(stderr.contains("remote other has "), "{stderr}");
     assert!(stderr.ends_with("rwv explain push-branch\n"), "{stderr}");
     assert_eq!(bare_main(weave.bare()), member_before, "nothing was pushed");
     assert_eq!(bare_main(&weave.ws.project_bare), project_before);
@@ -682,4 +687,196 @@ fn every_verb_runs_where_the_operator_names_a_first_remote_something_else() {
     );
     assert_eq!(names(&project), [CALLED]);
     assert_eq!(names(&member), [CALLED]);
+}
+
+/// The git line printed under the choice whose phrase starts with `phrase`,
+/// its `<r>` filled with `remote` where the operator chooses it.
+fn printed_git_line(stderr: &str, phrase: &str, remote: &str) -> Vec<String> {
+    let mut lines = stderr
+        .lines()
+        .skip_while(|l| !l.starts_with(&format!("  {phrase}")));
+    lines
+        .next()
+        .unwrap_or_else(|| panic!("no choice `{phrase}` in:\n{stderr}"));
+    lines
+        .take_while(|l| l.starts_with("    "))
+        .map(|l| l.trim().replace("<r>", remote))
+        .collect()
+}
+
+fn run_git_line(line: &str) {
+    let words: Vec<&str> = line.split_whitespace().collect();
+    assert_eq!(words[0], "git", "{line}");
+    let out = std::process::Command::new("git")
+        .args(&words[1..])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{line}: {}", text(&out.stderr));
+}
+
+#[test]
+fn the_choice_a_foreign_upstream_prints_stops_the_branch_taking_in_from_the_other_name() {
+    let weave = Weave::new();
+    let main = weave.member();
+    common::git_in(&main, &["push", "origin", "main:release"]);
+    common::git_in(&main, &["fetch", "origin"]);
+    common::git_in(&main, &["branch", "--set-upstream-to", "origin/release"]);
+    commit(&main, "work");
+    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    assert!(
+        refused.contains("push-branch foreign upstream (main takes in from origin/release)"),
+        "{refused}"
+    );
+    assert!(!refused.contains("pushRemote"), "{refused}");
+    assert!(!refused.contains("remote add"), "{refused}");
+    let run = printed_git_line(
+        &refused,
+        "stop `main` taking in from the branch of another name",
+        "",
+    );
+    assert_eq!(run.len(), 1, "{refused}");
+    run_git_line(&run[0]);
+
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+}
+
+#[test]
+fn the_choices_no_push_target_prints_each_give_the_branch_a_push_target() {
+    let build = || {
+        let weave = Weave::new();
+        let other = weave.scratch("other.git");
+        init_bare(&other);
+        common::git_in(
+            weave.project(),
+            &["remote", "add", "other", &common::file_url(&other)],
+        );
+        common::git_in(weave.project(), &["branch", "--unset-upstream"]);
+        commit(&weave.member(), "work");
+        assert!(weave.rwv(&["lock", "--commit"]).status.success());
+        (weave, other)
+    };
+
+    let (weave, other) = build();
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    assert!(
+        refused.contains("push-branch no push target (main)"),
+        "{refused}"
+    );
+    assert!(!refused.contains("unset-upstream"), "{refused}");
+    assert!(!refused.contains("checkout.defaultRemote"), "{refused}");
+    let set = printed_git_line(&refused, "set the remote this repo publishes to", "other");
+    assert_eq!(set.len(), 1, "{refused}");
+    run_git_line(&set[0]);
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+    assert!(ref_of(&other, "refs/heads/main").is_some());
+
+    let (weave, _) = build();
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    let url = common::file_url(&weave.scratch("third.git"));
+    init_bare(&weave.scratch("third.git"));
+    let add =
+        printed_git_line(&refused, "add a remote for `<url>`", "third")[0].replace("<url>", &url);
+    run_git_line(&add);
+    let set = printed_git_line(&refused, "set the remote this repo publishes to", "third");
+    run_git_line(&set[0]);
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+}
+
+#[test]
+fn the_choice_a_taken_name_prints_adds_the_url_under_another_name_and_the_fetch_runs() {
+    let weave = Weave::new();
+    let manifest = weave.project().join("rwv.toml");
+    let declared = std::fs::read_to_string(&manifest).unwrap();
+    let bare_url = common::file_url(weave.bare());
+    let acme_url = "https://example.com/acme/a.git";
+    std::fs::write(&manifest, declared.replace(&bare_url, acme_url)).unwrap();
+    common::git_in(
+        weave.member(),
+        &["config", &format!("url.{bare_url}.insteadOf"), acme_url],
+    );
+    let other = weave.scratch("other.git");
+    init_bare(&other);
+    common::git_in(
+        weave.member(),
+        &["remote", "add", "acme", &common::file_url(&other)],
+    );
+
+    let refused = text(&weave.rwv(&["fetch", "--repo", MEMBER]).stderr);
+    assert!(refused.contains("name taken (remote acme)"), "{refused}");
+    let phrase = format!("add a remote for `{acme_url}`, under a name no remote has");
+    let run = printed_git_line(&refused, &phrase, "mirror");
+    assert_eq!(run.len(), 1, "{refused}");
+    assert!(run[0].ends_with(acme_url), "{}", run[0]);
+    run_git_line(&run[0]);
+
+    let fetched = weave.rwv(&["fetch", "--repo", MEMBER]);
+    assert!(fetched.status.success(), "{}", text(&fetched.stderr));
+}
+
+#[test]
+fn the_choice_an_unreachable_pin_prints_adds_the_remote_that_holds_the_commit() {
+    let weave = Weave::new();
+    let fork = weave.scratch("fork.git");
+    init_bare(&fork);
+    let member = weave.member();
+    let pinned = commit(&member, "work");
+    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+    common::git_in(
+        &member,
+        &[
+            "push",
+            &common::file_url(&fork),
+            &format!("{pinned}:refs/heads/side"),
+        ],
+    );
+    common::git_in(&member, &["reset", "--hard", "HEAD~1"]);
+    common::git_in(&member, &["reflog", "expire", "--expire=now", "--all"]);
+    common::git_in(&member, &["gc", "--prune=now"]);
+
+    let before = text(&weave.rwv(&["status"]).stdout) + &text(&weave.rwv(&["status"]).stderr);
+    assert!(before.contains("pin unreachable"), "{before}");
+    assert!(!before.contains("pushRemote"), "{before}");
+    let url = common::file_url(&fork);
+    let add =
+        printed_git_line(&before, "add a remote for `<url>`", "fork")[0].replace("<url>", &url);
+    run_git_line(&add);
+    let fetched = weave.rwv(&["fetch", "--repo", MEMBER]);
+    assert!(fetched.status.success(), "{}", text(&fetched.stderr));
+
+    let after = text(&weave.rwv(&["status"]).stdout) + &text(&weave.rwv(&["status"]).stderr);
+    assert!(!after.contains("pin unreachable"), "{after}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_choice_a_withheld_project_push_prints_publishes_it_to_the_remote_chosen() {
+    use std::os::unix::fs::PermissionsExt;
+    let weave = Weave::new();
+    let hook = weave.ws.project_bare.join("hooks").join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let open = weave.scratch("open.git");
+    init_bare(&open);
+    common::git_in(
+        weave.project(),
+        &["remote", "add", "open", &common::file_url(&open)],
+    );
+    commit(&weave.member(), "work");
+    assert!(weave.rwv(&["lock", "--commit"]).status.success());
+
+    let refused = text(&weave.rwv(&["push"]).stderr);
+    assert!(refused.contains("publish withheld"), "{refused}");
+    assert!(!refused.contains("remote add"), "{refused}");
+    let set = printed_git_line(&refused, "set the remote this repo publishes to", "open");
+    assert_eq!(set.len(), 1, "{refused}");
+    run_git_line(&set[0]);
+
+    let pushed = weave.rwv(&["push"]);
+    assert!(pushed.status.success(), "{}", text(&pushed.stderr));
+    assert!(ref_of(&open, "refs/heads/main").is_some());
 }

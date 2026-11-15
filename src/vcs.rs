@@ -438,9 +438,7 @@ pub enum VcsAction {
     Revert,
     MergeNoFastForward,
     PushCommitAs,
-    SetPushRemote,
-    SetPushDefault,
-    SetDefaultRemote,
+    SetPublishRemote,
     AddRemote,
     UnsetUpstream,
     SetCommitIdentity,
@@ -448,7 +446,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 31] = [
+    pub const ALL: [VcsAction; 29] = [
         Self::AddAll,
         Self::Commit,
         Self::Stash,
@@ -473,9 +471,7 @@ impl VcsAction {
         Self::Revert,
         Self::MergeNoFastForward,
         Self::PushCommitAs,
-        Self::SetPushRemote,
-        Self::SetPushDefault,
-        Self::SetDefaultRemote,
+        Self::SetPublishRemote,
         Self::AddRemote,
         Self::UnsetUpstream,
         Self::SetCommitIdentity,

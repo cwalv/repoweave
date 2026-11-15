@@ -949,7 +949,7 @@ impl State {
                 means: "the branch takes in from a branch of another name, which the subject \
                         names; a branch publishes to the branch of its own name",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C17],
+                offers: &[Form::StopTakingIn],
                 verb_offers: &[],
             },
             Self::PushBranchNoPushTarget => &StateRow {
@@ -958,7 +958,7 @@ impl State {
                 means: "no remote is configured for the branch to push to, and the repo has no \
                         url remote to fall back on",
                 refused_by: "`rwv push`; `rwv status` reports it",
-                offers: &[Form::C17],
+                offers: &[Form::SetPublishRemote, Form::AddRemote],
                 verb_offers: &[],
             },
             Self::PushBranchUnconfirmed => &StateRow {
@@ -994,7 +994,7 @@ impl State {
                              completes, lists the member and exits with status 3; `rwv \
                              cherry-pick`, for a pin the ported commit or its parent holds; `rwv \
                              status` reports it",
-                offers: &[Form::C17, Form::C25, Form::C19],
+                offers: &[Form::AddRemote, Form::C25, Form::C19],
                 verb_offers: &[("land", Form::C33)],
             },
             Self::NameTaken => &StateRow {
@@ -1013,12 +1013,12 @@ impl State {
                 verb_offers: &[
                     ("workweave create", Form::AnotherName),
                     ("workweave create", Form::C9WorkweaveDelete),
-                    ("fetch", Form::C17),
-                    ("pull", Form::C17),
-                    ("backup prune", Form::C17),
-                    ("member add", Form::C17),
-                    ("update", Form::C17),
-                    ("init", Form::C17),
+                    ("fetch", Form::AddRemote),
+                    ("pull", Form::AddRemote),
+                    ("backup prune", Form::AddRemote),
+                    ("member add", Form::AddRemote),
+                    ("update", Form::AddRemote),
+                    ("init", Form::AddRemote),
                 ],
             },
             Self::NameExists => &StateRow {
@@ -1141,7 +1141,7 @@ impl State {
                     Form::C7PushRepo,
                     Form::C7PushTarget,
                     Form::C27,
-                    Form::C17,
+                    Form::SetPublishRemote,
                 ],
                 verb_offers: &[],
             },
@@ -1937,7 +1937,9 @@ pub enum ChoiceId {
     C14,
     C15,
     C16,
-    C17,
+    StopTakingIn,
+    SetPublishRemote,
+    AddRemote,
     C18,
     C19,
     C22,
@@ -2082,9 +2084,19 @@ impl ChoiceId {
                 phrase: "free the other checkout",
                 keeps_work: "removal refuses over edits",
             },
-            Self::C17 => &ChoiceRow {
-                id: Some("C17"),
-                phrase: "choose where it pushes and pulls",
+            Self::StopTakingIn => &ChoiceRow {
+                id: None,
+                phrase: "stop `<b>` taking in from the branch of another name",
+                keeps_work: "config only",
+            },
+            Self::SetPublishRemote => &ChoiceRow {
+                id: None,
+                phrase: "set the remote this repo publishes to",
+                keeps_work: "config only",
+            },
+            Self::AddRemote => &ChoiceRow {
+                id: None,
+                phrase: "add a remote for `<url>`, under a name no remote has",
                 keeps_work: "config only",
             },
             Self::C18 => &ChoiceRow {
@@ -2540,7 +2552,9 @@ pub enum Form {
     C16WorkweaveDelete,
     C16Raw,
     C16Detach,
-    C17,
+    StopTakingIn,
+    SetPublishRemote,
+    AddRemote,
     C18,
     C19,
     C22,
@@ -2640,7 +2654,7 @@ impl FormRow {
 }
 
 impl Form {
-    pub const ALL: [Form; 123] = [
+    pub const ALL: [Form; 125] = [
         Self::C1Pull,
         Self::C1UpdateRemote,
         Self::C1UpdateRemoteCommit,
@@ -2691,7 +2705,9 @@ impl Form {
         Self::C16WorkweaveDelete,
         Self::C16Raw,
         Self::C16Detach,
-        Self::C17,
+        Self::StopTakingIn,
+        Self::SetPublishRemote,
+        Self::AddRemote,
         Self::C18,
         Self::C19,
         Self::C22,
@@ -3078,15 +3094,21 @@ impl Form {
                 at: W::Here,
                 shipped: true,
             },
-            Self::C17 => &FormRow {
-                choice: C::C17,
-                steps: &[
-                    Vcs(A::SetPushRemote),
-                    Vcs(A::SetPushDefault),
-                    Vcs(A::SetDefaultRemote),
-                    Vcs(A::AddRemote),
-                    Vcs(A::UnsetUpstream),
-                ],
+            Self::StopTakingIn => &FormRow {
+                choice: C::StopTakingIn,
+                steps: &[Vcs(A::UnsetUpstream)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::SetPublishRemote => &FormRow {
+                choice: C::SetPublishRemote,
+                steps: &[Vcs(A::SetPublishRemote)],
+                at: W::Any,
+                shipped: true,
+            },
+            Self::AddRemote => &FormRow {
+                choice: C::AddRemote,
+                steps: &[Vcs(A::AddRemote)],
                 at: W::Any,
                 shipped: true,
             },

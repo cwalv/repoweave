@@ -3304,11 +3304,9 @@ impl Vcs for GitVcs {
             VcsAction::Revert => "git -C <checkout> revert <ids>",
             VcsAction::MergeNoFastForward => "git -C <checkout> merge --no-ff <pin>",
             VcsAction::PushCommitAs => "git -C <checkout> push <r> <sha>:refs/heads/<name>",
-            VcsAction::SetPushRemote => "git -C <checkout> config branch.<b>.pushRemote <r>",
-            VcsAction::SetPushDefault => "git -C <checkout> config remote.pushDefault <r>",
-            VcsAction::SetDefaultRemote => "git -C <checkout> config checkout.defaultRemote <r>",
+            VcsAction::SetPublishRemote => "git -C <checkout> config remote.pushDefault <r>",
             VcsAction::AddRemote => "git -C <checkout> remote add <r> <url>",
-            VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream",
+            VcsAction::UnsetUpstream => "git -C <checkout> branch --unset-upstream <b>",
             VcsAction::MarkResolved => "git -C <checkout> add -- <paths>",
             VcsAction::TurnOnCheckoutRecording => {
                 "git -C <checkout> config core.logAllRefUpdates true"

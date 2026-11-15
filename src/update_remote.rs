@@ -910,6 +910,7 @@ fn refuse_backwards(
                                 upstream.remote, upstream.branch
                             ))
                             .checkout(dir)
+                            .bind("<b>", &branch)
                             .judge(vcs),
                     );
                     continue;

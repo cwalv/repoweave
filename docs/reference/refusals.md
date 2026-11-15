@@ -209,8 +209,9 @@ The others follow.
 | `gone` | C22: squashed, rebase-merged or on another lineage: reset yours to the target's here | `rwv sync --reset-to-target <m>` | the workspace with that feature | backup kept; local only |
 | `gone` | C9: delete what is landed | `rwv branch delete <W> --discard-unlanded` | a workspace where `<W>` is not checked out | deletes only what is landed elsewhere; local only |
 | `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
-| `foreign upstream` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `no push target` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `foreign upstream` | stop `<b>` taking in from the branch of another name | VCS action (git: `git -C <checkout> branch --unset-upstream <b>`) | any workspace | config only |
+| `no push target` | set the remote this repo publishes to | VCS action (git: `git -C <checkout> config remote.pushDefault <r>`) | any workspace | config only |
+| `no push target` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
 | `unconfirmed` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 
 **Where this sits.** [Sync semantics](../explanation/joints/sync-semantics.md).
@@ -240,12 +241,12 @@ The others follow.
 |---|---|---|---|---|
 | `taken`, for `rwv workweave create` | use another name | — | here | nothing changes |
 | `taken`, for `rwv workweave create` | C9: delete what is landed | `rwv workweave delete <ww> --project <project>` | the primary | deletes only what is landed elsewhere; local only |
-| `taken`, for `rwv fetch` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `taken`, for `rwv pull` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `taken`, for `rwv backup prune` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `taken`, for `rwv member add` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `taken`, for `rwv update` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
-| `taken`, for `rwv init` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `taken`, for `rwv fetch` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
+| `taken`, for `rwv pull` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
+| `taken`, for `rwv backup prune` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
+| `taken`, for `rwv member add` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
+| `taken`, for `rwv update` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
+| `taken`, for `rwv init` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
 | `exists`, for `rwv workweave create` | use another name | — | here | nothing changes |
 | `exists`, for `rwv branch create` | use another name | — | here | nothing changes |
 | `exists`, for `rwv branch create` | open it | `rwv switch <W>` | here | moves only what alignment moves |
@@ -297,7 +298,7 @@ The others follow.
 | `withheld` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
 | `withheld` | C7: publish it (again) | `rwv push --branch <target>` | any workspace | adds only |
 | `withheld` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
-| `withheld` | C17: choose where it pushes and pulls | VCS action (git: `git -C <checkout> config branch.<b>.pushRemote <r>`, `git -C <checkout> config remote.pushDefault <r>`, `git -C <checkout> config checkout.defaultRemote <r>`, `git -C <checkout> remote add <r> <url>`, `git -C <checkout> branch --unset-upstream`) | any workspace | config only |
+| `withheld` | set the remote this repo publishes to | VCS action (git: `git -C <checkout> config remote.pushDefault <r>`) | any workspace | config only |
 | `no pin` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `target unpublished` | C7: publish it (again) | `rwv push --branch <target>` | any workspace | adds only |
 | `target unpublished` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |

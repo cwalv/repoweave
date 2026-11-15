@@ -1169,6 +1169,7 @@ impl Aligner {
                         upstream.remote, upstream.branch
                     ))
                     .checkout(m.dir)
+                    .bind("<b>", name)
                     .judge(m.vcs)],
             });
         }
