@@ -14,7 +14,7 @@ rwv integration set cargo-workspace rustc-wrapper '"sccache"'
 
 | Ecosystem | Strategy | Concurrency-safe? | Setup needed? |
 |---|---|---|---|
-| Rust / cargo | `sccache` via `rustc-wrapper` integration key | Yes | Install `sccache`; set `rustc-wrapper = "sccache"` in `rwv.toml` |
+| Rust / cargo | `sccache` via `rustc-wrapper` integration key | Yes | Install `sccache`; run `rwv integration set cargo-workspace rustc-wrapper '"sccache"'` |
 | Rust / cargo | `sccache` via `RUSTC_WRAPPER` env var | Yes | Install `sccache`; export `RUSTC_WRAPPER=sccache` in shell profile |
 | Rust / cargo | Shared `CARGO_TARGET_DIR` | No (lock contention & feature thrashing) | Not recommended for concurrent workweaves |
 | Node / pnpm | Content-addressed pnpm store | Yes | None — shared by default |
@@ -27,9 +27,13 @@ For tracked source files themselves, `rwv` already shares disk blocks across wor
 
 [sccache](https://github.com/mozilla/sccache) wraps `rustc`, keys on the full compiler invocation (crate source, flags, compiler version, and target triple), and serves cached object files from `~/.cache/sccache` (Linux/macOS) on a hit. Each workweave keeps its own `target/` directory for Cargo fingerprints and linked binaries while sharing compiled dependency objects across workweaves.
 
-### Enable per project via `rwv.toml`
+### Enable per project
 
-Setting `rustc-wrapper` to `"sccache"` under `[integrations.cargo-workspace]` in `rwv.toml` (`rwv integration set cargo-workspace rustc-wrapper '"sccache"'`) instructs `rwv` to check whether `sccache` is on `PATH` whenever the workspace is materialized (including `rwv clone`, `rwv activate`, `rwv materialize`, `rwv workweave create`, and `rwv doctor --fix`). When `sccache` is present on the host, `rwv` writes `[build] rustc-wrapper = "sccache"` into the generated `.cargo/config.toml`; on machines without `sccache`, the key is omitted (and the file removed when nothing else is in it) so `cargo` still builds cleanly.
+```bash
+rwv integration set cargo-workspace rustc-wrapper '"sccache"'
+```
+
+Setting `rustc-wrapper` to `"sccache"` under `[integrations.cargo-workspace]` in `rwv.toml` instructs `rwv` to check whether `sccache` is on `PATH` whenever the workspace is materialized (including `rwv clone`, `rwv activate`, `rwv materialize`, `rwv workweave create`, and `rwv doctor --fix`). When `sccache` is present on the host, `rwv` writes `[build] rustc-wrapper = "sccache"` into the generated `.cargo/config.toml`; on machines without `sccache`, the key is omitted (and the file removed when nothing else is in it) so `cargo` still builds cleanly.
 
 ### Or enable host-wide via shell environment
 

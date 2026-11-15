@@ -18,9 +18,9 @@ Repoweave separates authoring workspace config files, selecting the active proje
 | Strip artifacts from newly disabled integrations and run install hooks (`npm install`, `uv sync`, `cargo fetch`) | `rwv materialize` | Primary weave or workweave |
 | Switch `.rwv-active`, re-point weave-root symlinks to `<project>`, and run install hooks (never authors files) | `rwv activate <project>` | Primary weave only |
 
-## After editing `rwv.toml` by hand
+## After a hand edit of `rwv.toml`
 
-The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`) update managed workspace files automatically. When you edit `rwv.toml` directly — for example, changing an integration setting or enabling a new integration — run:
+The authoring verbs (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`, `rwv integration set-enabled`, `rwv integration set`) update managed workspace files automatically: change an integration setting with `rwv integration set <name> <key> <value>` and enable or disable one with `rwv integration set-enabled <name> true|false`. A hand edit of `rwv.toml` is recoverable; after one, run:
 
 ```bash
 rwv doctor --fix
@@ -30,7 +30,7 @@ rwv doctor --fix
 
 Three settings are not compared by `rwv doctor`, so `rwv doctor --fix` alone does not pick up a change to them: `cargo-workspace`'s `patch` mode with the default `patch-surface = "manifest"`, `workspace-package`, and a `patch-surface` switch back to `manifest`. Any authoring verb (`rwv member add`, `rwv member remove`, `rwv update --remote`, `rwv member set-role`) always re-applies them, because it re-authors unconditionally; otherwise the change lands only at the next `rwv doctor --fix` that regenerates for another reason.
 
-If your `rwv.toml` edit disabled an integration (`enabled = false`), follow up with `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
+After an integration is disabled (`rwv integration set-enabled <name> false`, or `enabled = false` by hand), run `rwv materialize` to strip the disabled integration's managed blocks or files and run install hooks:
 
 ```bash
 rwv materialize

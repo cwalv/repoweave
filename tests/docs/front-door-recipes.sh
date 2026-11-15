@@ -285,6 +285,8 @@ recipe_add_an_integration() {
   expect "every setter committed what it did" test -z "$(git -C projects/web-app status --short)"
   run "$page" 'rwv integration set-enabled npm-workspaces false' 2
   run "$page" 'rwv doctor            # disabled-integration-artifact lists what materialize will remove'
+  run "$HOWTO/cache-builds-across-workweaves.md" 'rwv integration set cargo-workspace rustc-wrapper '"'"'"sccache"'"'"''
+  expect "the setting is committed" test -z "$(git -C projects/web-app status --short)"
 }
 
 recipe_migrate() {
