@@ -8714,6 +8714,10 @@ pub fn a_refused_landing_leaves_a_lock_behind_as_it_stood() -> Scenario {
             Step::commit(&ww("w"), Repo::App, "w-app-2"),
             Step::rwv(&ww("w"), &["land"])
                 .expect(Exit::refuses(Repo::App, State::HistoryUnset))
+                .claim(Claim::OutputContains(" branch set-history <h>\n"))
+                .claim(Claim::OutputContains(
+                    " branch set-history <h> --repo local/remotes/app",
+                ))
                 .claim(Claim::OutputLacks("the landing records"))
                 .claim(Claim::LocalStateUnchanged(ww("w"))),
         ],
