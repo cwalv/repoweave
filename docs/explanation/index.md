@@ -22,12 +22,18 @@
 
 - [Workweave hierarchy](./joints/workweave-hierarchy.md) — parent-child relationships between workweaves and flat `<project>--<workweave>` branch naming
 - [Workweave lifecycle](./joints/workweave-lifecycle.md) — creating, syncing, landing (`land --retire`), and deleting workweaves
+- [Records and modes](./joints/branch-records.md) — how a weave branch is used, written once as its record and published with it
+- [Alignment](./joints/alignment.md) — where members sit for the checked-out branch, and what is reported when they do not
+- [The deletion rule](./joints/deletion-rule.md) — what deleting a branch, a workweave or a store keeps, refuses and asks first
 - [Shared-refs drift](./joints/shared-refs-drift.md) — what happens when a checked-out branch ref moves underneath a worktree and how `rwv` classifies drift
 
 ### Lock & sync
 
 - [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` is computed from member HEADs on mutation and read as the target only when `clone`, `update` or `sync` materializes it
-- [Sync semantics](./joints/sync-semantics.md) — the direction pair `rwv sync` / `rwv land`, its phases, savepoints and abort, and the strategy choice
+- [Sync semantics](./joints/sync-semantics.md) — taking a target's work into a branch with `rwv sync`
+- [History and lineage](./joints/history-and-lineage.md) — the history setting, rebasing and stacks, and the lineage rule
+- [Landing](./joints/landing.md) — `rwv land`: compose in the source, then move the target
+- [Stops and abort](./joints/stops-and-abort.md) — savepoints, `--continue`, and what `rwv abort` keeps
 
 ## Design notes
 

@@ -60,7 +60,7 @@ Cloned for reading or study, not as a build input. Examples: a sibling project's
 
 A workweave holds a `reference` repo the way it holds every other repo: as a
 worktree of the canonical weave-root clone. An `owned` or `fork` repo sits on
-the workweave's own ephemeral branch; a `reference` repo, like a `dependency`
+the feature branch the workweave is on; a `reference` repo, like a `dependency`
 repo, sits detached at the commit the workweave's lock pins, and carries no
 branch of the workweave's. Where the filesystem supports copy-on-write cloning, a new
 workweave's files are cloned from another workspace's copy, so it costs disk
@@ -108,6 +108,23 @@ rwv member add https://github.com/me/my-fork.git --role fork
 rwv member add https://github.com/other/code.git --role reference
 ```
 
+## Roles bound change
+
+A role decides what a feature may do to a repo, so the rule is the same in every verb that
+moves one:
+
+| Role | In a feature | At `rwv land` | At `rwv push` |
+|---|---|---|---|
+| `owned`, `fork` | gets a branch named after the feature, created by rwv | moved onto its receiving branch where it holds new work | pushed |
+| `dependency`, `reference` | sits as declared, or detached at its pin; never gets a feature branch | never moved: it takes the feature's pin where the feature changed it and the target's branch reaches it, else the target's | pushed only when `--repo` or `--role` names it |
+
+A landing that changes a member's role is a named change: `rwv land --allow-member-change
+<m>` is required (see [landing](../explanation/joints/landing.md#member-changes-are-named)).
+Patching a `dependency` is therefore `rwv member set-role <m> fork` first, then landing
+with that consent; re-pinning one without patching it is `rwv update --remote --repo <m>`
+or `rwv member pin <m> <rev>`, and `rwv cherry-pick` carries such a pin by name, never by
+copying its commits.
+
 ## Roles in `rwv push`
 
 `rwv push` walks the manifest and applies per-role policy:
@@ -116,8 +133,8 @@ rwv member add https://github.com/other/code.git --role reference
 |---|---|
 | `owned` | Push (with lock-precondition check) |
 | `fork` | Push (same as `owned`) |
-| `dependency` | Skip — you don't push upstream code |
-| `reference` | Skip — read-only |
+| `dependency` | Not pushed unless named: `--repo <path>` or `--role dependency` pushes it |
+| `reference` | Not pushed unless named, in the same way |
 
 See [push a cross-repo feature](../how-to/push-cross-repo-feature.md).
 

@@ -5,8 +5,9 @@ deletion. The daily bring-work-home flow touches all four. This joint
 covers what each stage means, what the tool enforces, and what the
 operator must ensure.
 
-The joint does not re-document the phase machine that `rwv land`
-runs internally — that lives in [sync-semantics](./sync-semantics.md).
+The joint does not re-document what `rwv land` composes and moves — that lives
+in [landing](./landing.md) — or how a stopped operation is finished or put back,
+which is [stops and abort](./stops-and-abort.md).
 It does not re-document the tree model or one-hop semantics — those live
 in [workweave-hierarchy](./workweave-hierarchy.md). The focus here is
 the observable lifecycle: what exists, when, and how to move it forward.
@@ -114,10 +115,9 @@ own lock (see [lock-as-derived](./lock-as-derived.md)). Before landing with
 `rwv land`, a manual `rwv lock` is optional because `rwv land`
 records CWD's member tips in the landing's own project commit.
 
-The workweave's project repo and its `owned` and `fork` members run on a flat
-ephemeral branch (`{project}--{name}`). This branch name is what allows `rwv land`
-to push cleanly into primary's `main` without a detach-or-stash dance —
-two worktrees never compete for the same branch name. See
+Unless a branch was named at creation, the workweave's project repo and its `owned` and
+`fork` members run on a feature branch named `{project}--{name}`, so two worktrees never
+compete for one branch name. See
 [workweave-hierarchy](./workweave-hierarchy.md#ephemeral-branch-names-and-the-git-worktree-constraint).
 
 ### Absorbing upstream changes
@@ -147,12 +147,12 @@ rwv land --retire
 
 Workweaves live at `<parent>/.workweaves/<project>--<name>/` — by default a sibling of the weave root, so from the weave root the path is `../.workweaves/<project>--<name>/`. `rwv land --retire` lands into the target the feature's record names, which a workweave created from another workspace records as that workspace's checked-out branch.
 
-`rwv land --retire` runs the `land` phase machine ([sync-semantics](./sync-semantics.md)) — composing CWD onto the target (whose lock must be fresh per `rwv doctor --locked`), recording in one project commit the lock with CWD's member tips, and fast-forwarding the target — and then runs the **retire** phase to delete the workweave on success.
+`rwv land --retire` lands as [landing](./landing.md) describes — composing CWD's work in this workspace, recording in one project commit the lock with its member tips, and fast-forwarding the target — and then runs the **retire** step to delete the workweave on success.
 
 ### The retire contract
 
-Retire is a phase in the land machine, not a separate command. It runs
-only after `advance-target` has completed successfully. It does two things:
+Retire is a step of the landing, not a separate command. It runs
+only after the target has moved. It does two things:
 
 **Dirty-check** — no checkout in the workweave may have uncommitted
 changes, whether a manifest member names it or not (a clone put there by
@@ -201,7 +201,7 @@ sits.
 
 ### If retire fails
 
-A failed retire check keeps the op record at phase `retire`. The landing
+A failed retire check keeps the op record, stopped at retire. The landing
 into the target has already completed, and the workweave is preserved. The
 repair loop:
 
@@ -214,7 +214,7 @@ rwv abort
 ```
 
 `rwv abort` restores both CWD and the target to their pre-op savepoints.
-See the abort contract in [sync-semantics](./sync-semantics.md#abort-verified-restore-contract).
+See [stops and abort](./stops-and-abort.md).
 
 ## Deletion
 
@@ -240,7 +240,7 @@ hand. The refusal lists the dirty or diverged paths, marking those outside
 the manifest `(not a manifest member)`. Options:
 
 - Commit the work and land it: `rwv land --retire`
-- Stash or discard the uncommitted changes, then delete
+- Set the uncommitted changes aside or discard them, then delete
 - Consent to losing everything: `rwv workweave delete <name>
   --discard-uncommitted --discard-unlanded`
 
@@ -256,7 +256,11 @@ deletion rule keeps the branch, listed with its reason, and the exit status is
 `3`. Whether a branch landed is judged against the branch the workweave's
 record lands into, by ancestry: the project branch of that name, and in each
 member its branch for that target. `--delete-remote` and
-`--delete-remote-unlanded <repo>` extend the rule to the push branches; see
+`--delete-remote-unlanded <repo>` extend the rule to the push branches. A member
+whose checkout keeps a submodule store is asked, before the store goes, whether it
+holds work no remote has (`dropped-repo-has-unique-commits`, `remotes-unconfirmed`,
+`--discard-unpublished`). A workweave whose directory is already gone is deleted the same way.
+[The deletion rule](./deletion-rule.md) states all of it; see also
 [`rwv branch delete`](../../reference/cli.md#rwv-branch).
 
 ## Lifecycle in one view
@@ -279,7 +283,9 @@ workweave is a git worktree, and commits are ordinary git commits.
 
 - [workweave-hierarchy](./workweave-hierarchy.md) — the tree model, parent
   tracking, one-hop semantics, and ephemeral branch naming.
-- [sync-semantics](./sync-semantics.md) — the phases `land` runs, the
-  abort contract, and the strategy choice.
+- [landing](./landing.md) — what `land` composes and moves, and what `--retire` adds.
+- [stops and abort](./stops-and-abort.md) — finishing or putting back a stopped landing.
+- [deletion rule](./deletion-rule.md) — what deleting a workweave or branch keeps and refuses.
+- [sync-semantics](./sync-semantics.md) — taking the target's work in before landing.
 - [lock-as-derived](./lock-as-derived.md) — why `rwv.lock` is per-workspace
   and why it is regenerated (not merged) at each sync boundary.

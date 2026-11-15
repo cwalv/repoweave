@@ -45,10 +45,16 @@
 - [Workweaves & branches]()
   - [Workweave hierarchy](./explanation/joints/workweave-hierarchy.md)
   - [Workweave lifecycle](./explanation/joints/workweave-lifecycle.md)
+  - [Records and modes](./explanation/joints/branch-records.md)
+  - [Alignment](./explanation/joints/alignment.md)
+  - [The deletion rule](./explanation/joints/deletion-rule.md)
   - [Shared-refs drift](./explanation/joints/shared-refs-drift.md)
 - [Lock & sync]()
   - [Lock-as-derived](./explanation/joints/lock-as-derived.md)
   - [Sync semantics](./explanation/joints/sync-semantics.md)
+  - [History and lineage](./explanation/joints/history-and-lineage.md)
+  - [Landing](./explanation/joints/landing.md)
+  - [Stops and abort](./explanation/joints/stops-and-abort.md)
 
 # Design notes
 
