@@ -658,3 +658,45 @@ fn a_clone_of_a_project_with_a_legacy_attribute_is_reported_and_doctor_fix_clear
         "rwv.lock merge=rwv-lock"
     );
 }
+
+#[test]
+fn land_onto_an_unmigrated_target_names_the_directory_its_fix_runs_in() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(&root).unwrap();
+    let rwv_in =
+        |dir: &Path, args: &[&str]| common::rwv().args(args).current_dir(dir).output().unwrap();
+    let out = rwv_in(&root, &["init", "web"]);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let out = rwv_in(&root, &["lock", "--commit"]);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let out = rwv_in(&root, &["workweave", "create", "w"]);
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let workweave = tmp.path().join(".workweaves/web--w");
+    for project in [root.join("projects/web"), workweave.join("projects/web")] {
+        std::fs::write(project.join(".gitattributes"), "rwv.lock merge=rwv-ours\n").unwrap();
+        common::git_in(&project, &["commit", "-qam", "the old attribute line"]);
+    }
+    let fixed = rwv_in(&workweave, &["doctor", "--fix"]);
+    assert!(fixed.status.success(), "{}", common::cli::describe(&fixed));
+
+    let refused = rwv_in(&workweave, &["land"]);
+    common::cli::refused(&refused, State::MissingLockMergeDriverAttributeLegacy);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let advised = stderr
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv -C") && line.ends_with("doctor --fix"))
+        .unwrap_or_else(|| panic!("the fix names no directory:\n{stderr}"));
+    assert!(
+        advised.contains(&root.display().to_string()),
+        "{advised}\n{stderr}"
+    );
+    assert!(common::run_advised(advised, tmp.path()).status.success());
+    let landed = rwv_in(&workweave, &["land"]);
+    assert!(
+        !String::from_utf8_lossy(&landed.stderr).contains("missing-lock-merge-driver"),
+        "{}",
+        common::cli::describe(&landed)
+    );
+}

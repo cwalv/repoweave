@@ -15,11 +15,13 @@ use crate::manifest::{LockEntry, LockFile, Manifest, RepoPath};
 use crate::vcs::{vcs_for, CommitId, LockDriverPart, ResolvedRevisionId, Vcs};
 
 /// Refuse when `dir`'s lock merge driver is not set up as this release sets
-/// it up, one line per part that is not.
+/// it up, one line per part that is not. `workspace` is the workspace `dir`
+/// belongs to when that is not the one the verb runs in.
 pub(crate) fn refuse_unmigrated(
     vcs: &dyn Vcs,
     repo: impl fmt::Display,
     dir: &Path,
+    workspace: Option<&Path>,
 ) -> anyhow::Result<()> {
     if !vcs.is_repo(dir) {
         return Ok(());
@@ -32,12 +34,13 @@ pub(crate) fn refuse_unmigrated(
     })?;
     let mut report = Report::default();
     for gap in MissingLockMergeDriverKind::of(setup) {
+        let judging = gap.state().of(&repo).project_repo().checkout(dir);
         report.add(
-            gap.state()
-                .of(&repo)
-                .project_repo()
-                .checkout(dir)
-                .judge(vcs),
+            match workspace {
+                Some(workspace) => judging.elsewhere(workspace),
+                None => judging,
+            }
+            .judge(vcs),
         );
     }
     report.into_result()

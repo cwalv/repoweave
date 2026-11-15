@@ -544,7 +544,7 @@ fn refuse_unsettled_lock(ctx: &WorkspaceContext, binding: Binding) -> anyhow::Re
         )?;
     }
     if binding.writes_project {
-        crate::lock_driver::refuse_unmigrated(vcs.as_ref(), &repo, &dir)?;
+        crate::lock_driver::refuse_unmigrated(vcs.as_ref(), &repo, &dir, None)?;
     }
     Ok(())
 }

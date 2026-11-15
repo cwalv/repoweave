@@ -4289,7 +4289,12 @@ fn run_preconditions_after_acquire(
     }
     let migrated_in = dest.map_or(cwd_project_dir, |(project_dir, _)| project_dir);
     hold(
-        crate::lock_driver::refuse_unmigrated(project_vcs, migrated_in.display(), migrated_in),
+        crate::lock_driver::refuse_unmigrated(
+            project_vcs,
+            migrated_in.display(),
+            migrated_in,
+            dest.map(|(_, workspace)| workspace),
+        ),
         &mut report,
     );
     let refusing =

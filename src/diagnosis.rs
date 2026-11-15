@@ -4043,7 +4043,7 @@ impl Judging {
         }
         match form.row().at {
             Where::OtherCheckout => self.places.get("<other>").map(PathBuf::as_path),
-            Where::Here | Where::CheckoutsWorkspace | Where::WithBranch => {
+            Where::Here | Where::Checkout | Where::CheckoutsWorkspace | Where::WithBranch => {
                 self.workspace.as_deref()
             }
             Where::OnTarget => self
