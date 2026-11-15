@@ -761,9 +761,13 @@ under the same op record. Its order is fixed:
 4. Checkouts the merged `rwv.toml` drops are pruned, after every member has
    merged.
 5. The merge is staged in the project checkout (a tree-mode merge is replayed
-   there now), the lock is written from `lock_merge::merge_pins`, the members
-   the merge added are cloned, the integration files are regenerated, and the
-   project commit is written last.
+   there now), the lock is written from `lock_merge::merge_pins`, the
+   integration files are regenerated (when every member the merged manifest
+   names has a checkout), and the project commit is written last. The merge
+   makes no member checkout: a member it added gets its checkout from the
+   alignment of the workspace that runs once the op's record is gone (the
+   `aligning-source` pause point in `pull`), so `rwv abort` never meets a
+   checkout the op made.
 
 A member that conflicts at step 3 leaves the project checkout without a commit.
 Without `merge-tree`, step 1 leaves the merge staged in the checkout while the

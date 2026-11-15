@@ -33,6 +33,18 @@ as good as "as last fetched", so the judgment fetches first.
 | `OwnAndNested` | the checkout is the repo's own clone in the primary (`Checkout::Primary`) | the clone's store and every store nested in the checkout (`Vcs::nested_stores`) |
 | `Nested` | the checkout is a linked workspace of a store that outlives it | only the stores nested in the checkout |
 
+`Vcs::nested_stores` lists every store nested in a checkout at any depth,
+checked out or not: each gitlink of the index whose path holds a repository,
+whether or not the submodule file describes it, then each repository under the
+checkout's `modules` directory and each found store's, and where the checkout is
+its own store, each linked worktree's. A checkout that no longer stands has no
+index to read: a workweave whose directory is gone is judged by the stores its
+store keeps for its record (`Vcs::stores_kept_for`, git: every repository under
+the `modules` directory of the worktree registration), which go with the
+record. `judge_stores_kept_for_gone` runs that judgment, and the retire reads
+the branch the record has checked out through `Vcs::registered_branch` in place
+of the workspace state that went with the directory.
+
 A workweave checkout that is itself a standalone store, with no primary-side
 clone to compare against, is refused (`clone-topology`, `RefusalKind::CloneTopology`) rather than removed:
 nothing has established that its objects exist anywhere else.
@@ -41,6 +53,15 @@ nothing has established that its objects exist anywhere else.
 
 `judge_removed_stores`, for the stores a removal removes:
 
+0. **Leave out a store that holds only what it fetched.** A nested store for
+   which `Vcs::holds_only_what_it_fetched` is true (refs only branches and
+   remote-tracking branches, and a record of where its checkout stood that
+   reaches back to its first entry and names only clones, checkouts and resets
+   to commits its remote-tracking branches reach) is neither fetched nor judged:
+   no remote's answer changes what removing it loses. The answer is false where
+   the record is missing, expired in part, or names anything else. A commit,
+   amend, merge, rebase, pull, cherry-pick or patch counts as made in it. The
+   clone's own store is never excused this way.
 1. **Fetch every store, then judge.** `refresh_remotes` runs a pruning fetch
    into each store: the clone's own through `fetch::pruning_fetch`, which keeps
    the superseded tips it sees, and a nested store through
@@ -48,7 +69,8 @@ nothing has established that its objects exist anywhere else.
    forgets them, since nothing rwv can drop may be left in a store about to be
    removed. A remote that did not answer is named (`remote`, cause).
 2. **A remote that did not answer refuses.** Without `--discard-unpublished` a
-   store whose remotes could not all be confirmed refuses as
+   store whose remotes could not all be confirmed refuses, even where what it
+   holds cannot be read, as
    `remotes-unconfirmed` (`RefusalKind::RemotesUnconfirmed`), because what it
    holds that no remote has cannot be told. What a remote has is judged against
    the remotes as they answer now, never against a stale fetch.
@@ -61,13 +83,21 @@ nothing has established that its objects exist anywhere else.
    is in) and the ways to keep it: publish it, commit what was set aside, drop
    the backups it names (`rwv backup drop`), or remove with
    `--discard-unpublished`.
-5. **`--discard-unpublished` removes both.** It lets a removal go past an
+5. **`--discard-unpublished` removes both**, and a list of stores that could not
+   be listed refuses without it (`dropped-repo-has-unique-commits`) and is
+   removed with it. It lets a removal go past an
    unconfirmed remote and past held items, and names what goes on stderr. It is
    `DiscardUnpublishedConsent`, minted only from that flag in `src/cli/consent.rs`
    (`from_flag`, `pub(in crate::cli)`), so no removal path carries the consent
    without the operator having typed the flag; nothing else discards.
 
 No remote is asked where the removal removes no store.
+
+`--discard-unpublished` is accepted only where a landing's retire stopped over
+what the stores it removes hold: with `--continue` of a `land`, and only when
+the op record's phase is `retire`. Anywhere else it refuses as
+`inapplicable-flag` (`RefusalKind::InapplicableFlag`); the retire's own stop
+lists what it would remove.
 
 ## Who runs it
 

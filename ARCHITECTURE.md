@@ -593,7 +593,7 @@ states what each capability requires of a second backend):
 | History-changing operations | `rebase`, `replayed`, `record_replayed`, `copy_replayed`, `take_rewritten`, `forget_replays`, `merge_as_refs`, `commit_merge`, `start_merge`, `end_merge`, `copy_commit`, `continue_copy`, `copied_from`, `copied_into`, `conflict_picks`, `conflict_sides`, `tree_merges` |
 | Operations in progress | `mid_operation`, `branch_under_rebase`, `rebase_in_flight`, `merge_in_flight`, `copy_in_flight`, `merging_commits`, `cancel_in_flight_op`, `ending_stopped` |
 | Savepoints and backups per ref | `create_ref_savepoint`, `ref_savepoints`, `drop_ref_savepoint`, `plan_ref_restore`, `execute_ref_restore`, `plan_checkout_restore`, `execute_checkout_restore`, `create_backup`, `write_backup`, `list_backups`, `drop_backup`, `keep_in_slot`, `backup_edits`, `backup_unpreserved_head`, `show_kept` |
-| Checkouts and stores | `store_of`, `private_dir`, `main_checkout`, `checkouts_of_branch`, `checkout_recorded_elsewhere`, `record_checkout_moved`, `nested_stores`, `materialize_worktree_detached` |
+| Checkouts and stores | `store_of`, `private_dir`, `main_checkout`, `checkouts_of_branch`, `checkout_recorded_elsewhere`, `record_checkout_moved`, `nested_stores`, `stores_kept_for`, `registered_branch`, `holds_only_what_it_fetched`, `materialize_worktree_detached` |
 | Working copy | `carry_edits_onto`, `check_out_branch`, `set_edits_aside`, `set_back`, `snapshot_edits`, `copy_uncommitted`, `uncompared_paths`, `unmerged_paths` |
 | Lock driver | `lock_driver_setup`, `declare_lock_driver_in`, `define_lock_driver`, `lock_driver_declaration_file` |
 | Operator text | `hint`, printed as "VCS action (git: ...)" |
