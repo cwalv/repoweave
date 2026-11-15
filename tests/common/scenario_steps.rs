@@ -1,7 +1,7 @@
 //! Step builders the scenarios and the kill matrix share.
 
-use super::scenario_runner::{Exit, Step};
-use super::scenario_sandbox::{self, Machine, Place, Remote, Repo};
+use super::scenario_runner::{Exit, Scenario, Step};
+use super::scenario_sandbox::{self, Machine, Place, Remote, Repo, Seed};
 
 pub const LIB: &str = "local/remotes/lib";
 pub const APP: &str = "local/remotes/app";
@@ -150,4 +150,44 @@ pub fn recurse_moved_back(at: &Place) -> [Step; 3] {
         ),
         Step::rwv_printed_holding(at, "git -C ", "add -- rwv.toml").expect(Exit::Succeeds),
     ]
+}
+
+/// One operator task end to end: the steps of the documented path, then the
+/// steps that check the end state. `fault` indexes the path step whose
+/// omission leaves the task undone, so that the end check, and nothing
+/// before it, is what reddens.
+pub struct Journey {
+    pub name: &'static str,
+    pub seed: Seed,
+    pub path: Vec<Step>,
+    pub fault: usize,
+    pub end: Vec<Step>,
+}
+
+impl Journey {
+    pub fn scenario(self) -> Scenario {
+        let mut steps = self.path;
+        steps.extend(self.end);
+        Scenario {
+            name: self.name,
+            seed: self.seed,
+            steps,
+        }
+    }
+
+    pub fn seeded(self) -> (Scenario, Vec<String>) {
+        let mut path = self.path;
+        path.remove(self.fault);
+        let end: Vec<String> = self.end.iter().map(|s| s.label.clone()).collect();
+        let mut steps = path;
+        steps.extend(self.end);
+        (
+            Scenario {
+                name: self.name,
+                seed: self.seed,
+                steps,
+            },
+            end,
+        )
+    }
 }

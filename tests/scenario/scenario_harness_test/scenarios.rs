@@ -7,7 +7,7 @@ use crate::common;
 use common::scenario_steps::{
     a, b, create, dependent_of, feature_onto_stable, main_checked_out_nowhere, main_moves_app,
     port_me_on_main, publish_app_and_project, recurse_moved_back, stable_lines,
-    stack_on_a_seat_under, ww, APP, DOCS, LIB,
+    stack_on_a_seat_under, ww, Journey, APP, DOCS, LIB,
 };
 use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
@@ -30353,4 +30353,241 @@ pub fn dc07_crash_convergence(verb: CrashVerb) -> Scenario {
         "dc07: a verb killed at a write is diagnosed and its rerun completes",
         steps,
     )
+}
+
+fn documented_create(name: &'static str) -> Step {
+    Step::rwv(&a(), &["workweave", "create", name]).expect(Exit::Succeeds)
+}
+
+fn clean_end(at: Place) -> Step {
+    Step::rwv(&at, &["doctor", "--all"]).expect(Exit::Succeeds)
+}
+
+/// A change to two members made in a workweave, landed with `--retire` and
+/// published, as the tutorial and the landing how-to teach it.
+pub fn j01_two_repo_change() -> Journey {
+    let workweave = ww("welcome");
+    Journey {
+        name: "j01: a two-repo change from a new feature to a published main",
+        seed: Seed::default(),
+        path: vec![
+            documented_create("welcome"),
+            Step::commit(&workweave, Repo::Lib, "welcome-lib"),
+            Step::commit(&workweave, Repo::App, "welcome-app"),
+            Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::App), "main")
+                .pushes(Remote::origin(Repo::Lib), "main")
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+        ],
+        fault: 4,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "welcome-app",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "main",
+                    mark: "welcome-lib",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::App,
+                    mark: "welcome-app",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::Lib,
+                    mark: "welcome-lib",
+                })
+                .claim(Claim::WorkweaveGone(workweave)),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("welcome")),
+        ],
+    }
+}
+
+/// `docs` is not a member of the project on its hosting service, and a
+/// colleague's machine clones the project.
+fn project_without_docs_and_a_colleague() -> Vec<Step> {
+    vec![
+        Step::rwv(&a(), &["member", "remove", DOCS, "--delete"]).expect(Exit::Succeeds),
+        Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Proj), "main"),
+        Step::new_machine(Machine::B),
+    ]
+}
+
+/// The colleague adds `docs` and changes `lib` in one landing, published.
+fn colleague_adds_docs_and_changes_lib() -> Vec<Step> {
+    vec![
+        Step::rwv(&b(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::commit(&b(), Repo::Lib, "their-lib"),
+        Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&b(), &["push"]))
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]
+}
+
+/// The tutorial's take-in: a colleague's landing, which adds a member, is
+/// pulled into the primary and synced into a workweave holding unlanded work
+/// before that work lands on top of it.
+pub fn j02_pick_up_a_colleagues_landing() -> Journey {
+    let workweave = ww("mine");
+    let mut path = project_without_docs_and_a_colleague();
+    path.extend([
+        documented_create("mine"),
+        Step::commit(&workweave, Repo::App, "my-app"),
+    ]);
+    path.extend(colleague_adds_docs_and_changes_lib());
+    path.extend([
+        Step::rwv(&a(), &["pull"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        Step::rwv(&workweave, &["sync"]).expect(Exit::Succeeds),
+        Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j02: a colleague's landing that adds a member is taken in and carried on",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![clean_end(a())
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::Lib),
+                branch: "main",
+                mark: "their-lib",
+            })
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "main",
+                mark: "my-app",
+            })
+            .claim(Claim::ManifestLists {
+                at: a(),
+                rev: "main",
+                members: &[Repo::App, Repo::Lib, Repo::Docs],
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::remote_main(Repo::Proj),
+                member: Repo::Lib,
+                mark: "their-lib",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::remote_main(Repo::Proj),
+                member: Repo::App,
+                mark: "my-app",
+            })
+            .claim(Claim::AtPin {
+                at: a(),
+                repo: Repo::Docs,
+            })
+            .claim(Claim::WorkweaveGone(workweave))],
+    }
+}
+
+/// Two workspaces each rewrite the one line of `app`'s `README`; the first is
+/// landed and retired.
+fn two_workspaces_on_one_line_the_first_landed() -> Vec<Step> {
+    let alpha = ww("alpha");
+    let beta = ww("beta");
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        documented_create("alpha"),
+        documented_create("beta"),
+        Step::hand_edit(&alpha, Repo::App, "README", "app", "alpha"),
+        Step::git(&alpha, Repo::App, &["add", "README"]),
+        Step::commit(&alpha, Repo::App, "alpha-line"),
+        Step::hand_edit(&beta, Repo::App, "README", "app", "beta"),
+        Step::git(&beta, Repo::App, &["add", "README"]),
+        Step::commit(&beta, Repo::App, "beta-line"),
+        Step::rwv(&alpha, &["land", "--retire"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// The second landing stops on the conflict; the file is resolved to the
+/// second workspace's line, marked resolved by the printed choice, and the
+/// landing continued.
+pub fn j03_a_landing_stops_on_a_conflict_and_is_finished() -> Journey {
+    let beta = ww("beta");
+    let mut path = two_workspaces_on_one_line_the_first_landed();
+    path.extend([
+        Step::rwv(&beta, &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("rwv land --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&beta, Repo::App, &["checkout", "--theirs", "README"]),
+        Step::git(&beta, Repo::App, &["add", "README"]),
+        Step::rwv_printed_exactly(&beta, "rwv land --continue")
+            .resolved_by_hand(&[Repo::App])
+            .expect(Exit::Succeeds),
+        Step::rwv(&beta, &["land", "--retire"]).expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j03: a landing stops on a conflict and is finished",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "alpha-line",
+                })
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main",
+                    member: Repo::App,
+                    subject: "beta-line",
+                    reached_from: "main",
+                })
+                .claim(Claim::WorkweaveGone(beta)),
+            Step::git(&a(), Repo::App, &["show", "main:README"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("beta")),
+        ],
+    }
+}
+
+/// The same stop, given up with the choice it prints: everything stands as
+/// it did before the landing began.
+pub fn j04_a_stopped_landing_is_abandoned() -> Journey {
+    let beta = ww("beta");
+    let mut path = two_workspaces_on_one_line_the_first_landed();
+    path.extend([
+        Step::capture("before the second landing"),
+        Step::rwv(&beta, &["land"])
+            .expect(Exit::refuses_kind(RefusalKind::OpParked))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::git(&beta, Repo::App, &["checkout", "--theirs", "README"]),
+        Step::rwv_printed_quoted(&beta, "rwv abort", "")
+            .may_strand(&[Repo::App])
+            .may_rewind(&[Repo::App])
+            .expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j04: a stopped landing is abandoned and everything is as it was",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a()).claim(Claim::TipsAsCaptured("before the second landing")),
+            Step::rwv(&beta, &["status"]).expect(Exit::Succeeds),
+        ],
+    }
 }

@@ -1152,6 +1152,12 @@ impl IntoSteps for Scenario {
     }
 }
 
+impl IntoSteps for common::scenario_steps::Journey {
+    fn into_steps(self) -> Vec<Step> {
+        self.scenario().steps
+    }
+}
+
 impl IntoSteps for Vec<Step> {
     fn into_steps(self) -> Vec<Step> {
         self
@@ -1187,6 +1193,10 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    j01_two_repo_change,
+    j02_pick_up_a_colleagues_landing,
+    j03_a_landing_stops_on_a_conflict_and_is_finished,
+    j04_a_stopped_landing_is_abandoned,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9019,4 +9029,37 @@ fn a_feature_resumed_on_machine_b_converges_and_lands_from_a() {
 #[test]
 fn a_feature_in_the_primary_survives_main_moving_and_lands() {
     runner::run(scenarios::feature_in_primary_while_main_moves()).assert_fully_decided_green();
+}
+
+fn every_journey() -> Vec<common::scenario_steps::Journey> {
+    vec![
+        scenarios::j01_two_repo_change(),
+        scenarios::j02_pick_up_a_colleagues_landing(),
+        scenarios::j03_a_landing_stops_on_a_conflict_and_is_finished(),
+        scenarios::j04_a_stopped_landing_is_abandoned(),
+    ]
+}
+
+/// The path a journey takes ends green, and leaving one step of it out is
+/// what its end check reports: every unmet claim is after an end step.
+#[test]
+fn every_journey_ends_green_and_its_end_check_reddens_under_its_fault() {
+    for journey in every_journey() {
+        let name = journey.name;
+        let (faulty, end) = journey.seeded();
+        let report = runner::run(faulty);
+        assert!(
+            !report.unmet.is_empty(),
+            "{name}: the fault left the end check green:\n{report}"
+        );
+        for (label, why) in &report.unmet {
+            assert!(
+                end.contains(label),
+                "{name}: the fault reddened `{label}` before the end check: {why}\n{report}"
+            );
+        }
+    }
+    for journey in every_journey() {
+        runner::run(journey.scenario()).assert_fully_decided_green();
+    }
 }
