@@ -1475,6 +1475,12 @@ impl BranchRecordStatus {
             RecordOutput::Cycle { chain } => format!("cycle: {}", chain.join(" -> ")),
         };
         let mut line = format!("record: {} {}: {record}", self.project, self.branch);
+        if matches!(self.record, RecordOutput::Unrecorded) {
+            line.push_str(&format!(
+                "; `rwv fetch` brings a record published elsewhere, else `rwv branch set-mode {} declared` records it",
+                self.branch
+            ));
+        }
         if !self.dependents.is_empty() {
             line.push_str(&format!("; landed into by {}", self.dependents.join(", ")));
         }

@@ -3549,6 +3549,9 @@ pub fn records_rejected() -> Scenario {
                 "projects/proj: publish records rejected",
             ))
             .claim(Claim::OutputContains("is asked once how to treat it"))
+            .claim(Claim::OutputContains(
+                "the next `rwv push` of feat-x publishes the record again",
+            ))
             .claim(Claim::RemoteContains {
                 remote: Remote::origin(Repo::App),
                 branch: "feat-x",
@@ -3563,6 +3566,14 @@ pub fn records_rejected() -> Scenario {
             .expect(Exit::refuses(Repo::Proj, State::TargetUnrecorded))
             .claim(Claim::OutputContains("rwv fetch"))
             .claim(Claim::OutputContains("rwv branch set-mode")),
+        Step::git(&b(), Repo::Proj, &["switch", "feat-x"]),
+        Step::rwv(&b(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("record: proj feat-x: unrecorded"))
+            .claim(Claim::OutputContains(
+                "`rwv fetch` brings a record published elsewhere, else `rwv branch set-mode feat-x declared` records it",
+            )),
+        Step::git(&b(), Repo::Proj, &["switch", "main"]),
         Step::git(&a(), Repo::Proj, &["switch", "main"]),
         Step::rwv(&a(), &["update"]).expect(Exit::Succeeds),
         Step::commit(&a(), Repo::App, "trunk-app"),

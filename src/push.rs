@@ -2128,6 +2128,10 @@ fn publish(
                          `rwv branch set-mode {} …`",
                         pushed.branch, pushed.branch
                     ),
+                    format!(
+                        "the next `rwv push` of {} publishes the record again",
+                        pushed.branch
+                    ),
                 ])
                 .judge(pvcs);
             json_outcomes.push(PushOutcomeOutput::RecordsRejected {
