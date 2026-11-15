@@ -140,7 +140,7 @@ src/init.rs	(untokened:owed)	-	1
 src/init.rs	malformed-provider	-	1
 src/init.rs	nested-project-name	-	1
 src/init.rs	occupied-bootstrap-dir	-	1
-src/init.rs	project-dir-occupied	-	2
+src/init.rs	project-dir-occupied	-	1
 src/init.rs	provider-cannot-mint-url	tests/docs/refusal_arrival_test.rs	1
 src/init.rs	unknown-registry	-	1
 src/integration_runner.rs	(untokened:integration-channel)	-	7

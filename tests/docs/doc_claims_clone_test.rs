@@ -434,11 +434,7 @@ fn every_verb_taking_a_source_refuses_two_segments_naming_the_shorthand_and_a_fi
         .assert()
         .success();
 
-    for verb in [
-        &["clone"][..],
-        &["init", "--adopt"][..],
-        &["member", "add"][..],
-    ] {
+    for verb in [&["clone"][..], &["member", "add"][..]] {
         let out = rwv()
             .args(verb)
             .arg("chatly/web-app")

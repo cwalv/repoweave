@@ -166,7 +166,7 @@ is *when* it authors them. In brief:
 |---|---|
 | `add`, `remove`, `update --remote`, `role` (the authoring verbs) | Regenerate, for the operator to commit alongside the `rwv.toml`/`rwv.lock` change |
 | `init <name>` | Author the files the new project's empty manifest implies, before activating it |
-| `activate`, `materialize`, `clone`, `update`, workweave-create, `lock`, `init --adopt` | Surface (symlink, always) + verify-and-warn; never rewrite integration workspace files to pick up `rwv.toml` changes (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
+| `activate`, `materialize`, `clone`, `update`, workweave-create, `lock` | Surface (symlink, always) + verify-and-warn; never rewrite integration workspace files to pick up `rwv.toml` changes (`materialize` also runs install hooks, cleans up disabled-integration artifacts, and settles drifted attested generated files via `--regenerate-drifted` / `--adopt-drifted`) |
 | `rwv doctor` / `rwv doctor --fix` | Report Axis-2 content drift **and** Axis-1 surfacing gaps; `--fix` regenerates content and re-surfaces symlinks |
 
 rwv writes the regenerated files into the project directory; it never commits them. An authoring verb
@@ -184,21 +184,21 @@ construction, because regeneration is tied to the authoring verb that changed th
 "Never author" is a claim about the **authoring path** — the managed regions and rwv-computed
 artifacts that the authoring verbs regenerate. It is not a claim that a verb off that path leaves
 every byte on disk untouched. The verbs that run activation (`activate`, `materialize`, `init`,
-`init --adopt`, workweave-create, a `clone` that activates a project, and an `update` selecting the
+workweave-create, a `clone` that activates a project, and an `update` selecting the
 weave's only project — but not `lock`, which runs no activation) still fire the integration **install hooks** unless the verb's `--no-materialize`
 skips them, and the ecosystem tools those hooks invoke rewrite the lockfiles they own:
 `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `uv.lock`.
 
-This holds at `init --adopt` even when the adopted repo **commits** its lock. A generated lock is
+This holds at `clone` even when the cloned project repo **commits** its lock. A generated lock is
 fully rwv-owned derived state with no user author (§"Lockfiles are fully owned",
-[lock-as-derived](./lock-as-derived.md)); committing one does not transfer the pen, so an adopt
+[lock-as-derived](./lock-as-derived.md)); committing one does not transfer the pen, so a clone
 regenerating it is a refresh of derived state, not re-authoring of committed content. (A refresh
 is not a re-resolve: an existing `Cargo.lock` is materialized with `cargo fetch`, which honors
 the versions it already records. `cargo generate-lockfile`, which rebuilds a lock with the latest
-compatible version of every package, runs only where no lock exists.) The adopt-time no-clobber guarantee is
+compatible version of every package, runs only where no lock exists.) The clone-time no-clobber guarantee is
 exactly the authoring-path guarantee: managed regions, rwv-computed generated artifacts (a
 `.code-workspace`, gita CSVs — written only by an authoring verb), and static-files entries
-(surfaced, never written) all survive an adopt byte-for-byte.
+(surfaced, never written) all survive a clone byte-for-byte.
 
 The license is keyed on **ownership**, not on `generated_files()` membership: static-files entries
 ride `generated_files()` for Axis-1 surfacing while remaining fully user-owned, and no verb,
@@ -206,10 +206,10 @@ authoring or not, may write them. Conversely `go.work.sum` is hook-owned in prin
 go-work has no install hook, so no verb's hooks rewrite it.
 
 A license to rewrite is not an obligation to. A hook whose inputs are not on disk yet **defers**
-rather than failing: `init --adopt` clones only the project repo, so an adopted manifest that
-already names its members names paths that do not exist, and cargo cannot resolve a lockfile
+rather than failing: a `clone` whose members did not all arrive leaves a manifest that
+names members whose paths do not exist, and cargo cannot resolve a lockfile
 against them. The cargo hook detects that before shelling out, skips the generation, and names the
-absent members plus the commands that resolve them (`rwv update`, then `rwv activate`) — the adopt
+absent members plus the commands that resolve them (`rwv update`, then `rwv activate`) — the clone
 completes, and the lock first appears at the activation that follows the members arriving. Nothing
 is lost by deferring, because membership change is the lockfile-refresh trigger in the first place.
 The deferral is scoped to inputs that are **absent**: a member that is on disk but whose manifest

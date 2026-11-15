@@ -82,7 +82,7 @@ Reported by `rwv doctor`. Verify rows also print as warnings on `rwv activate`, 
 | Kind | Severity | Condition | Repair |
 |---|---|---|---|
 | [`malformed-settings`](../doctor-findings.md#malformed-settings) | error | A value of the wrong type in `[integrations.vscode-workspace]`, such as `hide-dotfiles = "yes"`. | Correct the field the message names. |
-| [`managed-file-missing`](../doctor-findings.md#managed-file-missing) | warning | `projects/<project>/{project}.code-workspace` does not exist. `rwv init <name>` writes it for a new project; `rwv init --adopt` leaves an adopted project's absent. | `rwv doctor --fix` |
+| [`managed-file-missing`](../doctor-findings.md#managed-file-missing) | warning | `projects/<project>/{project}.code-workspace` does not exist. `rwv init <name>` writes it for a new project; `rwv clone` leaves a cloned project's absent. | `rwv doctor --fix` |
 | [`managed-file-drift`](../doctor-findings.md#managed-file-drift) | warning | `"rwv.generated"` is present, but `folders[0]` or the managed `settings.files.exclude` keys differ from what `rwv` would write in the current container. | `rwv doctor --fix` |
 | [`managed-file-user-held`](../doctor-findings.md#managed-file-user-held) | warning | `folders` is present without the `"rwv.generated"` marker. | Add the marker back, or leave the file as yours. |
 | [`disabled-integration-artifact`](../doctor-findings.md#disabled-integration-artifact) | warning | The integration is disabled, and a `.code-workspace` file still carrying `"rwv.generated"` is in the project directory. `rwv doctor --fix` does not act on it. | `rwv materialize` |

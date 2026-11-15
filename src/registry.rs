@@ -397,7 +397,7 @@ const DOMAIN_CREATION_PARAMS: &[ParamSpec] = &[
 /// The last path segment with a `.git` suffix removed, reading past a
 /// `git@host:owner/repo` colon as a separator the way git does. Sources that
 /// no registry matched still have a nameable tail, which is what makes this
-/// the fallback both `init --adopt` and `CloneInfo` extraction reach for.
+/// the fallback `rwv clone` and `CloneInfo` extraction reach for.
 pub fn repo_name_from_source(source: &str) -> String {
     let trimmed = source.trim_end_matches('/');
     let last_segment = trimmed.rsplit('/').next().unwrap_or(trimmed);

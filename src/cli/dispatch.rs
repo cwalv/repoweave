@@ -802,7 +802,7 @@ pub fn run() -> anyhow::Result<()> {
     // all explicit forms) and for the chain-step record kept on the context.
     //
     // Exemptions from the pre-resolve step:
-    //   - `init` / `init --adopt`: may run in an empty directory that has
+    //   - `init`: may run in an empty directory that has
     //     no workspace yet, so bootstrap-then-first-resolve happens
     //     inside the handler with the origin dir passed through.
     //   - `fetch <SOURCE>`: same shape — a bootstrap into an empty (or
@@ -941,22 +941,9 @@ pub fn run() -> anyhow::Result<()> {
                 activate::ActivateOptions { no_materialize },
             )?;
         }
-        Some(Commands::Init {
-            project,
-            provider,
-            adopt,
-            no_materialize,
-        }) => {
+        Some(Commands::Init { project, provider }) => {
             // Bootstrap-then-resolve happens inside the handler — see init.rs.
-            if adopt {
-                init::init_adopt(
-                    &project,
-                    origin_dir,
-                    activate::ActivateOptions { no_materialize },
-                )?;
-            } else {
-                init::init(&ProjectName::new(project)?, provider.as_deref(), origin_dir)?;
-            }
+            init::init(&ProjectName::new(project)?, provider.as_deref(), origin_dir)?;
         }
         Some(Commands::Member { action }) => match action {
             MemberAction::Add {

@@ -150,17 +150,11 @@ pub enum Commands {
     },
     /// Initialize a new project
     Init {
-        /// Project name (or URL / `<registry>/<owner>/<repo>` shorthand when --adopt is used)
+        /// Project name
         project: String,
         /// Provider in registry/owner format (e.g., github/myorg)
-        #[arg(long, conflicts_with = "adopt")]
-        provider: Option<String>,
-        /// Adopt an existing repo: clone from URL or shorthand instead of git init
         #[arg(long)]
-        adopt: bool,
-        /// With `--adopt`, skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
-        #[arg(long, requires = "adopt")]
-        no_materialize: bool,
+        provider: Option<String>,
     },
     /// Add a repo to the active project, remove one, pin one at a commit, or change a member's role or submodule setting
     Member {

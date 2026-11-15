@@ -92,11 +92,10 @@ A relative path resolves against the directory you run `rwv` in, so from `github
 
 Passing the URL instead also skips the clone when the clone at the placement already has a remote with that URL. When none of its remotes names that repository, `rwv member add <url>` refuses with `foreign-clone-at-placement` and writes nothing; the message names `rwv member add --adopt <path>` to register the clone under the URL it records. A directory or file at the placement that is not a clone refuses with `non-clone-at-placement`; move it aside and re-run.
 
-If the *project repository* itself already exists on a remote and carries an `rwv.toml`, adopt it into `projects/<name>/` with `rwv init --adopt` and then materialize its member repositories:
+If the *project repository* itself already exists on a remote and carries an `rwv.toml`, clone it into `projects/<name>/`, member repositories included, with `rwv clone`:
 
 ```bash
-rwv init https://github.com/example/my-project.git --adopt
-rwv update
+rwv clone https://github.com/example/my-project.git
 ```
 
 ## Remove a repo

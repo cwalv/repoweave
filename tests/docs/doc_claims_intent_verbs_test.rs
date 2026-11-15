@@ -11,9 +11,9 @@
 //!     manifest declares is on disk; over a partial member set they record
 //!     the membership change and leave the managed files alone
 //!   - `rwv clone`, `rwv activate`, `rwv materialize`, workweave-create
-//!     and `rwv init --adopt` do not author (context mode)
-//!   - `rwv init --adopt` additionally must not re-author what the
-//!     authoring path owns, even when the adopted repo committed it: it
+//!     do not author (context mode)
+//!   - `rwv clone` additionally must not re-author what the
+//!     authoring path owns, even when the cloned repo committed it: it
 //!     clones only the one repo, so re-authoring there would recompute
 //!     owned content from a tree missing every other manifest member
 //!   - the same claim carried by `cargo-workspace`, on both halves of the
@@ -21,7 +21,7 @@
 //!     user-held (unmarked) `Cargo.toml` gets no `DefaultOnly` key written
 //!     into it
 //!   - the boundary of that claim: install hooks run in context mode too, so
-//!     an adopt DOES regenerate a committed `Cargo.lock`, and DEFERS the
+//!     a clone DOES regenerate a committed `Cargo.lock`, and DEFERS the
 //!     generation entirely when the members are not fetched yet
 //!
 //! `rwv update` authoring and `rwv lock`'s exemption are pinned elsewhere
@@ -93,7 +93,7 @@ fn clone_member(bare: &Path, ws: &Path, repo_path: &str) {
 }
 
 /// A bare "project" repo whose HEAD carries `rwv.toml` (only) declaring
-/// `repos`. Used as an `rwv clone` / `rwv init --adopt` source.
+/// `repos`. Used as an `rwv clone` source.
 fn make_project_bare(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> PathBuf {
     let bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&bare);
@@ -264,7 +264,7 @@ fn add_does_not_author_from_a_partial_member_set() {
     let absent_url = common::file_url(&absent_bare);
 
     // `org/absent` is declared and never cloned: the partially-fetched shape
-    // an `rwv init --adopt` (or a failed clone) leaves behind.
+    // an `rwv clone` (or a failed clone) leaves behind.
     let (ws, project_dir) = setup_git_project(tmp.path(), "myapp", &[("org/absent", &absent_url)]);
 
     let new_bare = tmp.path().join("org/newdep.git");
@@ -356,7 +356,7 @@ fn remove_does_not_overwrite_managed_content_from_a_partial_member_set() {
 }
 
 // ===========================================================================
-// Context verbs: clone / activate / materialize / workweave-create / init --adopt do not author
+// Context verbs: clone / activate / materialize / workweave-create / clone do not author
 // ===========================================================================
 
 #[test]
@@ -459,44 +459,22 @@ fn workweave_create_does_not_author_managed_content() {
     );
 }
 
-#[test]
-fn init_adopt_does_not_author_managed_content() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_workspace(tmp.path());
-
-    let project_bare = make_project_bare(tmp.path(), "adoptee", &[]);
-    let source = common::file_url(&project_bare);
-
-    rwv()
-        .args(["init", "--adopt", &source])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let project_dir = ws.join("projects/adoptee");
-    assert!(project_dir.join("rwv.toml").exists());
-    assert!(
-        !code_workspace(&project_dir, "adoptee").exists(),
-        "`rwv init --adopt` is a context verb; it must not author managed content"
-    );
-}
-
 // ===========================================================================
-// `rwv init --adopt` must not re-author what the AUTHORING PATH owns
+// `rwv clone` must not re-author what the AUTHORING PATH owns
 //
 // Scope, per docs/explanation/joints/file-ownership.md §"Install hooks at
 // context verbs: lockfiles may be rewritten": "never author" is a claim about
 // the authoring path — managed regions and rwv-computed artifacts, which
 // intent verbs regenerate and context verbs never run. It is NOT the broader
-// claim that an adopt leaves every committed byte alone. Install hooks run in
+// claim that a clone leaves every committed byte alone. Install hooks run in
 // context mode too and rewrite the ecosystem lockfiles their tools own, which
-// `init_adopt_regenerates_a_committed_cargo_lock` below pins as the other half
+// `clone_regenerates_a_committed_cargo_lock` below pins as the other half
 // of the same distinction. So this test is named for the artifact it proves it
 // on rather than for "committed generated content" as a class: a
 // `.code-workspace` and a `Cargo.lock` are both committed generated content
 // and their fates differ.
 //
-// `init --adopt` clones only the adopted project's own repo — none of the
+// `clone` clones only the cloned project's own repo — none of the
 // manifest's other members land on disk. If it ever ran intent-mode
 // activation instead of context mode, it would open and re-author every
 // managed file from that partial tree, clobbering whatever was committed.
@@ -512,7 +490,7 @@ fn init_adopt_does_not_author_managed_content() {
 // ===========================================================================
 
 #[test]
-fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
+fn clone_does_not_reauthor_a_committed_code_workspace() {
     let tmp = common::tempdir().unwrap();
     let bare = tmp.path().join("myapp.git");
     init_bare_repo(&bare);
@@ -532,19 +510,19 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
     );
     common::git_in(&work, &["push", "origin", "main"]);
 
-    let adopt_ws = make_workspace(tmp.path());
+    let clone_ws = make_workspace(tmp.path());
     let source = common::file_url(&bare);
 
     rwv()
-        .args(["init", "--adopt", &source])
-        .current_dir(&adopt_ws)
+        .args(["clone", &source])
+        .current_dir(&clone_ws)
         .assert()
         .success();
 
-    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/myapp.code-workspace"));
+    let adopted = common::read_normalized(clone_ws.join("projects/myapp/myapp.code-workspace"));
     assert_eq!(
         adopted, committed_code_workspace,
-        "`rwv init --adopt` must not re-author the adopted repo's committed \
+        "`rwv clone` must not re-author the cloned repo's committed \
          .code-workspace file; it clones only the project repo, so re-authoring \
          here would clobber committed content with a recompute from a partial tree"
     );
@@ -558,8 +536,8 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 // re-authoring `[workspace].members` silently truncates a cargo workspace —
 // but it is gated behind `CargoWorkspace::has_active_cargo_work`, which is
 // disk-driven: its first arm looks for repos with a root `Cargo.toml` on
-// disk, and `init --adopt` clones only the project repo, so that arm is
-// always empty at adopt time. A fixture that relies on it produces a no-op in
+// disk, and `clone` clones only the project repo, so that arm is
+// always empty at clone time. A fixture that relies on it produces a no-op in
 // BOTH activation modes — a test that passes whether or not the behavior
 // under test is correct.
 //
@@ -567,14 +545,14 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 // `integrations.cargo-workspace.members.<repo>` counts as active cargo work
 // from `rwv.toml` alone, no clone required. That is the rvtty shape (a repo
 // with no root `Cargo.toml` whose sub-packages are the members), and it is
-// what makes the integration live during an adopt.
+// what makes the integration live during a clone.
 //
 // Two constraints shape the fixtures below.
 //
 // 1. Every member path named by the *committed* `Cargo.toml` must exist on
-//    disk. `init --adopt` runs activate hooks, and cargo-workspace's hook
+//    disk. `clone` runs activate hooks, and cargo-workspace's hook
 //    runs `cargo generate-lockfile` against the surfaced manifest; a member
-//    that is not on disk makes cargo exit 101 and takes the whole adopt down
+//    that is not on disk makes cargo exit 101 and takes the whole clone down
 //    with it. So the adopting workspace already carries the member repo (an
 //    adopt into an existing weave), and the truncation is driven by the
 //    config naming fewer members than the committed file lists.
@@ -590,9 +568,9 @@ fn init_adopt_does_not_reauthor_a_committed_code_workspace() {
 // and writes the file back.
 // ===========================================================================
 
-/// Return early (skip) if `cargo` is not on PATH. `init --adopt` runs
+/// Return early (skip) if `cargo` is not on PATH. `clone` runs
 /// cargo-workspace's activate hook, which shells out to
-/// `cargo generate-lockfile`; without cargo the adopt cannot complete, so
+/// `cargo generate-lockfile`; without cargo the clone cannot complete, so
 /// there is no successful run to assert the no-clobber claim against.
 macro_rules! require_cargo {
     () => {
@@ -614,22 +592,28 @@ const LIB_SUBCRATES: &[&str] = &["core", "cli", "legacy"];
 /// `org/lib` is declared but has no root `Cargo.toml`, so it is invisible to
 /// `detect_repos_with_manifest` — the `members:` block is the only reason
 /// cargo-workspace considers this project to have active cargo work.
-const CARGO_MEMBERS_MANIFEST: &str = "[repositories.\"org/lib\"]\ntype = \"git\"\nurl = \"https://example.com/lib.git\"\nbranch = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace.members.\"org/lib\"]\ninclude = [\"crates/core\", \"crates/cli\"]\n";
+fn cargo_members_manifest(lib_url: &str) -> String {
+    format!(
+        "[repositories.\"org/lib\"]\ntype = \"git\"\nurl = \"{lib_url}\"\nbranch = \"main\"\nrole = \"owned\"\n\n[integrations.cargo-workspace.members.\"org/lib\"]\ninclude = [\"crates/core\", \"crates/cli\"]\n"
+    )
+}
 
-/// A bare project repo carrying [`CARGO_MEMBERS_MANIFEST`] and a committed
-/// root `Cargo.toml`, ready to be adopted.
+/// A bare project repo carrying [`cargo_members_manifest`] and a committed
+/// root `Cargo.toml`, ready to be cloned.
 ///
 /// `cargo_lock` commits a `Cargo.lock` alongside it. `None` is the shape the
 /// no-clobber tests want (the lock is absent, so nothing about it can be
 /// asserted); `Some` is for
-/// [`init_adopt_regenerates_a_committed_cargo_lock`], where the committed lock
+/// [`clone_regenerates_a_committed_cargo_lock`], where the committed lock
 /// is the subject.
-fn make_cargo_adoptee_bare(
+fn make_cargo_clonee_bare(
     tmp: &Path,
     name: &str,
     cargo_toml: &str,
     cargo_lock: Option<&str>,
+    lib_subcrates: &[&str],
 ) -> PathBuf {
+    let lib = make_lib_bare(tmp, lib_subcrates);
     let bare = tmp.join(format!("{name}.git"));
     init_bare_repo(&bare);
     let work = tmp.join(format!("{name}-work"));
@@ -637,7 +621,11 @@ fn make_cargo_adoptee_bare(
         tmp,
         &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
     );
-    std::fs::write(work.join("rwv.toml"), CARGO_MEMBERS_MANIFEST).unwrap();
+    std::fs::write(
+        work.join("rwv.toml"),
+        cargo_members_manifest(&common::file_url(&lib)),
+    )
+    .unwrap();
     std::fs::write(work.join("Cargo.toml"), cargo_toml).unwrap();
     if let Some(lock) = cargo_lock {
         std::fs::write(work.join("Cargo.lock"), lock).unwrap();
@@ -648,11 +636,19 @@ fn make_cargo_adoptee_bare(
     bare
 }
 
-/// Materialize `org/lib` in the adopting workspace: no root `Cargo.toml`,
-/// one package per entry in `subcrates` under `crates/`.
-fn materialize_lib_subcrates(ws: &Path, subcrates: &[&str]) {
+/// A bare `org/lib` repo: no root `Cargo.toml`, one package per entry in
+/// `subcrates` under `crates/`.
+fn make_lib_bare(tmp: &Path, subcrates: &[&str]) -> PathBuf {
+    let bare = tmp.join("lib.git");
+    init_bare_repo(&bare);
+    let work = tmp.join("lib-work");
+    common::git_in(
+        tmp,
+        &["clone", &bare.to_string_lossy(), &work.to_string_lossy()],
+    );
+    std::fs::write(work.join("README.md"), "lib\n").unwrap();
     for name in subcrates {
-        let dir = ws.join("org/lib/crates").join(name);
+        let dir = work.join("crates").join(name);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(
             dir.join("Cargo.toml"),
@@ -661,6 +657,10 @@ fn materialize_lib_subcrates(ws: &Path, subcrates: &[&str]) {
         .unwrap();
         std::fs::write(dir.join("src/lib.rs"), "").unwrap();
     }
+    common::git_in(&work, &["add", "."]);
+    common::git_in(&work, &["commit", "-m", "lib"]);
+    common::git_in(&work, &["push", "origin", "main"]);
+    bare
 }
 
 /// The consequential form of the adopt-clobber bug: an authoring pass at
@@ -677,7 +677,7 @@ fn materialize_lib_subcrates(ws: &Path, subcrates: &[&str]) {
 /// `common::cargo_stand_in_path` states why that does not port.
 #[cfg(unix)]
 #[test]
-fn init_adopt_does_not_truncate_committed_cargo_members() {
+fn clone_does_not_truncate_committed_cargo_members() {
     let tmp = common::tempdir().unwrap();
     let path = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
 
@@ -694,29 +694,34 @@ resolver = \"2\"
 [profile.release]
 lto = true
 ";
-    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml, None);
+    let bare = make_cargo_clonee_bare(
+        tmp.path(),
+        "myapp",
+        committed_cargo_toml,
+        None,
+        LIB_SUBCRATES,
+    );
 
-    let adopt_ws = make_workspace(tmp.path());
-    materialize_lib_subcrates(&adopt_ws, LIB_SUBCRATES);
+    let clone_ws = make_workspace(tmp.path());
     let source = common::file_url(&bare);
 
     rwv()
-        .args(["init", "--adopt", &source])
-        .current_dir(&adopt_ws)
+        .args(["clone", &source])
+        .current_dir(&clone_ws)
         .env("PATH", &path)
         .assert()
-        .success();
+        .code(3);
 
-    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/Cargo.toml"));
+    let adopted = common::read_normalized(clone_ws.join("projects/myapp/Cargo.toml"));
     assert!(
         adopted.contains("org/lib/crates/legacy"),
-        "`rwv init --adopt` must not drop a committed workspace member; \
-         authoring at adopt time truncates [workspace].members to what the \
+        "`rwv clone` must not drop a committed workspace member; \
+         authoring at clone time truncates [workspace].members to what the \
          config yields, which silently shrinks the workspace. Got:\n{adopted}"
     );
     assert_eq!(
         adopted, committed_cargo_toml,
-        "`rwv init --adopt` is a context verb: it must leave the adopted \
+        "`rwv clone` is a context verb: it must leave the adopted \
          repo's committed Cargo.toml byte-for-byte alone"
     );
 }
@@ -736,7 +741,7 @@ lto = true
 /// `common::cargo_stand_in_path` states why that does not port.
 #[cfg(unix)]
 #[test]
-fn init_adopt_does_not_write_into_a_user_held_cargo_manifest() {
+fn clone_does_not_write_into_a_user_held_cargo_manifest() {
     let tmp = common::tempdir().unwrap();
     let path = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
 
@@ -749,28 +754,33 @@ members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
 [profile.release]
 lto = true
 ";
-    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml, None);
+    let bare = make_cargo_clonee_bare(
+        tmp.path(),
+        "myapp",
+        committed_cargo_toml,
+        None,
+        &["core", "cli"],
+    );
 
-    let adopt_ws = make_workspace(tmp.path());
-    materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
+    let clone_ws = make_workspace(tmp.path());
     let source = common::file_url(&bare);
 
     rwv()
-        .args(["init", "--adopt", &source])
-        .current_dir(&adopt_ws)
+        .args(["clone", &source])
+        .current_dir(&clone_ws)
         .env("PATH", &path)
         .assert()
-        .success();
+        .code(3);
 
-    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/Cargo.toml"));
+    let adopted = common::read_normalized(clone_ws.join("projects/myapp/Cargo.toml"));
     assert!(
         !adopted.contains("resolver"),
-        "`rwv init --adopt` must not inject the DefaultOnly `resolver` key \
+        "`rwv clone` must not inject the DefaultOnly `resolver` key \
          into a Cargo.toml the user holds the pen on. Got:\n{adopted}"
     );
     assert_eq!(
         adopted, committed_cargo_toml,
-        "`rwv init --adopt` must leave a user-held Cargo.toml byte-for-byte alone"
+        "`rwv clone` must leave a user-held Cargo.toml byte-for-byte alone"
     );
 }
 
@@ -819,7 +829,7 @@ version = \"0.0.9\"
 /// subject of the next test, and mixing the two would let either one explain a
 /// pass.
 #[test]
-fn init_adopt_regenerates_a_committed_cargo_lock() {
+fn clone_regenerates_a_committed_cargo_lock() {
     require_cargo!();
     let tmp = common::tempdir().unwrap();
 
@@ -831,28 +841,28 @@ fn init_adopt_regenerates_a_committed_cargo_lock() {
 members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
 resolver = \"2\"
 ";
-    let bare = make_cargo_adoptee_bare(
+    let bare = make_cargo_clonee_bare(
         tmp.path(),
         "myapp",
         committed_cargo_toml,
         Some(STALE_COMMITTED_CARGO_LOCK),
+        &["core", "cli"],
     );
 
-    let adopt_ws = make_workspace(tmp.path());
-    materialize_lib_subcrates(&adopt_ws, &["core", "cli"]);
+    let clone_ws = make_workspace(tmp.path());
     let source = common::file_url(&bare);
 
     rwv()
-        .args(["init", "--adopt", &source])
-        .current_dir(&adopt_ws)
+        .args(["clone", &source])
+        .current_dir(&clone_ws)
         .assert()
-        .success();
+        .code(3);
 
-    let lock = std::fs::read_to_string(adopt_ws.join("projects/myapp/Cargo.lock"))
+    let lock = std::fs::read_to_string(clone_ws.join("projects/myapp/Cargo.lock"))
         .expect("adopt should leave a Cargo.lock at the canonical project path");
     assert!(
         !lock.contains("lib-stale-sentinel"),
-        "`rwv init --adopt` runs the cargo install hook, which regenerates the \
+        "`rwv clone` runs the cargo install hook, which regenerates the \
          lockfile it owns — the committed bytes must not survive. Got:\n{lock}"
     );
     assert!(
@@ -862,19 +872,22 @@ resolver = \"2\"
     );
 }
 
-/// Adopt of a cargo project whose members are not fetched yet completes.
+/// Exit status 3 in these clones is the clone completing with the lib member
+/// listed as left without a pin: the fixture's project commits no lock.
 ///
-/// `init --adopt` clones only the project repo, so a manifest that already
+/// Clone of a cargo project whose members are not fetched yet completes.
+///
+/// `clone` clones only the project repo, so a manifest that already
 /// names its members names paths that are not on disk — the normal starting
-/// state for adopting any existing cargo workspace, not an edge case. Left to
-/// cargo this is exit 101, which takes the whole adopt down with it after it
+/// state for cloning any existing cargo workspace, not an edge case. Left to
+/// cargo this is exit 101, which takes the whole clone down with it after it
 /// has otherwise succeeded.
 ///
 /// Deferring is not suppression: the test above pins that the hook still runs
 /// and still rewrites the lock once the members resolve.
 ///
 /// The subject is the message rwv prints when it DEFERS the lockfile step, so
-/// the generator is never spawned on the path under test — the adopt gets a
+/// the generator is never spawned on the path under test — the clone gets a
 /// stand-in `cargo` and no other tool, which also pins that the defer happens
 /// before any spawn rather than because one failed.
 ///
@@ -882,7 +895,7 @@ resolver = \"2\"
 /// `common::cargo_stand_in_path` states why that does not port.
 #[cfg(unix)]
 #[test]
-fn init_adopt_completes_when_workspace_members_are_not_fetched_yet() {
+fn clone_completes_when_workspace_members_are_not_fetched_yet() {
     let tmp = common::tempdir().unwrap();
     let path = common::cargo_stand_in_path(&tmp.path().join("stand-in-bin"));
 
@@ -892,19 +905,19 @@ fn init_adopt_completes_when_workspace_members_are_not_fetched_yet() {
 members = [\"org/lib/crates/cli\", \"org/lib/crates/core\"]
 resolver = \"2\"
 ";
-    let bare = make_cargo_adoptee_bare(tmp.path(), "myapp", committed_cargo_toml, None);
+    let bare = make_cargo_clonee_bare(tmp.path(), "myapp", committed_cargo_toml, None, &[]);
 
-    // The point of the fixture: `materialize_lib_subcrates` is NOT called, so
+    // The point of the fixture: the lib repo holds no sub-crates, so
     // neither member path exists.
-    let adopt_ws = make_workspace(tmp.path());
+    let clone_ws = make_workspace(tmp.path());
     let source = common::file_url(&bare);
 
     let out = rwv()
-        .args(["init", "--adopt", &source])
-        .current_dir(&adopt_ws)
+        .args(["clone", &source])
+        .current_dir(&clone_ws)
         .env("PATH", &path)
         .assert()
-        .success()
+        .code(3)
         .get_output()
         .clone();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
@@ -921,17 +934,17 @@ resolver = \"2\"
     assert!(
         stderr.contains("rwv update") && stderr.contains("rwv activate"),
         "the skip must name the commands that resolve it. `rwv update` alone \
-         does not: the adopt wrote `.rwv-active`, so update skips its \
+         does not: the clone wrote `.rwv-active`, so update skips its \
          auto-activate and the lock is generated only by the \
          explicit `rwv activate` that follows. Got:\n{stderr}"
     );
 
-    // The adopt is otherwise complete — the lock is the only thing deferred.
+    // The clone is otherwise complete — the lock is the only thing deferred.
     assert!(
-        adopt_ws.join(".rwv-active").exists(),
-        "a completed adopt selects the project it adopted"
+        clone_ws.join(".rwv-active").exists(),
+        "a completed clone selects the project it cloned"
     );
-    let adopted = common::read_normalized(adopt_ws.join("projects/myapp/Cargo.toml"));
+    let adopted = common::read_normalized(clone_ws.join("projects/myapp/Cargo.toml"));
     assert_eq!(
         adopted, committed_cargo_toml,
         "deferring the lockfile must not disturb the committed Cargo.toml"

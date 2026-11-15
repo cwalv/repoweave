@@ -95,7 +95,7 @@ Run this only after the Step 1 check prints nothing. Without `-f`, `git submodul
 
 A `git-repo` manifest repository (`manifests/default.xml`) already separates the composition record from member repositories, so it maps directly to `projects/<name>/rwv.toml`:
 
-1. **Initialize the project:** Run `rwv init <project>` in a new weave root (or `rwv init <manifest-repository-url> --adopt` if you are converting the existing manifest repository in place).
+1. **Initialize the project:** Run `rwv init <project>` in a new weave root.
 2. **Add each `<project>` element from `default.xml`:** Construct the full remote URL from `<remote fetch="..."/>` + `<project name="..."/>` and run `rwv member add <url> --role <owned|fork|dependency>`. If `<project revision="..."/>` names a non-default branch, follow [Track a non-default branch](./add-a-repo.md#track-a-non-default-branch).
 3. **Replace `<copyfile>` / `<linkfile>` entries:** Configure the [`static-files` integration](../reference/integrations/static-files.md) in `projects/<project>/rwv.toml` to surface shared build files (`Makefile`, `justfile`, `.editorconfig`) at the weave root.
 4. **Commit and publish:** Commit the remaining project files, and publish the project repo as in Steps 4 and 5 above. `rwv status` shows the branch each member repo is on; compare it with `branch` in `rwv.toml`, because `rwv doctor` does not report a clone on a branch other than the one `rwv.toml` declares.

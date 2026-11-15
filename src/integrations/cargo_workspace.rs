@@ -339,7 +339,7 @@ impl CargoWorkspace {
     /// The complement of [`has_active_cargo_work`](Self::has_active_cargo_work)'s
     /// second arm: that arm counts a repo as active cargo work from `rwv.toml`
     /// alone, no clone required, which is what makes this integration live
-    /// during an `init --adopt` (the adopt clones only the project repo). The
+    /// before the members are cloned. The
     /// gate therefore admits workspaces whose members are not on disk, while
     /// cargo requires every member to resolve. This answers, first-hand, the
     /// question cargo would answer by exiting 101.
@@ -870,9 +870,9 @@ impl Integration for CargoWorkspace {
         }
 
         // Precheck: cargo cannot resolve members that are not on disk yet, and
-        // `init --adopt` is precisely the moment when none of them are — it
-        // clones only the project repo. Left to cargo this exits 101, which
-        // `report_and_check_activate_hook_issues` turns into an adopt that
+        // a clone whose members did not all arrive leaves some of them absent.
+        // Left to cargo this exits 101, which
+        // `report_and_check_activate_hook_issues` turns into an activation that
         // exits 1 after having otherwise succeeded, naming `rwv doctor --fix`
         // as the remedy (it re-runs this same hook against the same absent
         // members and fails identically).
@@ -880,18 +880,17 @@ impl Integration for CargoWorkspace {
         // Skipping is a DEFERRAL, not a suppression: the hook materializes what
         // current membership implies, fetching the members IS a membership
         // change, and the activate that follows materializes then. The lock
-        // first appears when it first can. Note this is not adopt-specific —
-        // the condition is keyed on the members, so a fetch that half-failed
-        // gets the same treatment at the next `rwv activate`.
+        // first appears when it first can. The condition is keyed on the
+        // members, so a fetch that half-failed gets the same treatment at the
+        // next `rwv activate`.
         let managed_text = std::fs::read_to_string(&managed)
             .with_context(|| format!("reading {}", managed.display()))?;
         let unfetched = Self::unfetched_members(&managed_text, ctx.workspace_root());
         if !unfetched.is_empty() {
             eprintln!(
                 "[warning] cargo-workspace: skipping the cargo lockfile step — {} \
-                 workspace member(s) named by {} are not on disk: {}. This is the \
-                 expected state directly after `rwv init --adopt`, which clones only \
-                 the project repo. Run `rwv update` to clone them, then `rwv activate` \
+                 workspace member(s) named by {} are not on disk: {}. A clone that left members \
+                 unfetched leaves this state. Run `rwv update` to clone them, then `rwv activate` \
                  to generate the lockfile.",
                 unfetched.len(),
                 managed.display(),

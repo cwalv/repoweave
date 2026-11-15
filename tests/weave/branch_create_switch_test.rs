@@ -688,7 +688,10 @@ fn a_first_project_publishes_to_its_only_remote_and_a_second_remote_needs_a_push
     succeed(&["branch", "create", "feat-y"], &ws);
     let refused = refuse(&["push"], &ws);
     assert!(refused.contains("push-branch no push target"), "{refused}");
-    assert!(refused.contains("pushRemote"), "{refused}");
+    assert!(
+        refused.contains("set the remote this repo publishes to"),
+        "{refused}"
+    );
     assert!(!remote_has(&first, "feat-y") && !remote_has(&second, "feat-y"));
 
     git_ok(&project, &["config", "branch.feat-y.pushRemote", "origin"]);

@@ -3,7 +3,7 @@
 //!
 //! `rwv workweave create` runs them in the new seat by default; so do the
 //! authoring verbs at primary, a clone's first activation, an update that
-//! selects the only project, and `init --adopt`. Each run below is paired with its control: the same verb without
+//! selects the only project. Each run below is paired with its control: the same verb without
 //! the flag, which must reach the hook, so a fixture that never reached the
 //! hooks cannot pass for one whose flag suppressed them.
 //!
@@ -73,7 +73,6 @@ struct Weave {
     ws: PathBuf,
     bin: PathBuf,
     witness: PathBuf,
-    member_url: String,
 }
 
 impl Weave {
@@ -108,7 +107,6 @@ impl Weave {
             ws,
             bin,
             witness,
-            member_url: url,
         };
         weave.npm(0);
         weave.ok(&["doctor", "--fix"]);
@@ -472,41 +470,13 @@ fn an_update_takes_no_materialize_for_the_project_it_selects() {
 }
 
 #[test]
-fn init_adopt_takes_no_materialize() {
-    let weave = Weave::new();
-
-    for (name, flagged) in [("adopted", true), ("control", false)] {
-        let _ = weave.npm_runs();
-        let source = remote(
-            weave.tmp.path(),
-            name,
-            &[(
-                "rwv.toml",
-                &manifest(&[("github/acme/web", &weave.member_url)]),
-            )],
-        );
-        let mut args = vec!["init", "--adopt", source.as_str()];
-        if flagged {
-            args.push("--no-materialize");
-        }
-        weave.ok(&args);
-        assert_eq!(
-            weave.npm_runs().is_empty(),
-            flagged,
-            "`rwv {}`: the adopted project's hooks ran iff the flag was absent",
-            args.join(" ")
-        );
-    }
-}
-
-#[test]
-fn init_no_materialize_without_adopt_is_a_usage_error() {
+fn init_takes_no_materialize_flag() {
     let weave = Weave::new();
 
     let (ok, _, stderr) = weave.run_in(&weave.ws, &["init", "other", "--no-materialize"]);
     assert!(
-        !ok && stderr.contains("--adopt"),
-        "`init --no-materialize` without `--adopt` must be a usage error naming it:\n{stderr}"
+        !ok && stderr.contains("unexpected argument '--no-materialize'"),
+        "`init --no-materialize` must be a usage error naming the flag:\n{stderr}"
     );
     assert!(
         !weave.ws.join("projects/other").exists(),

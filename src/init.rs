@@ -6,14 +6,6 @@
 //! auto-activates the project. Optionally configures a git remote when
 //! `--provider` is given.
 //!
-//! `rwv init --adopt SOURCE` clones an existing repo as a project. The source
-//! can be a URL or a `registry/owner/repo` shorthand. The
-//! cloned repo is placed under `projects/{name}/`, an `rwv.toml` is written if
-//! missing, the files it wrote are committed, and the project is activated.
-//! It authors nothing: its members are not on disk yet, and authoring from
-//! the repos it can see would rewrite the adopted project's committed files
-//! without the rest.
-//!
 //! ## Empty-directory bootstrap
 //!
 //! When invoked in an empty directory (no workspace markers), `rwv init`
@@ -29,9 +21,9 @@
 //! Running `rwv init` in a non-empty, non-workspace directory is refused with
 //! a clear actionable error.
 
-use crate::manifest::{Manifest, RepoUrl};
+use crate::manifest::Manifest;
 use crate::refusal::{refusal, RefusalKind};
-use crate::registry::{builtin_registries, resolve_to_clone_info, CloneUrl, RepoId};
+use crate::registry::{builtin_registries, CloneUrl, RepoId};
 use crate::vcs::project_vcs;
 use crate::workspace::{
     create_identity_dir, enclosing_project, project_dir, projects_dir, require_workspace_or_empty,
@@ -71,7 +63,7 @@ fn bootstrap_workspace_if_empty(cwd: &Path) -> anyhow::Result<()> {
 
     // Gate passed. If we are NOT already a workspace (resolve would fail), we
     // are in an empty dir — create the minimal `projects/` marker so that the
-    // subsequent `WorkspaceContext::resolve_invocation` call in `init`/`init_adopt` finds
+    // subsequent `WorkspaceContext::resolve_invocation` call in `init` finds
     // a workspace root.
     if WorkspaceContext::resolve_invocation(cwd, None).is_err() {
         let projects_dir = projects_dir(cwd);
@@ -328,117 +320,4 @@ fn provider_remote_url(provider: &str, name: &str) -> anyhow::Result<CloneUrl> {
                 ),
             )
         })
-}
-
-/// Adopt an existing repo as a project.
-///
-/// `source` is a URL or a `registry/owner/repo` shorthand.
-/// The function:
-/// 1. Determines the clone URL and project name from `source`, and
-///    validates the name.
-/// 2. Bootstraps a workspace skeleton if `cwd` is an empty directory.
-/// 3. Resolves the workspace root from `cwd`.
-/// 4. Clones the repo to `projects/{name}/`, refusing an occupied directory.
-/// 5. Writes an empty `rwv.toml` if the clone does not already contain one,
-///    and the replay exclusion, and commits whichever of the two it wrote.
-/// 6. Activates the project.
-pub fn init_adopt(
-    source: &str,
-    origin_dir: &Path,
-    opts: crate::activate::ActivateOptions,
-) -> anyhow::Result<()> {
-    // Resolve the source to a clone URL and project name, and validate the
-    // name, before anything touches disk. `resolve_adopt_source` is a pure
-    // string computation, so this is free; the clone below is not, and a
-    // refused name must not leave a partial clone for a retry to trip over.
-    let (clone_url, project_name) = resolve_adopt_source(source)?;
-    let project_name = crate::manifest::ProjectName::new(project_name)?;
-    let vcs = project_vcs();
-    judge_commit_identity(vcs.as_ref(), origin_dir)?;
-
-    // Same bootstrap-then-first-resolve pattern as `init` above.
-    bootstrap_workspace_if_empty(origin_dir)?;
-    let ctx = WorkspaceContext::resolve_invocation(origin_dir, None)?;
-    let root = ctx.primary_path();
-
-    let project_dir = project_dir(root, &project_name);
-
-    // Collision check
-    if project_dir.exists() {
-        crate::refuse!(
-            RefusalKind::ProjectDirOccupied,
-            "project '{}' already exists at {}",
-            project_name,
-            project_dir.display()
-        );
-    }
-
-    eprintln!("Cloning {} into {}", clone_url, project_dir.display());
-    let url_remote = vcs
-        .clone_repo(&clone_url, &project_dir)
-        .with_context(|| format!("failed to clone {}", clone_url))?;
-    vcs.record_project_url_remote(&project_dir, &url_remote)
-        .with_context(|| {
-            format!(
-                "failed to record the url remote in {}",
-                project_dir.display()
-            )
-        })?;
-
-    let mut written = BTreeSet::new();
-    let manifest_path = project_dir.join(Manifest::FILE_NAME);
-    if !manifest_path.exists() {
-        std::fs::write(&manifest_path, Manifest::SKELETON)
-            .with_context(|| format!("failed to write {}", Manifest::FILE_NAME))?;
-        written.insert(PathBuf::from(Manifest::FILE_NAME));
-    }
-
-    if crate::lock_driver::declare_in_working_copy(vcs.as_ref(), &project_dir)? {
-        written.insert(PathBuf::from(vcs.lock_driver_declaration_file()));
-    }
-    vcs.define_lock_driver(&project_dir).with_context(|| {
-        format!(
-            "failed to define the lock merge driver in {}",
-            project_dir.display()
-        )
-    })?;
-    commit_written(
-        vcs.as_ref(),
-        &project_dir,
-        &written,
-        &format!("init --adopt {source}"),
-    )?;
-
-    record_trunk(vcs.as_ref(), &project_name, &project_dir)?;
-    crate::alignment::record(root, &project_name)?;
-
-    eprintln!(
-        "Adopted project '{}' at {}",
-        project_name,
-        project_dir.display()
-    );
-
-    // Activate the project
-    crate::activate::activate_with_options(&project_name, &ctx, opts)?;
-
-    Ok(())
-}
-
-/// Resolve an adopt source (URL or shorthand) into a clone URL and project name.
-///
-/// For full URLs, the project name is derived from the last path segment.
-/// For shorthands, the registry is used to construct the clone URL and the
-/// repo name becomes the project name.
-fn resolve_adopt_source(source: &str) -> anyhow::Result<(CloneUrl, String)> {
-    let parsed: RepoUrl = source.parse()?;
-    if parsed.is_plain_path() {
-        return Err(crate::registry::unresolvable_source(
-            Some("rwv init --adopt"),
-            source,
-            None,
-        ));
-    }
-    let info = resolve_to_clone_info(&parsed)?;
-    let repo = info.id.repo().to_owned();
-    Ok((info.url, repo))
 }

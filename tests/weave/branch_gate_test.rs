@@ -1,5 +1,5 @@
 //! The gate on an unrecorded branch, and the verbs that write a record as part
-//! of what they mean: `init`, `clone`, `init --adopt` and `workweave create`.
+//! of what they mean: `init`, `clone` and `workweave create`.
 //! Each is driven through the shipped binary against a weave built by `rwv
 //! init`, with a bare repo as its origin where a remote is involved.
 //!
@@ -10,7 +10,7 @@
 //!   nothing; the verbs that only look, or that record, run;
 //! - a branch whose record is conflicted, unreadable or on a cycle is refused
 //!   the same way, by its own state;
-//! - `init`, `clone` and `init --adopt` record the branch they leave checked
+//! - `init` and `clone` record the branch they leave checked
 //!   out as `declared`, after reading the records the remote holds;
 //! - a bare `workweave create` records `{target: the parent's branch, as: the
 //!   parent's mode}` and says where it lands, and refuses before it makes
@@ -404,22 +404,6 @@ fn clone_writes_the_trunk_on_top_of_records_that_lack_it() {
     );
     assert_eq!(
         common::git_in(&cloned, &["show", &format!("{RECORDS}:other")]),
-        DECLARED.trim_end()
-    );
-}
-
-#[test]
-fn init_adopt_records_the_adopted_trunk() {
-    let weave = Weave::new();
-    let elsewhere = weave.tmp.path().join("elsewhere");
-    std::fs::create_dir_all(&elsewhere).unwrap();
-    succeed(
-        &["init", "--adopt", &common::file_url(weave.origin())],
-        &elsewhere,
-    );
-    let adopted = elsewhere.join("projects/origin");
-    assert_eq!(
-        common::git_in(&adopted, &["show", &format!("{RECORDS}:main")]),
         DECLARED.trim_end()
     );
 }

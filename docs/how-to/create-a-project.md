@@ -79,7 +79,7 @@ rwv member add https://github.com/chatly/billing.git
 
 ## Related
 
-- [Add a repo to a project](./add-a-repo.md) — URL clones, `--new`, brownfield adoption, and `rwv init --adopt`
+- [Add a repo to a project](./add-a-repo.md) — URL clones, `--new`, and brownfield adoption
 - [Add an integration](./add-an-integration.md) — enabling and configuring ecosystem workspace files
 - [Switch projects](./switch-projects.md) — switching `.rwv-active` vs. using workweaves
 - [File formats reference](../reference/formats.md) — `rwv.toml` and `rwv.lock` schema

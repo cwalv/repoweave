@@ -6,7 +6,7 @@
 //! the project repo's url remote is the remote its clone made, recorded when it
 //! was made, and `rwv push` publishes to it, reading its default branch there.
 //!
-//! Driven through `rwv init --adopt`, whose project-repo clone `rwv push` then
+//! Driven through `rwv clone`, whose project-repo clone `rwv push` then
 //! publishes to. The test spawns `rwv` because only a subprocess can be given a
 //! git config that differs from the developer's: the in-process unit test of
 //! the seam cannot tell a remote rwv named from one git named.
@@ -106,7 +106,7 @@ fn adopted_project_is_publishable_under_a_renamed_default_remote() {
     );
 
     rwv_under_renamed_default_remote()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();

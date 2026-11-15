@@ -348,7 +348,7 @@ it, is the same for every integration: see [Hook points](./index.md#hook-points)
 - **No managed `Cargo.toml`** — the hook refuses with an error naming
   `rwv doctor --fix`, which authors the file.
 - **Members not on disk** — when a member `Cargo.toml` names is not cloned
-  yet (directly after `rwv init --adopt`), the hook skips with a warning
+  yet (after a `rwv clone` that left members unfetched), the hook skips with a warning
   naming the missing members and `rwv update`.
 - **Tool trouble** — with `cargo` absent from `PATH` the hook is skipped with
   a `tool-missing` warning and the verb continues. A Cargo run that fails is

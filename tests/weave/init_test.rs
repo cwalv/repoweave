@@ -245,7 +245,7 @@ fn init_collision_does_not_modify_existing_project() {
 // ============================================================================
 //
 // A refused name must not put anything on disk: `ProjectName::new` runs
-// before `init`/`init_adopt` touch the filesystem, not after. These pin that
+// before `init` touch the filesystem, not after. These pin that
 // ordering directly, rather than through a side effect of it.
 
 #[test]
@@ -286,7 +286,7 @@ fn init_repeated_invalid_name_reports_the_same_refusal_not_a_stale_collision() {
             .failure()
             .stderr(
                 predicate::str::contains("not a valid project name")
-                    .and(predicate::str::contains("already exists").not()),
+                    .and(predicate::str::contains("cannot clone project").not()),
             );
     }
 
@@ -314,7 +314,7 @@ fn init_retry_with_a_corrected_name_succeeds_after_a_refused_attempt() {
 }
 
 #[test]
-fn adopt_with_invalid_derived_name_refuses_before_cloning() {
+fn clone_project_with_invalid_derived_name_refuses_before_cloning() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     // The repo's own name becomes the derived project name; `a+b` is a
@@ -322,7 +322,7 @@ fn adopt_with_invalid_derived_name_refuses_before_cloning() {
     let bare = make_bare_repo(tmp.path(), "a+b");
 
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .failure()
@@ -330,28 +330,28 @@ fn adopt_with_invalid_derived_name_refuses_before_cloning() {
 
     assert!(
         !ws.join("projects/a+b").exists(),
-        "a refused adopt must not leave a partial clone at its target path"
+        "a refused clone must not leave a partial clone at its target path"
     );
 }
 
-/// The adopt half of the same debris regression: a clone before validation
+/// The clone half of the same debris regression: a clone before validation
 /// means a second attempt at the same (still invalid) source reports
 /// "already exists" over the leftover clone rather than the real refusal.
 #[test]
-fn adopt_repeated_invalid_source_reports_the_same_refusal_not_a_stale_collision() {
+fn clone_project_repeated_invalid_source_reports_the_same_refusal_not_a_stale_collision() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_bare_repo(tmp.path(), "a+b");
 
     for _ in 0..2 {
         rwv()
-            .args(["init", "--adopt", &common::file_url(&bare)])
+            .args(["clone", &common::file_url(&bare)])
             .current_dir(&ws)
             .assert()
             .failure()
             .stderr(
                 predicate::str::contains("not a valid project name")
-                    .and(predicate::str::contains("already exists").not()),
+                    .and(predicate::str::contains("cannot clone project").not()),
             );
     }
 
@@ -578,10 +578,10 @@ fn init_works_from_workspace_subdirectory() {
 }
 
 // ============================================================================
-// --adopt flag tests
+// cloning a project
 // ============================================================================
 
-/// Create a bare git repo that can serve as a clone source for --adopt tests.
+/// Create a bare git repo that can serve as a clone source for clone tests.
 /// Returns the path to the bare repo.
 fn make_bare_repo(parent: &Path, name: &str) -> std::path::PathBuf {
     let bare = parent.join(format!("{}.git", name));
@@ -622,6 +622,7 @@ fn make_repo_with_commit(parent: &Path, name: &str) -> std::path::PathBuf {
         .status();
 
     std::fs::write(work.join("README.md"), "# test\n").unwrap();
+    std::fs::write(work.join("rwv.toml"), "[repositories]\n").unwrap();
     let _ = common::git().args(["add", "."]).current_dir(&work).status();
     let _ = common::git()
         .args(["commit", "-m", "init"])
@@ -640,13 +641,13 @@ fn make_repo_with_commit(parent: &Path, name: &str) -> std::path::PathBuf {
 }
 
 #[test]
-fn adopt_clones_repo_into_projects() {
+fn clone_project_clones_repo_into_projects() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "my-app");
 
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -654,37 +655,18 @@ fn adopt_clones_repo_into_projects() {
     let project_dir = ws.join("projects/my-app");
     assert!(
         project_dir.exists(),
-        "projects/my-app/ should exist after adopt"
+        "projects/my-app/ should exist after clone"
     );
     // Should be a git repo (cloned, not git-init'd)
     let toplevel = common::git_in(&project_dir, &["rev-parse", "--git-dir"]);
     assert!(
         toplevel.contains(".git"),
-        "adopted project should be a git repo"
+        "cloned project should be a git repo"
     );
 }
 
 #[test]
-fn adopt_writes_rwv_yaml_when_missing() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_empty_workspace(tmp.path());
-    let bare = make_repo_with_commit(tmp.path(), "no-yaml");
-
-    rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let manifest_path = ws.join("projects/no-yaml/rwv.toml");
-    assert!(
-        manifest_path.exists(),
-        "rwv.toml should be created for adopted repo"
-    );
-}
-
-#[test]
-fn adopt_preserves_existing_rwv_yaml() {
+fn clone_project_preserves_existing_rwv_yaml() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
 
@@ -730,7 +712,7 @@ fn adopt_preserves_existing_rwv_yaml() {
         .status();
 
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -743,13 +725,13 @@ fn adopt_preserves_existing_rwv_yaml() {
 }
 
 #[test]
-fn adopt_activates_project() {
+fn clone_project_activates_project() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "activated");
 
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
@@ -759,40 +741,30 @@ fn adopt_activates_project() {
     assert_eq!(
         active.trim(),
         "activated",
-        ".rwv-active should contain the adopted project name"
+        ".rwv-active should contain the cloned project name"
     );
 }
 
 #[test]
-fn adopt_rejects_duplicate_project_name() {
+fn clone_project_rejects_duplicate_project_name() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
     let bare = make_repo_with_commit(tmp.path(), "dup");
 
-    // First adopt succeeds.
+    // First clone succeeds.
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // Second adopt with same source should fail.
+    // Second clone with same source should fail.
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("already exists"));
-}
-
-#[test]
-fn adopt_conflicts_with_provider() {
-    // --adopt and --provider are mutually exclusive.
-    rwv()
-        .args(["init", "--adopt", "--provider", "github/owner", "foo"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cannot be used with"));
+        .stderr(predicate::str::contains("cannot clone project"));
 }
 
 // ============================================================================
@@ -927,38 +899,35 @@ fn init_existing_workspace_unaffected_by_bootstrap_path() {
     assert_eq!(active.trim(), "second");
 }
 
-/// `rwv init --adopt` in an empty directory must also bootstrap the workspace
+/// `rwv clone` in an empty directory must also bootstrap the workspace
 /// skeleton before cloning.
 #[test]
-fn adopt_bootstraps_empty_directory() {
+fn clone_project_bootstraps_empty_directory() {
     let tmp = common::tempdir().unwrap();
-    let ws = tmp.path().join("adopt-fresh");
+    let ws = tmp.path().join("clone-fresh");
     std::fs::create_dir_all(&ws).unwrap();
-    let bare = make_repo_with_commit(tmp.path(), "adopted-proj");
+    let bare = make_repo_with_commit(tmp.path(), "cloned-proj");
 
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["clone", &common::file_url(&bare)])
         .current_dir(&ws)
         .assert()
         .success();
 
-    // projects/ skeleton was created and the adopted project landed inside it.
+    // projects/ skeleton was created and the cloned project landed inside it.
     assert!(
         ws.join("projects").is_dir(),
-        "projects/ must exist after adopt bootstrap"
+        "projects/ must exist after clone bootstrap"
     );
     assert!(
-        ws.join("projects/adopted-proj").is_dir(),
-        "projects/adopted-proj/ must exist after adopt in empty dir"
+        ws.join("projects/cloned-proj").is_dir(),
+        "projects/cloned-proj/ must exist after clone in empty dir"
     );
     // Must be a real git repo (cloned, not init'd).
-    let toplevel = common::git_in(
-        ws.join("projects/adopted-proj"),
-        &["rev-parse", "--git-dir"],
-    );
+    let toplevel = common::git_in(ws.join("projects/cloned-proj"), &["rev-parse", "--git-dir"]);
     assert!(
         toplevel.contains(".git"),
-        "adopted project must be a git repo"
+        "cloned project must be a git repo"
     );
 }
 
@@ -1056,109 +1025,15 @@ fn init_without_a_commit_identity_refuses_before_writing_anything() {
 }
 
 #[test]
-fn adopt_commits_only_its_own_files_onto_the_adopted_history() {
+fn init_takes_no_adopt_flag() {
     let tmp = common::tempdir().unwrap();
     let ws = make_empty_workspace(tmp.path());
-    let bare = make_bare_repo(tmp.path(), "with-attrs");
-    let seed = tmp.path().join("with-attrs-seed");
-    common::git_in(
-        tmp.path(),
-        &["init", "-q", "-b", "main", seed.to_str().unwrap()],
-    );
-    std::fs::write(seed.join(".gitattributes"), "*.png binary\n").unwrap();
-    std::fs::write(seed.join("README.md"), "# seed\n").unwrap();
-    common::git_in(&seed, &["add", "-A"]);
-    common::git_in(
-        &seed,
-        &[
-            "-c",
-            "user.name=T",
-            "-c",
-            "user.email=t@t",
-            "commit",
-            "-q",
-            "-m",
-            "seed",
-        ],
-    );
-    common::git_in(&seed, &["push", "-q", bare.to_str().unwrap(), "main"]);
-    let seeded = common::git_in(&seed, &["rev-parse", "HEAD"]);
 
     rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
+        .args(["init", "--adopt", "foo"])
         .current_dir(&ws)
         .assert()
-        .success();
-
-    let project = ws.join("projects/with-attrs");
-    assert_eq!(common::git_in(&project, &["rev-parse", "HEAD~1"]), seeded);
-    assert_eq!(
-        common::git_in(&project, &["diff", "--name-only", "HEAD~1", "HEAD"]),
-        ".gitattributes\nrwv.toml"
-    );
-    let attrs = common::git_in(&project, &["show", "HEAD:.gitattributes"]);
-    assert_eq!(attrs, "*.png binary\nrwv.lock merge=rwv-lock");
-    assert_eq!(
-        common::git_in(
-            &project,
-            &["status", "--porcelain", "--untracked-files=all"]
-        ),
-        ""
-    );
-}
-
-#[test]
-fn adopt_of_a_repo_with_no_commits_makes_its_first_commit() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_empty_workspace(tmp.path());
-    let bare = make_bare_repo(tmp.path(), "unborn");
-
-    rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let project = ws.join("projects/unborn");
-    assert_eq!(commit_count(&project), "1");
-    assert_eq!(tree_at(&project, "HEAD"), [".gitattributes", "rwv.toml"]);
-}
-
-#[test]
-fn adopt_of_a_repo_that_already_carries_rwvs_files_makes_no_commit() {
-    let tmp = common::tempdir().unwrap();
-    let ws = make_empty_workspace(tmp.path());
-    let bare = make_bare_repo(tmp.path(), "carried");
-    let seed = tmp.path().join("carried-seed");
-    common::git_in(
-        tmp.path(),
-        &["init", "-q", "-b", "main", seed.to_str().unwrap()],
-    );
-    std::fs::write(seed.join(".gitattributes"), common::LOCK_DRIVER_ATTRIBUTE).unwrap();
-    std::fs::write(seed.join("rwv.toml"), "[repositories]\n").unwrap();
-    common::git_in(&seed, &["add", "-A"]);
-    common::git_in(
-        &seed,
-        &[
-            "-c",
-            "user.name=T",
-            "-c",
-            "user.email=t@t",
-            "commit",
-            "-q",
-            "-m",
-            "seed",
-        ],
-    );
-    common::git_in(&seed, &["push", "-q", bare.to_str().unwrap(), "main"]);
-    let seeded = common::git_in(&seed, &["rev-parse", "HEAD"]);
-
-    rwv()
-        .args(["init", "--adopt", &common::file_url(&bare)])
-        .current_dir(&ws)
-        .assert()
-        .success();
-
-    let project = ws.join("projects/carried");
-    assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), seeded);
+        .failure()
+        .stderr(predicate::str::contains("unexpected argument '--adopt'"));
+    assert!(!ws.join("projects/foo").exists());
 }
