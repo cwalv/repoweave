@@ -162,6 +162,9 @@ pub struct Journey {
     /// How many leading steps of `path` build the start state the task
     /// describes; the rest is the documented path.
     pub start: usize,
+    /// Read-only steps that hold exactly when the start state has what the
+    /// task text says is already there.
+    pub holds: Vec<Step>,
     pub path: Vec<Step>,
     pub fault: usize,
     pub end: Vec<Step>,

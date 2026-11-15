@@ -9068,6 +9068,11 @@ macro_rules! journey_tests {
             #[test]
             fn $name() {
                 let name = scenarios::$name().name;
+                let starting = scenarios::$name();
+                let holds = starting.holds.clone();
+                let sandbox = Sandbox::new(starting.seed.clone());
+                runner::run_in(&sandbox, starting.start_scenario()).assert_fully_decided_green();
+                runner::check_in(&sandbox, name, holds).assert_fully_decided_green();
                 let (faulty, end) = scenarios::$name().seeded();
                 let report = runner::run(faulty);
                 assert!(

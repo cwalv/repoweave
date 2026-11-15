@@ -126,6 +126,15 @@ pub enum Action {
         repo: Repo,
         mark: &'static str,
     },
+    /// Write `content` to `file` and commit it with message `<mark>`,
+    /// recording the commit under that mark.
+    CommitFile {
+        at: Place,
+        repo: Repo,
+        mark: &'static str,
+        file: &'static str,
+        content: &'static str,
+    },
     /// Replace the one occurrence of `from` in a tracked file with `to`, as
     /// an operator editing it by hand would.
     HandEdit {
@@ -416,6 +425,23 @@ pub enum Claim {
         site: LockSite,
         member: Repo,
         mark: &'static str,
+    },
+    /// The file `path` at `branch` of `remote` holds `has` when `present`,
+    /// else does not.
+    RemoteFile {
+        remote: Remote,
+        branch: &'static str,
+        path: &'static str,
+        has: &'static str,
+        present: bool,
+    },
+    /// The same of the file `path` at the commit `site` pins `member` at.
+    PinFile {
+        site: LockSite,
+        member: Repo,
+        path: &'static str,
+        has: &'static str,
+        present: bool,
     },
     /// The pin at `site` for `member` does not reach the commit `mark` names.
     PinLacks {
@@ -733,6 +759,26 @@ impl Step {
                 at: at.clone(),
                 repo,
                 mark,
+            },
+            Expect::succeeds(),
+        )
+    }
+
+    pub fn commit_file(
+        at: &Place,
+        repo: Repo,
+        mark: &'static str,
+        file: &'static str,
+        content: &'static str,
+    ) -> Step {
+        Step::new(
+            format!("commit {mark} in {}: {file}", repo.name()),
+            Action::CommitFile {
+                at: at.clone(),
+                repo,
+                mark,
+                file,
+                content,
             },
             Expect::succeeds(),
         )
@@ -1441,6 +1487,24 @@ impl Run<'_> {
                     self.forge_clone(*repo);
                 }
                 self.commit_in(sb.checkout(at, *repo), mark)
+            }
+            Action::CommitFile {
+                at,
+                repo,
+                mark,
+                file,
+                content,
+            } => {
+                let dir = sb.checkout(at, *repo);
+                std::fs::write(dir.join(file), content).unwrap();
+                let add = sb.git(&dir, &["add", file]);
+                let commit = sb.git(&dir, &["commit", "-m", mark]);
+                if !add.status.success() || !commit.status.success() {
+                    return (false, format!("{}{}", rendered(&add), rendered(&commit)));
+                }
+                let sha = sb.git_ok(&dir, &["rev-parse", "HEAD"]);
+                self.marks.insert(mark, sha);
+                (true, rendered(&commit))
             }
             Action::HandEdit {
                 at,
@@ -2735,6 +2799,53 @@ impl Run<'_> {
                 let store = scenario_invariants::store_for(sb, after, site, *member)
                     .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
                 self.contains(&store, pin, mark)
+            }
+            Claim::RemoteFile {
+                remote,
+                branch,
+                path,
+                has,
+                present,
+            } => {
+                let out = sb.git(
+                    &sb.remote_path(*remote),
+                    &["show", &format!("{branch}:{path}")],
+                );
+                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                if text.contains(has) == *present {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{remote:?} {branch}:{path} {} '{has}':\n{text}",
+                        if *present { "lacks" } else { "holds" }
+                    ))
+                }
+            }
+            Claim::PinFile {
+                site,
+                member,
+                path,
+                has,
+                present,
+            } => {
+                let pin = after
+                    .pins
+                    .get(site)
+                    .and_then(|pins| pins.get(member))
+                    .ok_or_else(|| format!("{site:?} has no pin for {}", member.name()))?;
+                let store = scenario_invariants::store_for(sb, after, site, *member)
+                    .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
+                let out = sb.git(&store, &["show", &format!("{pin}:{path}")]);
+                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                if text.contains(has) == *present {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{site:?} pins {} at {pin}, whose {path} {} '{has}':\n{text}",
+                        member.name(),
+                        if *present { "lacks" } else { "holds" }
+                    ))
+                }
             }
             Claim::PinLacks { site, member, mark } => {
                 let pin = after

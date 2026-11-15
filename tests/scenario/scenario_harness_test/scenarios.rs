@@ -30389,6 +30389,9 @@ pub fn j01_two_repo_change() -> Journey {
         name: "j01: a two-repo change from a new feature to a published main",
         seed: Seed::default(),
         start: 0,
+        holds: vec![Step::rwv(&a(), &["workweave", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("proj--"))],
         path,
         fault,
         end: vec![
@@ -30471,6 +30474,19 @@ pub fn j02_pick_up_a_colleagues_landing() -> Journey {
         name: "j02: a colleague's landing that adds a member is taken in and carried on",
         seed: Seed::default(),
         start: 9,
+        holds: vec![
+            Step::git(&ww("mine"), Repo::App, &["log", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("my-app")),
+            Step::git(&b(), Repo::Proj, &["show", "main:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("local/remotes/docs"))
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "main",
+                    mark: "their-lib",
+                }),
+        ],
         path,
         fault,
         end: vec![clean_end(a())
@@ -30549,6 +30565,15 @@ pub fn j03_a_landing_stops_on_a_conflict_and_is_finished() -> Journey {
         name: "j03: a landing stops on a conflict and is finished",
         seed: Seed::default(),
         start: 10,
+        holds: vec![
+            Step::git(&ww("beta"), Repo::App, &["log", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("beta-line")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("alpha-line"))
+                .claim(Claim::WorkweaveGone(ww("alpha"))),
+        ],
         path,
         fault,
         end: vec![
@@ -30594,6 +30619,15 @@ pub fn j04_a_stopped_landing_is_abandoned() -> Journey {
         name: "j04: a stopped landing is abandoned and everything is as it was",
         seed: Seed::default(),
         start: 11,
+        holds: vec![
+            Step::git(&ww("beta"), Repo::App, &["log", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("beta-line")),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("alpha-line"))
+                .claim(Claim::WorkweaveGone(ww("alpha"))),
+        ],
         path,
         fault,
         end: vec![
@@ -30631,6 +30665,14 @@ pub fn j05_a_landing_loses_a_race() -> Journey {
         name: "j05: a landing loses a race to a colleague's publish and recovers",
         seed: Seed::default(),
         start: 4,
+        holds: vec![Step::git(&ww("mine"), Repo::App, &["log", "--format=%s"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("my-app"))
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "main",
+                mark: "their-app",
+            })],
         path,
         fault: 9,
         end: vec![clean_end(a())
@@ -30690,7 +30732,19 @@ pub fn j06_a_published_feature_is_renamed() -> Journey {
     Journey {
         name: "j06: a feature already published is renamed everywhere",
         seed: Seed::default(),
-        start: 0,
+        start: 4,
+        holds: vec![Step::rwv(&a(), &["branch", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("try-1"))
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "try-1",
+                mark: "try-app",
+            })
+            .claim(Claim::RemoteRecordIs {
+                branch: "try-1",
+                record: Some(feature_onto("main", Mode::Declared)),
+            })],
         path,
         fault: 6,
         end: vec![
@@ -30755,6 +30809,9 @@ pub fn j08_a_second_feature_stacked_on_the_first() -> Journey {
         name: "j08: a second feature stacked on the first, both landed and published",
         seed: Seed::default(),
         start: 4,
+        holds: vec![Step::git(&ww("a"), Repo::App, &["log", "--format=%s"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("a-app"))],
         path,
         fault,
         end: vec![
@@ -30806,6 +30863,9 @@ pub fn j09_an_experiment_that_never_landed_is_thrown_away() -> Journey {
         name: "j09: an experiment that never landed is thrown away and can be recovered",
         seed: Seed::default(),
         start: 2,
+        holds: vec![Step::git(&ww("try"), Repo::App, &["log", "--format=%s"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("try-app"))],
         path,
         fault,
         end: vec![
@@ -30857,6 +30917,14 @@ pub fn j10_a_second_machine_takes_the_project() -> Journey {
         name: "j10: a second machine takes the project and reaches the same state",
         seed: Seed::default(),
         start: 5,
+        holds: vec![Step::rwv(&a(), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::DirGone(Machine::B, "weave"))
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "main",
+                mark: "welcome-app",
+            })],
         path,
         fault,
         end: vec![
@@ -30905,6 +30973,10 @@ pub fn j11_an_ordinary_repository_becomes_a_project() -> Journey {
         name: "j11: an ordinary repository is taken as a project and published",
         seed: Seed::default(),
         start: 1,
+        holds: vec![Step::git(&a(), Repo::Docs, &["ls-files"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("rwv.toml"))
+            .claim(Claim::DirStands(Machine::B, "weave"))],
         path,
         fault,
         end: vec![
@@ -30944,6 +31016,12 @@ pub fn j12_a_hand_edited_manifest_converges() -> Journey {
         name: "j12: a hand-edited manifest converges",
         seed: Seed::default(),
         start: 4,
+        holds: vec![Step::git(&a(), Repo::Proj, &["diff", "--", "rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("+branch = \"v1\""))
+            .claim(Claim::OutputContains(
+                "-[repositories.\"local/remotes/docs\"]",
+            ))],
         path,
         fault,
         end: vec![
@@ -30974,7 +31052,13 @@ fn release_line_cut_and_published() -> Vec<Step> {
     let app_v1 = "v1";
     let lib_v1 = "protov1";
     vec![
-        Step::commit(&a(), Repo::App, "release-app"),
+        Step::commit_file(
+            &a(),
+            Repo::App,
+            "release-app",
+            "welcome.txt",
+            "helo, world\n",
+        ),
         Step::commit(&a(), Repo::Lib, "release-lib"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
         Step::rwv(
@@ -31013,6 +31097,14 @@ pub fn j13_a_release_line_is_cut() -> Journey {
         name: "j13: a release line is cut for two members and published",
         seed: Seed::default(),
         start: 3,
+        holds: vec![
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("release-app")),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("stable")),
+        ],
         path,
         fault,
         end: vec![
@@ -31064,7 +31156,12 @@ fn hotfix_landed_and_published() -> Vec<Step> {
             ],
         )
         .expect(Exit::Succeeds),
-        Step::commit(&workweave, Repo::App, "hotfix-app"),
+        Step::hand_edit(&workweave, Repo::App, "welcome.txt", "helo", "hello"),
+        Step::git(
+            &workweave,
+            Repo::App,
+            &["commit", "-qam", "fix the welcome message"],
+        ),
         Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["push", "--branch", "stable"])
             .pushes(Remote::origin(Repo::App), "v1")
@@ -31082,29 +31179,54 @@ pub fn j14_a_hotfix_lands_on_the_release_line() -> Journey {
         name: "j14: a hotfix is landed on the release line and main is left alone",
         seed: Seed::default(),
         start: 9,
+        holds: vec![
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("stable"))
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stable",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::App),
+                    branch: "v1",
+                    path: "welcome.txt",
+                    has: "helo",
+                    present: true,
+                }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main-next")),
+        ],
         path,
         fault,
         end: vec![
             clean_end(a())
-                .claim(Claim::RemoteContains {
+                .claim(Claim::RemoteFile {
                     remote: Remote::origin(Repo::App),
                     branch: "v1",
-                    mark: "hotfix-app",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: true,
                 })
-                .claim(Claim::PinContains {
+                .claim(Claim::PinFile {
                     site: stable_pins(),
                     member: Repo::App,
-                    mark: "hotfix-app",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: true,
                 })
-                .claim(Claim::PinLacks {
+                .claim(Claim::PinFile {
                     site: LockSite::remote_main(Repo::Proj),
                     member: Repo::App,
-                    mark: "hotfix-app",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: false,
                 })
                 .claim(Claim::WorkweaveGone(workweave)),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "origin/main"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLacks("hotfix-app")),
+                .claim(Claim::OutputLacks("fix the welcome message")),
         ],
     }
 }
@@ -31140,17 +31262,36 @@ pub fn j15_a_fix_is_ported_from_one_line_to_the_other() -> Journey {
     Journey {
         name: "j15: a fix is ported from the release line to main",
         seed: Seed::default(),
-        start: 13,
+        start: 14,
+        holds: vec![
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("stable"))
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stable",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::App),
+                    branch: "v1",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: true,
+                }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main-next")),
+        ],
         path,
         fault,
         end: vec![
             clean_end(a())
-                .claim(Claim::PinsReplayed {
-                    at: a(),
-                    rev: "main",
+                .claim(Claim::PinFile {
+                    site: LockSite::remote_main(Repo::Proj),
                     member: Repo::App,
-                    subject: "hotfix-app",
-                    reached_from: "main",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: true,
                 })
                 .claim(Claim::PinContains {
                     site: LockSite::remote_main(Repo::Proj),
@@ -31160,7 +31301,7 @@ pub fn j15_a_fix_is_ported_from_one_line_to_the_other() -> Journey {
                 .claim(Claim::WorkweaveGone(port)),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "origin/main"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputContains("hotfix-app"))
+                .claim(Claim::OutputContains("fix the welcome message"))
                 .claim(Claim::OutputContains("main-next")),
         ],
     }
@@ -31191,7 +31332,26 @@ pub fn j16_a_release_line_is_retired() -> Journey {
     Journey {
         name: "j16: a release line is retired from main and its tip is kept",
         seed: Seed::default(),
-        start: 13,
+        start: 14,
+        holds: vec![
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("stable"))
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stable",
+                    record: Some(Record::Declared),
+                })
+                .claim(Claim::RemoteFile {
+                    remote: Remote::origin(Repo::App),
+                    branch: "v1",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: true,
+                }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main-next")),
+        ],
         path,
         fault,
         end: vec![
@@ -31200,10 +31360,12 @@ pub fn j16_a_release_line_is_retired() -> Journey {
                     repo: Repo::Proj,
                     branch: "stable",
                 })
-                .claim(Claim::RemoteContains {
+                .claim(Claim::RemoteFile {
                     remote: Remote::origin(Repo::App),
                     branch: "v1",
-                    mark: "hotfix-app",
+                    path: "welcome.txt",
+                    has: "hello",
+                    present: true,
                 })
                 .claim(Claim::RemoteRecordIs {
                     branch: "stable",
@@ -31254,6 +31416,9 @@ pub fn j18_a_landing_killed_midway_is_finished() -> Journey {
         name: "j18: a landing killed midway is found and finished",
         seed: Seed::default(),
         start: 7,
+        holds: vec![Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("land in progress"))],
         path,
         fault,
         end: vec![clean_end(a())
@@ -31300,6 +31465,9 @@ pub fn j19_a_landing_killed_midway_is_given_up() -> Journey {
         name: "j19: a landing killed midway is given up and everything is as it was",
         seed: Seed::default(),
         start: 7,
+        holds: vec![Step::rwv(&ww("w"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("land in progress"))],
         path,
         fault,
         end: vec![
@@ -31350,6 +31518,11 @@ pub fn j17_a_retire_stops_over_unpublished_nested_work() -> Journey {
         name: "j17: a retire stops over unpublished nested work and finishes once it is published",
         seed: Seed::default(),
         start: 9,
+        holds: vec![
+            Step::git(&ww("w"), Repo::App, &["-C", "sub", "log", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("nested-only")),
+        ],
         path,
         fault,
         end: vec![
@@ -31431,6 +31604,19 @@ pub fn j20_a_colleague_moves_a_nested_repository() -> Journey {
         name: "j20: a colleague's move of a nested repository is taken in and work is landed",
         seed: Seed::default(),
         start,
+        holds: vec![
+            Step::git(&ww("mine"), Repo::Docs, &["log", "--format=%s"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("my-docs"))
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "main",
+                    mark: "lib-new",
+                }),
+            Step::git(&a(), Repo::App, &["-C", "sub", "branch", "--show-current"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("main")),
+        ],
         path,
         fault,
         end: vec![
