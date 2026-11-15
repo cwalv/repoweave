@@ -70,9 +70,11 @@ It also refuses when the workweave's marker, the project clone's index and its p
 checkout's link to that clone disagree, restoring nothing and naming `rwv doctor --fix`.
 Then it removes the workweave and applies the rule to its branch when that is a feature.
 Both refusals cover every checkout under the workweave, a clone put there by hand
-included. A workweave whose recorded directory is gone is deleted the same way: its
-registrations and index entry go, and nothing is judged of checkouts that are no longer
-there. `rwv land --retire` does the same after a landing, and a refusal then leaves the
+included. A workweave whose recorded directory is gone is a full deletion as well: the
+rule judges the branch its project checkout's registration has checked out (deleted, or
+kept and listed), the stores its registrations keep are asked as below, and then the
+registrations and the index entry go. A verb addressed at such a workweave with `-w`
+refuses (`stale-registry-entry`); `rwv workweave delete <name>` is the way out. `rwv land --retire` does the same after a landing, and a refusal then leaves the
 landing done and the workweave in place; `rwv land --continue` retires it once nothing
 refuses.
 
@@ -88,8 +90,14 @@ So before it removes a store, rwv asks **every store it removes**, a submodule s
 checked out or not included, what it holds that no remote-tracking branch of a remote the
 store has reaches: a branch, a tag, a backup, an operation's savepoint, edits the VCS set
 aside, a checked-out commit on no branch. It first fetches those remotes, so the answer
-is what the remotes hold now. The removal refuses before it changes anything in two
-cases:
+is what the remotes hold now. The exception is a nested store that holds only what it
+fetched: no ref but branches and remote-tracking branches, each reached by its
+remote-tracking branches as last fetched, and a record of where its checkout stood that
+names only clones, checkouts and resets to fetched commits. A submodule nothing was
+committed, set aside or tagged in is judged without reaching its remote, so deleting or
+retiring a workweave over an untouched submodule works with the network down. A repository
+committed as a gitlink that `.gitmodules` does not describe is a store like any other.
+The removal refuses before it changes anything in two cases:
 
 - **`dropped-repo-has-unique-commits`**: the store holds work no remote has. The refusal
   names each item, with the submodule's path where it is inside one. Publish or merge the
@@ -100,12 +108,15 @@ cases:
   `rwv member remove <repo>` without `--delete`.
 
 `--discard-unpublished` lets the removal go on with the work no remote holds, judged
-against the remotes as last fetched, and lists what went. No backup is kept for it,
+against the remotes as last fetched, and lists what went. On `rwv land` it is accepted only
+with `--continue`, at the retire stop that listed what the stores hold; anywhere else it is
+refused (`inapplicable-flag`). No backup is kept for it,
 because the backup would be inside the store being removed. A removal that touches no
 submodule store asks no remote at all.
 
 A sync or landing that would prune a member the new entries drop, and meets either
-refusal, still completes. It keeps the checkout, says why, and names the removal that
+refusal, still completes. A sync or pull that adds a member makes its checkout only after
+the operation ends. It keeps the checkout, says why, and names the removal that
 takes it later, `rwv member remove <repo> --delete`; a sync then exits 1, since a
 checkout it was asked to prune is still on disk.
 
