@@ -11662,7 +11662,7 @@ mod floor_tests {
         );
         assert_eq!(readiness("git version 2.40.0\n"), ToolReadiness::Ready);
         assert_eq!(
-            readiness("git version 2.39.5 (Apple Git-154)\n"),
+            readiness("git version 2.45.2 (Apple Git-154)\n"),
             ToolReadiness::Ready
         );
         assert_eq!(readiness("git version 3.0.0\n"), ToolReadiness::Ready);

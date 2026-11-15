@@ -317,8 +317,5 @@ fn a_declared_branch_existing_nowhere_offers_its_creation_at_update() {
     );
     assert!(text.contains("name no-such-branch"), "{text}");
     assert!(text.contains("rwv fetch"), "{text}");
-    assert!(
-        text.contains("rwv member set-branch local/org/a nosuch --new"),
-        "{text}"
-    );
+    assert!(!text.contains("choices:"), "{text}");
 }

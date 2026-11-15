@@ -361,13 +361,15 @@ fn an_entry_change_is_reported_with_both_values_verb_after_verb_until_the_push_b
     assert!(update.contains("not yet published"), "{update}");
     assert!(update.contains("unpushed on main"), "{update}");
     assert!(update.contains("main-unpushed"), "{update}");
-    let (keep, restore) = (
-        update.find("rwv member pin").expect("C25 is printed"),
-        update
-            .find(&format!("rwv member set-branch {LIB} main"))
-            .expect("C11 restores the previous value"),
+    assert!(
+        update.contains("next: ") && update.contains("rwv member pin"),
+        "{update}"
     );
-    assert!(keep < restore, "C25 is listed before C11:\n{update}");
+    assert!(
+        !update.contains("choices:")
+            && !update.contains(&format!("rwv member set-branch {LIB} main")),
+        "a completed update prints one next line, no choices block:\n{update}"
+    );
 
     for verb in [&["update"][..], &["lock"][..]] {
         let again = succeeded(&run(&w, verb));

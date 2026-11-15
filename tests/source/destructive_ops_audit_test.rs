@@ -634,17 +634,6 @@ const ALLOWLIST: &[Allowed] = &[
             it still sits at the tip the operation wrote).",
     },
     Allowed {
-        file: "git/merge.rs",
-        pattern: "\"worktree\", \"remove\"",
-        count: 1,
-        callers: &[],
-        justification: "merge_commit_as_refs: removes the scratch worktree \
-            it added moments before to merge in a release with no \
-            merge-tree. It runs after the merge was aborted, so the \
-            worktree is clean, and without --force: a worktree holding \
-            anything is left standing and the error returned.",
-    },
-    Allowed {
         file: "git/records.rs",
         pattern: "\"update-ref\"",
         count: 1,
