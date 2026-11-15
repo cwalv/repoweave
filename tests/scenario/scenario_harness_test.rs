@@ -925,6 +925,26 @@ fn discard_unpublished_applies_only_at_the_retire_stop() {
 }
 
 #[test]
+fn a_workweave_delete_counts_a_commit_only_a_detached_submodule_worktree_holds() {
+    runner::run(
+        scenarios::removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
+            scenarios::DetachedWorktreeOf::Workweave,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn member_remove_delete_counts_a_commit_only_a_detached_submodule_worktree_holds() {
+    runner::run(
+        scenarios::removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
+            scenarios::DetachedWorktreeOf::Primary,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1903,6 +1923,12 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
+        scenarios::DetachedWorktreeOf::Workweave
+    ),
+    removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
+        scenarios::DetachedWorktreeOf::Primary
+    ),
     discard_unpublished_applies_only_at_the_retire_stop,
     a_workweave_removal_judges_an_untouched_submodule_store_offline(
         scenarios::InTheSubmodule::Nothing,

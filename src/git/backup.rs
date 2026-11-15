@@ -254,7 +254,8 @@ impl GitVcs {
         walk.extend(remote_globs.iter().cloned());
         walk.push("--".to_owned());
         let unreached = Self::run(walk, repo)?;
-        let unreached: HashSet<&str> = unreached.lines().filter(|l| !l.is_empty()).collect();
+        let unreached_in_order: Vec<&str> = unreached.lines().filter(|l| !l.is_empty()).collect();
+        let unreached: HashSet<&str> = unreached_in_order.iter().copied().collect();
         let listing = Self::run(
             [
                 "for-each-ref",
@@ -314,6 +315,18 @@ impl GitVcs {
                 held.push(HeldAlone {
                     kind: HeldKind::CheckedOut,
                     name: head.chars().take(ID_WIDTH).collect(),
+                });
+            }
+        }
+        if held.is_empty() {
+            if let Some(newest) = unreached_in_order.first() {
+                held.push(HeldAlone {
+                    kind: HeldKind::Other,
+                    name: format!(
+                        "{} commit(s) only another checkout of it holds, newest {}",
+                        unreached_in_order.len(),
+                        newest.chars().take(ID_WIDTH).collect::<String>()
+                    ),
                 });
             }
         }

@@ -945,6 +945,73 @@ pub fn a_workweave_removal_judges_an_untouched_submodule_store_offline(
     )
 }
 
+/// Where a commit only another checkout of a submodule's store holds is made.
+#[derive(Debug, Clone, Copy)]
+pub enum DetachedWorktreeOf {
+    /// The submodule store a workweave's checkout keeps.
+    Workweave,
+    /// The submodule store inside the primary's clone.
+    Primary,
+}
+
+/// A worktree of a submodule's store, detached on a commit no ref holds,
+/// holds that commit alone: the removal that takes the store refuses,
+/// counting it, and keeps the store.
+pub fn removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
+    of: DetachedWorktreeOf,
+) -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    let (at, removal, stands) = match of {
+        DetachedWorktreeOf::Workweave => {
+            steps.push(create("w"));
+            (
+                ww("w"),
+                Step::rwv(&a(), &["workweave", "delete", "w"]),
+                ".workweaves/proj--w/local/remotes/app",
+            )
+        }
+        DetachedWorktreeOf::Primary => (
+            a(),
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"]),
+            "weave/local/remotes/app",
+        ),
+    };
+    let (from_sub, from_app) = match of {
+        DetachedWorktreeOf::Workweave => ("../../../../../subwt", "../../../../subwt"),
+        DetachedWorktreeOf::Primary => ("../../../../subwt", "../../../subwt"),
+    };
+    steps.extend([
+        Step::git(
+            &at,
+            Repo::App,
+            &["-C", "sub", "worktree", "add", "-q", "--detach", from_sub],
+        ),
+        Step::git(
+            &at,
+            Repo::App,
+            &[
+                "-C",
+                from_app,
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "only-in-the-worktree",
+            ],
+        ),
+        removal
+            .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+            .claim(Claim::OutputContains(
+                "1 commit(s) only another checkout of it holds",
+            ))
+            .claim(Claim::DirStands(Machine::A, stands)),
+    ]);
+    scenario(
+        "a removal counts a commit only a detached worktree of a submodule holds",
+        steps,
+    )
+}
+
 /// The verbs that remove a checkout of a member holding a nested repository
 /// committed as a gitlink no `.gitmodules` entry describes.
 #[derive(Debug, Clone, Copy)]

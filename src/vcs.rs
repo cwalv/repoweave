@@ -4071,7 +4071,9 @@ pub trait Vcs: Send + Sync {
     /// For git: `git rev-list --all --not` the configured remotes'
     /// remote-tracking refs, then every ref and a detached HEAD whose tip
     /// that lists; a ref on a tree or blob counts where `rev-list --objects`
-    /// of those refs does not list it.
+    /// of those refs does not list it. Where that walk lists commits and none
+    /// of those is named, as for a commit only another worktree's detached
+    /// HEAD holds, one entry names how many and the newest.
     fn held_by_no_remote(&self, repo: &Path) -> Result<Vec<HeldAlone>, VcsError>;
 
     /// Whether everything `repo`'s store holds came from its remotes and
