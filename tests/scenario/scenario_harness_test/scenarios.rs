@@ -29506,3 +29506,52 @@ pub fn dc26_migration() -> Scenario {
         ],
     )
 }
+
+pub fn schema_history() -> Scenario {
+    let lib_main = declared_branch_text(Repo::Lib, "main");
+    let lib_old = lib_main.replace("branch =", "version =");
+    scenario(
+        "schema-history: an earlier release's manifest in history is read as declaring nothing",
+        vec![
+            Step::git(&a(), Repo::Proj, &["switch", "-q", "-c", "stable"]),
+            Step::rwv(&a(), &["branch", "set-mode", "stable", "declared"]).expect(Exit::Succeeds),
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &lib_main, &lib_old),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "old stable"]),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "stable"])
+                .pushes(Remote::origin(Repo::Proj), "stable"),
+            Step::git(&a(), Repo::Proj, &["switch", "-q", "main"]),
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &lib_main, &lib_old),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "old main"]),
+            Step::rwv(&a(), &["lock"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere)),
+            Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["merge", "-q", "--no-ff", "-m", "merge old stable", "stable"],
+            ),
+            Step::rwv(&a(), &["lock"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere)),
+            Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            publishes_records(Step::rwv(&a(), &["push"]))
+                .pushes(Remote::origin(Repo::Proj), "main")
+                .expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "create", "feat"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "delete", "feat"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("unparseable")),
+            Step::rwv(&a(), &["switch", "stable"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
+                .claim(Claim::OutputContains("rwv doctor --fix"))
+                .claim(Claim::OnBranch {
+                    at: a(),
+                    repo: Repo::Lib,
+                    branch: "main",
+                }),
+            Step::rwv_printed_exactly(&a(), "rwv doctor --fix").expect(Exit::Succeeds),
+            Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        ],
+    )
+}

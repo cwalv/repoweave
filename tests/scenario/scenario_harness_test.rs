@@ -976,6 +976,7 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    schema_history,
     dc26_migration,
     dc24_no_remote_names,
     dc23_local_verbs_offline,
@@ -8726,4 +8727,9 @@ fn every_flow_runs_on_a_weave_with_no_remote_named_origin() {
 #[test]
 fn a_weave_an_earlier_release_wrote_refuses_naming_its_fix_and_the_fix_converges() {
     runner::run(scenarios::dc26_migration()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_manifest_of_an_earlier_release_in_history_declares_nothing_and_never_refuses_a_verb() {
+    runner::run(scenarios::schema_history()).assert_fully_decided_green();
 }
