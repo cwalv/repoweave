@@ -31,7 +31,7 @@ For resting state on disk, installing a newer `rwv` does not touch existing file
 |---|---|---|
 | `.rwv-op` / `.rwv-op-lease` | In-flight sync state | Finish or run `rwv abort` on the **old** binary before upgrading; left in progress, the lines the refusal prints end it |
 | `.rwv-workweave` & member slots | Written by `rwv` itself | `rwv doctor --fix` from the primary weave migrates them |
-| `projects/<project>/.rwv-workweave-index` | Written by `rwv` itself | `rwv doctor --fix` rebuilds the index in the project clone from the workweave markers and removes the old file; the recorded basedir is not carried over (Step 8) |
+| `projects/<project>/.rwv-workweave-index` | Written by `rwv` itself | `rwv doctor --fix` rebuilds the index in the project clone from the workweave markers, records the container it named as the basedir, and removes the old file (Step 8) |
 | `rwv.yaml` → `rwv.toml` | Hand-authored by you | Rewrite as `rwv.toml` and delete `rwv.yaml` (no `--fix` arm) |
 | `version` and `submodules` keys in `rwv.toml` | Hand-authored by you | `rwv doctor --fix` renames them to `branch` and `recurse-submodules` and commits only that rename |
 | `rwv.lock` | Generated output | `rwv lock` writes a file that does not parse afresh, pinning nothing; `rwv member pin` gives each member its pin again |
@@ -203,7 +203,13 @@ An earlier release kept each project's workweave index at `projects/<project>/.r
 rwv -C <primary> doctor --fix
 ```
 
-The rebuild runs after the markers are migrated (Step 1), so it lists the workweave each checkout of the project clone sits in, by the name its `.rwv-workweave` marker records, writes the index into the project clone, and removes the old file. The basedir the old index recorded is not carried over: `rwv workweave set-default-create-basedir` records it again. If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
+The rebuild runs after the markers are migrated (Step 1), so it lists the workweave each checkout of the project clone sits in, by the name its `.rwv-workweave` marker records, writes the index into the project clone with the container the old file recorded as the basedir, so `rwv workweave create` keeps placing new workweaves where the earlier release did, and removes the old file. Where no file records a container, the fix says where new workweaves will be created and prints, for each other directory the existing workweaves stand in, the line that records it:
+
+```bash
+rwv -C <primary> workweave set-default-create-basedir <dir> --project <project>
+```
+
+If the old file was committed to the project repo, the removal leaves the deletion for you to commit.
 
 ## Step 9 — the lock merge driver an earlier release set up
 

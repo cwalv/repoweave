@@ -720,9 +720,12 @@ adopt or prune against an unreadable index would fail on the same parse error.
 project's workweaves, rebuilds the index from what the workweaves on disk
 record: each checkout the project clone links, wherever its directory is,
 sits in a workweave whose `.rwv-workweave` marker holds its project, name and
-parent. What no marker holds is not rebuilt: the basedir the index recorded
-(`rwv workweave set-default-create-basedir` records it again). The rebuild
-removes a file at the old path.
+parent. The basedir is the container a file an earlier release kept at the
+old path records. Where nothing records one, the fix names the default basedir
+new workweaves will be created in and, for each other directory the existing
+workweaves stand in, prints `rwv -C <primary> workweave
+set-default-create-basedir <dir> --project <project>`, which records it. The
+rebuild removes a file at the old path.
 
 ### `workweave-tree-integrity`
 

@@ -508,6 +508,130 @@ fn an_unparseable_index_reports_itself_and_doctor_fix_rebuilds_it() {
     );
 }
 
+/// A workweave created under `seats`, away from the default basedir, whose
+/// project then holds the index an earlier release kept: at the old path,
+/// recording `container`, with the workweave's marker naming no workweave.
+fn earlier_release_index(tmp: &Path, container: Option<&Path>) -> (PathBuf, PathBuf) {
+    let ws = make_workspace(tmp, "web-app");
+    let seats = tmp.join("seats");
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "feat"])
+        .arg("--basedir")
+        .arg(&seats)
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let seat = seats.join("web-app--feat");
+    let project_dir = ws.join("projects/web-app");
+    std::fs::remove_file(index_path(&ws, "web-app")).unwrap();
+    let mut old = serde_json::json!({
+        "workweaves": { "feat": seat },
+        "receipts": [],
+    });
+    if let Some(container) = container {
+        old["container"] = serde_json::json!(container);
+    }
+    std::fs::write(
+        common::old_path_index_of(&project_dir),
+        serde_json::to_string_pretty(&old).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        seat.join(".rwv-workweave"),
+        serde_json::to_string(&serde_json::json!({
+            "primary": ws,
+            "project": "web-app",
+            "parent": ws,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    (ws, seats)
+}
+
+/// The rehearsal's primary `rwv doctor --fix` on a 0.25.0 weave whose
+/// workweaves live in a container of their own, then `rwv workweave create`:
+/// the new workweave goes where the earlier release put them, not beside the
+/// primary.
+#[test]
+fn the_rebuild_carries_the_earlier_release_container_into_the_basedir() {
+    let tmp = common::tempdir().unwrap();
+    let seats = tmp.path().join("seats");
+    let (ws, seats) = earlier_release_index(tmp.path(), Some(&seats));
+
+    let fixed = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&fixed.stdout);
+    let carried = repoweave::path_spelling::resolve(&seats).unwrap();
+    assert!(
+        stdout.contains(&format!(
+            "new workweaves are created in {}, the container the earlier release's index \
+             recorded",
+            carried.display()
+        )),
+        "{stdout}"
+    );
+    assert_eq!(
+        read_index(&ws, "web-app")["basedir"].as_str(),
+        Some(carried.to_string_lossy().as_ref())
+    );
+
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "fresh"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(seats.join("web-app--fresh").is_dir());
+    assert!(!tmp.path().join(".workweaves/web-app--fresh").exists());
+}
+
+/// An index whose basedir nothing can tell: the rebuild says where new
+/// workweaves will go and prints the line that records the directory the
+/// existing ones stand in, which, run as printed, sends the next one there.
+#[test]
+fn a_rebuild_that_cannot_know_the_basedir_prints_the_line_that_records_it() {
+    let tmp = common::tempdir().unwrap();
+    let (ws, seats) = earlier_release_index(tmp.path(), None);
+
+    let fixed = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&fixed.stdout);
+    assert!(
+        stdout.contains("no basedir was recorded, so new workweaves are created in"),
+        "{stdout}"
+    );
+    let line = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("rwv -C") && line.contains("set-default-create-basedir"))
+        .unwrap_or_else(|| panic!("no basedir line in:\n{stdout}"));
+    assert!(
+        line.contains(
+            &repoweave::path_spelling::resolve(&seats)
+                .unwrap()
+                .to_string_lossy()
+                .to_string()
+        ),
+        "{line}"
+    );
+    let ran = common::run_advised(line, &ws);
+    assert!(ran.status.success(), "{}", common::cli::describe(&ran));
+
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "fresh"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    assert!(seats.join("web-app--fresh").is_dir());
+    assert!(!tmp.path().join(".workweaves/web-app--fresh").exists());
+}
+
 #[test]
 fn the_index_lives_in_the_clone_and_leaves_the_project_checkout_untouched() {
     let tmp = common::tempdir().unwrap();

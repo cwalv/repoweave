@@ -273,8 +273,8 @@ delete --discard-unmerged-commits`, whose successor is `--discard-unlanded`.
 The reader of the workweave index at `projects/<project>/.rwv-workweave-index`
 is removed: a file there refuses as `unreadable-workweave-index`, and `rwv
 doctor --fix` rebuilds the index into the project clone from the workweaves'
-markers (the recorded default basedir is not carried over; `rwv workweave
-set-default-create-basedir` records it again). The health floor file and its
+markers, recording the container the file named as the basedir, so new
+workweaves keep going where that release put them. The health floor file and its
 `health-floor-too-low` refusal are removed. `rwv.yaml` is still reported as `legacy-manifest-format` and still has no
 `--fix` arm.
 

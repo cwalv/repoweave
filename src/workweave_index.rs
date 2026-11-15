@@ -24,7 +24,8 @@
 //! written it. A file at `projects/<project>/.rwv-workweave-index`, where
 //! earlier releases kept the index, is read by nothing: every read of the
 //! index refuses it as unreadable, naming the rebuild, which writes the index
-//! afresh from the workweave markers and removes the old file.
+//! afresh from the workweave markers, with the container that file records
+//! as the basedir, and removes the old file.
 //!
 //! ## Advisory, validated before use
 //!
@@ -233,15 +234,38 @@ pub fn rebuild_command(primary_root: &Path) -> String {
     format!("rwv -C {} doctor --fix", primary_root.display())
 }
 
+/// The container the index an earlier release kept at the old path records:
+/// the directory that release placed new workweaves under.
+fn old_path_container(primary_root: &Path, project: &ProjectName) -> Option<CanonicalPath> {
+    let content = old_path_file(primary_root, project).read_to_string().ok()?;
+    let index: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let container = Path::new(index.get("container")?.as_str()?);
+    container
+        .is_absolute()
+        .then(|| CanonicalPath::of(container))
+}
+
+/// What [`rebuild`] wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rebuilt {
+    /// The index was replaced, with the basedir the earlier release's file
+    /// recorded as its container where that file names one.
+    Replaced { basedir: Option<CanonicalPath> },
+    /// The index read by the time the claim was held; only the file at the
+    /// old path was removed.
+    OldPathRemoved,
+}
+
 /// Replace the unreadable index of `(primary_root, project)` with one listing
 /// `found`, each workweave with the parent its marker records, and remove the
-/// file an earlier release kept the index in. An index that reads by the time
-/// the claim is held is left as it is.
+/// file an earlier release kept the index in, carrying the container it
+/// records into the basedir. An index that reads by the time the claim is
+/// held is left as it is.
 pub fn rebuild(
     primary_root: &Path,
     project: &ProjectName,
     found: &[(WorkweaveName, CanonicalPath, CanonicalPath)],
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<Rebuilt>> {
     IndexClaim::hold_unchecked(primary_root, project, |claim| {
         let old = old_path_file(primary_root, project);
         let had_old = old.exists();
@@ -259,10 +283,11 @@ pub fn rebuild(
                 old.remove()
                     .with_context(|| format!("failed to remove {old}"))?;
             }
-            return Ok(had_old);
+            return Ok(had_old.then_some(Rebuilt::OldPathRemoved));
         }
+        let basedir = old_path_container(primary_root, project);
         let index = WorkweaveIndex {
-            basedir: None,
+            basedir: basedir.clone(),
             workweaves: found
                 .iter()
                 .map(|(name, path, parent)| {
@@ -281,7 +306,7 @@ pub fn rebuild(
             old.remove()
                 .with_context(|| format!("failed to remove {old} after rebuilding"))?;
         }
-        Ok(true)
+        Ok(Some(Rebuilt::Replaced { basedir }))
     })
 }
 
@@ -961,7 +986,12 @@ mod tests {
             CanonicalPath::of(&primary),
         )];
 
-        assert!(rebuild(&primary, &project, &found).unwrap());
+        assert_eq!(
+            rebuild(&primary, &project, &found).unwrap(),
+            Some(Rebuilt::Replaced {
+                basedir: Some(at("/abs/container"))
+            })
+        );
 
         assert!(!old_path_file(&primary, &project).exists());
         let index = read(&primary, &project).unwrap().unwrap();
@@ -970,8 +1000,14 @@ mod tests {
             vec![name("boxed")],
             "the index lists what the markers say, not what the old file listed"
         );
-        assert!(
-            !rebuild(&primary, &project, &found).unwrap(),
+        assert_eq!(
+            index.basedir,
+            Some(at("/abs/container")),
+            "the container the old file recorded is where new workweaves go"
+        );
+        assert_eq!(
+            rebuild(&primary, &project, &found).unwrap(),
+            None,
             "nothing left to rebuild"
         );
     }
@@ -985,7 +1021,10 @@ mod tests {
         record(&primary, &project, "a");
         write_old_path(&primary, &project, br#"{"workweaves":{"b":"/old/b"}}"#);
 
-        assert!(rebuild(&primary, &project, &[]).unwrap());
+        assert_eq!(
+            rebuild(&primary, &project, &[]).unwrap(),
+            Some(Rebuilt::OldPathRemoved)
+        );
 
         assert!(!old_path_file(&primary, &project).exists());
         let index = read(&primary, &project).unwrap().unwrap();

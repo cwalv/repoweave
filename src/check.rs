@@ -3848,14 +3848,29 @@ fn other_name_for(
     .unwrap_or_else(|| name.clone())
 }
 
+/// What [`rebuild_workweave_index`] did.
+pub enum RebuiltIndex {
+    /// The index was written listing `names`, with the basedir the earlier
+    /// release's file recorded, or with none, while the workweaves stand in
+    /// `elsewhere`, directories other than the default basedir.
+    Replaced {
+        names: Vec<WorkweaveName>,
+        basedir: Option<CanonicalPath>,
+        elsewhere: BTreeSet<CanonicalPath>,
+    },
+    /// The index read by the time its claim was held; the file at the old
+    /// path was removed.
+    OldPathRemoved,
+}
+
 /// Rebuild `project`'s unreadable workweave index from the markers of the
 /// workweaves the project clone's linked checkouts sit in, wherever their
-/// directories are: the names it lists, or `None` where the index read by the
-/// time its claim was held.
+/// directories are; `None` where the index read by the time its claim was
+/// held and no file stood at the old path.
 pub fn rebuild_workweave_index(
     ws_root: &Path,
     project: &crate::manifest::ProjectName,
-) -> anyhow::Result<Option<Vec<WorkweaveName>>> {
+) -> anyhow::Result<Option<RebuiltIndex>> {
     let mut found: Vec<_> = linked_workweaves(ws_root, project)
         .into_iter()
         .map(|(marker, root)| {
@@ -3874,7 +3889,70 @@ pub fn rebuild_workweave_index(
         .collect();
     found.retain(|(name, ..)| !claimed_twice.contains(name));
     let names = found.iter().map(|(name, ..)| name.clone()).collect();
-    Ok(crate::workweave_index::rebuild(ws_root, project, &found)?.then_some(names))
+    let default = CanonicalPath::of(&crate::workweave_index::default_basedir(ws_root));
+    let elsewhere = found
+        .iter()
+        .filter_map(|(_, path, _)| path.as_path().parent().map(CanonicalPath::of))
+        .filter(|dir| *dir != default)
+        .collect();
+    Ok(
+        crate::workweave_index::rebuild(ws_root, project, &found)?.map(|rebuilt| match rebuilt {
+            crate::workweave_index::Rebuilt::Replaced { basedir } => RebuiltIndex::Replaced {
+                names,
+                basedir,
+                elsewhere,
+            },
+            crate::workweave_index::Rebuilt::OldPathRemoved => RebuiltIndex::OldPathRemoved,
+        }),
+    )
+}
+
+/// The line that records `dir` as the directory `project`'s new workweaves
+/// are created in.
+pub fn set_basedir_command(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+    dir: &Path,
+) -> String {
+    format!(
+        "rwv -C {} workweave set-default-create-basedir {} --project {project}",
+        ws_root.display(),
+        dir.display()
+    )
+}
+
+/// What the `--fix` of an unreadable index says it did, past the names.
+fn rebuilt_basedir_text(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+    basedir: Option<&CanonicalPath>,
+    elsewhere: &BTreeSet<CanonicalPath>,
+) -> String {
+    if let Some(basedir) = basedir {
+        return format!(
+            "; new workweaves are created in {}, the container the earlier release's index \
+             recorded",
+            basedir.as_path().display()
+        );
+    }
+    let default = crate::workweave_index::default_basedir(ws_root);
+    if elsewhere.is_empty() {
+        return format!(
+            "; no basedir was recorded, so new workweaves are created in {}",
+            default.display()
+        );
+    }
+    format!(
+        "; no basedir was recorded, so new workweaves are created in {}, and the existing ones \
+         stand elsewhere; this records a directory they stand in as the one new workweaves are \
+         created in:\n  {}",
+        default.display(),
+        elsewhere
+            .iter()
+            .map(|dir| set_basedir_command(ws_root, project, dir.as_path()))
+            .collect::<Vec<_>>()
+            .join("\n  ")
+    )
 }
 
 /// Adopt an on-disk workweave into its project's workweave index, with the
@@ -7188,8 +7266,8 @@ impl CheckViolation {
                 "{}: workweave index does not parse ({error}); the recorded \
                      workweaves for project `{project}` are unevaluated. `rwv doctor \
                      --fix` rebuilds it from the markers of the workweaves the project \
-                     clone's checkouts sit in, wherever they are; it cannot rebuild the \
-                     basedir the index recorded",
+                     clone's checkouts sit in, wherever they are, with the container an \
+                     earlier release's file at the old path records as the basedir",
                 index_path.display()
             ),
             // Relayed, not narrated: the loader states which file failed
@@ -9512,12 +9590,15 @@ fn apply_finding_repairs(
 
             CheckViolation::UnreadableWorkweaveIndex { project, .. } => {
                 match rebuild_workweave_index(ctx.primary_path(), project) {
-                    Ok(Some(names)) => {
+                    Ok(Some(RebuiltIndex::Replaced {
+                        names,
+                        basedir,
+                        elsewhere,
+                    })) => {
                         outln!(
                             "[fixed] core: unreadable-workweave-index of project `{project}`: \
                              rebuilt it listing {} workweave(s) the project clone's \
-                             checkouts hold{}{}; the basedir it recorded is not rebuilt: \
-                             `rwv workweave set-default-create-basedir` records it again",
+                             checkouts hold{}{}{}",
                             names.len(),
                             if names.is_empty() { "" } else { ": " },
                             names
@@ -9525,6 +9606,20 @@ fn apply_finding_repairs(
                                 .map(ToString::to_string)
                                 .collect::<Vec<_>>()
                                 .join(", "),
+                            rebuilt_basedir_text(
+                                ctx.primary_path(),
+                                project,
+                                basedir.as_ref(),
+                                &elsewhere
+                            ),
+                        );
+                        true
+                    }
+                    Ok(Some(RebuiltIndex::OldPathRemoved)) => {
+                        outln!(
+                            "[fixed] core: unreadable-workweave-index of project `{project}`: \
+                             removed the file an earlier release kept at the old path; the \
+                             index the project clone keeps reads"
                         );
                         true
                     }
