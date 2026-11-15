@@ -189,6 +189,7 @@ pub fn case_token(v: &CheckViolation) -> String {
         },
         CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker".into(),
         CheckViolation::UnmigratedWorkweave { .. } => "unmigrated-workweave".into(),
+        CheckViolation::UnreadableHolder { .. } => "unreadable-holder".into(),
         CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state".into(),
         CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
         CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
@@ -533,6 +534,13 @@ pub fn corpus() -> Vec<CheckViolation> {
             workweave_dir: path("/ws-seats/proj--w1"),
             project: project(),
             parts: vec![UnmigratedPart::PreSchemaKeys, UnmigratedPart::LockAttribute],
+        },
+        CheckViolation::UnreadableHolder {
+            why: "the directory /ws-seats/proj--w1 a checkout of project `proj`'s clone is \
+                  registered in is not there"
+                .into(),
+            line: "rwv -C /ws doctor --fix --forget-gone-workspace /ws-seats/proj--w1".into(),
+            withholds: true,
         },
         CheckViolation::UnreadableOwnedState {
             project: project(),

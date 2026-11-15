@@ -1813,6 +1813,32 @@
         {
           "type": "object",
           "required": [
+            "kind",
+            "line",
+            "why",
+            "withholds"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unreadable-holder"
+              ]
+            },
+            "line": {
+              "type": "string"
+            },
+            "why": {
+              "type": "string"
+            },
+            "withholds": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
             "active",
             "error",
             "kind",

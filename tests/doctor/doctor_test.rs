@@ -1386,6 +1386,11 @@ mod doctor_json {
             project: String,
             parts: Vec<String>,
         },
+        UnreadableHolder {
+            why: String,
+            line: String,
+            withholds: bool,
+        },
         UnreadableOwnedState {
             project: String,
             state_path: String,
@@ -2416,9 +2421,10 @@ fn dangling_reference_names_rwv_update_repair_verb() {
 }
 
 /// A landing claim whose owner workspace is not here is reported, never
-/// taken over, and released by `rwv doctor --fix`.
+/// taken over, kept by a bare `rwv doctor --fix`, and released by the
+/// `--forget-gone-workspace` line it prints.
 #[test]
-fn a_claim_whose_owner_is_not_here_is_reported_and_released_by_fix() {
+fn a_claim_whose_owner_is_not_here_is_kept_by_fix_and_released_by_the_line_it_prints() {
     let tmp = common::tempdir().unwrap();
     let root = tmp.path().join("ws");
     std::fs::create_dir_all(root.join("github")).unwrap();
@@ -2446,8 +2452,8 @@ fn a_claim_whose_owner_is_not_here_is_reported_and_released_by_fix() {
         .expect("failed to spawn rwv doctor");
     let json = String::from_utf8_lossy(&report.stdout);
     assert!(
-        json.contains("claim-owner-unreachable") && json.contains("4242"),
-        "doctor reports the claim: {json}"
+        json.contains("unreadable-holder") && json.contains("not-mounted-here"),
+        "doctor reports the claim's owner: {json}"
     );
     assert!(claim_dir.join(".rwv-landing.lock").exists());
 
@@ -2462,12 +2468,24 @@ fn a_claim_whose_owner_is_not_here_is_reported_and_released_by_fix() {
         String::from_utf8_lossy(&fixed.stderr)
     );
     assert!(
-        combined.contains("claim-owner-unreachable"),
-        "the fix names what it released: {combined}"
+        claim_dir.join(".rwv-landing.lock").exists(),
+        "a bare --fix keeps the claim of an owner it cannot read: {combined}"
+    );
+    let line = combined
+        .lines()
+        .map(str::trim)
+        .find(|line| line.contains("--forget-gone-workspace"))
+        .unwrap_or_else(|| panic!("no line releases the claim: {combined}"));
+    let ran = common::run_advised(line, &root);
+    let ran_text = common::cli::describe(&ran);
+    assert!(ran.status.success(), "{ran_text}");
+    assert!(
+        ran_text.contains("released the landing claim at") && ran_text.contains("4242"),
+        "the line names what it released: {ran_text}"
     );
     assert!(
         !claim_dir.join(".rwv-landing.lock").exists(),
-        "--fix released the claim: {combined}"
+        "the line released the claim: {ran_text}"
     );
 }
 

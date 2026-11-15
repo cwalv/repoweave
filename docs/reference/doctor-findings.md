@@ -86,6 +86,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `marker-unverifiable`, `unwitnessed` | Error | Report-only |
 | [`legacy-workweave-marker`](#legacy-workweave-marker) | Warning | Auto-fixable |
 | [`unmigrated-workweave`](#unmigrated-workweave) | Warning | Report-only |
+| [`unreadable-holder`](#unreadable-holder) | Warning | Report-only by default (`--forget-gone-workspace`) |
 | [`unreadable-owned-state`](#unreadable-owned-state) | Warning | Report-only |
 | [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
@@ -690,6 +691,38 @@ run in that workweave:
 ```bash
 rwv -C <workweave> doctor --fix
 ```
+
+### `unreadable-holder`
+
+**Warning. Report-only by default.** A workspace that may hold an operation
+cannot be read, so whether that operation stands cannot be told: a project's
+workweave index does not parse; the directory an index records for a
+workweave, or one a checkout of a project clone is registered in, or the owner
+a lease or landing claim names, is not there (a volume not mounted, a rename
+in progress, a directory removed by hand); or a workweave's `.rwv-op` names no
+operation this rwv reads. The workspaces `rwv doctor` asks are the primary,
+every workweave an index records, and every workspace a checkout of a project
+clone is registered in, wherever it runs. While one cannot be read, `--fix`
+drops no savepoint that no readable record claims, prunes no registration of a
+checkout in it, and removes no lease and releases no landing claim it may own;
+`withholds` in `--json` says whether savepoints are kept for it. The finding
+names the workspace and prints the line that ends the doubt.
+
+**What to do:** bring the directory back, and the next `rwv doctor` reads it.
+Otherwise run the line the finding prints:
+
+| Cannot be read | Line |
+|---|---|
+| the index | `rwv -C <primary> doctor --fix` rebuilds it |
+| a recorded workweave's directory | `rwv -C <primary> workweave delete <name> --project <project>` |
+| a directory no index records: a registered checkout's, or a lease's or claim's owner | `rwv -C <primary> doctor --fix --forget-gone-workspace <dir>` |
+| a record naming no operation | `rwv -C <workweave> abort --discard-unreadable-record` |
+
+`--forget-gone-workspace <dir>` gives up whatever an operation that may still
+run in `<dir>` holds: it releases every registration of a checkout under
+`<dir>`, held ones too, the lease each workspace holds for an operation `<dir>`
+owns, and the landing claims `<dir>` owns, then runs the fix. It refuses a path
+that is there, and one an index records, naming the `workweave delete`.
 
 ### `unreadable-owned-state`
 
@@ -1656,8 +1689,9 @@ holds that no branch reaches as a backup before dropping it.
 
 ### `dead-op-lease`
 
-**Warning. Auto-fixable.** A `.rwv-op-lease` whose recorded owner has no
-matching `.rwv-op`. Unlike `stale-op-state`, this one *is* auto-fixable,
+**Warning. Auto-fixable.** A `.rwv-op-lease` whose recorded owner workspace
+is there and has no matching `.rwv-op`. A lease whose owner is not there is
+[`unreadable-holder`](#unreadable-holder) instead. Unlike `stale-op-state`, this one *is* auto-fixable,
 because the classification is structural rather than temporal: the lease
 pointer resolves to no paired owner record. No wall clock, no timeout, no
 liveness guess. Dropping a lease whose owner is provably absent cannot clobber
@@ -1681,13 +1715,13 @@ removes it.
 ### `claim-owner-unreachable`
 
 **Warning. Auto-fixable.** A target's landing claim names an operation whose
-owner workspace is not here to read: the directory does not exist from where
-`rwv doctor` runs. That is what a deleted workweave looks like, and also what
-a workweave on another mount, or outside a sandbox the verb runs in, looks
-like. Only a workspace that is here and records no such operation proves the
-operation gone, so no landing takes this claim over: a landing into the target
-waits on it and then refuses with this kind, naming the operation and its
-workspace.
+owner path is a directory that is not a workspace. Only a workspace that is
+here and records no such operation proves the operation gone, so no landing
+takes this claim over: a landing into the target waits on it and then refuses
+with this kind, naming the operation and its workspace. A claim whose owner
+path is not there at all (a deleted workweave, one on another mount, one
+outside a sandbox the verb runs in) is [`unreadable-holder`](#unreadable-holder)
+instead, and `--fix` keeps it.
 
 **What to do:** if the operation still runs where its workspace is, end it
 there with its `--continue` or `rwv abort`. If it is gone, `rwv doctor --fix`

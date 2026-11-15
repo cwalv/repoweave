@@ -400,8 +400,25 @@ pub struct UnreachableClaim {
 }
 
 /// Every claim in the store of `repo_dir` whose owner workspace is not here to
-/// read.
+/// read while a directory stands at its path.
 pub fn unreachable_claims(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreachableClaim> {
+    claims_not_here(vcs, repo_dir)
+        .into_iter()
+        .filter(|claim| claim.owner.is_dir())
+        .collect()
+}
+
+/// Every claim in the store of `repo_dir` whose owner path is not a
+/// directory: whether its op stands cannot be told, so only the release of
+/// that workspace as gone ends it.
+pub fn claims_of_absent_owners(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreachableClaim> {
+    claims_not_here(vcs, repo_dir)
+        .into_iter()
+        .filter(|claim| !claim.owner.is_dir())
+        .collect()
+}
+
+fn claims_not_here(vcs: &dyn Vcs, repo_dir: &Path) -> Vec<UnreachableClaim> {
     let Ok(dir) = claims_dir(vcs, repo_dir) else {
         return Vec::new();
     };
@@ -653,9 +670,14 @@ fn take_within(
                     "another operation moving '{target}' holds it: op {op}, recorded in {owner}, \
                      which is not here to read, so whether that operation still stands cannot be \
                      told from here. If it runs where {owner} is, end it there. If it is gone, \
-                     `rwv doctor --fix` run here releases its claim, and then this landing runs.",
+                     this, run here, releases its claim, and then this landing runs:\n  {release}",
                     op = holder.op,
                     owner = holder.owner.as_path().display(),
+                    release = if holder.owner.as_path().is_dir() {
+                        crate::workspace::rwv_line(owner, "doctor --fix")
+                    } else {
+                        crate::op_state::forget_gone_workspace_line(owner, holder.owner.as_path())
+                    },
                 ),
                 Standing::Live(holder) | Standing::Dead(holder) => crate::refuse!(
                     RefusalKind::StateClaimHeld,

@@ -274,6 +274,15 @@ pub enum Commands {
         /// runs. Without this flag, `--fix` reports them.
         #[arg(long, requires = "fix")]
         release_unreachable_claims: bool,
+        /// With `--fix`, first release what the workspace at this path, which
+        /// is gone for good and which no index records, holds in the weave:
+        /// every registration of a checkout under it, the leases and the
+        /// landing claims of operations it owns. Refused for a path that is
+        /// there or that an index records. Without this flag, `--fix` keeps
+        /// them, and the savepoints no readable record claims, for as long as
+        /// the workspace cannot be read.
+        #[arg(long, requires = "fix", value_name = "DIR")]
+        forget_gone_workspace: Option<Operand>,
         /// With `--fix`, in each checkout of this workspace whose branch
         /// moved under it and that holds files both that move and an edit
         /// here changed, keep the working copy and the VCS's record of it as a backup, point

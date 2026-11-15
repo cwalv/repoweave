@@ -1624,6 +1624,13 @@ pub(super) const POINTS: &[Row] = &[
         elsewhere: "only a landing composes its source before advancing the target.",
     },
     Row {
+        point: "doctor-savepoints-listed",
+        cells: &[],
+        same_as: &[],
+        timing_dependent: false,
+        elsewhere: "reached only by `rwv doctor`, which records no operation: there is nothing to continue or abort. tests/doctor/stopped_op_savepoints_test.rs holds it there while an operation starts.",
+    },
+    Row {
         point: "drift-merge-carry",
         cells: &[],
         same_as: &[],

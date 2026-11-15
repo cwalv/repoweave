@@ -4438,6 +4438,20 @@ impl Vcs for GitVcs {
         Ok(RegistrationPrune::Pruned)
     }
 
+    fn release_registration_hold(&self, repo: &Path, worktree: &Path) -> Result<(), VcsError> {
+        let Some(record) = Self::worktree_records(repo)?
+            .into_iter()
+            .find(|record| same_location(&record.path, worktree))
+        else {
+            return Ok(());
+        };
+        if record.locked {
+            let registered = GitArg::from_path(&record.path, "worktree path")?;
+            Self::run_awaiting_peers(Argv::from(["worktree", "unlock"]).path(&registered), repo)?;
+        }
+        Ok(())
+    }
+
     fn worktree_registration(
         &self,
         store: &Path,

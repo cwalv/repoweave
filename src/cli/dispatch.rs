@@ -1335,6 +1335,7 @@ pub fn run() -> anyhow::Result<()> {
             release_unreadable_claims,
             release_unreadable_claims_on,
             release_unreachable_claims,
+            forget_gone_workspace,
             merge_edited_drift,
             set_aside_edited_drift,
             kind,
@@ -1369,6 +1370,9 @@ pub fn run() -> anyhow::Result<()> {
             };
             if fix {
                 ctx.refuse_cwd_in_inactive_project()?;
+            }
+            if let Some(gone) = forget_gone_workspace {
+                check::forget_gone_workspace(ctx.primary_path(), &gone.locate(&invocation))?;
             }
             let scope = check::Scope::from_all_flag(all);
             let verdict = if locked {

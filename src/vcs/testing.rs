@@ -1326,6 +1326,10 @@ impl Vcs for FakeVcs {
         unsupported("prune_stale_worktree_registration")
     }
 
+    fn release_registration_hold(&self, _repo: &Path, _worktree: &Path) -> Result<(), VcsError> {
+        unsupported("release_registration_hold")
+    }
+
     fn checkout_recorded_elsewhere(&self, _checkout: &Path) -> Option<PathBuf> {
         unsupported("checkout_recorded_elsewhere")
     }

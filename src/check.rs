@@ -260,6 +260,19 @@ pub enum CheckViolation {
         parts: Vec<UnmigratedPart>,
     },
 
+    /// A workspace that may hold an operation cannot be read: an index that
+    /// does not parse, a directory a record or registration names that is
+    /// not there, or a record that names no operation this rwv reads. While
+    /// it stands, `--fix` drops no savepoint that no readable record claims,
+    /// prunes no registration in it, and leaves every lease and claim it
+    /// may own; `line` is what ends it.
+    UnreadableHolder {
+        why: String,
+        line: String,
+        /// Whether savepoints no readable record claims stand, kept for it.
+        withholds: bool,
+    },
+
     /// A `.rwv-workweave` marker file this build cannot use as-is: YAML
     /// (markers are JSON now), possibly also missing the `parent:` field
     /// required before the format changed. Auto-fixable: rewrite the file as
@@ -741,6 +754,7 @@ impl CheckViolation {
             CheckViolation::ClaimUnopenable { .. } | CheckViolation::UnmigratedWorkweave { .. } => {
                 ReportOnly
             }
+            CheckViolation::UnreadableHolder { .. } => Consented("--forget-gone-workspace"),
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -863,7 +877,8 @@ impl CheckViolation {
             | CheckViolation::MissingCanonicalClone { .. }
             | CheckViolation::UninitializedSubmodule { .. }
             | CheckViolation::PhantomMergeDriver { .. }
-            | CheckViolation::UnmigratedWorkweave { .. } => Warning,
+            | CheckViolation::UnmigratedWorkweave { .. }
+            | CheckViolation::UnreadableHolder { .. } => Warning,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.severity(),
@@ -916,6 +931,7 @@ impl CheckViolation {
             }
             CheckViolation::LegacyWorkweaveMarker { .. } => ViolationKind::LegacyWorkweaveMarker,
             CheckViolation::UnmigratedWorkweave { .. } => ViolationKind::UnmigratedWorkweave,
+            CheckViolation::UnreadableHolder { .. } => ViolationKind::UnreadableHolder,
             CheckViolation::UnreadableOwnedState { .. } => ViolationKind::UnreadableOwnedState,
             CheckViolation::UnreadableWorkweaveIndex { .. } => {
                 ViolationKind::UnreadableWorkweaveIndex
@@ -977,6 +993,7 @@ pub enum ViolationKind {
     WeaveRootIdentityConflict,
     LegacyWorkweaveMarker,
     UnmigratedWorkweave,
+    UnreadableHolder,
     UnreadableOwnedState,
     UnreadableWorkweaveIndex,
     UnparseableProject,
@@ -1003,7 +1020,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 47] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1027,6 +1044,7 @@ impl ViolationKind {
         Self::WeaveRootIdentityConflict,
         Self::LegacyWorkweaveMarker,
         Self::UnmigratedWorkweave,
+        Self::UnreadableHolder,
         Self::UnreadableOwnedState,
         Self::UnreadableWorkweaveIndex,
         Self::UnparseableProject,
@@ -2239,6 +2257,11 @@ pub enum ViolationOutput {
         project: ProjectName,
         parts: Vec<UnmigratedPart>,
     },
+    UnreadableHolder {
+        why: String,
+        line: String,
+        withholds: bool,
+    },
     UnreadableOwnedState {
         project: ProjectName,
         state_path: WirePath,
@@ -2730,6 +2753,15 @@ impl ViolationOutput {
                 workweave_dir: WirePath::of(&workweave_dir),
                 project,
                 parts,
+            },
+            CheckViolation::UnreadableHolder {
+                why,
+                line,
+                withholds,
+            } => Self::UnreadableHolder {
+                why,
+                line,
+                withholds,
             },
             CheckViolation::UnreadableOwnedState {
                 project,
@@ -6172,20 +6204,14 @@ pub fn scan_state_hygiene(
     vcs: &dyn crate::vcs::Vcs,
     repos: &[StateHygieneScanTarget],
     op_state_targets: &[StateHygieneOpStateTarget],
-    holders: &OpHolders,
+    primary: &Path,
     moved: &[MovedCheckout],
     gone: &[GoneWorkweave],
-    kept: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
-    // Phase 1: collect the live op-ids from every `.rwv-op` file under the
-    // workspace tree. We need this set before classifying savepoints below;
-    // any savepoint whose op-id is in this set is in-use (the matching sync
-    // is in flight) and must not be reported as orphaned.
-    let mut live_savepoints: std::collections::HashSet<SavepointKey> =
-        std::collections::HashSet::new();
-    let mut every_savepoint_live = false;
+    // Phase 1: report the op state of the workspaces in scope. Which
+    // savepoints are live is decided after they are listed, below.
     for target in op_state_targets {
         match crate::op_state::read_owner_header(&target.workspace_dir) {
             Ok(None) => {}
@@ -6195,17 +6221,12 @@ pub fn scan_state_hygiene(
                     verb: state.verb,
                     started_at: state.started_at.clone(),
                 });
-                live_savepoints.extend(state.savepoint_keys());
             }
             Err(e) => {
                 violations.push(CheckViolation::UnreadableOpRecord {
                     workspace_dir: target.workspace_dir.clone(),
                     error: format!("{e:#}"),
                 });
-                match crate::op_state::read_owner_header_of_any_schema(&target.workspace_dir) {
-                    Some(state) => live_savepoints.extend(state.savepoint_keys()),
-                    None => every_savepoint_live = true,
-                }
             }
         }
         // Dead-lease check: a workspace holding an `.rwv-op-lease` whose
@@ -6236,37 +6257,30 @@ pub fn scan_state_hygiene(
         }
     }
 
-    let mut unknown = holders.unknown.clone();
-    for dir in &holders.dirs {
-        if !crate::op_state::OwnerRecord::path_in(dir).exists() {
-            continue;
-        }
-        match crate::op_state::read_owner_header_of_any_schema(dir) {
-            Some(state) => live_savepoints.extend(state.savepoint_keys()),
-            None => unknown.push(format!(
-                "the operation record at {} names no operation this rwv reads",
-                crate::op_state::OwnerRecord::path_in(dir)
-            )),
-        }
-    }
-    let mut withheld = false;
-
-    // Phase 2: per-repo checks (stale worktree registrations + orphaned
-    // savepoints).
-    // Refs live in the store every worktree of a clone shares, so one ref is
-    // seen once per checkout of it.
+    // Phase 2: per-repo checks. Refs live in the store every worktree of a
+    // clone shares, so a ref, a registration or a claim is seen once per
+    // checkout of it and reported once per store.
     let mut reported_refs: std::collections::HashSet<(PathBuf, String)> =
         std::collections::HashSet::new();
+    let mut gone_registrations: Vec<CheckViolation> = Vec::new();
+    let mut listed: Vec<(&StateHygieneScanTarget, SavepointKey)> = Vec::new();
+    let mut unrecognized: Vec<(&StateHygieneScanTarget, String)> = Vec::new();
     for repo in repos {
         // Skip repos that are not vcs-managed (the manifest may list a
         // path that hasn't been cloned yet).
         if !vcs.is_repo(&repo.abs) {
             continue;
         }
+        let store = vcs.store_of(&repo.abs).unwrap_or_else(|| repo.abs.clone());
 
-        // Stale worktree registrations.
         if let Ok(stale_paths) = vcs.list_stale_worktree_registrations(&repo.abs) {
             for worktree_path in stale_paths {
+                if !reported_refs.insert((
+                    store.clone(),
+                    format!("registration {}", worktree_path.display()),
+                )) {
+                    continue;
+                }
                 let registered = CanonicalPath::of(&worktree_path);
                 let stands_at = moved
                     .iter()
@@ -6285,45 +6299,48 @@ pub fn scan_state_hygiene(
                 } else {
                     RegistrationDirectoryKind::DirectoryGone
                 };
-                violations.push(CheckViolation::StaleWorktreeRegistration {
+                let finding = CheckViolation::StaleWorktreeRegistration {
                     workweave: repo.workweave.clone(),
                     repo: repo.repo.clone(),
                     worktree_path,
                     recorded_in,
                     stands_at,
                     sub_kind,
-                });
+                };
+                if matches!(sub_kind, RegistrationDirectoryKind::DirectoryGone) {
+                    gone_registrations.push(finding);
+                } else {
+                    violations.push(finding);
+                }
             }
         }
 
-        if let Some(store) = vcs.store_of(&repo.abs) {
-            if reported_refs.insert((store, String::new())) {
-                violations.extend(
-                    crate::landing_claim::unreachable_claims(vcs, &repo.abs)
-                        .into_iter()
-                        .map(|claim| CheckViolation::ClaimOwnerUnreachable {
-                            claim_dir: claim.dir,
-                            op_id: claim.op.to_string(),
-                            recorded_owner: claim.owner,
-                        }),
-                );
-                violations.extend(
-                    crate::landing_claim::unreadable_claims(vcs, &repo.abs)
-                        .into_iter()
-                        .map(|claim| CheckViolation::ClaimUnreadable {
-                            file: claim.file,
-                            seen: claim.seen,
-                        }),
-                );
-                violations.extend(
-                    crate::landing_claim::unopenable_claims(vcs, &repo.abs)
-                        .into_iter()
-                        .map(|claim| CheckViolation::ClaimUnopenable {
-                            file: claim.file,
-                            error: claim.error,
-                        }),
-                );
-            }
+        if reported_refs.insert((store.clone(), String::new())) {
+            violations.extend(
+                crate::landing_claim::unreachable_claims(vcs, &repo.abs)
+                    .into_iter()
+                    .map(|claim| CheckViolation::ClaimOwnerUnreachable {
+                        claim_dir: claim.dir,
+                        op_id: claim.op.to_string(),
+                        recorded_owner: claim.owner,
+                    }),
+            );
+            violations.extend(
+                crate::landing_claim::unreadable_claims(vcs, &repo.abs)
+                    .into_iter()
+                    .map(|claim| CheckViolation::ClaimUnreadable {
+                        file: claim.file,
+                        seen: claim.seen,
+                    }),
+            );
+            violations.extend(
+                crate::landing_claim::unopenable_claims(vcs, &repo.abs)
+                    .into_iter()
+                    .map(|claim| CheckViolation::ClaimUnopenable {
+                        file: claim.file,
+                        error: claim.error,
+                    }),
+            );
         }
 
         violations.extend(unreachable_claim_findings(
@@ -6336,50 +6353,218 @@ pub fn scan_state_hygiene(
             Ok(listing) => listing,
             Err(_) => continue, // can't enumerate → leave repo alone
         };
-        let store = vcs.store_of(&repo.abs).unwrap_or_else(|| repo.abs.clone());
         for ref_name in listing.unrecognized {
-            if !reported_refs.insert((store.clone(), ref_name.clone())) {
-                continue;
+            if reported_refs.insert((store.clone(), ref_name.clone())) {
+                unrecognized.push((repo, ref_name));
             }
-            violations.push(CheckViolation::UnrecognizedSavepointRef {
-                workweave: repo.workweave.clone(),
-                repo: repo.repo.clone(),
-                holder: repo.abs.clone(),
-                ref_name,
-            });
         }
         for key in listing.keys {
-            // Skip savepoints whose op-id matches an in-flight `.rwv-op`.
-            // The owning sync may still need to roll back.
-            if every_savepoint_live || live_savepoints.contains(&key) {
-                continue;
+            if reported_refs.insert((store.clone(), format!("savepoint {key}"))) {
+                listed.push((repo, key));
             }
-            if !unknown.is_empty() {
-                withheld = true;
-                continue;
-            }
-            let sub_kind = match unreached_savepoint_tips(vcs, &repo.abs, &key) {
-                Ok(unreached) if unreached.is_empty() => OrphanedSavepointKind::Redundant,
-                Ok(_) | Err(_) => OrphanedSavepointKind::Live,
-            };
-            violations.push(CheckViolation::OrphanedSavepoint {
-                workweave: repo.workweave.clone(),
-                repo: repo.repo.clone(),
-                key,
-                sub_kind,
-            });
         }
     }
 
-    if withheld {
-        kept.push(format!(
-            "savepoints no readable operation record claims are kept, not judged, because a \
-             workspace that may hold the operation they belong to cannot be read: {}; \
-             `rwv doctor` judges them once it can",
-            unknown.join("; ")
-        ));
+    // Phase 3: which operations stand, read after every savepoint was
+    // listed. A verb writes its record before it files a savepoint, so a key
+    // listed above whose operation no record names below has ended.
+    crate::test_pause::point("doctor-savepoints-listed");
+    let mut holders = OpHolders::of(vcs, primary);
+    holders.dirs.extend(
+        op_state_targets
+            .iter()
+            .map(|target| target.workspace_dir.clone()),
+    );
+    holders.dirs.sort();
+    holders.dirs.dedup();
+    let mut live: std::collections::HashSet<SavepointKey> = std::collections::HashSet::new();
+    let mut other_release = false;
+    for dir in &holders.dirs {
+        if !crate::op_state::OwnerRecord::path_in(dir).exists() {
+            continue;
+        }
+        if crate::op_state::read_owner_header(dir).is_err() {
+            other_release = true;
+        }
+        match crate::op_state::read_owner_header_of_any_schema(dir) {
+            Some(state) => live.extend(state.savepoint_keys()),
+            None => holders.unknown.push(UnreadableHolder {
+                why: format!(
+                    "the operation record at {} names no operation this rwv reads",
+                    crate::op_state::OwnerRecord::path_in(dir)
+                ),
+                line: crate::op_state::discard_unreadable_record_at(dir),
+                root: Some(dir.clone()),
+                holds_state: false,
+            }),
+        }
+    }
+
+    let mut withheld = false;
+    for (repo, key) in listed {
+        if live.contains(&key) {
+            continue;
+        }
+        if !holders.unknown.is_empty() {
+            withheld = true;
+            continue;
+        }
+        let sub_kind = match unreached_savepoint_tips(vcs, &repo.abs, &key) {
+            Ok(unreached) if unreached.is_empty() => OrphanedSavepointKind::Redundant,
+            Ok(_) | Err(_) => OrphanedSavepointKind::Live,
+        };
+        violations.push(CheckViolation::OrphanedSavepoint {
+            workweave: repo.workweave.clone(),
+            repo: repo.repo.clone(),
+            key,
+            sub_kind,
+        });
+    }
+    for (repo, ref_name) in unrecognized {
+        if !holders.unknown.is_empty() || other_release {
+            withheld = true;
+            continue;
+        }
+        violations.push(CheckViolation::UnrecognizedSavepointRef {
+            workweave: repo.workweave.clone(),
+            repo: repo.repo.clone(),
+            holder: repo.abs.clone(),
+            ref_name,
+        });
+    }
+
+    let unreadable_roots: Vec<&Path> = holders
+        .unknown
+        .iter()
+        .filter_map(|holder| holder.root.as_deref())
+        .collect();
+    for finding in gone_registrations {
+        let CheckViolation::StaleWorktreeRegistration { worktree_path, .. } = &finding else {
+            unreachable!()
+        };
+        let named_unreadable = unreadable_roots
+            .iter()
+            .any(|root| worktree_path.starts_with(root));
+        if !(withheld && named_unreadable) {
+            violations.push(finding);
+        }
+    }
+    for holder in holders.unknown {
+        if withheld || holder.holds_state {
+            violations.push(CheckViolation::UnreadableHolder {
+                why: holder.why,
+                line: holder.line,
+                withholds: withheld,
+            });
+        }
     }
     violations
+}
+
+/// Release what the workspace at `gone`, which is not there and which no
+/// index records, holds in the weave at `primary`: every registration of a
+/// checkout under it, held or not, the lease each workspace holds for an
+/// operation it owns, and the landing claims it owns. Run before the scan, so
+/// the scan no longer counts it as a workspace that may hold an operation.
+pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> {
+    if gone.symlink_metadata().is_ok() {
+        crate::refuse!(
+            RefusalKind::InapplicableFlag,
+            "`--forget-gone-workspace {}` names a path that is there; it releases only what a \
+             workspace that is gone holds",
+            gone.display()
+        );
+    }
+    for project in crate::workspace::discover_projects(primary) {
+        if let Ok(Some(index)) = crate::workweave_index::read(primary, &project) {
+            if let Some((name, _)) = index.entry_at(gone) {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "`--forget-gone-workspace {}` names the directory the index of project \
+                     `{project}` records for workweave `{name}`; deleting the workweave releases \
+                     what it holds:\n  rwv -C {} workweave delete {name} --project {project}",
+                    gone.display(),
+                    primary.display()
+                );
+            }
+        }
+    }
+    let vcs = crate::vcs::project_vcs();
+    let mut stores: Vec<PathBuf> = Vec::new();
+    for project in crate::workspace::discover_projects(primary) {
+        let dir = project_dir(primary, &project);
+        if let Ok(manifest) = Manifest::from_path(&dir.join(Manifest::FILE_NAME)) {
+            stores.extend(
+                manifest
+                    .iter_repo_paths()
+                    .map(|path| primary.join(path.as_path())),
+            );
+        }
+        stores.push(dir);
+    }
+    stores.sort();
+    stores.dedup();
+    for store in stores.iter().filter(|store| vcs.is_repo(store)) {
+        for checkout in vcs.list_worktrees(store).unwrap_or_default() {
+            if !checkout.starts_with(gone) {
+                continue;
+            }
+            vcs.release_registration_hold(store, &checkout)?;
+            if vcs.prune_stale_worktree_registration(store, &checkout)?
+                == crate::vcs::RegistrationPrune::Pruned
+            {
+                outln!(
+                    "[fixed] core: forgot the checkout {} that {} registered",
+                    checkout.display(),
+                    store.display()
+                );
+            }
+        }
+    }
+    let holders = OpHolders::of(vcs.as_ref(), primary);
+    for dir in &holders.dirs {
+        if let Ok(Some(lease)) = crate::op_state::read_lease(dir) {
+            if lease.owner.same_directory(gone) {
+                crate::op_state::clear_lease_owned_by(dir, gone);
+                outln!(
+                    "[fixed] core: released the lease on {} of op {}, owned by {}",
+                    dir.display(),
+                    lease.id,
+                    gone.display()
+                );
+            }
+        }
+    }
+    for project in crate::workspace::discover_projects(primary) {
+        for claim in crate::landing_claim::claims_of_absent_owners(
+            vcs.as_ref(),
+            &project_dir(primary, &project),
+        ) {
+            if CanonicalPath::of(&claim.owner).same_directory(gone)
+                && crate::landing_claim::release_unreachable(&claim, primary)?
+            {
+                outln!(
+                    "[fixed] core: released the landing claim at {} of op {}, owned by {}",
+                    claim.dir.display(),
+                    claim.op,
+                    gone.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A workspace that may hold an operation and cannot be read, why, and the
+/// line that ends the doubt.
+pub struct UnreadableHolder {
+    pub why: String,
+    pub line: String,
+    /// The directory it names, where it names one.
+    pub root: Option<PathBuf>,
+    /// Whether it is the owner a lease or a landing claim names, which
+    /// stands while it cannot be read, savepoints or not.
+    pub holds_state: bool,
 }
 
 /// Each workweave the weave records, in `project_scope` when one is given,
@@ -6422,35 +6607,53 @@ fn scan_unmigrated_workweaves(
 /// other cannot be read.
 pub struct OpHolders {
     pub dirs: Vec<PathBuf>,
-    pub unknown: Vec<String>,
+    pub unknown: Vec<UnreadableHolder>,
 }
 
 impl OpHolders {
     /// The primary at `primary`, every workweave a project's index records,
     /// wherever its directory is, and every workspace a checkout of a
-    /// project's clone is registered in, recorded or not.
-    pub fn of(primary: &Path) -> Self {
+    /// project's clone is registered in, recorded or not; then the owner of
+    /// every lease those hold and of every landing claim in the project
+    /// clones.
+    pub fn of(vcs: &dyn crate::vcs::Vcs, primary: &Path) -> Self {
         let mut dirs = vec![primary.to_path_buf()];
         let mut unknown = Vec::new();
+        let mut absent: BTreeSet<PathBuf> = BTreeSet::new();
+        let forget = |gone: &Path| crate::op_state::forget_gone_workspace_line(primary, gone);
         for project in crate::workspace::discover_projects(primary) {
             match crate::workweave_index::read(primary, &project) {
-                Err(e) => unknown.push(format!(
-                    "the workweave index of project `{project}` cannot be read ({})",
-                    crate::refusal::kind_of(&e)
-                        .map_or_else(|| format!("{e:#}"), |kind| kind.token().to_string())
-                )),
+                Err(e) => unknown.push(UnreadableHolder {
+                    why: format!(
+                        "the workweave index of project `{project}` cannot be read ({})",
+                        crate::refusal::kind_of(&e)
+                            .map_or_else(|| format!("{e:#}"), |kind| kind.token().to_string())
+                    ),
+                    line: crate::workweave_index::rebuild_command(primary),
+                    root: None,
+                    holds_state: false,
+                }),
                 Ok(None) => {}
                 Ok(Some(index)) => {
                     for (name, entry) in index.workweaves {
                         let dir = entry.path.as_path();
                         if dir.is_dir() {
                             dirs.push(dir.to_path_buf());
-                        } else {
-                            unknown.push(format!(
-                                "the directory {} the index of project `{project}` records \
-                                 for workweave `{name}` is not there",
-                                dir.display()
-                            ));
+                        } else if absent.insert(dir.to_path_buf()) {
+                            unknown.push(UnreadableHolder {
+                                why: format!(
+                                    "the directory {} the index of project `{project}` records \
+                                     for workweave `{name}` is not there; bring it back, or, if \
+                                     it is gone for good, delete the workweave",
+                                    dir.display()
+                                ),
+                                line: format!(
+                                    "rwv -C {} workweave delete {name} --project {project}",
+                                    primary.display()
+                                ),
+                                root: Some(dir.to_path_buf()),
+                                holds_state: false,
+                            });
                         }
                     }
                 }
@@ -6460,17 +6663,68 @@ impl OpHolders {
             for root in linked_roots(primary, &project) {
                 if root.is_dir() {
                     dirs.push(root);
-                } else {
-                    unknown.push(format!(
-                        "the directory {} a checkout of project `{project}`'s clone is \
-                         registered in is not there",
-                        root.display()
-                    ));
+                } else if absent.insert(root.clone()) {
+                    unknown.push(UnreadableHolder {
+                        why: format!(
+                            "the directory {} a checkout of project `{project}`'s clone is \
+                             registered in is not there and no index records it; bring it back, \
+                             or, if it is gone for good, release what it holds",
+                            root.display()
+                        ),
+                        line: forget(&root),
+                        root: Some(root),
+                        holds_state: false,
+                    });
                 }
             }
         }
         dirs.sort();
         dirs.dedup();
+        let mut owners: Vec<(PathBuf, String)> = Vec::new();
+        for dir in &dirs {
+            if let Ok(Some(lease)) = crate::op_state::read_lease(dir) {
+                owners.push((
+                    lease.owner.as_path().to_path_buf(),
+                    format!("the lease on {}", dir.display()),
+                ));
+            }
+        }
+        for project in crate::workspace::discover_projects(primary) {
+            for claim in crate::landing_claim::claims_of_absent_owners(
+                vcs,
+                &crate::workspace::project_dir(primary, &project),
+            ) {
+                owners.push((
+                    claim.owner,
+                    format!("the landing claim at {}", claim.dir.display()),
+                ));
+            }
+        }
+        for (owner, what) in owners {
+            if owner.is_dir() {
+                continue;
+            }
+            match unknown
+                .iter_mut()
+                .find(|holder| holder.root.as_deref() == Some(owner.as_path()))
+            {
+                Some(holder) => holder.holds_state = true,
+                None => {
+                    absent.insert(owner.clone());
+                    unknown.push(UnreadableHolder {
+                        why: format!(
+                            "{what} names the owner workspace {}, which is not there, so whether \
+                             its operation stands cannot be told; bring it back, or, if it is \
+                             gone for good, release what it holds",
+                            owner.display()
+                        ),
+                        line: forget(&owner),
+                        root: Some(owner),
+                        holds_state: true,
+                    });
+                }
+            }
+        }
         Self { dirs, unknown }
     }
 }
@@ -7399,6 +7653,20 @@ impl CheckViolation {
                     .collect::<Vec<_>>()
                     .join("; "),
                 workweave_dir.display()
+            ),
+            CheckViolation::UnreadableHolder {
+                why,
+                line,
+                withholds,
+            } => format!(
+                "{why}. Until then `rwv doctor --fix` {}leaves every lease and claim it may own; \
+                 this ends it:\n  {line}",
+                if withholds {
+                    "drops no savepoint no readable operation record claims, prunes no \
+                     registration in it, and "
+                } else {
+                    ""
+                }
             ),
             CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
                 "{} is a legacy workweave marker an earlier release wrote, in YAML or with no \
@@ -11540,15 +11808,13 @@ fn collect_doctor_violations(
         }
     }
 
-    let mut kept_savepoints = Vec::new();
     violations.extend(scan_state_hygiene(
         vcs,
         &hygiene_targets,
         &hygiene_op_state_targets,
-        &OpHolders::of(ctx.primary_path()),
+        ctx.primary_path(),
         &moved_checkouts(ctx),
         &gone_workweaves(ctx),
-        &mut kept_savepoints,
     ));
 
     if matches!(ctx.checkout, Checkout::Primary { .. }) {
@@ -11650,13 +11916,6 @@ fn collect_doctor_violations(
                 message: message.into(),
                 safe_to_fix: false,
             })
-            .chain(kept_savepoints.into_iter().map(|message| Issue {
-                kind: IssueKind::CoreFinding,
-                source: IssueSource::Core,
-                severity: crate::integration::Severity::Warning,
-                message: message.into(),
-                safe_to_fix: false,
-            }))
             .collect(),
         filtered: false,
         workweave_dirs,

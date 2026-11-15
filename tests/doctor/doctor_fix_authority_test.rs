@@ -341,8 +341,8 @@ fn the_page_walk_actually_reads_the_page() {
         "only {auto} findings are auto-fixable; the register has stopped classifying"
     );
     assert_eq!(
-        consented, 3,
-        "the findings repaired behind a consent flag are pinned at 3; got {consented}"
+        consented, 4,
+        "the findings repaired behind a consent flag are pinned at 4; got {consented}"
     );
     for expected in [
         "record-drift/safe-to-fix",
@@ -1497,6 +1497,13 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         (
             "claim-owner-unreachable at",
             Findings(&["claim-owner-unreachable"]),
+        ),
+        // --- forget_gone_workspace ---------------------------------------
+        ("forgot the checkout", Findings(&["unreadable-holder"])),
+        ("released the lease on", Findings(&["unreadable-holder"])),
+        (
+            "released the landing claim at",
+            Findings(&["unreadable-holder"]),
         ),
         ("claim-unreadable at", Findings(&["claim-unreadable"])),
         (

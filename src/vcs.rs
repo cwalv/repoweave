@@ -4430,6 +4430,14 @@ pub trait Vcs: Send + Sync {
         worktree: &Path,
     ) -> Result<RegistrationPrune, VcsError>;
 
+    /// Release the hold `repo` keeps on its registration of the worktree at
+    /// `worktree`, which keeps a registration whose directory is away from
+    /// being dropped; a registration with no hold is left as it is.
+    ///
+    /// For git: `git worktree unlock` on the registered path, when it is
+    /// locked.
+    fn release_registration_hold(&self, repo: &Path, worktree: &Path) -> Result<(), VcsError>;
+
     /// The local branch each **live** worktree of `repo` has checked out —
     /// the complement of [`list_stale_worktree_registrations`] over the same
     /// listing, minus the detached ones, which hold no name.

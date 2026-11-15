@@ -1396,6 +1396,17 @@ fn resolve_with<T>(
 /// with no record, nothing can resume or abort the op, so the lease is
 /// released on its own.
 fn dead_lease_sentence(lease_dir: &Path, lease: &LeaseRecord) -> String {
+    if !lease.owner.as_path().is_dir() {
+        return format!(
+            "{dir} is leased to op {id}, whose owner workspace {owner} is not there to read, so \
+             whether the op stands cannot be told and nothing releases the lease. Bring {owner} \
+             back, or, if it is gone for good, this releases what it holds:\n  {forget}",
+            dir = lease_dir.display(),
+            id = lease.id,
+            owner = lease.owner.as_path().display(),
+            forget = forget_gone_workspace_line(lease_dir, lease.owner.as_path()),
+        );
+    }
     format!(
         "{dir} is leased to op {id}, but its owner workspace {owner} records no such op, \
          so nothing can resume or abort it. `rwv doctor --fix` run in {dir} releases \
@@ -1514,6 +1525,23 @@ fn migrations_before_discard(dir: &Path) -> Vec<String> {
         verbs.push(doctor_fix_in(dir));
     }
     verbs
+}
+
+/// The line that releases what the workspace at `gone`, no longer there,
+/// holds in the weave `workspace` belongs to.
+pub fn forget_gone_workspace_line(workspace: &Path, gone: &Path) -> String {
+    let primary = crate::workspace::WorkweaveMarker::read(workspace)
+        .ok()
+        .flatten()
+        .map_or_else(
+            || workspace.to_path_buf(),
+            |marker| marker.primary().as_path().to_path_buf(),
+        );
+    format!(
+        "rwv -C {} doctor --fix --forget-gone-workspace {}",
+        primary.display(),
+        gone.display()
+    )
 }
 
 /// What ends the operation that holds `workspace`, its record there or its
@@ -2455,6 +2483,9 @@ pub fn detect_dead_lease(workspace_dir: &Path) -> anyhow::Result<Option<DeadLeas
         return Ok(None);
     };
     let created_at = lease.created_at.clone();
+    if !lease.owner.as_path().is_dir() {
+        return Ok(None);
+    }
     let owner_path = OwnerRecord::path_in(lease.owner.as_path());
     if !owner_path.exists() {
         return Ok(Some(DeadLease {
