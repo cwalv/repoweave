@@ -1233,3 +1233,20 @@ fn unparseable_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<(anyho
         .err()
         .map(|error| (error, text))
 }
+
+#[cfg(test)]
+mod backend_without_tree_merges_tests {
+    use super::*;
+
+    #[test]
+    fn member_merges_are_not_planned_from_a_tree_where_the_backend_has_none() {
+        let vcs = crate::vcs::testing::FakeVcs::new();
+        assert!(vcs.tree_merges().is_none());
+        let sides = Sides {
+            first: CommitId::parse(&"a".repeat(40)).unwrap(),
+            second: CommitId::parse(&"b".repeat(40)).unwrap(),
+        };
+        let planned = member_merges_planned(&vcs, Path::new("/ws"), Path::new("/ws/p"), &sides);
+        assert!(planned.unwrap().is_none());
+    }
+}
