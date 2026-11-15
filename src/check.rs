@@ -1421,7 +1421,8 @@ impl MissingLockMergeDriverKind {
                  as text.\n\n\
                  **What to do:** `rwv doctor --fix`, run in the project's checkout. It puts the \
                  line last in the working file and in the checked-out commit's file and commits \
-                 only that line; any other edit to `.gitattributes` stays uncommitted, and anything \
+                 only that line; an attribute source outside the file that still outranks it is \
+                 named and left for you to remove; any other edit to `.gitattributes` stays uncommitted, and anything \
                  else marked for the next commit stays marked. It declines, changing nothing, while a merge, rebase or \
                  cherry-pick is in progress in the project repo. Another branch carries its own \
                  file and is migrated where it is checked out."
@@ -1438,14 +1439,18 @@ impl MissingLockMergeDriverKind {
                  travel with a clone, so a clone rwv did not make has none; every workweave \
                  shares its clone's.\n\n\
                  **What to do:** `rwv doctor --fix`. It sets `merge.rwv-lock.driver` to \
-                 `rwv lock --merge-driver %O %A %B`, which git runs by finding `rwv` on `PATH`."
+                 `rwv lock --merge-driver %O %A %B`, which git runs by finding `rwv` on `PATH`; a \
+                 configuration scope that outranks the clone's own and defines it otherwise is \
+                 named and left for you to remove."
             }
             Self::ConfigLegacy => {
                 "The clone's config still defines `merge.rwv-ours.driver`, the driver an \
                  earlier release planted, or defines `merge.rwv-lock.driver` as a command other \
                  than `rwv lock --merge-driver %O %A %B`.\n\n\
                  **What to do:** `rwv doctor --fix`. It replaces the config: the earlier \
-                 entries are removed and `merge.rwv-lock.driver` names rwv's command."
+                 entries are removed and `merge.rwv-lock.driver` names rwv's command; a \
+                 configuration scope that outranks the clone's own and defines it otherwise is \
+                 named and left for you to remove."
             }
         }
     }
@@ -8979,15 +8984,20 @@ fn apply_workspace_repairs(
         }
         match crate::lock_driver::migrate(vcs, &project_repo) {
             Ok(migrated) => {
+                let fixed = if migrated.outranked.is_empty() {
+                    "[fixed] "
+                } else {
+                    ""
+                };
                 if migrated.committed {
                     outln!(
-                        "[fixed] core: set up the lock merge driver's attribute line in {}, \
+                        "{fixed}core: set up the lock merge driver's attribute line in {}, \
                          committing only that",
                         project.name
                     );
                 } else if migrated.declared {
                     outln!(
-                        "[fixed] core: wrote the lock merge driver's attribute line in {}",
+                        "{fixed}core: wrote the lock merge driver's attribute line in {}",
                         project.name
                     );
                 }
@@ -8997,11 +9007,14 @@ fn apply_workspace_repairs(
                         project.name
                     ));
                 }
-                if migrated.defined {
+                if migrated.defined && migrated.outranked.is_empty() {
                     outln!(
                         "[fixed] core: defined the lock merge driver in {}'s config",
                         project.name
                     );
+                }
+                for why in migrated.outranked {
+                    fix_errors.push(format!("{}: {why}", project.name));
                 }
             }
             Err(e) => fix_errors.push(format!(

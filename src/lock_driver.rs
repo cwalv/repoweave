@@ -88,6 +88,8 @@ pub(crate) struct Migrated {
     pub(crate) defined: bool,
     /// Why the commit was not made, when it was owed and withheld.
     pub(crate) withheld: Option<String>,
+    /// Each part that, read again after the writes, is still not set up.
+    pub(crate) outranked: Vec<String>,
 }
 
 /// Set the lock merge driver up in the project repo `dir`: the declaration
@@ -137,6 +139,22 @@ pub(crate) fn migrate(vcs: &dyn Vcs, dir: &Path) -> anyhow::Result<Migrated> {
     if setup.definition != LockDriverPart::Current {
         vcs.define_lock_driver(dir)?;
         migrated.defined = true;
+    }
+    let after = vcs.lock_driver_setup(dir)?;
+    if after.definition != LockDriverPart::Current {
+        migrated.outranked.push(format!(
+            "{}'s merge driver is still defined otherwise: a configuration scope that outranks \
+             the clone's own defines it; remove that definition",
+            LockFile::FILE_NAME
+        ));
+    }
+    if after.declaration != LockDriverPart::Current && migrated.withheld.is_none() {
+        migrated.outranked.push(format!(
+            "{} is still assigned another merge driver: an attribute source that outranks the \
+             project repo's {} assigns it; remove that assignment",
+            LockFile::FILE_NAME,
+            vcs.lock_driver_declaration_file()
+        ));
     }
     Ok(migrated)
 }

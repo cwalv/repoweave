@@ -741,3 +741,62 @@ fn the_finding_reads_the_attribute_in_force_and_fix_puts_the_line_where_it_wins(
     );
     assert!(weave.rwv(&["lock"]).status.success());
 }
+
+#[test]
+fn doctor_fix_never_reports_fixed_while_an_outranking_definition_keeps_the_finding() {
+    let weave = Weave::new();
+    common::git_in(
+        weave.project(),
+        &["config", "extensions.worktreeConfig", "true"],
+    );
+    common::git_in(
+        weave.project(),
+        &[
+            "config",
+            "--worktree",
+            "merge.rwv-lock.driver",
+            "mytool %O %A %B",
+        ],
+    );
+    let out = weave.rwv(&["doctor", "--fix"]);
+    let printed = common::cli::describe(&out);
+    assert!(
+        !printed.contains("[fixed] core: defined the lock merge driver"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("rwv.lock's merge driver is still defined otherwise"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn doctor_fix_never_reports_fixed_while_an_outranking_attribute_keeps_the_finding() {
+    let weave = Weave::new();
+    let info = weave.project().join(".git/info");
+    std::fs::create_dir_all(&info).unwrap();
+    std::fs::write(info.join("attributes"), "rwv.lock merge=union\n").unwrap();
+    std::fs::write(
+        weave.project().join(".gitattributes"),
+        "rwv.lock merge=rwv-ours\n",
+    )
+    .unwrap();
+    common::git_in(
+        weave.project(),
+        &["commit", "-qam", "the old attribute line"],
+    );
+    let out = weave.rwv(&["doctor", "--fix"]);
+    let printed = common::cli::describe(&out);
+    assert!(
+        !printed.contains("[fixed] core: set up the lock merge driver"),
+        "{printed}"
+    );
+    assert!(
+        !printed.contains("[fixed] core: wrote the lock merge driver"),
+        "{printed}"
+    );
+    assert!(
+        printed.contains("rwv.lock is still assigned another merge driver"),
+        "{printed}"
+    );
+}

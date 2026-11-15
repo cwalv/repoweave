@@ -215,7 +215,7 @@ Run the repair in each checkout of the project repo whose branch carries the old
 rwv doctor --fix
 ```
 
-It rewrites the line in the checked-out commit's `.gitattributes`, committing only that, and in the working file with its other edits in place, and replaces the clone's config. The same run that rewrites the checkout's `rwv.toml` keys (Step 3) does this too. Every workweave shares its clone's config; another branch carries its own `.gitattributes` and is migrated where it is checked out.
+It writes the line last in the checked-out commit's `.gitattributes`, where no other line of the file outranks it, committing only that, and in the working file with its other edits in place, and replaces the clone's config. A definition or attribute from outside the project repo's files that still outranks rwv's is named, and the finding stays until you remove it. The same run that rewrites the checkout's `rwv.toml` keys (Step 3) does this too. Every workweave shares its clone's config; another branch carries its own `.gitattributes` and is migrated where it is checked out.
 
 ## Ending an operation an earlier release left
 
