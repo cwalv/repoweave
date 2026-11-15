@@ -169,8 +169,8 @@ workspaces are gone; no branch of `a` or `b` remains on machine A; a clean end.
 
 ### J09 Throw away a feature whose work never made it into `main`
 
-**Start:** the shared world; on machine A a spare workspace holds a commit to `server`
-that was never brought into `main`.
+**Start:** the shared world; on machine A a spare workspace holds an experiment: a commit
+to `server` that was never brought into `main`.
 **Task:** The experiment failed. Remove the spare workspace and the branch it made,
 while being able to get the commit back afterwards.
 **Check:** no spare workspace; no branch for the experiment in any repository; the

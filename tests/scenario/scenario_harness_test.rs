@@ -9280,6 +9280,22 @@ fn check_a_journey_end_state() {
     common::scenario_runner::check_in(&sandbox, name, end).assert_fully_decided_green();
 }
 
+/// A task whose start state has no workweave on a machine is judged by its
+/// end check as unmet claims, not by a panic from running a command there.
+#[test]
+fn an_end_check_of_an_untouched_second_machine_reports_unmet_claims() {
+    let journey = journey_by_id("j10").expect("j10 is a journey");
+    let sandbox = Sandbox::new(journey.seed.clone());
+    runner::run_in(&sandbox, journey.start_scenario()).assert_green();
+    let journey = journey_by_id("j10").expect("j10 is a journey");
+    let (name, end) = (journey.name, journey.end);
+    let report = common::scenario_runner::check_in(&sandbox, name, end);
+    assert!(
+        !report.unmet.is_empty(),
+        "an untouched machine B must leave claims unmet:\n{report}"
+    );
+}
+
 /// A commit the agent makes after the start state is found by the mark-free
 /// end check through its subject, so the journey's task text must say the
 /// subject.

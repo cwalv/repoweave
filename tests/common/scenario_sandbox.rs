@@ -585,10 +585,13 @@ impl Sandbox {
     }
 
     pub fn git(&self, dir: &Path, args: &[&str]) -> Output {
-        self.hermetic(common::git())
-            .args(args)
-            .current_dir(dir)
-            .output()
+        let mut cmd = self.hermetic(common::git());
+        if dir.is_dir() {
+            cmd.args(args).current_dir(dir);
+        } else {
+            cmd.arg("-C").arg(dir).args(args).current_dir(&self.root);
+        }
+        cmd.output()
             .unwrap_or_else(|e| panic!("git {args:?} in {} failed to start: {e}", dir.display()))
     }
 
@@ -727,7 +730,11 @@ impl Sandbox {
     /// itself.
     pub fn rwv_command(&self, dir: &Path, args: &[&str]) -> Command {
         let mut cmd = self.hermetic(common::rwv_std());
-        cmd.args(args).current_dir(dir);
+        if dir.is_dir() {
+            cmd.args(args).current_dir(dir);
+        } else {
+            cmd.arg("-C").arg(dir).args(args).current_dir(&self.root);
+        }
         if self.tracing.load(std::sync::atomic::Ordering::SeqCst) {
             cmd.env("RWV_TEST_PAUSE_TRACE", self.point_trace());
         }
