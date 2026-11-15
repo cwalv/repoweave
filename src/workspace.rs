@@ -2145,7 +2145,7 @@ impl WorkweaveMarker {
         let parent = field("parent").unwrap_or(primary);
         let name = match name {
             Some(name) => name.clone(),
-            None => Self::name_for_migration(Path::new(primary), &project, dir, Path::new(parent))?,
+            None => Self::name_for_migration(Path::new(primary), &project, dir)?,
         };
         Self::new(Path::new(primary), project, name, Path::new(parent)).write(dir)?;
         Ok(true)
@@ -2158,7 +2158,6 @@ impl WorkweaveMarker {
         primary: &Path,
         project: &ProjectName,
         dir: &Path,
-        parent: &Path,
     ) -> anyhow::Result<crate::manifest::WorkweaveName> {
         let recorded = if crate::workweave_index::old_path_file(primary, project).exists() {
             crate::workweave_index::old_path_name_at(primary, project, dir)
@@ -2175,16 +2174,35 @@ impl WorkweaveMarker {
         let named = base
             .filter(|b| crate::manifest::WorkweaveName::new(*b).is_ok())
             .unwrap_or("<name>");
+        let create = format!(
+            "rwv -C {} workweave create {named} --project {project} --dir {}",
+            primary.display(),
+            dir.display(),
+        );
+        let names = match crate::op_state::holding(primary) {
+            None => format!("This names it `{named}` and keeps what it holds:\n  {create}"),
+            Some(crate::op_state::Holding::EndedBy(lines)) => {
+                let this_run = format!("rwv -C {} doctor --fix", primary.display());
+                let lines: Vec<String> = lines.into_iter().filter(|l| *l != this_run).collect();
+                format!(
+                "An operation holds {}, where the naming runs: the first lines end it, then the \
+                 last names it `{named}` and keeps what it holds:\n  {}\n  {create}",
+                primary.display(),
+                lines.join("\n  ")
+                )
+            }
+            Some(crate::op_state::Holding::Live { resume, abort }) => format!(
+                "An operation holds {}, where the naming runs: once `{resume}` or `{abort}` \
+                 ends it, this names it `{named}` and keeps what it holds:\n  {create}",
+                primary.display(),
+            ),
+        };
         Err(crate::refusal::refusal(
             RefusalKind::LegacyWorkweaveMarker,
             format!(
                 "{} names no workweave, no index of project `{project}` records one at {}, and \
-                 the directory's name is not `<project>--<name>`. This names it `{named}` and \
-                 keeps what it holds:\n  rwv -C {} workweave create {named} --project {project} \
-                 --dir {}",
+                 the directory's name is not `<project>--<name>`. {names}",
                 Self::path_in(dir),
-                dir.display(),
-                parent.display(),
                 dir.display(),
             ),
         ))

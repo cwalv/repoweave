@@ -1516,6 +1516,36 @@ fn migrations_before_discard(dir: &Path) -> Vec<String> {
     verbs
 }
 
+/// What ends the operation that holds `workspace`, its record there or its
+/// lease, for a verb refused there until it ends.
+pub enum Holding {
+    /// The lines that end it, in the order they run.
+    EndedBy(Vec<String>),
+    /// An operation this rwv reads: its `--continue` or its abort ends it.
+    Live { resume: String, abort: String },
+}
+
+/// [`Holding`] for `workspace`, `None` where no operation holds it.
+pub fn holding(workspace: &Path) -> Option<Holding> {
+    let owner = if OwnerRecord::path_in(workspace).exists() {
+        workspace.to_path_buf()
+    } else {
+        read_lease(workspace).ok()??.owner.as_path().to_path_buf()
+    };
+    Some(match read_owner(&owner) {
+        Ok(Some(record)) => Holding::Live {
+            resume: resume_command_at(record.verb, &owner),
+            abort: abort_command_at(&owner),
+        },
+        Ok(None) => Holding::EndedBy(vec![doctor_fix_in(workspace)]),
+        Err(_) => {
+            let mut lines = migrations_before_discard(&owner);
+            lines.push(discard_unreadable_record_at(&owner));
+            Holding::EndedBy(lines)
+        }
+    })
+}
+
 fn doctor_fix_in(workspace: &Path) -> String {
     format!("rwv -C {} doctor --fix", workspace.display())
 }

@@ -1044,6 +1044,84 @@ fn a_workweave_no_record_names_is_reported_with_the_verb_that_names_it() {
     assert!(out.status.success(), "{}", common::cli::describe(&out));
 }
 
+/// The rehearsal's unnamed `--dir` seat while another seat still holds the
+/// operation an earlier release left stopped, leasing the primary: the naming
+/// line comes after the lines that end that operation, and each line, run as
+/// printed in that order, succeeds.
+#[test]
+fn the_naming_verb_follows_the_lines_that_end_an_operation_holding_the_primary() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    let dirs = weave_an_earlier_release_left(&ws, tmp.path(), &["ww", "nest"]);
+    let (holder, far) = (&dirs[0], &dirs[1]);
+    std::fs::write(
+        holder.join(".rwv-op"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "id": "1794770581161624583",
+            "verb": "sync-to",
+            "strategy": "rebase",
+            "project": "web-app",
+            "source": holder,
+            "target": ws,
+            "retire": false,
+            "phase": "replay",
+            "advanced_tips": {},
+            "converged_tips": {},
+            "overrides": [],
+            "started_at": "2026-11-15T19:23:01Z",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        ws.join(".rwv-op-lease"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "id": "1794770581161624583",
+            "owner": holder,
+            "created_at": "2026-11-15T19:23:01Z",
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let out = rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout);
+    let at = text
+        .find("names no workweave")
+        .unwrap_or_else(|| panic!("no naming finding:\n{text}"));
+    let lines: Vec<&str> = text[at..]
+        .lines()
+        .skip(1)
+        .map(str::trim)
+        .take_while(|line| line.starts_with("rwv "))
+        .collect();
+    assert!(
+        lines.len() > 1 && lines.last().unwrap().contains("workweave create"),
+        "{text}"
+    );
+    assert!(
+        lines.iter().all(|line| line.starts_with(&format!(
+            "rwv -C {}",
+            repoweave::path_spelling::resolve(&ws).unwrap().display()
+        )) || line.contains(&*holder.to_string_lossy())),
+        "{lines:?}"
+    );
+    for line in &lines {
+        let words = shell_words(line);
+        let out = rwv().args(&words[1..]).current_dir(&ws).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{line}:\n{}",
+            common::cli::describe(&out)
+        );
+    }
+    assert_eq!(marker_name(far).as_deref(), Some("far"));
+}
+
 /// A workweave directory renamed by hand: `rwv doctor --all --fix` records
 /// its checkouts where they stand instead of pruning them, and lists it under
 /// its marker's name. What a checkout had marked for its next commit stays.
