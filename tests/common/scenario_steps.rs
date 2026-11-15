@@ -1,6 +1,6 @@
 //! Step builders the scenarios and the kill matrix share.
 
-use super::scenario_runner::{Exit, Scenario, Step};
+use super::scenario_runner::{Action, Exit, Scenario, Step};
 use super::scenario_sandbox::{self, Machine, Place, Remote, Repo, Seed};
 
 pub const LIB: &str = "local/remotes/lib";
@@ -168,6 +168,18 @@ pub struct Journey {
 }
 
 impl Journey {
+    /// How many rwv commands the documented path runs after the start state.
+    pub fn golden(&self) -> usize {
+        self.path[self.start..]
+            .iter()
+            .map(|step| match &step.action {
+                Action::RwvPrintedChoice { prefixes, .. } => prefixes.len(),
+                action if action.runs_rwv() => 1,
+                _ => 0,
+            })
+            .sum()
+    }
+
     /// The scenario that only builds the task's start state.
     pub fn start_scenario(self) -> Scenario {
         let mut steps = self.path;

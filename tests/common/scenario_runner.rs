@@ -1230,8 +1230,20 @@ pub fn run(scenario: Scenario) -> Report {
 }
 
 pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
+    let steps = std::iter::once(Step::new_machine(Machine::A)).chain(scenario.steps);
+    run_steps(sandbox, scenario.name, steps)
+}
+
+/// Steps run against a sandbox that already holds a finished journey's work,
+/// whoever did it: no commit is recorded under a mark, so a claim naming a
+/// mark finds the commit by its subject.
+pub fn check_in(sandbox: &Sandbox, name: &'static str, steps: Vec<Step>) -> Report {
+    run_steps(sandbox, name, steps.into_iter())
+}
+
+fn run_steps(sandbox: &Sandbox, name: &'static str, steps: impl Iterator<Item = Step>) -> Report {
     let mut report = Report {
-        name: scenario.name,
+        name,
         ..Report::default()
     };
     let mut run = Run {
@@ -1244,7 +1256,6 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
         offline: BTreeMap::new(),
         captured: BTreeMap::new(),
     };
-    let steps = std::iter::once(Step::new_machine(Machine::A)).chain(scenario.steps);
     let mut before = scenario_invariants::snapshot(sandbox);
     for step in steps {
         let unmoved: Vec<(Captured, Place, String)> = step
@@ -1761,6 +1772,7 @@ impl Run<'_> {
                         (place, tips)
                     })
                     .collect();
+                self.persist_capture(name, &kept);
                 self.captured.insert(name, kept);
                 (true, String::new())
             }
@@ -1933,7 +1945,9 @@ impl Run<'_> {
     }
 
     fn contains(&self, dir: &std::path::Path, rev: &str, mark: &str) -> Result<(), String> {
-        let sha = self.mark(mark)?;
+        let Some(sha) = self.marks.get(mark) else {
+            return self.contains_subject(dir, rev, mark);
+        };
         let ok = self
             .sandbox
             .git(dir, &["merge-base", "--is-ancestor", sha, rev])
@@ -1944,6 +1958,27 @@ impl Run<'_> {
         } else {
             Err(format!(
                 "{} at {rev} does not contain {mark} ({sha})",
+                dir.display()
+            ))
+        }
+    }
+
+    fn contains_subject(
+        &self,
+        dir: &std::path::Path,
+        rev: &str,
+        subject: &str,
+    ) -> Result<(), String> {
+        let out = self.sandbox.git(dir, &["log", "--format=%s", rev]);
+        if out.status.success()
+            && String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .any(|line| line == subject)
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "{} at {rev} holds no commit with the subject '{subject}'",
                 dir.display()
             ))
         }
@@ -2057,6 +2092,68 @@ impl Run<'_> {
                 std::fs::remove_file(&new).map_err(|e| io(&new, e))
             }
         }
+    }
+
+    fn captures_file(&self, name: &str) -> PathBuf {
+        self.sandbox
+            .root
+            .join("captures")
+            .join(format!("{name}.json"))
+    }
+
+    fn persist_capture(&self, name: &str, kept: &BTreeMap<Place, Tips>) {
+        let text: BTreeMap<String, serde_json::Value> = kept
+            .iter()
+            .map(|(place, tips)| {
+                (
+                    format!("{place:?}"),
+                    serde_json::json!({
+                        "exact": tips.exact,
+                        "backups": tips.backups,
+                        "branches": tips.branches,
+                    }),
+                )
+            })
+            .collect();
+        let path = self.captures_file(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, serde_json::to_string(&text).unwrap()).unwrap();
+    }
+
+    /// What was captured as `name`: in this run, else as the run that built
+    /// the sandbox left it on disk.
+    fn captured_named(&self, name: &str) -> BTreeMap<Place, Tips> {
+        if let Some(kept) = self.captured.get(name) {
+            return kept.clone();
+        }
+        let path = self.captures_file(name);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("nothing was captured as {name}"));
+        let stored: BTreeMap<String, serde_json::Value> = serde_json::from_str(&text).unwrap();
+        self.sandbox
+            .live_places()
+            .into_iter()
+            .filter_map(|place| {
+                let value = stored.get(&format!("{place:?}"))?;
+                let field = |key: &str| value[key].as_str().unwrap_or_default().to_owned();
+                let branches = value["branches"]
+                    .as_object()
+                    .map(|map| {
+                        map.iter()
+                            .map(|(k, v)| (k.clone(), v.as_str().unwrap_or_default().to_owned()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some((
+                    place,
+                    Tips {
+                        exact: field("exact"),
+                        backups: field("backups"),
+                        branches,
+                    },
+                ))
+            })
+            .collect()
     }
 
     fn tips(&self, at: &Place) -> Tips {
@@ -2516,10 +2613,7 @@ impl Run<'_> {
                 }
             }
             Claim::TipsAsCaptured(name) | Claim::BranchesAsCaptured(name) => {
-                let kept = self
-                    .captured
-                    .get(name)
-                    .unwrap_or_else(|| panic!("nothing was captured as {name}"));
+                let kept = &self.captured_named(name);
                 let whole = matches!(claim, Claim::TipsAsCaptured(_));
                 let mut off = Vec::new();
                 for (place, before) in kept {
@@ -2546,10 +2640,7 @@ impl Run<'_> {
                 }
             }
             Claim::BackupsAsCaptured { name, kept } => {
-                let before = self
-                    .captured
-                    .get(name)
-                    .unwrap_or_else(|| panic!("nothing was captured as {name}"));
+                let before = &self.captured_named(name);
                 let mut off = Vec::new();
                 for (place, before) in before {
                     let now = self.tips(place).backups;
@@ -2609,7 +2700,7 @@ impl Run<'_> {
                 mark,
             } => {
                 let dir = sb.checkout(at, *repo);
-                let sha = self.mark(mark)?;
+                let sha = self.marks.get(*mark).map_or(*mark, String::as_str);
                 if !self
                     .sandbox
                     .git(&dir, &["rev-parse", "--verify", "--quiet", rev])
@@ -2732,6 +2823,28 @@ impl Run<'_> {
                 } else {
                     Err(format!(
                         "backups in {} still reach {mark} ({sha}): {holders:?}",
+                        dir.display()
+                    ))
+                }
+            }
+            Claim::BackedUp { repo, mark, marked } if !self.marks.contains_key(mark) => {
+                let dir = sb.checkout(&Place::Primary(Machine::A), *repo);
+                let refs = sb.git_ok(
+                    &dir,
+                    &["for-each-ref", "--format=%(refname)", "refs/rwv/backup/"],
+                );
+                let held = refs.lines().any(|name| {
+                    marked.is_none_or(|marked| {
+                        name.rsplit('/')
+                            .next()
+                            .is_some_and(|id| id.starts_with(&format!("{marked}-")))
+                    }) && self.contains_subject(&dir, name, mark).is_ok()
+                });
+                if held {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "no backup in {} holds a commit with the subject '{mark}'",
                         dir.display()
                     ))
                 }

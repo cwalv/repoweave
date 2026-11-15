@@ -295,7 +295,7 @@ fn refuse_records_hook() -> String {
 /// fork of `proj` a seed asks for by itself, and every `url` the seed writes
 /// names an origin.
 pub struct Sandbox {
-    _tmp: tempfile::TempDir,
+    _tmp: Option<tempfile::TempDir>,
     pub root: PathBuf,
     home: PathBuf,
     remotes: Vec<Remote>,
@@ -305,6 +305,33 @@ pub struct Sandbox {
 
 impl Sandbox {
     /// Leave the sandbox on disk when this process ends, and return its root.
+    /// A sandbox already on disk, left by [`Sandbox::keep`]: its remotes are
+    /// the bare repositories it holds.
+    pub fn attach(root: PathBuf) -> Sandbox {
+        let home = root.join("home");
+        assert!(home.is_dir(), "{} is not a kept sandbox", root.display());
+        let mut remotes = Vec::new();
+        for kind in RemoteKind::ALL {
+            for repo in Repo::ALL {
+                let remote = Remote { repo, kind };
+                let path = root
+                    .join(kind.dir_name())
+                    .join(format!("{}.git", repo.name()));
+                if path.is_dir() {
+                    remotes.push(remote);
+                }
+            }
+        }
+        Sandbox {
+            _tmp: None,
+            root,
+            home,
+            remotes,
+            shim: None,
+            tracing: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
     pub fn keep(self) -> PathBuf {
         let root = self.root.clone();
         std::mem::forget(self);
@@ -317,7 +344,7 @@ impl Sandbox {
         let home = root.join("home");
         std::fs::create_dir_all(&home).unwrap();
         let mut sandbox = Sandbox {
-            _tmp: tmp,
+            _tmp: Some(tmp),
             root,
             home,
             remotes: Vec::new(),

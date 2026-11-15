@@ -9080,7 +9080,11 @@ macro_rules! journey_tests {
                         "{name}: the fault reddened `{label}` before the end check: {why}\n{report}"
                     );
                 }
-                runner::run(scenarios::$name().scenario()).assert_fully_decided_green();
+                let journey = scenarios::$name();
+                let end = journey.end.clone();
+                let sandbox = Sandbox::new(journey.seed.clone());
+                runner::run_in(&sandbox, journey.scenario()).assert_fully_decided_green();
+                runner::check_in(&sandbox, name, end).assert_fully_decided_green();
             }
         )*
     };
@@ -9145,4 +9149,23 @@ fn build_a_journey_start_state() {
         "MACHINE_B_WEAVE={}",
         root.join("machine-b").join("weave").display()
     );
+}
+
+/// Runs the end check of the journey named by `RWV_JOURNEY` against the kept
+/// sandbox at `SANDBOX`, whoever did the task in it. A claim that names a
+/// commit finds it by its subject, so the task text prescribes the subjects;
+/// everything else is read from refs, pins, records, published state and the
+/// diagnosis.
+///
+/// `RWV_JOURNEY=j03 SANDBOX=<root> cargo test --release --features test-pause --test scenario -- check_a_journey_end_state --ignored --nocapture`
+#[test]
+#[ignore = "judges a kept sandbox for a probe; set RWV_JOURNEY and SANDBOX"]
+fn check_a_journey_end_state() {
+    let id = std::env::var("RWV_JOURNEY").expect("RWV_JOURNEY names the journey, such as j03");
+    let root =
+        std::env::var("SANDBOX").expect("SANDBOX is the root build_a_journey_start_state printed");
+    let journey = journey_by_id(&id).unwrap_or_else(|| panic!("no journey {id}"));
+    let (name, end) = (journey.name, journey.end);
+    let sandbox = Sandbox::attach(root.into());
+    runner::check_in(&sandbox, name, end).assert_fully_decided_green();
 }
