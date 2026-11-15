@@ -1121,6 +1121,14 @@ impl Vcs for FakeVcs {
         unsupported("stores_kept_for")
     }
 
+    fn registered_branch(
+        &self,
+        _store: &Path,
+        _checkout: &Path,
+    ) -> Result<Option<RawRefName>, VcsError> {
+        unsupported("registered_branch")
+    }
+
     fn pushed_range(
         &self,
         _repo: &Path,

@@ -3919,8 +3919,9 @@ fn judge_detached_commits(
 }
 
 /// The feature branch a workweave's deletion judges, and the branch it lands
-/// into: the branch its project checkout is aligned for, when its record is a
-/// feature's. A detached or declared workspace has none.
+/// into: the branch its project checkout is aligned for, or, where the
+/// checkout no longer stands, the branch its registration has checked out,
+/// when its record is a feature's. A detached or declared workspace has none.
 fn feature_of(
     ws_root: &Path,
     project: &ProjectName,
@@ -3928,17 +3929,25 @@ fn feature_of(
 ) -> anyhow::Result<Option<(crate::records::BranchName, crate::records::BranchName)>> {
     let vcs = project_vcs();
     let checkout = project_dir(workweave_dir, project);
-    if !vcs.is_repo(&checkout) {
-        return Ok(None);
-    }
-    let crate::alignment::WorkspaceState {
-        aligned: Some(crate::alignment::Aligned::Branch(aligned)),
-        ..
-    } = crate::alignment::read_state(vcs.as_ref(), &checkout)?.state
-    else {
-        return Ok(None);
-    };
     let primary_project = project_dir(ws_root, project);
+    let aligned = if checkout.symlink_metadata().is_err() {
+        match vcs.registered_branch(&primary_project, &checkout)? {
+            Some(branch) => branch.as_str().to_owned(),
+            None => return Ok(None),
+        }
+    } else {
+        if !vcs.is_repo(&checkout) {
+            return Ok(None);
+        }
+        let crate::alignment::WorkspaceState {
+            aligned: Some(crate::alignment::Aligned::Branch(aligned)),
+            ..
+        } = crate::alignment::read_state(vcs.as_ref(), &checkout)?.state
+        else {
+            return Ok(None);
+        };
+        aligned
+    };
     let branch = match crate::records::BranchName::parse(vcs.as_ref(), &aligned) {
         Ok(branch) => branch,
         Err(_) => return Ok(None),

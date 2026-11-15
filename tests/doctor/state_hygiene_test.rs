@@ -1563,7 +1563,21 @@ fn a_workweave_whose_directory_is_gone_is_deleted_as_the_finding_names() {
         .find(|quoted| quoted.starts_with("rwv workweave delete "))
         .unwrap_or_else(|| panic!("the finding names the delete: {report}"));
     let args: Vec<&str> = delete.split_whitespace().skip(1).collect();
-    rwv_cmd().args(&args).current_dir(&ws).assert().success();
+    let deleted = rwv_cmd().args(&args).current_dir(&ws).output().unwrap();
+    assert!(deleted.status.success());
+    let said = String::from_utf8_lossy(&deleted.stdout);
+    assert!(
+        said.contains("deleted projects/demo demo--far")
+            && said.contains("dropped the record of demo--far"),
+        "the deletion rule runs as for any delete: {said}"
+    );
+    for repo in ["projects/demo", "local/acme/x"] {
+        assert_eq!(
+            common::git_in(common::under(&ws, repo), &["branch", "--list", "demo--far"]),
+            "",
+            "{repo}"
+        );
+    }
 
     let (violations, _) = doctor_report(&ws, &["doctor", "--all"]);
     assert!(

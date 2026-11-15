@@ -4078,6 +4078,22 @@ impl Vcs for GitVcs {
         Ok(nested)
     }
 
+    fn registered_branch(
+        &self,
+        store: &Path,
+        checkout: &Path,
+    ) -> Result<Option<RawRefName>, VcsError> {
+        let Some(registration) = self.worktree_registration(store, checkout)? else {
+            return Ok(None);
+        };
+        let head = std::fs::read_to_string(registration.join("HEAD")).unwrap_or_default();
+        Ok(head
+            .trim()
+            .strip_prefix("ref: ")
+            .and_then(|full| full.strip_prefix(LOCAL_BRANCH_NAMESPACE))
+            .map(RawRefName::new))
+    }
+
     fn stores_kept_for(&self, store: &Path, checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
         Ok(match self.worktree_registration(store, checkout)? {
             Some(registration) => {

@@ -4118,6 +4118,17 @@ pub trait Vcs: Send + Sync {
     /// checkout's worktree registration, and of each one found.
     fn stores_kept_for(&self, store: &Path, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
 
+    /// The branch `store`'s record of its linked checkout at `checkout` has
+    /// checked out, whether or not the checkout stands; `None` where the
+    /// record holds a commit on no branch, or there is no record.
+    ///
+    /// For git: the `HEAD` of the checkout's worktree registration.
+    fn registered_branch(
+        &self,
+        store: &Path,
+        checkout: &Path,
+    ) -> Result<Option<RawRefName>, VcsError>;
+
     /// The commits of `branch` that no remote-tracking branch reaches and no
     /// superseded tip reaches, newest first: its unpushed commits.
     ///
