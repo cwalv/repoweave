@@ -9072,7 +9072,7 @@ macro_rules! journey_tests {
                 let holds = starting.holds.clone();
                 let sandbox = Sandbox::new(starting.seed.clone());
                 runner::run_in(&sandbox, starting.start_scenario()).assert_fully_decided_green();
-                runner::check_in(&sandbox, name, holds).assert_fully_decided_green();
+                common::scenario_runner::check_in(&sandbox, name, holds).assert_fully_decided_green();
                 let (faulty, end) = scenarios::$name().seeded();
                 let report = runner::run(faulty);
                 assert!(
@@ -9089,7 +9089,7 @@ macro_rules! journey_tests {
                 let end = journey.end.clone();
                 let sandbox = Sandbox::new(journey.seed.clone());
                 runner::run_in(&sandbox, journey.scenario()).assert_fully_decided_green();
-                runner::check_in(&sandbox, name, end).assert_fully_decided_green();
+                common::scenario_runner::check_in(&sandbox, name, end).assert_fully_decided_green();
             }
         )*
     };
@@ -9172,5 +9172,5 @@ fn check_a_journey_end_state() {
     let journey = journey_by_id(&id).unwrap_or_else(|| panic!("no journey {id}"));
     let (name, end) = (journey.name, journey.end);
     let sandbox = Sandbox::attach(root.into());
-    runner::check_in(&sandbox, name, end).assert_fully_decided_green();
+    common::scenario_runner::check_in(&sandbox, name, end).assert_fully_decided_green();
 }

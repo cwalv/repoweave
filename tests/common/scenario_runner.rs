@@ -2179,9 +2179,9 @@ impl Run<'_> {
                 )
             })
             .collect();
-        let path = self.captures_file(name);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, serde_json::to_string(&text).unwrap()).unwrap();
+        let file = self.captures_file(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, serde_json::to_string(&text).unwrap()).unwrap();
     }
 
     /// What was captured as `name`: in this run, else as the run that built
