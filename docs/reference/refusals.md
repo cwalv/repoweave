@@ -154,7 +154,7 @@ The others follow.
 
 | State | Means | Refused by |
 |---|---|---|
-| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, `rwv switch` and `rwv workweave create --branch`, for a project branch checked out in another workspace |
+| `in another workspace` | a workweave's checkout derives from the clone, named; or the branch is checked out there, the primary's own checkout included | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, `rwv switch` and `rwv workweave create --branch`, for a project branch checked out in another workspace |
 | `in a raw worktree` | a worktree no workweave records derives from the clone, named by path; or the branch is checked out there | `rwv member remove --delete` in the primary, and replay's prune of a dropped member there; `rwv branch delete`, for a branch checked out in a raw worktree |
 
 **Choices.** Each state's choices print under `choices:` in this order, with a directory named where a choice does not run where the verb did. A state with no row here prints none.
@@ -193,7 +193,7 @@ The others follow.
 |---|---|---|---|---|
 | `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `diverged` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream` | a workspace with the branch checked out | backup first |
-| `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
+| `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m> --commit` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
 | `diverged`, for `rwv workweave create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |
@@ -204,14 +204,14 @@ The others follow.
 | `diverged`, for `rwv update --remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`); then `rwv update --remote --reset-to-upstream <repo> --commit` | any workspace | creates or fast-forwards |
 | `behind` | C1: take in theirs | `rwv pull` | any workspace | fast-forward only |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
-| `ahead` | C7: publish it (again) | `rwv push` | here | adds only |
-| `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
-| `ahead`, for `rwv land` | C7: publish it (again) | `rwv push --branch <W>` | any workspace | adds only |
+| `ahead` | C7: publish it | `rwv push` | here | adds only |
+| `ahead` | C7: publish it | `rwv push --repo <m>` | here | adds only |
+| `ahead`, for `rwv land` | C7: publish it | `rwv push --branch <W>` | any workspace | adds only |
 | `gone` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new> --adopt` | here | renames or links only |
 | `gone` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `gone` | C22: squashed, rebase-merged or on another lineage: reset yours to the target's here | `rwv sync --reset-to-target <m>` | the workspace with that feature | backup kept; local only |
 | `gone` | C9: delete what is landed | `rwv branch delete <W> --discard-unlanded` | a workspace where `<W>` is not checked out | deletes only what is landed elsewhere; local only |
-| `gone` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `gone` | C7: publish it | `rwv push --repo <m>` | here | adds only |
 | `foreign upstream` | stop `<b>` taking in from the branch of another name | VCS action (git: `git -C <checkout> branch --unset-upstream <b>`) | any workspace | config only |
 | `no push target` | set the remote this repo publishes to | VCS action (git: `git -C <checkout> config remote.pushDefault <r>`) | any workspace | config only |
 | `no push target` | add a remote for `<url>`, under a name no remote has | VCS action (git: `git -C <checkout> remote add <r> <url>`) | any workspace | config only |
@@ -297,13 +297,13 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `withheld` | C7: publish it (again) | `rwv push` | here | adds only |
-| `withheld` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
-| `withheld` | C7: publish it (again) | `rwv push --branch <target>` | any workspace | adds only |
+| `withheld` | C7: publish it | `rwv push` | here | adds only |
+| `withheld` | C7: publish it | `rwv push --repo <m>` | here | adds only |
+| `withheld` | C7: publish it | `rwv push --branch <target>` | any workspace | adds only |
 | `withheld` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `withheld` | set the remote this repo publishes to | VCS action (git: `git -C <checkout> config remote.pushDefault <r>`) | any workspace | config only |
 | `no pin` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
-| `target unpublished` | C7: publish it (again) | `rwv push --branch <target>` | any workspace | adds only |
+| `target unpublished` | C7: publish it | `rwv push --branch <target>` | any workspace | adds only |
 | `target unpublished` | C10: name it, or adopt the remote branch you name | `rwv branch rename <new>` | here | renames or links only |
 | `target unpublished` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> feature --target <T>` | any workspace | records only |
 
@@ -438,7 +438,7 @@ The others follow.
 
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
-| `declared` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
+| `declared` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m> --commit` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `declared` | C12: say how this branch is used: feature work onto `<T>`, or declared | `rwv branch set-mode <W> declared` | any workspace | records only |
 | `declared mode` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `declared mode`, for `rwv branch delete` | give the line up unlanded: record it as a feature onto `<T>`, then delete it and its published copy, a backup keeping what it held | `rwv branch set-mode <W> feature --target <T>`; `rwv branch delete <W> --discard-unlanded --delete-remote-unlanded <repo>` | any workspace | backup kept |
@@ -1462,6 +1462,20 @@ tool.
 **Exits.** The refusal lists the valid kinds, derived from the vocabulary
 itself: the kinds `violations` carries and the integration kinds `issues`
 carries. [Doctor findings](./doctor-findings.md) has an entry for each.
+
+### `unknown-integration-setting`
+
+**Condition.** `rwv integration set-enabled` or `rwv integration set` named an
+integration no built-in integration has, a key the named integration does not
+read, or a value that is not a TOML value.
+
+**Why.** The setters write `rwv.toml`, which refuses an unknown integration or
+key when it is read, so a name or key the manifest would refuse is refused
+before anything is written.
+
+**Exits.** The refusal lists the accepted integration names or the accepted
+keys. Quote a string value (`'"sccache"'`) and bracket a list
+(`'["turbo.json"]'`).
 
 ### `unknown-registry`
 

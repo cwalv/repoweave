@@ -194,6 +194,9 @@ pub enum RefusalKind {
     ProjectDirOccupied,
     /// A repository named as a project holds no `rwv.toml`.
     NotAProject,
+    /// An integration name, or a key of its table, that no built-in integration
+    /// takes, or a value that is not TOML.
+    UnknownIntegrationSetting,
     /// The name would nest a project inside a project.
     NestedProjectName,
     /// A project directory holds the pre-TOML manifest and nothing rwv reads.

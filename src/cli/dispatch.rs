@@ -17,7 +17,8 @@ use crate::activate;
 use crate::add_remove;
 use crate::check;
 use crate::cli::{
-    consent, BackupAction, BranchAction, Cli, Commands, MemberAction, SetupAction, WorkweaveAction,
+    consent, BackupAction, BranchAction, Cli, Commands, IntegrationAction, MemberAction,
+    SetupAction, WorkweaveAction,
 };
 use crate::clone;
 use crate::explain;
@@ -423,6 +424,7 @@ struct Binding {
 fn writes_project(command: Option<&Commands>) -> bool {
     match command {
         Some(Commands::Member { .. })
+        | Some(Commands::Integration { .. })
         | Some(Commands::Lock { .. })
         | Some(Commands::Sync { .. })
         | Some(Commands::Land { .. })
@@ -507,7 +509,7 @@ fn continues(
 /// `--continue` is not counted: it concludes the operation that stopped.
 fn commits_project(command: Option<&Commands>) -> bool {
     match command {
-        Some(Commands::Member { .. }) => true,
+        Some(Commands::Member { .. }) | Some(Commands::Integration { .. }) => true,
         Some(Commands::Lock { commit, .. }) => *commit,
         Some(Commands::Sync { do_continue, .. })
         | Some(Commands::Land { do_continue, .. })
@@ -720,6 +722,7 @@ fn drives_repositories(command: Option<&Commands>) -> bool {
             | Commands::Clone { .. }
             | Commands::Init { .. }
             | Commands::Member { .. }
+            | Commands::Integration { .. }
             | Commands::Branch { .. }
             | Commands::Switch { .. }
             | Commands::Workweave { .. }
@@ -993,6 +996,32 @@ pub fn run() -> anyhow::Result<()> {
         Some(Commands::Init { project, provider }) => {
             // Bootstrap-then-resolve happens inside the handler — see init.rs.
             init::init(&ProjectName::new(project)?, provider.as_deref(), origin_dir)?;
+        }
+        Some(Commands::Integration { action }) => {
+            let (project, no_materialize) = match &action {
+                IntegrationAction::SetEnabled {
+                    project,
+                    no_materialize,
+                    ..
+                }
+                | IntegrationAction::Set {
+                    project,
+                    no_materialize,
+                    ..
+                } => (project.clone(), *no_materialize),
+            };
+            let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
+            let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
+            refuse_symlinked_members_here(&ctx)?;
+            let opts = activate::ActivateOptions { no_materialize };
+            match action {
+                IntegrationAction::SetEnabled { name, enabled, .. } => {
+                    crate::integration_settings::run_set_enabled(&name, enabled, &ctx, opts)?;
+                }
+                IntegrationAction::Set {
+                    name, key, value, ..
+                } => crate::integration_settings::run_set(&name, &key, &value, &ctx, opts)?,
+            }
         }
         Some(Commands::Member { action }) => match action {
             MemberAction::Add {

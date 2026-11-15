@@ -153,6 +153,7 @@ pub mod git;
 pub mod init;
 pub mod integration;
 pub mod integration_runner;
+pub mod integration_settings;
 pub mod integrations;
 pub mod land;
 pub mod landing_claim;

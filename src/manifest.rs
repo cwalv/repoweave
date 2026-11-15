@@ -1924,6 +1924,37 @@ impl Manifest {
         self.repositories.len()
     }
 
+    /// Turn the integration `name` on or off, creating its table when the
+    /// manifest has none.
+    pub(crate) fn set_integration_enabled(&mut self, name: &str, on: bool) {
+        self.integrations
+            .entry(name.to_owned())
+            .or_default()
+            .enablement = if on { Enablement::On } else { Enablement::Off };
+    }
+
+    /// Whether the integration `name` states `enabled` in this manifest, and
+    /// which way.
+    pub(crate) fn integration_enablement(&self, name: &str) -> Enablement {
+        self.integrations
+            .get(name)
+            .map_or(Enablement::Default, IntegrationConfig::enablement)
+    }
+
+    /// Set the key `key` of the integration `name`'s table to `value`.
+    pub(crate) fn set_integration_setting(&mut self, name: &str, key: &str, value: toml::Value) {
+        self.integrations
+            .entry(name.to_owned())
+            .or_default()
+            .settings
+            .insert(key.to_owned(), value);
+    }
+
+    /// The value the integration `name`'s table holds at `key`, if any.
+    pub(crate) fn integration_setting(&self, name: &str, key: &str) -> Option<&toml::Value> {
+        self.integrations.get(name)?.settings.get(key)
+    }
+
     /// Return `true` if the manifest contains no repositories.
     ///
     /// Equivalent to `manifest.repositories.is_empty()` but avoids direct

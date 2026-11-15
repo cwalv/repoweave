@@ -32,6 +32,7 @@ mod integration_framework_test;
 mod integration_issue_kind_precision_test;
 mod integration_runner_contract_test;
 mod integration_tool_declaration_test;
+mod integration_verbs_test;
 mod integration_warning_pass_test;
 mod integrations_test;
 mod intent_verb_atomicity_test;

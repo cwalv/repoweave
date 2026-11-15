@@ -14,30 +14,22 @@ rwv member add https://github.com/chatly/shared-types.git --role dependency
 
 ## Enable ecosystem integrations
 
-By default, `cargo-workspace`, `npm-workspaces`, `go-work`, `uv-workspace`, and `vscode-workspace` are enabled. The first four act only when a member repo carries their marker (`Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`); `vscode-workspace` covers every member repo. `pnpm-workspaces`, `gita`, and `static-files` are opt-in in `projects/web-app/rwv.toml`, and you can set `enabled = true` or `enabled = false` on any integration:
-
-```toml
-[integrations.npm-workspaces]
-enabled = false
-
-[integrations.pnpm-workspaces]
-enabled = true
-
-[integrations.static-files]
-enabled = true
-files = ["justfile"]
-```
-
-After editing `rwv.toml`, author the newly enabled integrations' files, then remove what the disabled ones left behind, surface the weave-root symlinks, and run the install hooks:
+By default, `cargo-workspace`, `npm-workspaces`, `go-work`, `uv-workspace`, and `vscode-workspace` are enabled. The first four act only when a member repo carries their marker (`Cargo.toml`, `package.json`, `go.mod`, `pyproject.toml`); `vscode-workspace` covers every member repo. `pnpm-workspaces`, `gita`, and `static-files` are opt-in in `projects/web-app/rwv.toml`, and you can set `enabled` to `true` or `false` on any integration with `rwv integration set-enabled`:
 
 ```bash
-rwv doctor --fix
+rwv integration set-enabled npm-workspaces false
+rwv integration set-enabled pnpm-workspaces true
+rwv integration set-enabled static-files true
+rwv integration set static-files files '["justfile"]'
+```
+
+Each `rwv integration` setter commits its own change to `rwv.toml`, and turning an integration on authors the managed files it declares in the same commit. Turning one off deletes nothing; remove what the disabled integrations left behind, surface the weave-root symlinks, and run the install hooks with:
+
+```bash
 rwv materialize
 ```
 
-Commit the edit and the files it generated with git (`git -C projects/web-app add -A`, then `git -C projects/web-app commit`).
-
-`rwv doctor --fix` authors files for an integration you just enabled; it does not remove a disabled integration's files, and says so. `rwv materialize` strips them, repairs the weave-root symlinks, and runs install hooks for the active project. An install hook whose tool is missing (`pnpm` here) prints a warning naming the tool and does not fail the command. `rwv member add`, `rwv member remove`, `rwv update --remote`, and `rwv member set-role` regenerate integration files as they change membership, and in the primary weave they also run install hooks.
+`rwv doctor --fix` also authors files for an integration whose `enabled` was edited by hand; it does not remove a disabled integration's files, and says so. `rwv materialize` strips them, repairs the weave-root symlinks, and runs install hooks for the active project. An install hook whose tool is missing (`pnpm` here) prints a warning naming the tool and does not fail the command. `rwv member add`, `rwv member remove`, `rwv update --remote`, and `rwv member set-role` regenerate integration files as they change membership, and in the primary weave they also run install hooks.
 
 ## Commit and publish the project repository
 

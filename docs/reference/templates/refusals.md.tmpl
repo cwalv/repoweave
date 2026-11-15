@@ -1055,6 +1055,20 @@ tool.
 itself: the kinds `violations` carries and the integration kinds `issues`
 carries. [Doctor findings](./doctor-findings.md) has an entry for each.
 
+### `unknown-integration-setting`
+
+**Condition.** `rwv integration set-enabled` or `rwv integration set` named an
+integration no built-in integration has, a key the named integration does not
+read, or a value that is not a TOML value.
+
+**Why.** The setters write `rwv.toml`, which refuses an unknown integration or
+key when it is read, so a name or key the manifest would refuse is refused
+before anything is written.
+
+**Exits.** The refusal lists the accepted integration names or the accepted
+keys. Quote a string value (`'"sccache"'`) and bracket a list
+(`'["turbo.json"]'`).
+
 ### `unknown-registry`
 
 **Condition.** `--provider` names a registry rwv does not have.

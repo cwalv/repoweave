@@ -31,6 +31,7 @@ const BACKUP_EXPLAIN: &str = include_str!("../docs/reference/explain/backup.md")
 const BRANCH_EXPLAIN: &str = include_str!("../docs/reference/explain/branch.md");
 const SWITCH_EXPLAIN: &str = include_str!("../docs/reference/explain/switch.md");
 const MEMBER_EXPLAIN: &str = include_str!("../docs/reference/explain/member.md");
+const INTEGRATION_EXPLAIN: &str = include_str!("../docs/reference/explain/integration.md");
 const LOCK_EXPLAIN: &str = include_str!("../docs/reference/explain/lock.md");
 const ACTIVATE_EXPLAIN: &str = include_str!("../docs/reference/explain/activate.md");
 const MATERIALIZE_EXPLAIN: &str = include_str!("../docs/reference/explain/materialize.md");
@@ -246,6 +247,7 @@ const VERB_BUNDLES: &[(&str, &str)] = &[
     ("branch", BRANCH_EXPLAIN),
     ("switch", SWITCH_EXPLAIN),
     ("member", MEMBER_EXPLAIN),
+    ("integration", INTEGRATION_EXPLAIN),
     ("lock", LOCK_EXPLAIN),
     ("activate", ACTIVATE_EXPLAIN),
     ("materialize", MATERIALIZE_EXPLAIN),

@@ -165,6 +165,13 @@ pub enum Commands {
         action: MemberAction,
     },
 
+    /// Turn an integration on or off, or set one key of its table in the project's `rwv.toml`
+    #[command(arg_required_else_help = true)]
+    Integration {
+        #[command(subcommand)]
+        action: IntegrationAction,
+    },
+
     /// Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one
     #[command(arg_required_else_help = true)]
     Branch {
@@ -847,6 +854,39 @@ pub enum BranchAction {
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IntegrationAction {
+    /// Turn an integration on or off. Turning it on authors the managed files it declares; turning it off deletes nothing, and `rwv materialize` strips what it authored before
+    SetEnabled {
+        /// The integration, as `[integrations.<name>]` names it
+        name: String,
+        /// `true` turns it on; `false` turns it off
+        #[arg(action = clap::ArgAction::Set)]
+        enabled: bool,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
+    },
+    /// Set one key of an integration's table, other than `enabled`
+    Set {
+        /// The integration, as `[integrations.<name>]` names it
+        name: String,
+        /// The key, as the integration's reference page names it
+        key: String,
+        /// The value, a TOML value: quote a string (`'"sccache"'`) and bracket a list (`'["a.json"]'`)
+        value: String,
+        /// Operate on this project instead of the active project (does not change `.rwv-active`)
+        #[arg(long)]
+        project: Option<String>,
+        /// Skip integration install hooks (e.g., `npm install`, `uv sync`); `rwv materialize` runs them later
+        #[arg(long)]
+        no_materialize: bool,
     },
 }
 

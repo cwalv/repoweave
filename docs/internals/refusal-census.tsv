@@ -75,6 +75,7 @@ src/check.rs	missing-lock-merge-driver config absent	-	1
 src/check.rs	missing-lock-merge-driver config legacy	tests/sync/lock_merge_driver_test.rs	1
 src/check.rs	repair-target-changed	-	2
 src/check.rs	unknown-finding-kind	-	1
+src/check.rs	unparseable-project malformed	-	1
 src/cherry_pick.rs	(untokened:owed)	-	4
 src/cherry_pick.rs	edits rwv.toml or rwv.lock uncommitted	-	1
 src/cherry_pick.rs	head-not-on-branch	-	1
@@ -147,6 +148,8 @@ src/init.rs	project-dir-occupied	-	1
 src/init.rs	provider-cannot-mint-url	tests/docs/refusal_arrival_test.rs	1
 src/init.rs	unknown-registry	-	1
 src/integration_runner.rs	(untokened:integration-channel)	-	7
+src/integration_settings.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
+src/integration_settings.rs	unknown-integration-setting	tests/integrations/integration_verbs_test.rs	2
 src/integrations/cargo_workspace.rs	(untokened:integration-channel)	-	6
 src/integrations/go_work.rs	(untokened:integration-channel)	-	3
 src/integrations/merge.rs	(untokened:integration-channel)	-	2
@@ -294,7 +297,7 @@ src/sync.rs	(untokened:internal-invariant)	-	14
 src/sync.rs	(untokened:tally)	-	3
 src/sync.rs	abort-in-its-workspace	-	2
 src/sync.rs	checkout in a raw worktree	-	1
-src/sync.rs	checkout in another workspace	-	1
+src/sync.rs	checkout in another workspace	-	2
 src/sync.rs	clone-topology	-	1
 src/sync.rs	dropped-repo-has-unique-commits	tests/doctor/state_hygiene_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
@@ -314,7 +317,6 @@ src/sync.rs	remotes-unconfirmed	-	1
 src/sync.rs	resume-contradicts-record	-	4
 src/sync.rs	savepoint-unfiled	tests/sync/sync_prune_direction_test.rs	1
 src/sync.rs	target moved mid-operation	tests/sync/crash_matrix_test.rs	2
-src/sync.rs	unparseable-project malformed	-	1
 src/sync.rs	unreadable-op-lease	-	1
 src/sync.rs	unreadable-status	-	2
 src/sync.rs	untracked-collision	-	1

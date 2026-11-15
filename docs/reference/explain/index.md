@@ -29,6 +29,7 @@ rwv explain <verb>
 - **branch** — create a weave branch, record how a weave branch is used, list the weave branches with their records, rename one, or delete one (`--json` available)
 - **switch** — put the project repo on a weave branch and align the members to it, or detach the workspace at a revision
 - **member** — add a repo to the active project manifest, remove one, or change a member's role or submodule setting
+- **integration** — turn an integration on or off, or set one key of its table in the project's rwv.toml
 - **lock** — snapshot current repo HEADs into rwv.lock (pure local; no network)
 - **activate** — set the active project, create symlinks, run integration install hooks
 - **materialize** — settle drift, clean up disabled integrations, repair weave-root symlinks, and run integration install hooks for the presented project, without selecting anything

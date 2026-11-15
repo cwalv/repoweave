@@ -55,8 +55,7 @@ If the old superproject itself also contains application code (not just submodul
 If the old superproject held a top-level `Cargo.toml`, `package.json`, `pnpm-workspace.yaml`, `go.work`, or `pyproject.toml`, enable the corresponding integration in `projects/web-app/rwv.toml`, generate the workspace files, and commit them:
 
 ```bash
-$EDITOR projects/web-app/rwv.toml   # enable [integrations.<name>]
-rwv doctor --fix
+rwv integration set-enabled <name> true   # enable [integrations.<name>]; authors its files
 rwv materialize
 rwv lock --commit
 ```

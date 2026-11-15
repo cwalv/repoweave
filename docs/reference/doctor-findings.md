@@ -349,7 +349,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `behind` | C6: align members for the checked-out branch | `rwv update` | here | moves only what alignment moves |
 | `behind` | C1: take in theirs | `rwv update --remote --repo <m>` | any workspace | fast-forward only |
 | `ahead` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
-| `ahead` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `ahead` | C7: publish it | `rwv push --repo <m>` | here | adds only |
 | `unpinned` | C5: record it: the lock, and `rwv.toml` as it stands | `rwv lock --commit` | a workspace with the branch checked out | records only |
 | `unpinned` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `unpinned` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
@@ -375,7 +375,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `unreachable` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `unreachable`, for `rwv land` | C33: look for what may be published but not yet fetched | `rwv fetch` | any workspace | downloads only |
 | `off remote` | C22: squashed, rebase-merged or on another lineage: reset yours to the target's here | `rwv sync --reset-to-target <m>` | the workspace with that feature | backup kept; local only |
-| `off remote` | C7: publish it (again) | `rwv push --repo <m>` | here | adds only |
+| `off remote` | C7: publish it | `rwv push --repo <m>` | here | adds only |
 | `off remote` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `off remote` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
 | `off remote` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
@@ -383,7 +383,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `backwards`, for `rwv update` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
 | `unmerged` | C26: merge `<pin>` in as a merge commit | VCS action (git: `git -C <checkout> merge --no-ff <pin>`) | the checkout | a merge adds only |
 | `unmerged` | C25: pin it at a commit you choose on its declared branch | `rwv member pin <m> <rev> --commit` | a workspace with the branch checked out | re-pins by name; backup for a detached HEAD |
-| `would be unreachable` | C7: publish it (again) | `rwv push` | here | adds only |
+| `would be unreachable` | C7: publish it | `rwv push` | here | adds only |
 | `would be unreachable` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `held by no branch` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 

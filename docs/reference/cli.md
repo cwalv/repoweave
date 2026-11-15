@@ -416,6 +416,28 @@ Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-man
 | `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
 | `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
 
+### `rwv integration`
+
+Turn an integration on or off, or set one key of its `[integrations.<name>]` table in the active project's `rwv.toml`. Each form commits its own change and the files its regeneration wrote, and leaves every other uncommitted edit of the project repo uncommitted, as the `rwv member` setters do. A value `rwv.toml` already holds is not rewritten, but the generated files are regenerated. A name no built-in integration has, a key it does not read and a value that is not TOML are refused (`unknown-integration-setting`), listing the accepted names or keys.
+
+### `rwv integration set-enabled <name> <true|false>`
+
+Write `enabled` for the integration. Turning it on authors the managed files it declares and commits them with the key. Turning it off deletes nothing and names `rwv materialize` as the step that strips what the integration authored before.
+
+| Flag | Effect |
+|---|---|
+| `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
+### `rwv integration set <name> <key> <value>`
+
+Write any other key of the integration's table. `<value>` is a TOML value: quote a string (`'"sccache"'`) and bracket a list (`'["turbo.json"]'`). `enabled` is refused (`inapplicable-flag`), naming `set-enabled`.
+
+| Flag | Effect |
+|---|---|
+| `--no-materialize` | Skip the install hooks; regeneration still runs, and `rwv materialize` runs the hooks later |
+| `--project <name>` | Operate on this project instead of the active project (does not change `.rwv-active`) |
+
 ### `rwv sync [...]`
 
 Take new work into the checked-out weave branch. In a feature, `rwv sync` takes in the branch its record lands into (the target); on any weave branch, `--from <branch>` merges that branch's history in. A declared branch takes nothing in without `--from`: it refuses as `target` `no target`. There is no positional argument; `rwv land` is the verb that lands a feature into its target.

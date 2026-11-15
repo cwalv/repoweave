@@ -131,6 +131,7 @@ rwv push
 | `rwv member set-branch <repo> <branch>` | Declare the branch a repo follows and pin it at that branch's tip, committing both (`--new` creates a branch that exists nowhere) |
 | `rwv member set-url <repo> <url>` | Set a repo's url; for `projects/<name>`, record the remote the project repo publishes to |
 | `rwv member set-role <repo> <role>` | Change a repo's role in `rwv.toml`, update ecosystem workspace files, and settle file permissions |
+| `rwv integration set-enabled <name> <true\|false>` | Turn an integration on (authoring its managed files) or off (deleting nothing; `rwv materialize` strips), and commit the change; `rwv integration set <name> <key> <value>` sets another key of its table |
 | `rwv member set-recurse-submodules <repo> <true\|false>` | Say whether new checkouts of a repo populate its submodules, and update ecosystem workspace files |
 | `rwv lock` | Record repo HEADs as `rwv.lock`'s pins, moving a pin forward only: a repo with no pin keeps none, and one behind or diverged from its pin is refused unless `--repo` names it. Errors on uncommitted changes (`--dirty` to bypass). `--commit` commits the lock, with `rwv.toml` when it has uncommitted changes (`-m` sets the message) |
 | `rwv doctor` | Convention enforcement: orphans, dangling refs, pins that disagree with their checkouts, integration checks. `--locked` for scriptable lock-freshness check |

@@ -542,6 +542,11 @@ fn verbs() -> Vec<Verb> {
             schema: None,
         },
         Verb {
+            name: "integration",
+            summary: "turn an integration on or off, or set one key of its table in the project's rwv.toml",
+            schema: None,
+        },
+        Verb {
             name: "lock",
             summary: "snapshot current repo HEADs into rwv.lock (pure local; no network)",
             schema: None,
