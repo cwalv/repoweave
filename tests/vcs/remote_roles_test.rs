@@ -776,7 +776,7 @@ fn the_choices_no_push_target_prints_each_give_the_branch_a_push_target() {
 
     let (weave, _) = build();
     let refused = text(&weave.rwv(&["push"]).stderr);
-    let url = common::file_url(&weave.scratch("third.git"));
+    let url = common::file_url(weave.scratch("third.git"));
     init_bare(&weave.scratch("third.git"));
     let add =
         printed_git_line(&refused, "add a remote for `<url>`", "third")[0].replace("<url>", &url);

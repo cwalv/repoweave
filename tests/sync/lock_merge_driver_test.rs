@@ -652,7 +652,7 @@ fn a_clone_of_a_project_with_a_legacy_attribute_is_reported_and_doctor_fix_clear
     assert!(!reported(&root));
     assert_eq!(
         common::git_in(
-            &root.join("projects/legacy"),
+            root.join("projects/legacy"),
             &["show", "HEAD:.gitattributes"]
         ),
         "rwv.lock merge=rwv-lock"
