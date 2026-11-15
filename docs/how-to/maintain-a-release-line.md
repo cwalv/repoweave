@@ -105,7 +105,7 @@ rwv branch set-mode stable feature --target main
 rwv branch delete stable --discard-unlanded --delete-remote-unlanded projects/web-app
 ```
 
-The line's member branches, `v1` and `protov1`, stay: once `stable` is a feature they are ordinary branches, and a delete never touches a branch a live line still declares.
+The hosting service keeps the line's record until a push removes it; `rwv push` publishes the deletion. The line's member branches, `v1` and `protov1`, stay: once `stable` is a feature they are ordinary branches, and a delete never touches a branch a live line still declares.
 
 ## Related
 

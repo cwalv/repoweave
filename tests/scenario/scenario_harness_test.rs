@@ -1204,6 +1204,10 @@ every_scenario!(
     j10_a_second_machine_takes_the_project,
     j11_an_ordinary_repository_becomes_a_project,
     j12_a_hand_edited_manifest_converges,
+    j13_a_release_line_is_cut,
+    j14_a_hotfix_lands_on_the_release_line,
+    j15_a_fix_is_ported_from_one_line_to_the_other,
+    j16_a_release_line_is_retired,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9081,6 +9085,10 @@ journey_tests!(
     j10_a_second_machine_takes_the_project,
     j11_an_ordinary_repository_becomes_a_project,
     j12_a_hand_edited_manifest_converges,
+    j13_a_release_line_is_cut,
+    j14_a_hotfix_lands_on_the_release_line,
+    j15_a_fix_is_ported_from_one_line_to_the_other,
+    j16_a_release_line_is_retired,
 );
 
 #[test]

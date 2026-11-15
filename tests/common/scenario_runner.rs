@@ -158,6 +158,13 @@ pub enum Action {
         holding: &'static str,
         fill: &'static [(&'static str, &'static str)],
     },
+    /// The lines of one printed choice, the line of the last rwv step that
+    /// begins each of `prefixes`, run in that order as printed; the step
+    /// stops at the first that fails.
+    RwvPrintedChoice {
+        at: Place,
+        prefixes: &'static [&'static str],
+    },
     DropLockEntry {
         at: Place,
         project: Repo,
@@ -227,6 +234,7 @@ impl Action {
             self,
             Action::Rwv { .. }
                 | Action::RwvPrinted { .. }
+                | Action::RwvPrintedChoice { .. }
                 | Action::RwvPaused { .. }
                 | Action::Release(_)
                 | Action::NewMachine(_)
@@ -938,6 +946,19 @@ impl Step {
         )
     }
 
+    /// Every line of one printed choice, in order, each beginning the
+    /// matching entry of `prefixes`.
+    pub fn rwv_printed_choice(at: &Place, prefixes: &'static [&'static str]) -> Step {
+        Step::new(
+            format!("the printed choice {prefixes:?}"),
+            Action::RwvPrintedChoice {
+                at: at.clone(),
+                prefixes,
+            },
+            Expect::undecided(),
+        )
+    }
+
     pub fn new_machine(machine: Machine) -> Step {
         Step::new(
             format!("fresh clone on {machine:?}"),
@@ -1518,6 +1539,43 @@ impl Run<'_> {
                     out.status.success(),
                     format!("ran: {line}\n{}", rendered(&out)),
                 )
+            }
+            Action::RwvPrintedChoice { at, prefixes } => {
+                let mut shown = String::new();
+                let mut last = None;
+                for prefix in *prefixes {
+                    let Some(line) = self
+                        .last_rwv_output
+                        .lines()
+                        .map(str::trim)
+                        .find(|line| line.starts_with(prefix))
+                    else {
+                        return (
+                            false,
+                            format!(
+                                "no `{prefix}...` line was printed:\n{}",
+                                self.last_rwv_output
+                            ),
+                        );
+                    };
+                    let mut words = line.split_whitespace();
+                    let program = words.next();
+                    let args: Vec<&str> = words.collect();
+                    let out = match program {
+                        Some("git") => {
+                            self.ran_printed_vcs_action = true;
+                            sb.git(&sb.place_root(at), &args)
+                        }
+                        _ => sb.rwv(&sb.place_root(at), &args),
+                    };
+                    shown.push_str(&format!("ran: {line}\n{}", rendered(&out)));
+                    self.last_code = out.status.code();
+                    last = Some(out.status.success());
+                    if !out.status.success() {
+                        break;
+                    }
+                }
+                (last.unwrap_or(false), shown)
             }
             Action::DropLockEntry {
                 at,

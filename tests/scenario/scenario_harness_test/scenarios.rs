@@ -1,7 +1,8 @@
 use super::invariants::{LockSite, Mode, Record};
 use super::runner::{Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, Scenario, Step, Tamper};
 use super::sandbox::{
-    declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, Store, RECORDS_BRANCH,
+    declared_branch_text, Machine, Place, Remote, RemoteKind, Repo, SecondProject, Seed, Store,
+    RECORDS_BRANCH,
 };
 use crate::common;
 use common::scenario_steps::{
@@ -30954,6 +30955,257 @@ pub fn j12_a_hand_edited_manifest_converges() -> Journey {
                     members: &[Repo::App, Repo::Lib],
                 }),
             Step::rwv(&a(), &["status"]).expect(Exit::Succeeds),
+        ],
+    }
+}
+
+/// `main` holds a release commit in `app` and `lib` and moves on by one more
+/// in `app`; the line `stable`, cut at the release with its own branches
+/// `v1` and `protov1`, is published and the primary is back on `main`.
+fn release_line_cut_and_published() -> Vec<Step> {
+    let app_v1 = "v1";
+    let lib_v1 = "protov1";
+    vec![
+        Step::commit(&a(), Repo::App, "release-app"),
+        Step::commit(&a(), Repo::Lib, "release-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "create",
+                "stable",
+                "--declared",
+                "--set-new-branch",
+                &format!("{APP}={app_v1}"),
+                "--set-new-branch",
+                &format!("{LIB}={lib_v1}"),
+            ],
+        )
+        .expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), app_v1)
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), lib_v1)
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "main-next"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]
+}
+
+/// A line of releases is cut for two members and published; the third
+/// member keeps following `main`.
+pub fn j13_a_release_line_is_cut() -> Journey {
+    let path = release_line_cut_and_published();
+    let fault = 4;
+    Journey {
+        name: "j13: a release line is cut for two members and published",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "v1",
+                    mark: "release-app",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "protov1",
+                    mark: "release-lib",
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stable",
+                    record: Some(Record::Declared),
+                }),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "origin/v1"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("main-next")),
+        ],
+    }
+}
+
+fn stable_pins() -> LockSite {
+    LockSite::Branch(
+        Store::Remote(RemoteKind::Origin),
+        Repo::Proj,
+        "stable".to_owned(),
+    )
+}
+
+/// A hotfix is made in a workspace that lands into the line, landed, and the
+/// line published; `main` is not touched.
+fn hotfix_landed_and_published() -> Vec<Step> {
+    let workweave = ww("hotfix");
+    vec![
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "hotfix",
+                "--new-branch",
+                "hotfix1",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&workweave, Repo::App, "hotfix-app"),
+        Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push", "--branch", "stable"])
+            .pushes(Remote::origin(Repo::App), "v1")
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds),
+    ]
+}
+
+pub fn j14_a_hotfix_lands_on_the_release_line() -> Journey {
+    let workweave = ww("hotfix");
+    let mut path = release_line_cut_and_published();
+    path.extend(hotfix_landed_and_published());
+    let fault = path.len() - 1;
+    Journey {
+        name: "j14: a hotfix is landed on the release line and main is left alone",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "v1",
+                    mark: "hotfix-app",
+                })
+                .claim(Claim::PinContains {
+                    site: stable_pins(),
+                    member: Repo::App,
+                    mark: "hotfix-app",
+                })
+                .claim(Claim::PinLacks {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::App,
+                    mark: "hotfix-app",
+                })
+                .claim(Claim::WorkweaveGone(workweave)),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "origin/main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("hotfix-app")),
+        ],
+    }
+}
+
+/// The hotfix is ported to `main` with a pick of the project commit that
+/// landed it on the line, landed and published.
+pub fn j15_a_fix_is_ported_from_one_line_to_the_other() -> Journey {
+    let port = ww("port");
+    let mut path = release_line_cut_and_published();
+    path.extend(hotfix_landed_and_published());
+    path.extend([
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "port",
+                "--new-branch",
+                "port-fix",
+                "--target",
+                "main",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&port, &["cherry-pick", "stable"]).expect(Exit::Succeeds),
+        Step::rwv(&port, &["land", "--retire"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j15: a fix is ported from the release line to main",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::PinsReplayed {
+                    at: a(),
+                    rev: "main",
+                    member: Repo::App,
+                    subject: "hotfix-app",
+                    reached_from: "main",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::App,
+                    mark: "main-next",
+                })
+                .claim(Claim::WorkweaveGone(port)),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "origin/main"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("hotfix-app"))
+                .claim(Claim::OutputContains("main-next")),
+        ],
+    }
+}
+
+/// The line that shipped its last fix is deleted from `main`: kept with its
+/// published copy, then given up with the printed choice, which keeps its tip
+/// as a backup.
+pub fn j16_a_release_line_is_retired() -> Journey {
+    let mut path = release_line_cut_and_published();
+    path.extend(hotfix_landed_and_published());
+    path.extend([
+        Step::rwv(&a(), &["branch", "delete", "stable", "--target", "main"])
+            .expect(Exit::Code(3))
+            .claim(Claim::OutputContains("open-head")),
+        Step::rwv_printed_choice(
+            &a(),
+            &["rwv branch set-mode stable", "rwv branch delete stable"],
+        )
+        .deletes(Remote::origin(Repo::Proj), "stable")
+        .expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j16: a release line is retired from main and its tip is kept",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteLacks {
+                    repo: Repo::Proj,
+                    branch: "stable",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "v1",
+                    mark: "hotfix-app",
+                })
+                .claim(Claim::RemoteRecordIs {
+                    branch: "stable",
+                    record: None,
+                }),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("stable")),
+            Step::git(&a(), Repo::App, &["branch", "--list", "v1"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("v1")),
+            Step::rwv(&a(), &["backup", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("stable")),
         ],
     }
 }
