@@ -30586,7 +30586,6 @@ pub fn j04_a_stopped_landing_is_abandoned() -> Journey {
             .claim(Claim::OutputContains("rwv abort")),
         Step::git(&beta, Repo::App, &["checkout", "--theirs", "README"]),
         Step::rwv_printed_quoted(&beta, "rwv abort", "")
-            .may_strand(&[Repo::App])
             .may_rewind(&[Repo::App])
             .expect(Exit::Succeeds),
     ]);
@@ -30619,9 +30618,7 @@ pub fn j05_a_landing_loses_a_race() -> Journey {
         }),
         Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::App, State::PushBranchDiverged)),
-        Step::rwv_printed_holding(&a(), "rwv update ", "--merge-upstream")
-            .may_rewind(&[Repo::App])
-            .expect(Exit::Succeeds),
+        Step::rwv_printed_holding(&a(), "rwv update ", "--merge-upstream").expect(Exit::Succeeds),
         Step::rwv(&a(), &["push"])
             .expect(Exit::refuses(Repo::Proj, State::EditsLockFilesUncommitted)),
         Step::rwv_printed(&a(), "rwv lock --commit").expect(Exit::Succeeds),
@@ -31296,7 +31293,6 @@ pub fn j19_a_landing_killed_midway_is_given_up() -> Journey {
             .claim(Claim::OutputContains("rwv abort")),
         Step::rwv_printed_quoted(&w, "rwv abort", "")
             .may_rewind(&[Repo::App, Repo::Lib])
-            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj])
             .expect(Exit::Succeeds),
     ]);
     let fault = path.len() - 1;
