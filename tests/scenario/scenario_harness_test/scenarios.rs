@@ -1539,8 +1539,8 @@ pub fn a_member_change_taken_in_from_the_target_is_reported_as_already_there() -
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains(
-                    "member-changed role: owned -> fork\n    a landing decides it; not yet published",
-                )),
+                "member-changed role: owned -> fork\n    a landing decides it; not yet published",
+            )),
         ],
     )
 }
@@ -12338,14 +12338,11 @@ fn stop_resolved_to_the_features_manifest() -> Vec<Step> {
 /// stands.
 fn the_resolved_tip_kept(step: Step) -> [Step; 2] {
     [
-        step.expect(Exit::refuses(
-            Repo::Proj,
-            State::EditsReplayDiffers,
-        ))
-        .may_strand(&[Repo::Proj])
-        .claim(Claim::OutputContains(
-            "local/remotes/docs: absent in the text merge, set in the merge of the values",
-        )),
+        step.expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
+            .may_strand(&[Repo::Proj])
+            .claim(Claim::OutputContains(
+                "local/remotes/docs: absent in the text merge, set in the merge of the values",
+            )),
         Step::rwv_printed_holding(&ww("w"), "rwv land --continue", "--keep text-merge")
             .expect(Exit::Succeeds)
             .may_strand(&[Repo::Proj]),
@@ -22713,10 +22710,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
                  merge of the values";
     let stop = || {
         Step::rwv(&ww("w"), start)
-            .expect(Exit::refuses(
-                Repo::Proj,
-                State::EditsReplayDiffers,
-            ))
+            .expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
             .claim(Claim::OutputContains(moved))
             .claim(Claim::OutputContains("--keep text-merge"))
             .claim(Claim::OutputLacks("--keep yours"))
@@ -22743,13 +22737,10 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
     };
     let fixed = || recurse_moved_back(&ww("w"));
     let stands = |step: Step| {
-        step.expect(Exit::refuses(
-            Repo::Proj,
-            State::EditsReplayDiffers,
-        ))
-        .claim(Claim::OutputContains(moved))
-        .claim(Claim::OutputContains("--keep text-merge"))
-        .claim(Claim::OutputLacks("wrote"))
+        step.expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
+            .claim(Claim::OutputContains(moved))
+            .claim(Claim::OutputContains("--keep text-merge"))
+            .claim(Claim::OutputLacks("wrote"))
     };
     let mut steps = vec![
         Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds),
@@ -22897,10 +22888,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
             ]);
             steps.extend(fixed());
             steps.extend([Step::rwv(&ww("w"), resume)
-                .expect(Exit::refuses(
-                    Repo::Proj,
-                    State::EditsReplayDiffers,
-                ))
+                .expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
                 .claim(Claim::OutputContains("not the tip the replay wrote"))]);
             "a hand amend of the replayed tip meets the guard"
         }
@@ -22946,10 +22934,7 @@ pub fn check_a_replayed_tip(verb: TipVerb, settle: TipSettle) -> Scenario {
             if matches!(settle, TipSettle::StagedUnparseable) {
                 steps.extend([
                     Step::rwv_printed_exactly(&ww("w"), bare)
-                        .expect(Exit::refuses(
-                            Repo::Proj,
-                            State::EditsReplayDiffers,
-                        ))
+                        .expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
                         .claim(Claim::OutputContains(moved))
                         .claim(Claim::OutputContains("--keep text-merge")),
                     Step::git(
@@ -23253,10 +23238,7 @@ pub fn a_replay_rwv_settled_still_checks_its_tip(verb: TipVerb) -> Scenario {
     };
     let mut steps = a_later_commit_moves_a_setting(verb);
     steps.extend([Step::rwv(&ww("w"), &[resume, "--continue"])
-        .expect(Exit::refuses(
-            Repo::Proj,
-            State::EditsReplayDiffers,
-        ))
+        .expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
         .claim(Claim::OutputContains("wrote the merge of both sides"))
         .claim(Claim::OutputContains(
             "local/remotes/docs recurse-submodules",
@@ -24471,10 +24453,7 @@ pub fn a_carried_dependent_whose_rwv_toml_differs_is_not_moved() -> Scenario {
         Step::rwv_printed_exactly(&ww("w1"), "rwv workweave create w2 --branch w2")
             .expect(Exit::Succeeds),
         Step::rwv(&ww("w2"), &["sync"])
-            .expect(Exit::refuses(
-                Repo::Proj,
-                State::EditsReplayDiffers,
-            ))
+            .expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers))
             .claim(Claim::OutputContains(
                 "local/remotes/app recurse-submodules: absent in the text merge",
             )),
@@ -26078,10 +26057,8 @@ pub fn doctor_at_a_stop_offers_no_fix_for_a_member_the_operation_places() -> Sce
             Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
             Step::rwv(&at, &["member", "set-recurse-submodules", APP, "false"])
                 .expect(Exit::Succeeds),
-            Step::rwv(&at, &["sync", "--history", "linear"]).expect(Exit::refuses(
-                Repo::Proj,
-                State::EditsReplayDiffers,
-            )),
+            Step::rwv(&at, &["sync", "--history", "linear"])
+                .expect(Exit::refuses(Repo::Proj, State::EditsReplayDiffers)),
             Step::rwv(&at, &["doctor"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputLacks("local/remotes/docs"))

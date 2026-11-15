@@ -2181,7 +2181,10 @@ fn a_merge_killed_where_the_move_swaps_a_file_for_a_directory_is_finished_by_the
     for verb in [&["land"][..], &["lock"], &["doctor", "--fix"]] {
         let out = common::cli::run(verb, &f.ww);
         let stderr = common::cli::refused(&out, State::EditsSetBack);
-        assert!(!common::cli::prose(&stderr).contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(
+            !common::cli::prose(&stderr).contains("commit"),
+            "{verb:?}:\n{stderr}"
+        );
         assert!(
             stderr.contains("rwv doctor --fix --merge-edited-drift"),
             "{verb:?}:\n{stderr}"
@@ -2527,7 +2530,10 @@ fn drift_at_a_name_that_is_not_utf8_is_exited_by_the_printed_stash() {
         let out = common::cli::run(verb, &f.ww);
         let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
         assert!(stderr.contains("could not be read"), "{verb:?}:\n{stderr}");
-        assert!(!common::cli::prose(&stderr).contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(
+            !common::cli::prose(&stderr).contains("commit"),
+            "{verb:?}:\n{stderr}"
+        );
     }
     let said = common::cli::describe(&common::cli::run(&["doctor"], &f.ww));
     assert!(said.contains("could not be read"), "{said}");
@@ -2721,7 +2727,10 @@ fn a_project_manifest_moved_and_edited_is_held_until_merged() {
             listing_under(&stderr, "edits moved and edited").contains(&"rwv.toml".to_owned()),
             "{verb:?}:\n{stderr}"
         );
-        assert!(!common::cli::prose(&stderr).contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(
+            !common::cli::prose(&stderr).contains("commit"),
+            "{verb:?}:\n{stderr}"
+        );
         assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), moved);
     }
     let out = common::cli::run(&["lock", "--commit"], &f.ww);
@@ -4014,7 +4023,10 @@ fn a_move_under_a_checkout_with_no_reflog_entry_is_held_with_no_commit_offered()
                 stderr.contains("where this checkout of"),
                 "{how:?} {verb:?}:\n{stderr}"
             );
-            assert!(!common::cli::prose(&stderr).contains("commit"), "{how:?} {verb:?}:\n{stderr}");
+            assert!(
+                !common::cli::prose(&stderr).contains("commit"),
+                "{how:?} {verb:?}:\n{stderr}"
+            );
             assert_eq!(
                 path_state(&f.ww_lib, &["notes.txt", "new.txt"]),
                 before,
