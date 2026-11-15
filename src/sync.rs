@@ -2462,6 +2462,40 @@ fn judge_stores(
         StoresRemoved::Nested => "the stores nested in its checkout hold",
     };
     let unanswered = refresh_remotes(vcs, stores);
+    if !unanswered.is_empty() && discard.is_none() {
+        let as_last_fetched = stores
+            .iter()
+            .map(|(nested, store)| match vcs.held_by_no_remote(store) {
+                Ok(found) => Ok(found
+                    .into_iter()
+                    .map(|held| Held {
+                        nested: nested.clone(),
+                        held,
+                    })
+                    .collect::<Vec<_>>()),
+                Err(e) => Err(e),
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|found| found.into_iter().flatten().collect::<Vec<_>>());
+        let as_last_fetched = match as_last_fetched {
+            Ok(held) if held.is_empty() => "nothing beyond what they last gave".to_owned(),
+            Ok(held) => held
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+            Err(e) => format!("what could not be read ({e:#})"),
+        };
+        crate::refuse!(
+            RefusalKind::RemotesUnconfirmed,
+            "{}{repo}: {situation}, but what its remotes hold could not be confirmed ({}), so \
+             whether {whose} what no remote has cannot be told; against its remotes as last \
+             fetched, it holds {as_last_fetched}. {}",
+            cause.preface(),
+            unanswered.join("; "),
+            cause.when_unconfirmed(workspace, repo)
+        );
+    }
     let mut held = Vec::new();
     for (nested, store) in stores {
         let found = vcs
@@ -2478,25 +2512,6 @@ fn judge_stores(
             nested: nested.clone(),
             held: h,
         }));
-    }
-    if !unanswered.is_empty() && discard.is_none() {
-        let as_last_fetched = match held.is_empty() {
-            true => "nothing beyond what they last gave".to_owned(),
-            false => held
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", "),
-        };
-        crate::refuse!(
-            RefusalKind::RemotesUnconfirmed,
-            "{}{repo}: {situation}, but what its remotes hold could not be confirmed ({}), so \
-             whether {whose} what no remote has cannot be told; against its remotes as last \
-             fetched, it holds {as_last_fetched}. {}",
-            cause.preface(),
-            unanswered.join("; "),
-            cause.when_unconfirmed(workspace, repo)
-        );
     }
     let listed = held
         .iter()
