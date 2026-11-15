@@ -3231,6 +3231,7 @@ Schema:
               "required": [
                 "claimants",
                 "project",
+                "removable",
                 "settle",
                 "workweave_name"
               ],
@@ -3244,6 +3245,13 @@ Schema:
                 },
                 "project": {
                   "type": "string"
+                },
+                "removable": {
+                  "description": "The claimants proven copies of another directory's workweave that hold no uncommitted or untracked work; `--fix` removes these and no others.",
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/definitions/WirePath"
+                  }
                 },
                 "settle": {
                   "description": "The verbs that name each claimant the index does not record otherwise, which settles it.",

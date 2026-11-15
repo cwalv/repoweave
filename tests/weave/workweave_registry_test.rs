@@ -1054,6 +1054,66 @@ fn a_name_two_markers_claim_is_neither_adopted_nor_deleted_until_one_is_named_ot
     assert_eq!(listed_workweaves(&ws), ["a", "b"]);
 }
 
+/// A `cp -a` duplicate of a workweave is a copy its own checkouts prove: the
+/// VCS records them in the original. `doctor --fix` removes it only while it
+/// holds no uncommitted or untracked work; one that does is reported with
+/// what it holds and left.
+#[cfg(unix)]
+#[test]
+fn doctor_fix_removes_a_copied_workweave_only_while_it_holds_no_work() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "a"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    let original = tmp.path().join(".workweaves").join("web-app--a");
+    let copy = tmp.path().join(".workweaves").join("web-app--a-copy");
+    let copied = std::process::Command::new("cp")
+        .arg("-a")
+        .arg(&original)
+        .arg(&copy)
+        .status()
+        .unwrap();
+    assert!(copied.success());
+
+    std::fs::write(copy.join("github/org/repo/mine.txt"), "mine").unwrap();
+    let report = rwv()
+        .args(["doctor", "--fix", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&report.stdout),
+        String::from_utf8_lossy(&report.stderr)
+    );
+    assert!(copy.is_dir(), "a copy holding work must stay:\n{text}");
+    assert!(copy.join("github/org/repo/mine.txt").exists());
+    assert!(
+        text.contains("holds 1 changed or untracked path(s) (mine.txt)"),
+        "{text}"
+    );
+
+    std::fs::remove_file(copy.join("github/org/repo/mine.txt")).unwrap();
+    let fixed = rwv()
+        .args(["doctor", "--fix", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&fixed.stdout).into_owned();
+    assert!(text.contains("a copy of workweave `a`"), "{text}");
+    assert!(!copy.exists(), "a clean copy is removed:\n{text}");
+    assert!(original.is_dir() && original.join("github/org/repo").is_dir());
+    let again = rwv()
+        .args(["status"])
+        .current_dir(&original)
+        .output()
+        .unwrap();
+    assert!(again.status.success(), "{}", common::cli::describe(&again));
+}
+
 /// A linked checkout of the project clone that no workweave holds, an
 /// operator's own, is no workweave: the index rebuild lists none for it, and
 /// doctor neither adopts nor reports it, with the index whole or rebuilt.

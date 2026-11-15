@@ -777,8 +777,14 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::ForeignPrimaryOtherWorkspace { .. }
                 | WorkweaveTreeIntegrityKind::UnreadableMarker { .. }
                 | WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. }
-                | WorkweaveTreeIntegrityKind::MisnamedDir { .. }
-                | WorkweaveTreeIntegrityKind::DuplicateName { .. } => ReportOnly,
+                | WorkweaveTreeIntegrityKind::MisnamedDir { .. } => ReportOnly,
+                WorkweaveTreeIntegrityKind::DuplicateName { removable, .. } => {
+                    if removable.is_empty() {
+                        ReportOnly
+                    } else {
+                        Auto
+                    }
+                }
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
@@ -1771,6 +1777,10 @@ pub enum WorkweaveTreeIntegrityKind<P> {
         /// The verbs that name each claimant the index does not record
         /// otherwise, which settles it.
         settle: Vec<String>,
+        /// The claimants proven copies of another directory's workweave
+        /// that hold no uncommitted or untracked work; `--fix` removes
+        /// these and no others.
+        removable: Vec<P>,
     },
 }
 
@@ -1831,11 +1841,13 @@ impl WorkweaveTreeIntegrityKind<PathBuf> {
                 workweave_name,
                 claimants,
                 settle,
+                removable,
             } => Wire::DuplicateName {
                 project,
                 workweave_name,
                 claimants: claimants.iter().map(|dir| WirePath::of(dir)).collect(),
                 settle,
+                removable: removable.iter().map(|dir| WirePath::of(dir)).collect(),
             },
         }
     }
@@ -3581,6 +3593,8 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
             if seen_duplicates.insert(workweave.clone()) {
                 let settle =
                     settle_duplicate_name(ws_root, &workweave.project, &workweave.name, &claimants);
+                let removable =
+                    removable_copies(ws_root, &workweave.project, &workweave.name, &claimants);
                 violations.push(CheckViolation::WorkweaveTreeIntegrity {
                     workweave_dir: dir,
                     sub_kind: WorkweaveTreeIntegrityKind::DuplicateName {
@@ -3588,6 +3602,7 @@ fn scan_registry_reconciliation(ws_root: &Path) -> Vec<CheckViolation> {
                         workweave_name: workweave.name.clone(),
                         claimants,
                         settle,
+                        removable,
                     },
                 });
             }
@@ -3693,14 +3708,7 @@ pub(crate) fn settle_duplicate_name(
     name: &WorkweaveName,
     claimants: &[PathBuf],
 ) -> Vec<String> {
-    let recorded = crate::workweave_index::read(ws_root, project)
-        .ok()
-        .flatten()
-        .and_then(|index| index.workweaves.get(name).map(|entry| entry.path.clone()));
-    let kept = recorded
-        .filter(|recorded| claimants.iter().any(|dir| recorded.same_directory(dir)))
-        .map(|recorded| recorded.as_path().to_path_buf())
-        .or_else(|| claimants.first().cloned());
+    let kept = claimant_kept(ws_root, project, name, claimants);
     claimants
         .iter()
         .filter(|dir| {
@@ -3709,16 +3717,24 @@ pub(crate) fn settle_duplicate_name(
         })
         .map(|dir| {
             let checkout = project_dir(dir, project);
-            if let Some(original) = crate::vcs::project_vcs().checkout_recorded_elsewhere(&checkout)
-            {
-                if original.exists() {
-                    return format!(
-                        "{} is a copy: its project checkout is the one at {}, so no verb \
-                         names it; remove the directory",
+            if let Some((original, state)) = copy_of_another(dir, &checkout) {
+                return match state {
+                    CopyState::Clean => format!(
+                        "{} is a copy: its project checkout is the one at {}, and it holds no \
+                         uncommitted or untracked work; `rwv doctor --fix` removes it",
                         dir.display(),
                         original.display()
-                    );
-                }
+                    ),
+                    CopyState::Holds(paths) => format!(
+                        "{} is a copy: its project checkout is the one at {}, and it holds {} \
+                         changed or untracked path(s) ({}) that the original does not; keep \
+                         what you want from it, then remove the directory",
+                        dir.display(),
+                        original.display(),
+                        paths.len(),
+                        paths.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+                    ),
+                };
             }
             let parent = crate::workspace::WorkweaveMarker::read(dir)
                 .ok()
@@ -3732,6 +3748,92 @@ pub(crate) fn settle_duplicate_name(
                 dir.display()
             )
         })
+        .collect()
+}
+
+/// The claimant the index records for `name`, else the first.
+fn claimant_kept(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+    name: &WorkweaveName,
+    claimants: &[PathBuf],
+) -> Option<PathBuf> {
+    let recorded = crate::workweave_index::read(ws_root, project)
+        .ok()
+        .flatten()
+        .and_then(|index| index.workweaves.get(name).map(|entry| entry.path.clone()));
+    recorded
+        .filter(|recorded| claimants.iter().any(|dir| recorded.same_directory(dir)))
+        .map(|recorded| recorded.as_path().to_path_buf())
+        .or_else(|| claimants.first().cloned())
+}
+
+/// What a directory proven a copy of another workweave holds.
+enum CopyState {
+    Clean,
+    Holds(Vec<String>),
+}
+
+/// Where the copy at `dir`, whose project checkout is `checkout`, was copied
+/// from, and what its own status says it holds. `None` where `dir` is no copy
+/// of a directory that still stands.
+fn copy_of_another(dir: &Path, checkout: &Path) -> Option<(PathBuf, CopyState)> {
+    let vcs = crate::vcs::project_vcs();
+    let original = vcs.checkout_recorded_elsewhere(checkout)?;
+    if !original.exists() {
+        return None;
+    }
+    let mut held: Vec<String> = Vec::new();
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(here) = pending.pop() {
+        if vcs.is_repo(&here) {
+            match vcs.dirty_file_names(&here) {
+                Ok(paths) => held.extend(paths),
+                Err(_) => held.push(format!("{} (status unreadable)", here.display())),
+            }
+        }
+        let Ok(entries) = std::fs::read_dir(&here) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            if is_dir && entry.file_name() != ".git" {
+                pending.push(entry.path());
+            }
+        }
+    }
+    held.sort();
+    held.dedup();
+    let state = if held.is_empty() {
+        CopyState::Clean
+    } else {
+        CopyState::Holds(held)
+    };
+    Some((original, state))
+}
+
+/// The claimants of `name`, other than the one the index keeps, that are
+/// copies holding no uncommitted or untracked work.
+fn removable_copies(
+    ws_root: &Path,
+    project: &crate::manifest::ProjectName,
+    name: &WorkweaveName,
+    claimants: &[PathBuf],
+) -> Vec<PathBuf> {
+    let kept = claimant_kept(ws_root, project, name, claimants);
+    claimants
+        .iter()
+        .filter(|dir| {
+            kept.as_deref()
+                .is_none_or(|kept| CanonicalPath::of(kept) != CanonicalPath::of(dir))
+        })
+        .filter(|dir| {
+            matches!(
+                copy_of_another(dir, &project_dir(dir, project)),
+                Some((_, CopyState::Clean))
+            )
+        })
+        .cloned()
         .collect()
 }
 
@@ -7273,6 +7375,7 @@ impl CheckViolation {
                         workweave_name,
                         claimants,
                         settle,
+                        ..
                     } => format!(
                         "{}: the markers of {} directories claim workweave `{workweave_name}` \
                          of project `{project}`: {}. Nothing is adopted or deleted by that \
@@ -9434,6 +9537,43 @@ fn apply_finding_repairs(
                         false
                     }
                 }
+            }
+
+            CheckViolation::WorkweaveTreeIntegrity {
+                sub_kind:
+                    WorkweaveTreeIntegrityKind::DuplicateName {
+                        project,
+                        workweave_name,
+                        removable,
+                        ..
+                    },
+                ..
+            } if !removable.is_empty() => {
+                let mut removed = false;
+                for dir in removable {
+                    let still_clean = matches!(
+                        copy_of_another(dir, &project_dir(dir, project)),
+                        Some((_, CopyState::Clean))
+                    );
+                    if !still_clean {
+                        continue;
+                    }
+                    match std::fs::remove_dir_all(dir) {
+                        Ok(()) => {
+                            outln!(
+                                "[fixed] core: removed {}, a copy of workweave `{workweave_name}` \
+                                 that held no uncommitted or untracked work",
+                                dir.display()
+                            );
+                            removed = true;
+                        }
+                        Err(e) => fix_errors.push(format!(
+                            "workweave-tree-integrity --fix failed: {} was not removed: {e}",
+                            dir.display()
+                        )),
+                    }
+                }
+                removed
             }
 
             CheckViolation::WorkweaveTreeIntegrity {

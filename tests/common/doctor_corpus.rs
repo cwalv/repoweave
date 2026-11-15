@@ -624,6 +624,7 @@ pub fn corpus() -> Vec<CheckViolation> {
                 settle: vec![
                     "rwv -C /ws workweave create b --project proj --dir /elsewhere/b".into(),
                 ],
+                removable: vec![],
             },
         },
         CheckViolation::WorkweaveTreeIntegrity {
