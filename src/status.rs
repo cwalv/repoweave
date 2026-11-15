@@ -793,8 +793,13 @@ fn project_line(
     };
     let aligned = aligner.state_aligned_text();
     let judging = judging.project_repo().checkout(project_dir);
+    let aligned_branch_is_there = aligner.standing != ProjectStanding::Detached
+        || matches!(
+            vcs.resolve_local_branch_tip(project_dir, &crate::vcs::RawRefName::new(&aligned)),
+            Ok(Some(_))
+        );
     Some(
-        if aligned.is_empty() {
+        if aligned.is_empty() || !aligned_branch_is_there {
             judging
         } else {
             judging.bind("<b>", aligned)

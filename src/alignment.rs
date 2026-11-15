@@ -675,8 +675,13 @@ pub fn detached_project(
     if let Ok(head) = vcs.head_revision(project_dir) {
         judging = judging.bind("<sha>", head.id().short());
     }
+    let still_there = |left: &crate::vcs::RawRefName| {
+        matches!(vcs.resolve_local_branch_tip(project_dir, left), Ok(Some(_)))
+    };
     if let Ok(Some(left)) = vcs.branch_left(project_dir) {
-        judging = judging.bind("<b>", left.as_str());
+        if still_there(&left) {
+            judging = judging.bind("<b>", left.as_str());
+        }
     }
     judging
 }

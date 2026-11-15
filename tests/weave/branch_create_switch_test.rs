@@ -802,6 +802,23 @@ fn the_moved_and_detached_states_print_the_choices_that_switch_and_create_ship()
 }
 
 #[test]
+fn a_detached_project_repo_whose_branch_is_gone_is_not_offered_a_switch_to_it() {
+    let w = weave(&[LIB]);
+    let ws = &w.workspace;
+    let project = project_dir(ws);
+    succeed(&["branch", "create", "feat-gone"], ws);
+    git_ok(&project, &["switch", "-q", "--detach"]);
+    git_ok(&project, &["branch", "-D", "feat-gone"]);
+
+    let detached = succeed(&["status"], ws);
+    assert!(
+        detached.contains("alignment project detached"),
+        "{detached}"
+    );
+    assert!(!detached.contains("rwv switch feat-gone"), "{detached}");
+}
+
+#[test]
 fn a_target_create_from_a_detached_project_repo_starts_at_its_head_not_the_targets_tip() {
     let w = weave(&[LIB]);
     let ws = &w.workspace;
