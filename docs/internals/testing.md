@@ -560,9 +560,6 @@ to do, read only by the invariants:
   (`RecordIs`), and `LocalStateUnchanged`, which compares every checkout at
   a place — HEAD, branches, uncommitted changes and the project's lock —
   before and after the step.
-- A step that needs a verb rwv does not have is `Step::pending`, naming the
-  `MissingVerb`; the scenario stops there and its test asserts that it
-  does.
 - Its remote writes say which refs of which remotes the step may change, and
   how: a push creates a branch or moves it forward, an overwrite may move it
   anywhere, a delete removes it, and the forge's sync of a mirror may change

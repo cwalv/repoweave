@@ -13,29 +13,6 @@ use super::scenario_sandbox::{
 };
 use crate::common::pause::Paused;
 
-/// A verb a scenario needs that rwv does not have. A step that needs one is
-/// recorded and the scenario stops there: nothing stands in for it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum MissingVerb {
-    /// Materialize a branch someone else pushed, in a workweave of its own.
-    Review,
-    /// Take a target's work into a feature, or land a feature into its
-    /// target, by the feature's record.
-    Land,
-    /// Port a project commit into a feature or a line.
-    CherryPick,
-}
-
-impl MissingVerb {
-    pub fn describe(self) -> &'static str {
-        match self {
-            MissingVerb::Review => "materialize someone else's pushed branch",
-            MissingVerb::Land => "take in or land a feature by its record",
-            MissingVerb::CherryPick => "port a project commit into a feature or a line",
-        }
-    }
-}
-
 /// What the owner of a remote does to it from outside every machine — a forge
 /// merging or deleting a branch, a colleague pushing — performed as plain git
 /// in a clone of the forge's own, or in the bare remote itself where no push
@@ -241,7 +218,6 @@ pub enum Action {
     /// `rwv.toml` and `rwv.lock`, kept under this name for
     /// [`Claim::TipsAsCaptured`].
     Capture(&'static str),
-    Pending(MissingVerb),
 }
 
 impl Action {
@@ -1049,10 +1025,6 @@ impl Step {
         )
     }
 
-    pub fn pending(label: &str, verb: MissingVerb) -> Step {
-        Step::new(label, Action::Pending(verb), Expect::undecided())
-    }
-
     pub fn expect(mut self, exit: Exit) -> Step {
         self.expect.exit = exit;
         self
@@ -1135,7 +1107,6 @@ pub struct StepRecord {
 pub struct Report {
     pub name: &'static str,
     pub ran: Vec<StepRecord>,
-    pub pending: Option<(String, MissingVerb)>,
     pub violations: Vec<(String, Violation)>,
     pub unmet: Vec<(String, String)>,
     pub marks: BTreeMap<&'static str, String>,
@@ -1153,13 +1124,6 @@ impl fmt::Display for Report {
                 }
             }
         }
-        if let Some((label, verb)) = &self.pending {
-            writeln!(
-                f,
-                "  [pending] {label}: needs a verb to {}",
-                verb.describe()
-            )?;
-        }
         for (label, violation) in &self.violations {
             writeln!(f, "  VIOLATION after `{label}`: {violation}")?;
         }
@@ -1175,7 +1139,7 @@ impl Report {
     /// no decided outcome is announced as a skip: what it did is unchecked.
     pub fn assert_green(&self) {
         assert!(
-            self.violations.is_empty() && self.unmet.is_empty() && self.pending.is_none(),
+            self.violations.is_empty() && self.unmet.is_empty(),
             "expected a green run:\n{self}"
         );
         assert!(!self.ran.is_empty(), "a green run ran no steps:\n{self}");
@@ -1207,25 +1171,6 @@ impl Report {
             .filter(|r| !r.decided)
             .map(|r| r.label.as_str())
             .collect()
-    }
-
-    pub fn assert_pending_on(&self, verb: MissingVerb) {
-        assert!(
-            self.violations.is_empty() && self.unmet.is_empty(),
-            "the steps before the pending one must hold:\n{self}"
-        );
-        assert_eq!(
-            self.pending.as_ref().map(|(_, v)| *v),
-            Some(verb),
-            "expected to stop on a missing verb:\n{self}"
-        );
-        self.announce_unchecked();
-        crate::common::report_skip(&format!(
-            "scenario {} stops at `{}`: no verb to {}",
-            self.name,
-            self.pending.as_ref().unwrap().0,
-            verb.describe()
-        ));
     }
 }
 
@@ -1273,10 +1218,6 @@ pub fn run_in(sandbox: &Sandbox, scenario: Scenario) -> Report {
     let steps = std::iter::once(Step::new_machine(Machine::A)).chain(scenario.steps);
     let mut before = scenario_invariants::snapshot(sandbox);
     for step in steps {
-        if let Action::Pending(verb) = step.action {
-            report.pending = Some((step.label, verb));
-            break;
-        }
         let unmoved: Vec<(Captured, Place, String)> = step
             .expect
             .claims
@@ -1756,9 +1697,6 @@ impl Run<'_> {
                     .unwrap_or_else(|| panic!("{remote:?} is not unreachable"));
                 drop(back_online);
                 (true, String::new())
-            }
-            Action::Pending(_) => {
-                unreachable!("a pending step stops the run before it is performed")
             }
         }
     }

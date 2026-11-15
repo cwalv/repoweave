@@ -1,7 +1,5 @@
 use super::invariants::{LockSite, Mode, Record};
-use super::runner::{
-    Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, MissingVerb, Scenario, Step, Tamper,
-};
+use super::runner::{Claim, Exit, Forge, IndexAt, MarkerState, MergeHow, Scenario, Step, Tamper};
 use super::sandbox::{
     declared_branch_text, Machine, Place, Remote, Repo, SecondProject, Seed, Store, RECORDS_BRANCH,
 };
@@ -255,10 +253,33 @@ pub fn resume_on_machine_b() -> Scenario {
                 at: b(),
                 repo: Repo::Lib,
             }),
-        Step::pending(
-            "commit in lib on B, publish, then converge or land from A",
-            MissingVerb::Land,
-        ),
+        Step::commit(&b(), Repo::Lib, "b-lib"),
+        Step::rwv(&b(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&b(), &["push"])
+            .pushes(Remote::origin(Repo::Lib), "feat-x")
+            .pushes(Remote::origin(Repo::Proj), "feat-x")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["pull"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "HEAD",
+                mark: "b-lib",
+            }),
+        Step::rwv(&a(), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "b-lib",
+            }),
+        publishes_records(Step::rwv(&a(), &["push", "--branch", "main"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
     ]);
     scenario("resume on machine B", steps)
 }
@@ -308,7 +329,14 @@ pub fn feature_in_primary_while_main_moves() -> Scenario {
                     rev: "HEAD",
                     mark: "feat-app",
                 }),
-            Step::pending("land feat-x into main", MissingVerb::Land),
+            Step::rwv(&a(), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::Contains {
+                    at: a(),
+                    repo: Repo::App,
+                    rev: "main",
+                    mark: "feat-app",
+                }),
         ],
     )
 }
@@ -1264,7 +1292,21 @@ pub fn review_colleague_fix() -> Scenario {
                 branch: "fix-123",
                 mark: "colleague-fix",
             }),
-            Step::pending("build fix-123 in a review workweave", MissingVerb::Review),
+            Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &[
+                    "workweave",
+                    "create",
+                    "--project",
+                    "proj",
+                    "rv",
+                    "--branch",
+                    "fix-123",
+                ],
+            )
+            .expect(Exit::refuses(Repo::App, State::NameNoSuchBranch))
+            .claim(Claim::LocalStateUnchanged(a())),
         ],
     )
 }
@@ -1840,7 +1882,21 @@ pub fn detached_head_in_workweave() -> Scenario {
             Step::commit(&ww("det"), Repo::App, "det-2"),
             Step::rwv(&ww("det"), &["lock"])
                 .expect(Exit::refuses(Repo::App, State::AlignmentDetachedUnpushed)),
-            Step::pending("land the workweave", MissingVerb::Land),
+            Step::rwv(&ww("det"), &["land", "--retire"])
+                .expect(Exit::refuses(Repo::App, State::AlignmentDetachedUnpushed)),
+            Step::rwv_printed_filling(
+                &ww("det"),
+                "git -C",
+                " branch",
+                &[("<name>", "kept"), ("<sha>", "HEAD")],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv_printed(&ww("det"), "rwv update").expect(Exit::Succeeds),
+            Step::rwv(&ww("det"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("det"))),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "kept"])
+                .claim(Claim::OutputLine("det-2")),
         ],
     )
 }
@@ -1861,7 +1917,23 @@ pub fn switch_c_wip_in_workweave() -> Scenario {
                 .claim(Claim::OutputLacks("copy these commits onto"))
                 .claim(Claim::OutputLine("rwv explain alignment")),
             Step::rwv(&ww("wip"), &["push"]).expect(Exit::refuses(Repo::Proj, State::NameMinted)),
-            Step::pending("land the workweave", MissingVerb::Land),
+            Step::rwv(&ww("wip"), &["land", "--retire"]).expect(Exit::refuses(
+                Repo::App,
+                State::AlignmentOnBranchWithStrayCommits,
+            )),
+            Step::rwv_printed_filling(
+                &ww("wip"),
+                "git -C",
+                " branch",
+                &[("<name>", "kept"), ("<sha>", "HEAD")],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv_printed(&ww("wip"), "rwv update").expect(Exit::Succeeds),
+            Step::rwv(&ww("wip"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("wip"))),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "kept"])
+                .claim(Claim::OutputLine("wip-1")),
         ],
     )
 }
@@ -1980,7 +2052,32 @@ pub fn worktree_add_force_on_weave_branch() -> Scenario {
                 Repo::App,
                 &["-C", stray, "commit", "--allow-empty", "-m", "stray-1"],
             ),
-            Step::pending("land and retire the workweave", MissingVerb::Land),
+            Step::rwv(&ww("wt"), &["land", "--retire"])
+                .expect(Exit::refuses(
+                    Repo::App,
+                    State::AlignmentOnBranchWithStrayCommits,
+                ))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed_filling(
+                &ww("wt"),
+                "git -C",
+                " branch",
+                &[("<name>", "kept"), ("<sha>", "HEAD")],
+            )
+            .expect(Exit::Succeeds),
+            Step::rwv_printed(&ww("wt"), "rwv update").expect(Exit::Succeeds),
+            Step::rwv(&ww("wt"), &["land", "--retire"])
+                .expect(Exit::refuses(Repo::App, State::CheckoutInRawWorktree))
+                .claim(Claim::OutputContains("worktree remove")),
+            Step::rwv_printed(&ww("wt"), "git -C").expect(Exit::Succeeds),
+            Step::rwv(&ww("wt"), &["land", "--continue"])
+                .expect(Exit::Code(3))
+                .claim(Claim::WorkweaveGone(ww("wt")))
+                .claim(Claim::OutputContains(
+                    "left: local/remotes/app proj--wt: unlanded",
+                )),
+            Step::git(&a(), Repo::App, &["log", "--format=%s", "kept"])
+                .claim(Claim::OutputLine("stray-1")),
         ],
     )
 }
@@ -5904,7 +6001,7 @@ pub fn sync_refuses_a_pre_schema_target_tip() -> Scenario {
             ),
             Step::git(&a(), Repo::Proj, &["commit", "-am", "old keys"]),
             Step::rwv(&ww("w"), &["sync"])
-                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
                 .claim(Claim::OutputContains("only that, in "))
                 .claim(Claim::OutputContains(
                     "machine-a/weave\n    rwv doctor --fix",
@@ -6557,7 +6654,7 @@ pub fn a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does() -> Scenario {
             Step::hand_commit(&a(), Repo::Proj, "main", &[("rwv.toml", "")]),
             Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
             Step::rwv(&ww("w"), &["land"])
-                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
                 .claim(Claim::OutputContains("holds no `repositories` table"))
                 .claim(Claim::OutputContains(
                     "a commit on main that makes its rwv.toml parse fixes it",
@@ -22261,7 +22358,7 @@ pub fn a_sync_onto_an_emptied_manifest_refuses() -> Scenario {
             Step::hand_commit(&a(), Repo::Proj, "main", &[("rwv.toml", "")]),
             Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
             Step::rwv(&ww("w"), &["sync"])
-                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
                 .claim(Claim::OutputContains("holds no `repositories` table"))
                 .claim(Claim::OutputContains(
                     "a commit on main that makes its rwv.toml parse fixes it",
@@ -29429,7 +29526,11 @@ pub fn dc26_migration() -> Scenario {
                 "merge=rwv-lock",
                 "merge=rwv-ours",
             ),
-            Step::git(&a(), Repo::Proj, &["config", "merge.rwv-ours.driver", "true"]),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["config", "merge.rwv-ours.driver", "true"],
+            ),
             Step::git(&a(), Repo::Proj, &["commit", "-qam", "the old driver"]),
             Step::rwv(&a(), &["lock", "--commit"])
                 .expect(Exit::refuses(
@@ -29628,11 +29729,13 @@ impl CrashVerb {
             ],
             CrashVerb::BranchRename => vec![
                 status(Claim::Judged(Repo::App, State::AlignmentOnBranch)),
-                Step::rwv(&a(), &args).expect(Exit::Succeeds).claim(Claim::RecordIs {
-                    machine: Machine::A,
-                    branch: "feat2",
-                    record: feat_x_record(),
-                }),
+                Step::rwv(&a(), &args)
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::RecordIs {
+                        machine: Machine::A,
+                        branch: "feat2",
+                        record: feat_x_record(),
+                    }),
             ],
             CrashVerb::BranchDelete => vec![
                 status(Claim::OutputLacks("alignment")),
@@ -29640,12 +29743,16 @@ impl CrashVerb {
                 Step::rwv(&a(), &["doctor", "--all"]).expect(Exit::Succeeds),
             ],
             CrashVerb::SetMode => vec![
-                status(Claim::OutputContains("record: proj feat: feature onto main")),
-                Step::rwv(&a(), &args).expect(Exit::Succeeds).claim(Claim::RecordIs {
-                    machine: Machine::A,
-                    branch: "feat",
-                    record: Some(Record::Declared),
-                }),
+                status(Claim::OutputContains(
+                    "record: proj feat: feature onto main",
+                )),
+                Step::rwv(&a(), &args)
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::RecordIs {
+                        machine: Machine::A,
+                        branch: "feat",
+                        record: Some(Record::Declared),
+                    }),
             ],
             CrashVerb::MemberSetBranch => vec![
                 status(Claim::OutputContains("record: proj main: declared")),

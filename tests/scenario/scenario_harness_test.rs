@@ -28,7 +28,7 @@ use invariants::{
 use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
 use repoweave::refusal::RefusalKind;
-use runner::{Claim, Exit, Forge, MissingVerb, Outcome, Report, Scenario, Step};
+use runner::{Claim, Exit, Forge, Outcome, Report, Scenario, Step};
 use sandbox::{Machine, Place, Remote, RemoteKind, Repo, Sandbox, Seed, Store};
 
 fn fired(report: &Report) -> Vec<(&str, Invariant)> {
@@ -2121,26 +2121,6 @@ fn set_mode_in_the_primary_leaves_the_workweave_on_that_branch_untouched() {
 fn a_detached_review_workspace_keeps_an_unrelated_lib_commit_on_a_branch_then_returns_to_its_pin() {
     runner::run(scenarios::detached_review_lib_fix()).assert_fully_decided_green();
 }
-
-macro_rules! pending_on {
-    ($($name:ident => $verb:ident),* $(,)?) => {
-        $(
-            #[test]
-            fn $name() {
-                runner::run(scenarios::$name()).assert_pending_on(MissingVerb::$verb);
-            }
-        )*
-    };
-}
-
-pending_on!(
-    resume_on_machine_b => Land,
-    feature_in_primary_while_main_moves => Land,
-    review_colleague_fix => Review,
-    detached_head_in_workweave => Land,
-    switch_c_wip_in_workweave => Land,
-    worktree_add_force_on_weave_branch => Land,
-);
 
 #[test]
 fn an_inactive_projects_landing_composes_in_the_source() {
@@ -5284,10 +5264,7 @@ fn a_landing_into_a_target_diverged_from_its_upstream_refuses_until_merged() {
                 }),
         ],
     );
-    assert!(
-        report.unmet.is_empty() && report.pending.is_none(),
-        "{report}"
-    );
+    assert!(report.unmet.is_empty(), "{report}");
     assert!(report.violations.is_empty(), "{report}");
 }
 
@@ -8744,4 +8721,35 @@ fn a_verb_killed_at_a_write_is_diagnosed_and_its_rerun_completes() {
     for verb in scenarios::CrashVerb::ALL {
         runner::run(scenarios::dc07_crash_convergence(verb)).assert_fully_decided_green();
     }
+}
+
+#[test]
+fn a_detached_head_with_commits_is_kept_on_a_branch_by_the_printed_choice_and_the_workweave_lands()
+{
+    runner::run(scenarios::detached_head_in_workweave()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_wip_branch_with_commits_is_kept_by_the_printed_choice_and_the_workweave_lands() {
+    runner::run(scenarios::switch_c_wip_in_workweave()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_raw_worktree_on_a_weave_branch_is_refused_and_its_printed_choices_run() {
+    runner::run(scenarios::worktree_add_force_on_weave_branch()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_colleagues_branch_only_the_app_holds_is_refused_for_a_workweave() {
+    runner::run(scenarios::review_colleague_fix()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_feature_resumed_on_machine_b_converges_and_lands_from_a() {
+    runner::run(scenarios::resume_on_machine_b()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_feature_in_the_primary_survives_main_moving_and_lands() {
+    runner::run(scenarios::feature_in_primary_while_main_moves()).assert_fully_decided_green();
 }
