@@ -563,6 +563,27 @@ fn an_output_line_claim_is_the_whole_line() {
     );
 }
 
+#[test]
+fn a_findings_only_claim_is_unmet_by_a_finding_of_another_kind() {
+    let report = bad_steps(
+        "a doctor run holding an orphaned clone alone",
+        vec![
+            Step::drop_manifest_entry(&a(), Repo::Proj, Repo::Docs),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["doctor", "--all"])
+                .expect(Exit::Findings)
+                .claim(Claim::FindingsOnly("orphaned-clone"))
+                .claim(Claim::FindingsOnly("orphaned-savepoint")),
+        ],
+    );
+    let why: Vec<&str> = report.unmet.iter().map(|(_, why)| why.as_str()).collect();
+    assert_eq!(why.len(), 1, "{report}");
+    assert!(
+        why[0].starts_with("findings other than orphaned-savepoint"),
+        "{report}"
+    );
+}
+
 /// Run by [`an_undecided_step_is_announced_by_a_green_run`] as a subprocess,
 /// whose stderr it reads.
 #[test]
