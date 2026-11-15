@@ -52,7 +52,8 @@ fn write_manifest(ws: &Path) {
     std::fs::write(ws.join("projects/app/rwv.toml"), manifest_toml).unwrap();
 }
 
-/// Write a healthy `.rwv-workweave` marker.
+/// Write a healthy `.rwv-workweave` marker and record the workweave in the
+/// project's index, as `workweave create` does.
 fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
     std::fs::create_dir_all(ww_dir).unwrap();
     let primary_canon =
@@ -66,6 +67,13 @@ fn write_marker(ww_dir: &Path, primary: &Path, project: &str, parent: &Path) {
         &parent_canon,
     );
     std::fs::write(ww_dir.join(".rwv-workweave"), content).unwrap();
+    common::register_workweave_from(
+        primary,
+        project,
+        &common::workweave_name_of(ww_dir),
+        ww_dir,
+        parent,
+    );
 }
 
 /// Run `rwv doctor --json` against `ws` and return the parsed violations array.

@@ -36,6 +36,7 @@ mod status_operator_branches_test;
 mod status_relation_token_test;
 mod status_selector_test;
 mod status_wire_path_test;
+mod stopped_op_savepoints_test;
 mod target_line_test;
 mod unknown_segment_clone_test;
 mod unreadable_active_project_test;

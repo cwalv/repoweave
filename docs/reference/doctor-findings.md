@@ -1545,9 +1545,14 @@ the VCS action that merges it back (for git, `git stash apply`).
 ### `orphaned-savepoint`
 
 The savepoints filed under a `refs/rwv/pre-op/<op-id>` key whose op id matches
-no `.rwv-op` file in this workspace tree: a checkout's, and one per branch the
-operation moved without a checkout. The finding judges every tip filed under
-the key.
+no `.rwv-op` file of any workspace of the weave: a checkout's, and one per
+branch the operation moved without a checkout. The workspaces are the primary
+and every workweave a project's index records, wherever its directory is, so a
+`rwv doctor` run anywhere in the weave judges a key the same way. While a
+workspace that may hold a record cannot be read, because an index does not
+read, a recorded directory is not there, or a record names no operation this
+rwv reads, no key is judged: the run reports which, at warning severity, and
+`--fix` drops nothing. The finding judges every tip filed under the key.
 
 #### `redundant`
 

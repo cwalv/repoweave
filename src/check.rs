@@ -6131,8 +6131,10 @@ pub fn scan_state_hygiene(
     vcs: &dyn crate::vcs::Vcs,
     repos: &[StateHygieneScanTarget],
     op_state_targets: &[StateHygieneOpStateTarget],
+    holders: &OpHolders,
     moved: &[MovedCheckout],
     gone: &[GoneWorkweave],
+    kept: &mut Vec<String>,
 ) -> Vec<CheckViolation> {
     let mut violations = Vec::new();
 
@@ -6192,6 +6194,21 @@ pub fn scan_state_hygiene(
             });
         }
     }
+
+    let mut unknown = holders.unknown.clone();
+    for dir in &holders.dirs {
+        if !crate::op_state::OwnerRecord::path_in(dir).exists() {
+            continue;
+        }
+        match crate::op_state::read_owner_header_of_any_schema(dir) {
+            Some(state) => live_savepoints.extend(state.savepoint_keys()),
+            None => unknown.push(format!(
+                "the operation record at {} names no operation this rwv reads",
+                crate::op_state::OwnerRecord::path_in(dir)
+            )),
+        }
+    }
+    let mut withheld = false;
 
     // Phase 2: per-repo checks (stale worktree registrations + orphaned
     // savepoints).
@@ -6296,6 +6313,10 @@ pub fn scan_state_hygiene(
             if every_savepoint_live || live_savepoints.contains(&key) {
                 continue;
             }
+            if !unknown.is_empty() {
+                withheld = true;
+                continue;
+            }
             let sub_kind = match unreached_savepoint_tips(vcs, &repo.abs, &key) {
                 Ok(unreached) if unreached.is_empty() => OrphanedSavepointKind::Redundant,
                 Ok(_) | Err(_) => OrphanedSavepointKind::Live,
@@ -6309,7 +6330,57 @@ pub fn scan_state_hygiene(
         }
     }
 
+    if withheld {
+        kept.push(format!(
+            "savepoints no readable operation record claims are kept, not judged, because a \
+             workspace that may hold the operation they belong to cannot be read: {}; \
+             `rwv doctor` judges them once it can",
+            unknown.join("; ")
+        ));
+    }
     violations
+}
+
+/// Every workspace of a weave that may hold an operation record, from the
+/// primary and the indexes, never from what sits in a container: the
+/// directories that stand, and why any other cannot be read.
+pub struct OpHolders {
+    pub dirs: Vec<PathBuf>,
+    pub unknown: Vec<String>,
+}
+
+impl OpHolders {
+    /// The primary at `primary` and every workweave a project's index
+    /// records, wherever its directory is.
+    pub fn of(primary: &Path) -> Self {
+        let mut dirs = vec![primary.to_path_buf()];
+        let mut unknown = Vec::new();
+        for project in crate::workspace::discover_projects(primary) {
+            match crate::workweave_index::read(primary, &project) {
+                Err(e) => unknown.push(format!(
+                    "the workweave index of project `{project}` cannot be read ({})",
+                    crate::refusal::kind_of(&e)
+                        .map_or_else(|| format!("{e:#}"), |kind| kind.token().to_string())
+                )),
+                Ok(None) => {}
+                Ok(Some(index)) => {
+                    for (name, entry) in index.workweaves {
+                        let dir = entry.path.as_path();
+                        if dir.is_dir() {
+                            dirs.push(dir.to_path_buf());
+                        } else {
+                            unknown.push(format!(
+                                "the directory {} the index of project `{project}` records \
+                                 for workweave `{name}` is not there",
+                                dir.display()
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        Self { dirs, unknown }
+    }
 }
 
 /// A linked checkout whose store records it where it no longer stands.
@@ -11361,12 +11432,15 @@ fn collect_doctor_violations(
         }
     }
 
+    let mut kept_savepoints = Vec::new();
     violations.extend(scan_state_hygiene(
         vcs,
         &hygiene_targets,
         &hygiene_op_state_targets,
+        &OpHolders::of(ctx.primary_path()),
         &moved_checkouts(ctx),
         &gone_workweaves(ctx),
+        &mut kept_savepoints,
     ));
 
     for project in &input.projects {
@@ -11460,6 +11534,13 @@ fn collect_doctor_violations(
                 message: message.into(),
                 safe_to_fix: false,
             })
+            .chain(kept_savepoints.into_iter().map(|message| Issue {
+                kind: IssueKind::CoreFinding,
+                source: IssueSource::Core,
+                severity: crate::integration::Severity::Warning,
+                message: message.into(),
+                safe_to_fix: false,
+            }))
             .collect(),
         filtered: false,
         workweave_dirs,

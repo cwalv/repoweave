@@ -4499,44 +4499,56 @@ fn list_workweave_dirs_for_project(
     Ok(result)
 }
 
-/// Every marker-bearing workweave directory under `ws_root`'s primary, across
-/// every workweave container, with its identity.
+/// Every workweave of `ws_root`'s primary that a project's index records,
+/// wherever its directory is, with its identity: each recorded directory that
+/// stands and whose marker agrees with the entry.
 ///
-/// **Scanning-based, not registry-backed.** Consumers that need to see every
-/// workweave regardless of registry state — doctor's per-workweave drift
-/// scans, `adopt_children_of` (child re-pointing by parent path) — use this.
-/// The user-facing `rwv workweave list` uses [`list_workweaves`] instead so
-/// unregistered on-disk directories are not silently visible in `list` output;
-/// doctor's `unregistered-workweave` finding is the one channel that surfaces
-/// them.
-///
-/// Enumerates every unique container (default `<parent-of-primary>/.workweaves`
-/// plus every recorded per-project container) and returns marker-bearing
-/// directories whose `.rwv-workweave` `primary` canonicalizes to `ws_root`.
+/// **Registry-backed.** The index is the one record of which workweaves a
+/// weave has; a directory on disk that no index records is reported by
+/// doctor's `unregistered-workweave` finding, which scans the containers, and
+/// is listed here once `--fix` has adopted it. A project whose index cannot
+/// be read lists none: [`unreadable_indexes`] names it.
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
-    let mut containers = std::collections::BTreeSet::new();
-    containers.insert(CanonicalPath::of(&workweave_index::default_basedir(
-        ws_root,
-    )));
-    for project in crate::workspace::discover_projects(ws_root) {
-        if let Ok(Some(idx)) = workweave_index::read(ws_root, &project) {
-            if let Some(basedir) = idx.basedir {
-                containers.insert(basedir);
-            }
-        }
-    }
-
-    let mut seen = std::collections::HashSet::new();
+    let primary = CanonicalPath::of(ws_root);
     let mut result: Vec<(WorkweaveId, PathBuf)> = Vec::new();
-    for container in &containers {
-        for (id, dir) in doctor_scan_container(ws_root, container.as_path()) {
-            if seen.insert(CanonicalPath::of(&dir)) {
-                result.push((id, dir));
+    for project in crate::workspace::discover_projects(ws_root) {
+        let Ok(Some(index)) = workweave_index::read(ws_root, &project) else {
+            continue;
+        };
+        for (name, entry) in index.workweaves {
+            let dir = entry.path.as_path().to_path_buf();
+            let agrees = matches!(
+                WorkweaveMarker::read(&dir),
+                Ok(Some(marker)) if marker.names_primary(&primary)
+                    && marker.project() == &project
+                    && marker.name() == &name
+            );
+            if agrees {
+                result.push((
+                    WorkweaveId {
+                        project: project.clone(),
+                        name,
+                    },
+                    dir,
+                ));
             }
         }
     }
     result.sort_by(|a, b| a.0.cmp(&b.0));
     result
+}
+
+/// Each project of `ws_root`'s primary whose workweave index cannot be read,
+/// with why: the workweaves it records are unknown.
+pub fn unreadable_indexes(ws_root: &Path) -> Vec<(ProjectName, String)> {
+    crate::workspace::discover_projects(ws_root)
+        .into_iter()
+        .filter_map(|project| {
+            workweave_index::read(ws_root, &project)
+                .err()
+                .map(|e| (project, format!("{e:#}")))
+        })
+        .collect()
 }
 
 /// Container-scoped scan used ONLY by doctor for reconciliation.
