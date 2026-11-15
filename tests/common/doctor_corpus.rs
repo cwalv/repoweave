@@ -26,7 +26,7 @@ use repoweave::check::{
     AlignmentKind, CheckViolation, CloneTopologyKind, DeadOpLeaseKind, DriftKind,
     MissingLockMergeDriverKind, OrphanedSavepointKind, PermissionsKind, PinKind,
     PlacementConvergence, ProvenanceKind, RecordDriftKind, RegistrationDirectoryKind,
-    SubmoduleCommitKind, UnparseableProjectKind, WeaveRootIdentityConflictKind,
+    SubmoduleCommitKind, UnmigratedPart, UnparseableProjectKind, WeaveRootIdentityConflictKind,
     WorkingTreeDriftKind, WorkweaveTreeIntegrityKind,
 };
 use repoweave::integration::{Issue, IssueKind, IssueSource, Severity};
@@ -188,6 +188,7 @@ pub fn case_token(v: &CheckViolation) -> String {
             }
         },
         CheckViolation::LegacyWorkweaveMarker { .. } => "legacy-workweave-marker".into(),
+        CheckViolation::UnmigratedWorkweave { .. } => "unmigrated-workweave".into(),
         CheckViolation::UnreadableOwnedState { .. } => "unreadable-owned-state".into(),
         CheckViolation::UnreadableWorkweaveIndex { .. } => "unreadable-workweave-index".into(),
         CheckViolation::UnparseableProject { sub_kind, .. } => match sub_kind {
@@ -527,6 +528,11 @@ pub fn corpus() -> Vec<CheckViolation> {
         CheckViolation::LegacyWorkweaveMarker {
             marker_path: path("/ws/.rwv-workweave"),
             primary: path("/ws"),
+        },
+        CheckViolation::UnmigratedWorkweave {
+            workweave_dir: path("/ws-seats/proj--w1"),
+            project: project(),
+            parts: vec![UnmigratedPart::PreSchemaKeys, UnmigratedPart::LockAttribute],
         },
         CheckViolation::UnreadableOwnedState {
             project: project(),

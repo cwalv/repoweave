@@ -248,6 +248,18 @@ pub enum CheckViolation {
         sub_kind: WeaveRootIdentityConflictKind<PathBuf>,
     },
 
+    /// A workweave whose checkout of its project still holds what an earlier
+    /// release wrote there and only `rwv doctor --fix` run inside it
+    /// migrates: member-entry keys in its `rwv.toml`, or a `.gitattributes`
+    /// that assigns `rwv.lock` no current merge driver. Its verbs that read
+    /// the manifest or write the lock refuse until then. Reported from the
+    /// primary, which knows every workweave the weave records.
+    UnmigratedWorkweave {
+        workweave_dir: PathBuf,
+        project: ProjectName,
+        parts: Vec<UnmigratedPart>,
+    },
+
     /// A `.rwv-workweave` marker file this build cannot use as-is: YAML
     /// (markers are JSON now), possibly also missing the `parent:` field
     /// required before the format changed. Auto-fixable: rewrite the file as
@@ -726,7 +738,9 @@ impl CheckViolation {
             CheckViolation::ClaimHolderUnreachable { .. } => {
                 Consented("--release-unreachable-claims")
             }
-            CheckViolation::ClaimUnopenable { .. } => ReportOnly,
+            CheckViolation::ClaimUnopenable { .. } | CheckViolation::UnmigratedWorkweave { .. } => {
+                ReportOnly
+            }
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.fix_disposition(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.fix_disposition(),
@@ -848,7 +862,8 @@ impl CheckViolation {
             | CheckViolation::CargoPatchShadowing { .. }
             | CheckViolation::MissingCanonicalClone { .. }
             | CheckViolation::UninitializedSubmodule { .. }
-            | CheckViolation::PhantomMergeDriver { .. } => Warning,
+            | CheckViolation::PhantomMergeDriver { .. }
+            | CheckViolation::UnmigratedWorkweave { .. } => Warning,
 
             CheckViolation::UnparseableProject { sub_kind, .. } => sub_kind.severity(),
             CheckViolation::Pin { sub_kind, .. } => sub_kind.severity(),
@@ -900,6 +915,7 @@ impl CheckViolation {
                 ViolationKind::WeaveRootIdentityConflict
             }
             CheckViolation::LegacyWorkweaveMarker { .. } => ViolationKind::LegacyWorkweaveMarker,
+            CheckViolation::UnmigratedWorkweave { .. } => ViolationKind::UnmigratedWorkweave,
             CheckViolation::UnreadableOwnedState { .. } => ViolationKind::UnreadableOwnedState,
             CheckViolation::UnreadableWorkweaveIndex { .. } => {
                 ViolationKind::UnreadableWorkweaveIndex
@@ -960,6 +976,7 @@ pub enum ViolationKind {
     UnreadableActiveProject,
     WeaveRootIdentityConflict,
     LegacyWorkweaveMarker,
+    UnmigratedWorkweave,
     UnreadableOwnedState,
     UnreadableWorkweaveIndex,
     UnparseableProject,
@@ -986,7 +1003,7 @@ pub enum ViolationKind {
 }
 
 impl ViolationKind {
-    pub const ALL: [Self; 45] = [
+    pub const ALL: [Self; 46] = [
         Self::OrphanedClone,
         Self::UnknownSegmentClone,
         Self::DanglingReference,
@@ -1009,6 +1026,7 @@ impl ViolationKind {
         Self::UnreadableActiveProject,
         Self::WeaveRootIdentityConflict,
         Self::LegacyWorkweaveMarker,
+        Self::UnmigratedWorkweave,
         Self::UnreadableOwnedState,
         Self::UnreadableWorkweaveIndex,
         Self::UnparseableProject,
@@ -1052,6 +1070,26 @@ pub enum OrphanedSavepointKind {
     /// is the last pointer to it. `--fix` keeps each such tip as a backup,
     /// then drops the key's savepoints.
     Live,
+}
+
+/// What an earlier release left in a workweave's checkout of its project.
+#[derive(Debug, Serialize, JsonSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum UnmigratedPart {
+    /// Its `rwv.toml` names member-entry keys an earlier release wrote.
+    PreSchemaKeys,
+    /// Its `.gitattributes` assigns `rwv.lock` no driver, or the one an
+    /// earlier release set up.
+    LockAttribute,
+}
+
+impl UnmigratedPart {
+    fn phrase(self) -> &'static str {
+        match self {
+            Self::PreSchemaKeys => "member-entry keys in rwv.toml",
+            Self::LockAttribute => "no `rwv.lock merge=rwv-lock` line in force in .gitattributes",
+        }
+    }
 }
 
 /// Why a project directory did not load, controlling `--fix` policy.
@@ -2196,6 +2234,11 @@ pub enum ViolationOutput {
         marker_path: WirePath,
         primary: WirePath,
     },
+    UnmigratedWorkweave {
+        workweave_dir: WirePath,
+        project: ProjectName,
+        parts: Vec<UnmigratedPart>,
+    },
     UnreadableOwnedState {
         project: ProjectName,
         state_path: WirePath,
@@ -2678,6 +2721,15 @@ impl ViolationOutput {
             } => Self::LegacyWorkweaveMarker {
                 marker_path: WirePath::of(&marker_path),
                 primary: WirePath::of(&primary),
+            },
+            CheckViolation::UnmigratedWorkweave {
+                workweave_dir,
+                project,
+                parts,
+            } => Self::UnmigratedWorkweave {
+                workweave_dir: WirePath::of(&workweave_dir),
+                project,
+                parts,
             },
             CheckViolation::UnreadableOwnedState {
                 project,
@@ -6330,6 +6382,40 @@ pub fn scan_state_hygiene(
     violations
 }
 
+/// Each workweave the weave records, in `project_scope` when one is given,
+/// whose checkout of its project holds what only `rwv doctor --fix` run there
+/// migrates.
+fn scan_unmigrated_workweaves(
+    vcs: &dyn crate::vcs::Vcs,
+    primary: &Path,
+    project_scope: Option<&ProjectName>,
+) -> Vec<CheckViolation> {
+    crate::workweave::list_workweave_dirs(primary)
+        .into_iter()
+        .filter(|(id, _)| project_scope.is_none_or(|scope| &id.project == scope))
+        .filter_map(|(id, dir)| {
+            let checkout = project_dir(&dir, &id.project);
+            let mut parts = Vec::new();
+            let manifest =
+                std::fs::read_to_string(checkout.join(Manifest::FILE_NAME)).unwrap_or_default();
+            if !crate::manifest::pre_schema_keys(&manifest).is_empty() {
+                parts.push(UnmigratedPart::PreSchemaKeys);
+            }
+            let declared = vcs
+                .lock_driver_setup(&checkout)
+                .map(|setup| setup.declaration == crate::vcs::LockDriverPart::Current);
+            if declared.is_ok_and(|current| !current) {
+                parts.push(UnmigratedPart::LockAttribute);
+            }
+            (!parts.is_empty()).then_some(CheckViolation::UnmigratedWorkweave {
+                workweave_dir: dir,
+                project: id.project,
+                parts,
+            })
+        })
+        .collect()
+}
+
 /// Every workspace of a weave that may hold an operation record, from the
 /// primary, the indexes and the project clones' registered checkouts, never
 /// from what sits in a container: the directories that stand, and why any
@@ -7297,6 +7383,22 @@ impl CheckViolation {
             } => format!(
                 "{project}: {}",
                 Manifest::legacy_format_refusal(legacy_path.as_path())
+            ),
+            CheckViolation::UnmigratedWorkweave {
+                workweave_dir,
+                project,
+                parts,
+            } => format!(
+                "{}: its checkout of project `{project}` holds what an earlier release wrote \
+                 ({}), which `rwv doctor --fix` migrates only where it runs; until then its \
+                 verbs refuse:\n  rwv -C {} doctor --fix",
+                workweave_dir.display(),
+                parts
+                    .iter()
+                    .map(|part| part.phrase())
+                    .collect::<Vec<_>>()
+                    .join("; "),
+                workweave_dir.display()
             ),
             CheckViolation::LegacyWorkweaveMarker { marker_path, .. } => format!(
                 "{} is a legacy workweave marker an earlier release wrote, in YAML or with no \
@@ -11448,6 +11550,14 @@ fn collect_doctor_violations(
         &gone_workweaves(ctx),
         &mut kept_savepoints,
     ));
+
+    if matches!(ctx.checkout, Checkout::Primary { .. }) {
+        violations.extend(scan_unmigrated_workweaves(
+            vcs,
+            ctx.primary_path(),
+            project_scope,
+        ));
+    }
 
     for project in &input.projects {
         let project_repo = project_dir(workspace_dir, &project.name);

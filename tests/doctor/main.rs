@@ -39,6 +39,7 @@ mod status_wire_path_test;
 mod stopped_op_savepoints_test;
 mod target_line_test;
 mod unknown_segment_clone_test;
+mod unmigrated_workweave_test;
 mod unreadable_active_project_test;
 mod unreadable_op_record_test;
 mod unreadable_owned_state_test;

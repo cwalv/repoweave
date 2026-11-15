@@ -1102,6 +1102,25 @@
         }
       ]
     },
+    "UnmigratedPart": {
+      "description": "What an earlier release left in a workweave's checkout of its project.",
+      "oneOf": [
+        {
+          "description": "Its `rwv.toml` names member-entry keys an earlier release wrote.",
+          "type": "string",
+          "enum": [
+            "pre-schema-keys"
+          ]
+        },
+        {
+          "description": "Its `.gitattributes` assigns `rwv.lock` no driver, or the one an earlier release set up.",
+          "type": "string",
+          "enum": [
+            "lock-attribute"
+          ]
+        }
+      ]
+    },
     "UnparseableProjectKind": {
       "description": "Why a project directory did not load, controlling `--fix` policy.",
       "oneOf": [
@@ -1758,6 +1777,35 @@
               "$ref": "#/definitions/WirePath"
             },
             "primary": {
+              "$ref": "#/definitions/WirePath"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "parts",
+            "project",
+            "workweave_dir"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "unmigrated-workweave"
+              ]
+            },
+            "parts": {
+              "type": "array",
+              "items": {
+                "$ref": "#/definitions/UnmigratedPart"
+              }
+            },
+            "project": {
+              "type": "string"
+            },
+            "workweave_dir": {
               "$ref": "#/definitions/WirePath"
             }
           }

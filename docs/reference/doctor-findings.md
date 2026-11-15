@@ -85,6 +85,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `registered-workweave` | Error | Auto-fixable |
 | [`weave-root-identity-conflict`](#weave-root-identity-conflict) / `marker-unverifiable`, `unwitnessed` | Error | Report-only |
 | [`legacy-workweave-marker`](#legacy-workweave-marker) | Warning | Auto-fixable |
+| [`unmigrated-workweave`](#unmigrated-workweave) | Warning | Report-only |
 | [`unreadable-owned-state`](#unreadable-owned-state) | Warning | Report-only |
 | [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
@@ -669,6 +670,25 @@ parent, which writes the name into the marker and records the workweave as it
 stands. Run `--fix` from the primary weave: from inside the workweave the
 marker refuses before any verb dispatches, naming `rwv -C <primary> doctor
 --fix`.
+
+### `unmigrated-workweave`
+
+**Warning. Report-only.** A workweave whose own checkout of the project still
+holds what an earlier release wrote there: member-entry keys in its
+`rwv.toml` (`pre-schema-keys` in `--json` `parts`), or a `.gitattributes`
+that assigns `rwv.lock` no `rwv-lock` merge driver in force
+(`lock-attribute`). Each workweave's branch carries its own `rwv.toml` and
+`.gitattributes`, so the primary's `rwv doctor --fix` does not migrate them,
+and the workweave's verbs that read the manifest or write the lock refuse
+until its own does. Reported from the primary, for every workweave a
+project's index records or a checkout of its clone is registered in.
+
+**What to do:** run the line the finding prints, which is `rwv doctor --fix`
+run in that workweave:
+
+```bash
+rwv -C <workweave> doctor --fix
+```
 
 ### `unreadable-owned-state`
 

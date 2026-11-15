@@ -1381,6 +1381,11 @@ mod doctor_json {
             marker_path: String,
             primary: String,
         },
+        UnmigratedWorkweave {
+            workweave_dir: String,
+            project: String,
+            parts: Vec<String>,
+        },
         UnreadableOwnedState {
             project: String,
             state_path: String,
