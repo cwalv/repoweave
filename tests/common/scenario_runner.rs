@@ -407,6 +407,12 @@ pub enum Claim {
         member: Repo,
         mark: &'static str,
     },
+    /// The pin at `site` for `member` does not reach the commit `mark` names.
+    PinLacks {
+        site: LockSite,
+        member: Repo,
+        mark: &'static str,
+    },
     /// The lock of the project commit `rev` at `at` pins `member` at a
     /// commit whose subject is `subject` and that `member`'s checkout at `at`
     /// reaches from `reached_from`: a commit a rebase replayed there, never
@@ -2562,6 +2568,22 @@ impl Run<'_> {
                 let store = scenario_invariants::store_for(sb, after, site, *member)
                     .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
                 self.contains(&store, pin, mark)
+            }
+            Claim::PinLacks { site, member, mark } => {
+                let pin = after
+                    .pins
+                    .get(site)
+                    .and_then(|pins| pins.get(member))
+                    .ok_or_else(|| format!("{site:?} has no pin for {}", member.name()))?;
+                let store = scenario_invariants::store_for(sb, after, site, *member)
+                    .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
+                match self.contains(&store, pin, mark) {
+                    Ok(()) => Err(format!(
+                        "{site:?} pins {} at {pin}, which contains {mark}",
+                        member.name()
+                    )),
+                    Err(_) => Ok(()),
+                }
             }
             Claim::PinsReplayed {
                 at,

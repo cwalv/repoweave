@@ -1199,6 +1199,8 @@ every_scenario!(
     j04_a_stopped_landing_is_abandoned,
     j05_a_landing_loses_a_race,
     j06_a_published_feature_is_renamed,
+    j08_a_second_feature_stacked_on_the_first,
+    j09_an_experiment_that_never_landed_is_thrown_away,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9041,6 +9043,8 @@ fn every_journey() -> Vec<common::scenario_steps::Journey> {
         scenarios::j04_a_stopped_landing_is_abandoned(),
         scenarios::j05_a_landing_loses_a_race(),
         scenarios::j06_a_published_feature_is_renamed(),
+        scenarios::j08_a_second_feature_stacked_on_the_first(),
+        scenarios::j09_an_experiment_that_never_landed_is_thrown_away(),
     ]
 }
 

@@ -30711,3 +30711,104 @@ pub fn j06_a_published_feature_is_renamed() -> Journey {
         ],
     }
 }
+
+/// A second feature is started from the first, in the same workspace; the
+/// first lands into `main`, then the second does, and both are published.
+pub fn j08_a_second_feature_stacked_on_the_first() -> Journey {
+    let workweave = ww("a");
+    let path = vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        documented_create("a"),
+        Step::commit(&workweave, Repo::App, "a-app"),
+        Step::rwv(&workweave, &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &workweave,
+            &["branch", "create", "b", "--target", "proj--a"],
+        )
+        .expect(Exit::Succeeds),
+        Step::commit(&workweave, Repo::Lib, "b-lib"),
+        Step::rwv(&workweave, &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&workweave, &["switch", "proj--a"]).expect(Exit::Succeeds),
+        Step::rwv(&workweave, &["land"]).expect(Exit::Succeeds),
+        Step::rwv(&workweave, &["switch", "b"]).expect(Exit::Succeeds),
+        Step::rwv(&workweave, &["land", "--target", "main", "--retire"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["branch", "delete", "proj--a"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ];
+    let fault = path.len() - 1;
+    Journey {
+        name: "j08: a second feature stacked on the first, both landed and published",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "a-app",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "main",
+                    mark: "b-lib",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::Lib,
+                    mark: "b-lib",
+                })
+                .claim(Claim::WorkweaveGone(workweave)),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("proj--a"))
+                .claim(Claim::OutputLacks("proj--b"))
+                .claim(Claim::OutputLacks(" b ")),
+        ],
+    }
+}
+
+/// A workspace is removed, its unlanded branch survives and is listed, and
+/// the printed deletion removes it with its tip kept as a backup.
+pub fn j09_an_experiment_that_never_landed_is_thrown_away() -> Journey {
+    let workweave = ww("try");
+    let path = vec![
+        documented_create("try"),
+        Step::commit(&workweave, Repo::App, "try-app"),
+        Step::rwv(&a(), &["workweave", "delete", "try"])
+            .expect(Exit::Code(3))
+            .claim(Claim::WorkweaveGone(workweave.clone()))
+            .claim(Claim::OutputContains("unlanded")),
+        Step::rwv(
+            &a(),
+            &["branch", "delete", "proj--try", "--discard-unlanded"],
+        )
+        .expect(Exit::Succeeds),
+    ];
+    let fault = path.len() - 1;
+    Journey {
+        name: "j09: an experiment that never landed is thrown away and can be recovered",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::BackedUp {
+                    repo: Repo::App,
+                    mark: "try-app",
+                    marked: None,
+                })
+                .claim(Claim::WorkweaveGone(workweave)),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("proj--try")),
+            Step::rwv(&a(), &["backup", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("proj--try")),
+        ],
+    }
+}
