@@ -1494,6 +1494,25 @@ pub fn retire_keeps_the_only_store_of_a_landed_submodule_commit() -> Scenario {
     )
 }
 
+/// A sync whose fetch cannot reach a remote refuses and names the repo and
+/// what its fetch answered, not only how many failed.
+pub fn sync_names_the_repo_whose_fetch_failed() -> Scenario {
+    scenario(
+        "a sync names the repo whose fetch failed",
+        vec![
+            create("w"),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::unreachable(Remote::origin(Repo::App)),
+            Step::rwv(&ww("w"), &["sync"])
+                .expect(Exit::refuses_kind(RefusalKind::PartialRunAborted))
+                .claim(Claim::OutputContains(
+                    "could not complete the fetch of 1 repo(s)",
+                ))
+                .claim(Claim::OutputContains("\n  local/remotes/app: ")),
+        ],
+    )
+}
+
 /// A workweave whose checkouts hold no submodule store is deleted, and
 /// retired, with every remote unreachable: nothing is asked of a remote when
 /// no store goes.

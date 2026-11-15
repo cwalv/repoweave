@@ -406,9 +406,21 @@ fn fresh(
         OutputMode::Json,
     )?;
     if fetched.unconfirmed > 0 {
+        let causes: String = fetched
+            .records
+            .iter()
+            .filter(|record| record.status == crate::fetch::FetchStatus::Unconfirmed)
+            .map(|record| {
+                format!(
+                    "\n  {}: {}",
+                    record.path,
+                    record.message.as_deref().unwrap_or("no answer")
+                )
+            })
+            .collect();
         crate::refuse!(
             RefusalKind::PartialRunAborted,
-            "sync could not complete the fetch of {} repo(s); nothing was taken in",
+            "sync could not complete the fetch of {} repo(s); nothing was taken in{causes}",
             fetched.unconfirmed
         );
     }
