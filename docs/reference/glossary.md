@@ -82,7 +82,7 @@ A **fact** is a statement of what the refs show, listed beside a state in `rwv s
 | `landed` | The branch is an ancestor of the branch it lands into. |
 | `pinned-by` | Another live lock pins the commits, so they are not unpinned: another weave branch's, in this project or another. It names the project and the branch. |
 | `shared` | Other live weave branches declare the member branch, so a landing into it moves them too. |
-| `pin-landed` | The pin is on the branch it lands into. |
+| `pin-landed` | The pin is on the branch it lands into, which it names. |
 | `checkout` | The member was left detached because its branch is checked out in another workspace, named. |
 | `patch-equivalent` | The unlanded commits carry changes equivalent to commits on the branch they land into, commit by commit or as one squashed change; it names them. It is evidence for a confirmation such as `--discard-unlanded` or `--reset-to-target` and never replaces it. |
 | `ahead`, `behind` | How many commits the branch holds that its push branch lacks, and the reverse. |

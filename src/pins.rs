@@ -314,7 +314,7 @@ fn judging(
             if let Some(reset) = reset.filter(|r| r.landed(vcs, dir, pin.id())) {
                 judging = judging.fact(Fact {
                     kind: FactKind::PinLanded,
-                    about: None,
+                    about: Some(reset.landing_branch.clone()),
                 });
                 if let Some(fact) = reset.patch_fact(vcs, dir, head.id()) {
                     judging = judging.fact(fact);

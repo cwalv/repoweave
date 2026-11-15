@@ -7474,7 +7474,7 @@ pub fn landed_pin_diverged_offers_the_reset() -> Scenario {
             Step::rwv(&ww("w"), &["status"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("local/remotes/app: pin diverged"))
-                .claim(Claim::OutputContains("pin-landed"))
+                .claim(Claim::OutputLine("    pin-landed: main"))
                 .claim(Claim::OutputContains("patch-equivalent: "))
                 .claim(Claim::OutputContains(
                     "rwv sync --reset-to-target local/remotes/app",

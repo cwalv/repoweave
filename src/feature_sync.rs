@@ -2494,6 +2494,8 @@ fn delivered_materialized_inputs(sync: &Sync<'_>, key: &SavepointKey) -> Vec<(Re
 /// plan without a refusal.
 pub(crate) struct ResetOffer {
     pub(crate) landing_tip: CommitId,
+    /// The branch the member lands on, whose tip `landing_tip` is.
+    pub(crate) landing_branch: String,
     pub(crate) runs: bool,
 }
 
@@ -2553,6 +2555,7 @@ pub(crate) fn reset_offer(
     )?;
     let mdir = ctx.active_path().join(path.as_path());
     let mvcs = vcs_for(entry.vcs_type);
+    let landing_branch = receiving.to_string();
     let landing_tip = newer(mvcs.as_ref(), &mdir, &receiving, None)
         .ok()?
         .ok()??
@@ -2570,7 +2573,11 @@ pub(crate) fn reset_offer(
         jobs: 1,
     };
     let runs = plan(&sync, Some(as_mode), &[RepoOperand::Member(path.clone())]).is_ok();
-    Some(ResetOffer { landing_tip, runs })
+    Some(ResetOffer {
+        landing_tip,
+        landing_branch,
+        runs,
+    })
 }
 
 /// What the lineage rule reads for a feature's members: its target's pins
