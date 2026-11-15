@@ -1991,7 +1991,8 @@ every_scenario!(
     a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::Seat { retire: true }),
     a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::SeatJson),
     a_landing_lands_a_pin_put_back_by_name(scenarios::PutBack::Primary),
-    a_landing_records_new_work_over_a_pin_put_back,
+    a_landing_records_new_work_over_a_pin_put_back(false),
+    a_landing_records_new_work_over_a_pin_put_back(true),
     a_landing_judges_the_checkout_it_records,
     a_pin_put_back_by_name_is_restored_by_its_printed_choice,
     parallel_retire_fetch,
@@ -6686,8 +6687,12 @@ fn a_landing_judges_the_checkout_it_records() {
 
 #[test]
 fn a_landing_records_new_work_over_a_pin_put_back() {
-    runner::run(scenarios::a_landing_records_new_work_over_a_pin_put_back())
+    for resumed in [false, true] {
+        runner::run(scenarios::a_landing_records_new_work_over_a_pin_put_back(
+            resumed,
+        ))
         .assert_fully_decided_green();
+    }
 }
 
 #[test]

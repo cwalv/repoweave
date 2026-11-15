@@ -9220,8 +9220,9 @@ pub fn a_landing_lands_a_pin_put_back_by_name(at: PutBack) -> Scenario {
 
 /// A pin put back by name whose checkout then gains a commit of its own:
 /// the landing records the checkout, saying so in one line naming the pin
-/// the seat committed and the commit it records in its place.
-pub fn a_landing_records_new_work_over_a_pin_put_back() -> Scenario {
+/// the seat committed and the commit it records in its place. A landing
+/// killed before its relock says so again on `--continue`.
+pub fn a_landing_records_new_work_over_a_pin_put_back(resumed: bool) -> Scenario {
     let mut steps = publish_app_and_project("app-1");
     steps.extend(publish_app_and_project("app-2"));
     steps.extend([
@@ -9230,7 +9231,18 @@ pub fn a_landing_records_new_work_over_a_pin_put_back() -> Scenario {
             .may_rewind(&[Repo::App])
             .expect(Exit::Succeeds),
         Step::commit(&ww("w"), Repo::App, "w-app-3"),
+    ]);
+    let landed = if resumed {
+        steps.extend([
+            Step::rwv_paused(&ww("w"), &["land"], "relocking", "relocking"),
+            Step::kill("relocking"),
+        ]);
+        Step::rwv(&ww("w"), &["land", "--continue"])
+    } else {
         Step::rwv(&ww("w"), &["land"])
+    };
+    steps.push(
+        landed
             .expect(Exit::Succeeds)
             .claim(Claim::OutputContains(
                 "lock behind HEAD by 2 commits — the landing records",
@@ -9245,7 +9257,7 @@ pub fn a_landing_records_new_work_over_a_pin_put_back() -> Scenario {
                 member: Repo::App,
                 mark: "w-app-3",
             }),
-    ]);
+    );
     scenario("a landing records new work over a pin put back", steps)
 }
 

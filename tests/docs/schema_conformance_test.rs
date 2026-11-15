@@ -1901,6 +1901,11 @@ fn landing_reports() -> Vec<LandingReportOutput> {
             was: id('b'),
             backup: "proj--feat/bbbbbbbbbbbb".to_owned(),
         },
+        LandingReportOutput::Relocked {
+            path: "local/remotes/app".to_owned(),
+            was: id('b'),
+            now: id('c'),
+        },
         LandingReportOutput::RePinned {
             path: "local/remotes/app".to_owned(),
             was: id('c'),

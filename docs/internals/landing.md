@@ -113,8 +113,10 @@ their pins (`CheckoutAhead`): an `owned` or `fork` member whose checkout `T`'s
 pin does not reach. `Sides::our_pin` reads the overlay, so `entry_changes`, the
 carried-pin and lineage judgments and `plan_realigned` read the same pins; the
 op record journals the overlay as `take_in.relocked`, which `relock_landing`
-overlays on the source's lock before the three-way merge, and each entry is
-reported `Relocked`. A checkout `T`'s pin reaches, and every `dependency` or
+overlays on the source's lock before the three-way merge. Each entry is
+reported `relocked` (`emit_relock`); the report is not journaled, and
+`--continue` rebuilds it from `take_in.relocked` and the lock at
+`take_in.source_tip` (`relocks_recorded`). A checkout `T`'s pin reaches, and every `dependency` or
 `reference` checkout, keeps `W`'s committed pin. The `target` `member changes`
 consent prints the landing as typed (`landing_as_started`) with each change's
 `--allow-member-change`.

@@ -98,8 +98,8 @@ pub struct Plan {
     /// committed pin, at that checkout's commit: the pins every judgment
     /// here read and the relock writes.
     pub relocked: BTreeMap<RepoPath, CommitId>,
-    /// One report per member in `relocked`.
-    pub relocks: Vec<crate::op_state::LandingReport>,
+    /// The pin each member in `relocked` replaces.
+    pub relocks: Vec<Relock>,
     /// The repos composed by a merge commit, first parent the receiving
     /// branch, rather than rebased onto it.
     pub merged: BTreeSet<RepoKey>,
@@ -132,6 +132,46 @@ pub struct CheckoutAhead {
     pub repo: RepoPath,
     pub pin: CommitId,
     pub checkout: CommitId,
+}
+
+/// A checkout `now` the landing records in place of the pin `was` the
+/// source's lock committed, `commits` beyond it.
+#[derive(Debug, Clone)]
+pub struct Relock {
+    pub repo: RepoPath,
+    pub was: CommitId,
+    pub now: CommitId,
+    pub commits: Option<usize>,
+}
+
+/// Each relock of `relocked`, the source's checkout tips a landing recorded,
+/// against the lock the source committed at `source_tip`.
+pub fn relocks_recorded(
+    workspace: &Path,
+    project: &ProjectName,
+    source_tip: &CommitId,
+    relocked: &BTreeMap<RepoPath, CommitId>,
+) -> Vec<Relock> {
+    let vcs = project_vcs();
+    let dir = project_dir(workspace, project);
+    let lock = lock_at(vcs.as_ref(), &dir, source_tip);
+    let manifest = manifest_at(vcs.as_ref(), &dir, source_tip);
+    relocked
+        .iter()
+        .filter_map(|(repo, now)| {
+            let was = pin_of(lock.as_ref(), repo)?;
+            let entry = manifest.as_ref()?.get_entry(repo)?;
+            let commits = vcs_for(entry.vcs_type)
+                .count_commits_in_range(&workspace.join(repo.as_path()), &rev(&was), &rev(now))
+                .ok();
+            Some(Relock {
+                repo: repo.clone(),
+                was,
+                now: now.clone(),
+                commits,
+            })
+        })
+        .collect()
 }
 
 /// How the landing was typed: the words of its `rwv land`, and the
@@ -669,11 +709,7 @@ impl Sides {
     /// `owned` or `fork` member's, where it holds commits `T`'s pin lacks.
     /// A checkout `T`'s pin already reaches brings nothing, and a
     /// `dependency` or `reference` member's pin moves only by name.
-    fn relocks(
-        &self,
-        ahead: &[CheckoutAhead],
-        source_root: &Path,
-    ) -> Vec<crate::op_state::LandingReport> {
+    fn relocks(&self, ahead: &[CheckoutAhead], source_root: &Path) -> Vec<Relock> {
         ahead
             .iter()
             .filter_map(|ahead| {
@@ -687,8 +723,8 @@ impl Sides {
                     !vcs.is_ancestor(&dir, &rev(&ahead.checkout), &rev(&theirs))
                         .unwrap_or(false)
                 });
-                brought.then(|| crate::op_state::LandingReport::Relocked {
-                    repo: RepoKey::Member(ahead.repo.clone()),
+                brought.then(|| Relock {
+                    repo: ahead.repo.clone(),
                     was: ahead.pin.clone(),
                     now: ahead.checkout.clone(),
                     commits: vcs
@@ -886,14 +922,9 @@ pub fn judge(
     )?;
     let relocks = sides.relocks(source.ahead, source_root);
     for relock in &relocks {
-        if let crate::op_state::LandingReport::Relocked {
-            repo: RepoKey::Member(path),
-            now,
-            ..
-        } = relock
-        {
-            sides.relocked.insert(path.clone(), now.clone());
-        }
+        sides
+            .relocked
+            .insert(relock.repo.clone(), relock.now.clone());
     }
     let (landed_changes, inapplicable) =
         judge_entry_changes(landing, &sides, source_root, source.typed, report)?;

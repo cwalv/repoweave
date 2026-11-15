@@ -870,11 +870,6 @@ impl LandingReportOutput {
                 was: was.clone(),
                 now: now.clone(),
             },
-            op_state::LandingReport::Relocked { repo, was, now, .. } => Self::Relocked {
-                path: repo.to_string(),
-                was: was.clone(),
-                now: now.clone(),
-            },
             op_state::LandingReport::Repinned { repo, was, now } => Self::RePinned {
                 path: repo.to_string(),
                 was: was.clone(),
@@ -1030,20 +1025,6 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
                     now.short()
                 );
             }
-            op_state::LandingReport::Relocked {
-                repo,
-                was,
-                now,
-                commits,
-            } => {
-                eprintln!(
-                    "  {repo}: lock behind HEAD by {} commits — the landing records {} in place \
-                     of the pin {}",
-                    display_count(*commits),
-                    now.short(),
-                    was.short()
-                );
-            }
             op_state::LandingReport::Repinned { repo, was, now } => {
                 eprintln!(
                     "  {repo}: re-pinned {} -> {} (backward, named by --allow-member-change)",
@@ -1190,6 +1171,25 @@ fn emit_landing_report(handler: &dyn OutputHandler, report: &op_state::LandingRe
         }
     }
     handler.record_landing_report(LandingReportOutput::of(report));
+}
+
+/// A landing's report of a checkout it records over the source's committed
+/// pin. It is read from the op record's relocked tips, never journaled.
+fn emit_relock(handler: &dyn OutputHandler, relock: &crate::land::Relock) {
+    if handler.emit_text() {
+        eprintln!(
+            "  {}: lock behind HEAD by {} commits — the landing records {} in place of the pin {}",
+            RepoKey::Member(relock.repo.clone()),
+            display_count(relock.commits),
+            relock.now.short(),
+            relock.was.short()
+        );
+    }
+    handler.record_landing_report(LandingReportOutput::Relocked {
+        path: relock.repo.to_string(),
+        was: relock.was.clone(),
+        now: relock.now.clone(),
+    });
 }
 
 /// Journal a move the landing made and report it, once: a move an earlier
@@ -4837,11 +4837,13 @@ fn guard_and_mark<'a>(
             target: landing.target.to_string(),
             commits: commits.clone(),
         });
+    for relock in &plan.relocks {
+        emit_relock(handler, relock);
+    }
     for report in plan
-        .relocks
+        .absent_pins
         .iter()
         .cloned()
-        .chain(plan.absent_pins.iter().cloned())
         .chain(beyond_pin)
         .chain(plan.landed_changes.iter().cloned())
     {
@@ -5089,6 +5091,16 @@ fn load_continuing_context<'a>(
             }
         }
         report_left_behind(handler, &take_in.left_behind);
+        if let Some(source_tip) = &take_in.source_tip {
+            for relock in crate::land::relocks_recorded(
+                &cwd_workspace_dir,
+                &record.project,
+                source_tip,
+                &take_in.relocked,
+            ) {
+                emit_relock(handler, &relock);
+            }
+        }
         for report in &take_in.reports {
             emit_landing_report(handler, report);
         }
