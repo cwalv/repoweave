@@ -54,6 +54,9 @@ enum Ending {
     /// touch, then `rwv abort`: a repair run elsewhere in the weave leaves the
     /// operation what its abort restores from.
     AbortAfterDoctorElsewhere,
+    /// The same doctor runs, then the shape's `--continue`: held to an
+    /// unkilled run's end state.
+    ContinueAfterDoctorElsewhere,
 }
 
 impl Ending {
@@ -63,6 +66,7 @@ impl Ending {
             Ending::Abort => "abort",
             Ending::AbortInTarget => "abort-in-target",
             Ending::AbortAfterDoctorElsewhere => "abort after doctor elsewhere",
+            Ending::ContinueAfterDoctorElsewhere => "continue after doctor elsewhere",
         }
     }
 }
@@ -1192,7 +1196,16 @@ fn aborted_keeping(
 }
 
 fn unkilled(shape: &Shape) -> Vec<Step> {
+    unkilled_with(shape, false)
+}
+
+/// [`unkilled`], with the bystander created where its cells create it when
+/// `with_bystander`.
+fn unkilled_with(shape: &Shape, with_bystander: bool) -> Vec<Step> {
     let mut steps = (shape.setup)();
+    if with_bystander {
+        steps.push(bystander(shape));
+    }
     if shape.contender == Some(Contention::Live) {
         steps.push(Step::rwv(&ww("w1"), HOLDER).expect(Exit::Succeeds));
     }
@@ -1232,6 +1245,44 @@ fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
     }
 }
 
+/// `rwv doctor --fix` in the primary of the shape's weave and in the
+/// bystander, twice over, each leaving every record, lease and landing claim
+/// as the held operation left them.
+fn doctors_elsewhere(shape: &Shape) -> Vec<Step> {
+    let machine = weave_of(shape)
+        .machine()
+        .expect("a shape runs on a machine");
+    let mut steps = Vec::new();
+    for _ in 0..2 {
+        for at in [weave_of(shape), Place::ww(machine, BYSTANDER)] {
+            steps.push(settled(
+                shape,
+                Step::rwv(&at, &["doctor", "--fix"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::HoldsAsCaptured("held")),
+            ));
+        }
+    }
+    steps
+}
+
+/// The bystander's creation, in the shape's weave.
+fn bystander(shape: &Shape) -> Step {
+    Step::rwv(
+        &weave_of(shape),
+        &[
+            "workweave",
+            "create",
+            "--project",
+            "proj",
+            BYSTANDER,
+            "--detach",
+            "main",
+        ],
+    )
+    .expect(Exit::Succeeds)
+}
+
 /// The primary of the weave the shape's operation runs in.
 fn weave_of(shape: &Shape) -> Place {
     Place::Primary((shape.at)().machine().expect("a shape runs on a machine"))
@@ -1244,24 +1295,10 @@ const BYSTANDER: &str = "bystander";
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
     let mut steps = Vec::new();
     match ending {
-        Ending::AbortAfterDoctorElsewhere => {
+        Ending::AbortAfterDoctorElsewhere | Ending::ContinueAfterDoctorElsewhere => {
             steps.extend((shape.setup)());
             steps.extend(holding(shape));
-            steps.push(
-                Step::rwv(
-                    &weave_of(shape),
-                    &[
-                        "workweave",
-                        "create",
-                        "--project",
-                        "proj",
-                        BYSTANDER,
-                        "--detach",
-                        "main",
-                    ],
-                )
-                .expect(Exit::Succeeds),
-            );
+            steps.push(bystander(shape));
             steps.push(Step::capture("before"));
             match &shape.stop {
                 Some(stop) => steps.push(run_of(shape, (stop.exit)(), shape.start)),
@@ -1274,6 +1311,8 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
                     steps.push(Step::kill("held"));
                 }
             }
+            steps.push(Step::capture("held"));
+            steps.extend(doctors_elsewhere(shape));
         }
         _ => steps.extend(until_stopped(shape, phase, point)),
     }
@@ -1290,16 +1329,17 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
             point,
             true,
         )),
-        Ending::AbortAfterDoctorElsewhere => {
-            let machine = weave_of(shape)
-                .machine()
-                .expect("a shape runs on a machine");
-            for at in [weave_of(shape), Place::ww(machine, BYSTANDER)] {
-                steps.push(settled(
-                    shape,
-                    Step::rwv(&at, &["doctor", "--fix"]).expect(Exit::Succeeds),
-                ));
+        Ending::ContinueAfterDoctorElsewhere => match &shape.stop {
+            Some(stop) => {
+                steps.push(run_of(shape, (stop.exit)(), shape.resume));
+                steps.extend((stop.fix)());
+                steps.push(finishing(shape));
+                steps.extend(kept_by_a_reset(shape));
+                steps.extend(ends_clean(shape, retires_its_seat(shape)));
             }
+            None => steps.extend(continued(shape, phase, point)),
+        },
+        Ending::AbortAfterDoctorElsewhere => {
             let kept = match shape.stop {
                 Some(_) => &["aborted", "aborted-working-copy"],
                 None => abort_keeps(shape),
@@ -1365,8 +1405,16 @@ fn line_diff(unkilled: &str, continued: &str) -> String {
 
 /// What an unkilled run of the shape ends in.
 fn reference_end(shape: &Shape) -> String {
+    reference_end_with(shape, false)
+}
+
+/// [`reference_end`] of [`unkilled_with`].
+fn reference_end_with(shape: &Shape, with_bystander: bool) -> String {
     let clean = Sandbox::new((shape.seed)());
-    let report = scenario_runner::run_in(&clean, scenario_of(shape, "unkilled", unkilled(shape)));
+    let report = scenario_runner::run_in(
+        &clean,
+        scenario_of(shape, "unkilled", unkilled_with(shape, with_bystander)),
+    );
     let failed = failures(&report);
     assert!(
         failed.is_empty(),
@@ -1388,8 +1436,19 @@ fn run_cell(
     let sandbox = Sandbox::new((shape.seed)());
     let report = scenario_runner::run_in(&sandbox, scenario_of(shape, leaked(name.clone()), steps));
     let mut why = failures(&report);
-    if ending == Ending::Continue && why.is_empty() {
+    if matches!(
+        ending,
+        Ending::Continue | Ending::ContinueAfterDoctorElsewhere
+    ) && why.is_empty()
+    {
         let continued = scenario_runner::end_state(&sandbox);
+        let with_bystander;
+        let reference = if ending == Ending::ContinueAfterDoctorElsewhere {
+            with_bystander = reference_end_with(shape, true);
+            with_bystander.as_str()
+        } else {
+            reference
+        };
         let differs = line_diff(reference, &continued);
         let left = left_by_the_kill(shape, point);
         if differs != left {
@@ -1924,11 +1983,12 @@ fn cell_runs(shape: &Shape) -> Vec<(&'static str, Phase, Ending)> {
                 .map(move |ending| (point, phase, ending))
         })
         .collect();
-    runs.push((
-        doctor_elsewhere_point(shape),
-        Start,
+    for ending in [
         Ending::AbortAfterDoctorElsewhere,
-    ));
+        Ending::ContinueAfterDoctorElsewhere,
+    ] {
+        runs.push((doctor_elsewhere_point(shape), Start, ending));
+    }
     runs
 }
 
@@ -2081,21 +2141,29 @@ fn every_shape_has_a_test_and_a_cell() {
     }
 }
 
-/// Every shape holds its operation once, and is aborted after `rwv doctor
-/// --fix` has run elsewhere in its weave; the shapes whose cell cannot fail
-/// are named, each one real.
+/// Every shape holds its operation once, and is aborted, and continued,
+/// after `rwv doctor --fix` has run twice elsewhere in its weave; the shapes
+/// whose abort cell cannot fail are named, each one real.
 #[test]
-fn every_shape_aborts_once_after_a_doctor_fix_elsewhere() {
+fn every_shape_aborts_and_continues_once_after_a_doctor_fix_elsewhere() {
     for shape in SHAPES {
         let point = doctor_elsewhere_point(shape);
         assert!(recorded(point), "{}", shape.id);
         let after_doctor: Vec<_> = cell_runs(shape)
             .into_iter()
-            .filter(|(_, _, ending)| *ending == Ending::AbortAfterDoctorElsewhere)
+            .filter(|(_, _, ending)| {
+                matches!(
+                    ending,
+                    Ending::AbortAfterDoctorElsewhere | Ending::ContinueAfterDoctorElsewhere
+                )
+            })
             .collect();
         assert_eq!(
             after_doctor,
-            [(point, Start, Ending::AbortAfterDoctorElsewhere)],
+            [
+                (point, Start, Ending::AbortAfterDoctorElsewhere),
+                (point, Start, Ending::ContinueAfterDoctorElsewhere)
+            ],
             "{}",
             shape.id
         );

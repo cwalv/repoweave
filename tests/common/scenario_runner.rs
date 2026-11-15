@@ -540,6 +540,10 @@ pub enum Claim {
     /// every branch it had, at the tip it had. A branch made since is not
     /// read. Each repo's tree is as it was too.
     TipsAsCaptured(&'static str),
+    /// Every live place holds the operation record, lease and landing
+    /// claims, byte for byte, that it held when [`Step::capture`] took the
+    /// name.
+    HoldsAsCaptured(&'static str),
     /// Every repo's `refs/rwv/backup` is as it was when [`Step::capture`]
     /// took `name`, but for backups whose last path component is one of
     /// `kept` (`<tip>` standing for a twelve-digit abbreviated commit id).
@@ -1312,6 +1316,9 @@ struct Tips {
     exact: String,
     backups: String,
     branches: BTreeMap<String, String>,
+    /// The operation record and lease the place holds, and, for a primary,
+    /// the landing claims in its project clone, each with its bytes.
+    holds: String,
 }
 
 pub fn run(scenario: Scenario) -> Report {
@@ -2271,6 +2278,7 @@ impl Run<'_> {
                         "exact": tips.exact,
                         "backups": tips.backups,
                         "branches": tips.branches,
+                        "holds": tips.holds,
                     }),
                 )
             })
@@ -2316,6 +2324,7 @@ impl Run<'_> {
                         exact: field("exact"),
                         backups: field("backups"),
                         branches,
+                        holds: field("holds"),
                     },
                 ))
             })
@@ -2369,10 +2378,41 @@ impl Run<'_> {
                 }
             }
         }
+        let mut holds = String::new();
+        let root = sb.place_root(at);
+        for file in [".rwv-op", ".rwv-op-lease"] {
+            if let Ok(text) = std::fs::read_to_string(root.join(file)) {
+                holds.push_str(&format!("{file}: {text}\n"));
+            }
+        }
+        if matches!(at, Place::Primary(_)) {
+            let project = sb.checkout(at, Repo::Proj);
+            let common = sb.git_ok(
+                &project,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            );
+            let landings = PathBuf::from(common.trim()).join("rwv-landings");
+            let mut claims: Vec<String> = std::fs::read_dir(&landings)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|entry| {
+                    let text =
+                        std::fs::read_to_string(entry.path().join(".rwv-landing.lock")).ok()?;
+                    Some(format!(
+                        "claim {}: {text}\n",
+                        entry.file_name().to_string_lossy()
+                    ))
+                })
+                .collect();
+            claims.sort();
+            holds.push_str(&claims.concat());
+        }
         Tips {
             exact,
             backups,
             branches,
+            holds,
         }
     }
 
@@ -2844,6 +2884,26 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("not as captured as {name}:\n{}", off.join("\n")))
+                }
+            }
+            Claim::HoldsAsCaptured(name) => {
+                let kept = &self.captured_named(name)?;
+                let off: Vec<String> = kept
+                    .iter()
+                    .filter_map(|(place, before)| {
+                        let now = self.tips(place).holds;
+                        (before.holds != now).then(|| {
+                            format!("{place:?}:\n--- captured\n{}--- now\n{now}", before.holds)
+                        })
+                    })
+                    .collect();
+                if off.is_empty() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "holds not as captured as {name}:\n{}",
+                        off.join("\n")
+                    ))
                 }
             }
             Claim::BackupsAsCaptured { name, kept } => {
