@@ -79,6 +79,18 @@ const FORBIDDEN: &[&str] = &[
 
 const ALLOWLIST: &[Allowed] = &[
     Allowed {
+        file: "clone.rs",
+        pattern: "remove_dir_all",
+        count: 1,
+        callers: &[],
+        justification: "take_back_clone, called by run_clone only after its \
+            own clone_repo made the directory: run_clone refused up front \
+            when anything was at project_dir, so the directory holds nothing \
+            but the clone of a repository that carries no rwv.toml, or that \
+            has one under `--init-manifest`, taken back so a retry finds \
+            nothing in the way.",
+    },
+    Allowed {
         file: "add_remove.rs",
         pattern: "remove_dir_all",
         count: 1,

@@ -59,6 +59,13 @@ impl CloneJsonOutput {
     }
 }
 
+/// Remove the project repo this clone just made at `project_dir`, which the
+/// clone refused to start in when anything was there.
+fn take_back_clone(project_dir: &Path) -> anyhow::Result<()> {
+    std::fs::remove_dir_all(project_dir)
+        .with_context(|| format!("failed to remove {}", project_dir.display()))
+}
+
 /// Resolve `source` to a clone URL.
 ///
 /// Accepts full URLs (returned as-is) or `registry/owner/repo` shorthand
@@ -154,8 +161,7 @@ pub fn run_clone(
     match (has_manifest, init_manifest) {
         (true, false) => {}
         (true, true) => {
-            std::fs::remove_dir_all(&project_dir)
-                .with_context(|| format!("failed to remove {}", project_dir.display()))?;
+            take_back_clone(&project_dir)?;
             crate::refuse!(
                 RefusalKind::InapplicableFlag,
                 "`--init-manifest` writes the `rwv.toml` a repository lacks, and {source} has \
@@ -163,8 +169,7 @@ pub fn run_clone(
             );
         }
         (false, false) => {
-            std::fs::remove_dir_all(&project_dir)
-                .with_context(|| format!("failed to remove {}", project_dir.display()))?;
+            take_back_clone(&project_dir)?;
             crate::refuse!(
                 RefusalKind::NotAProject,
                 "{source} holds no `rwv.toml`, so it is not a project (an empty repository \
