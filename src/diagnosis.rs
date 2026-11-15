@@ -377,8 +377,8 @@ impl Axis {
 
 const LOCK_DRIVER_REFUSED_BY: &str = "every verb that writes the project repo or its lock, \
 before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it \
-composes onto too), `rwv pull`, `rwv update --remote`, the `rwv member` \
-verbs, `rwv branch create`, `delete`, `rename` and `set-mode`, and `rwv workweave create` and \
+composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` \
+and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and \
 `delete`; `rwv doctor` reports it instead";
 
 const PRE_SCHEMA_ENTRY: &str = "The project's `rwv.toml` names member-entry keys an earlier \

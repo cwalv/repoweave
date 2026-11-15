@@ -1926,3 +1926,147 @@ pub fn run() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn leaves(command: &clap::Command, path: &[&str], into: &mut Vec<String>) {
+        if command.get_subcommands().next().is_none() {
+            into.push(path.join(" "));
+        }
+        for sub in command.get_subcommands() {
+            let mut deeper = path.to_vec();
+            deeper.push(sub.get_name());
+            leaves(sub, &deeper, into);
+        }
+    }
+
+    /// Every verb with arguments that parse, and whether it writes the
+    /// project repo; `update --remote` is the one flag that decides.
+    const VERBS: &[(&str, &[&str], bool)] = &[
+        ("activate", &["activate", "p"], false),
+        ("materialize", &["materialize"], false),
+        ("prime", &["prime"], false),
+        ("resolve", &["resolve"], false),
+        ("clone", &["clone", "u"], false),
+        ("init", &["init", "p"], false),
+        ("member add", &["member", "add", "u"], true),
+        ("member remove", &["member", "remove", "p"], true),
+        (
+            "member set-role",
+            &["member", "set-role", "p", "owned"],
+            true,
+        ),
+        ("member pin", &["member", "pin", "p", "HEAD"], true),
+        (
+            "member set-branch",
+            &["member", "set-branch", "p", "b"],
+            true,
+        ),
+        ("member set-url", &["member", "set-url", "p", "u"], true),
+        (
+            "member set-recurse-submodules",
+            &["member", "set-recurse-submodules", "p", "true"],
+            true,
+        ),
+        (
+            "integration set-enabled",
+            &["integration", "set-enabled", "i", "true"],
+            true,
+        ),
+        (
+            "integration set",
+            &["integration", "set", "i", "k", "v"],
+            true,
+        ),
+        ("branch list", &["branch", "list"], false),
+        ("branch set-mode", &["branch", "set-mode", "b", "m"], true),
+        (
+            "branch set-history",
+            &["branch", "set-history", "linear"],
+            true,
+        ),
+        ("branch rename", &["branch", "rename", "b"], true),
+        ("branch create", &["branch", "create", "b"], true),
+        ("branch delete", &["branch", "delete", "b"], true),
+        ("switch", &["switch", "b"], false),
+        ("workweave create", &["workweave", "create", "w"], true),
+        ("workweave delete", &["workweave", "delete", "w"], true),
+        ("workweave list", &["workweave", "list"], false),
+        (
+            "workweave set-default-create-basedir",
+            &["workweave", "set-default-create-basedir", "d"],
+            false,
+        ),
+        ("doctor", &["doctor"], false),
+        ("lock", &["lock"], true),
+        ("status", &["status"], false),
+        ("log", &["log"], false),
+        ("abort", &["abort"], false),
+        ("backup list", &["backup", "list"], false),
+        ("backup drop", &["backup", "drop", "r", "x"], false),
+        ("backup prune", &["backup", "prune"], false),
+        ("sync", &["sync"], true),
+        ("land", &["land"], true),
+        ("cherry-pick", &["cherry-pick", "c"], true),
+        ("fetch", &["fetch"], false),
+        ("pull", &["pull"], true),
+        ("update", &["update"], false),
+        ("update --remote", &["update", "--remote"], true),
+        ("push", &["push"], false),
+        ("completions", &["completions", "bash"], false),
+        ("explain", &["explain", "x"], false),
+        ("setup claude", &["setup", "claude"], false),
+    ];
+
+    fn mentions(spelling: &str, text: &str) -> bool {
+        let group = spelling.split(' ').next().unwrap();
+        match group {
+            "member" => text.contains("the `rwv member` and"),
+            "integration" => text.contains("`rwv integration` verbs"),
+            "branch" => {
+                spelling != "branch list" && text.contains("every `rwv branch` verb but `list`")
+            }
+            "workweave" => {
+                matches!(spelling, "workweave create" | "workweave delete")
+                    && text.contains("`rwv workweave create` and `delete`")
+            }
+            "update" => spelling == "update --remote" && text.contains("`rwv update --remote`"),
+            _ => text.contains(&format!("`rwv {spelling}`")),
+        }
+    }
+
+    #[test]
+    fn the_text_of_the_verbs_a_lock_driver_setup_refuses_is_the_verbs_that_write_the_project() {
+        let mut clap_leaves = Vec::new();
+        leaves(&crate::cli::Cli::command(), &[], &mut clap_leaves);
+        let table: Vec<&str> = VERBS
+            .iter()
+            .map(|(name, _, _)| *name)
+            .filter(|name| !name.contains("--"))
+            .collect();
+        assert_eq!(clap_leaves, table, "every verb is decided here");
+
+        let text = crate::diagnosis::State::MissingLockMergeDriverAttributeAbsent
+            .row()
+            .refused_by
+            .split_once(';')
+            .expect("the verbs that refuse come before the one that reports")
+            .0;
+        for (spelling, argv, writes) in VERBS {
+            let matches = crate::cli::Cli::command()
+                .try_get_matches_from(std::iter::once("rwv").chain(argv.iter().copied()))
+                .unwrap_or_else(|e| panic!("{spelling}: {e}"));
+            let cli = crate::cli::Cli::from_arg_matches(&matches)
+                .unwrap_or_else(|e| panic!("{spelling}: {e}"));
+            assert_eq!(
+                writes_project(cli.command.as_ref()),
+                *writes,
+                "{spelling}: the table and the code disagree"
+            );
+            let spelled = mentions(spelling, text) == *writes;
+            assert!(spelled, "{spelling}: the refused-by text disagrees: {text}");
+        }
+    }
+}
