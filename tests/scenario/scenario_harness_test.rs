@@ -919,6 +919,12 @@ fn an_expired_submodule_head_log_takes_the_fetch() {
 }
 
 #[test]
+fn discard_unpublished_applies_only_at_the_retire_stop() {
+    runner::run(scenarios::discard_unpublished_applies_only_at_the_retire_stop())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1897,6 +1903,7 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    discard_unpublished_applies_only_at_the_retire_stop,
     a_workweave_removal_judges_an_untouched_submodule_store_offline(
         scenarios::InTheSubmodule::Nothing,
         false

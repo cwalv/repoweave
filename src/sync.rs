@@ -2130,7 +2130,10 @@ impl RemovalCause<'_> {
 
     fn preface(self) -> &'static str {
         match self {
-            Self::Retire => "the landing is done and the workweave was not deleted. ",
+            Self::Retire => {
+                "the landing has landed and the workweave was not deleted; `rwv abort` would \
+                 roll the landing back whole. "
+            }
             Self::DroppedFromLock | Self::RemoveDelete | Self::WorkweaveDelete(_) => "",
         }
     }
@@ -2459,16 +2462,6 @@ fn judge_stores(
         StoresRemoved::Nested => "the stores nested in its checkout hold",
     };
     let unanswered = refresh_remotes(vcs, stores);
-    if !unanswered.is_empty() && discard.is_none() {
-        crate::refuse!(
-            RefusalKind::RemotesUnconfirmed,
-            "{}{repo}: {situation}, but what its remotes hold could not be confirmed ({}), so \
-             whether {whose} what no remote has cannot be told. {}",
-            cause.preface(),
-            unanswered.join("; "),
-            cause.when_unconfirmed(workspace, repo)
-        );
-    }
     let mut held = Vec::new();
     for (nested, store) in stores {
         let found = vcs
@@ -2485,6 +2478,25 @@ fn judge_stores(
             nested: nested.clone(),
             held: h,
         }));
+    }
+    if !unanswered.is_empty() && discard.is_none() {
+        let as_last_fetched = match held.is_empty() {
+            true => "nothing beyond what they last gave".to_owned(),
+            false => held
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        crate::refuse!(
+            RefusalKind::RemotesUnconfirmed,
+            "{}{repo}: {situation}, but what its remotes hold could not be confirmed ({}), so \
+             whether {whose} what no remote has cannot be told; against its remotes as last \
+             fetched, it holds {as_last_fetched}. {}",
+            cause.preface(),
+            unanswered.join("; "),
+            cause.when_unconfirmed(workspace, repo)
+        );
     }
     let listed = held
         .iter()
@@ -3326,8 +3338,20 @@ fn run_machine(
     let discard_unpublished = match &request {
         SyncRequest::Continue {
             discard_unpublished,
+            op,
             ..
-        } => *discard_unpublished,
+        } => {
+            if discard_unpublished.is_some() && op.record.phase != op_state::OpPhase::Retire {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "`--discard-unpublished` applies only where this landing's retire stopped \
+                     over what the stores it removes hold, which that stop lists; this landing \
+                     is mid `{}`, and `rwv land --continue` resumes it",
+                    op.record.phase
+                );
+            }
+            *discard_unpublished
+        }
         SyncRequest::Fresh { .. } => None,
     };
     let mut ctx = match request {

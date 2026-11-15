@@ -478,7 +478,7 @@ pub enum Commands {
         /// With `--continue`, retire the workweave even if a store nested in one of its
         /// checkouts holds what no remote is confirmed to have, as `rwv workweave delete
         /// --discard-unpublished` does
-        #[arg(long, requires = "do_continue")]
+        #[arg(long)]
         discard_unpublished: bool,
         /// Resume a landing a conflict stopped, after resolving it; every parameter comes
         /// from the op record. `--project` asserts the recorded project and refuses another

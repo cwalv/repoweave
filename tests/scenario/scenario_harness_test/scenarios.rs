@@ -825,6 +825,9 @@ pub fn store_removal_of_a_clone_whose_remote_is_gone() -> Scenario {
             Step::unreachable(Remote::origin(Repo::App)),
             Step::rwv(&a(), &["member", "remove", APP, "--delete"])
                 .expect(Exit::refuses_kind(RefusalKind::RemotesUnconfirmed))
+                .claim(Claim::OutputContains(
+                    "against its remotes as last fetched, it holds branch main",
+                ))
                 .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
             Step::rwv_printed_quoted(&a(), "rwv member remove ", "--discard-unpublished")
                 .expect(Exit::Succeeds)
@@ -1041,7 +1044,8 @@ pub fn checkout_removal_asks_the_submodule_stores_of_a_workweave(
             (
                 Step::rwv(&ww("w"), &["land", "--retire"])
                     .claim(Claim::OutputContains(
-                        "the landing is done and the workweave was not deleted",
+                        "the landing has landed and the workweave was not deleted; `rwv abort` \
+                         would roll the landing back whole",
                     ))
                     .claim(Claim::Contains {
                         at: a(),
@@ -1095,7 +1099,7 @@ pub fn retire_keeps_the_only_store_of_a_landed_submodule_commit() -> Scenario {
         Step::rwv(&ww("w"), &["land", "--retire"])
             .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
             .claim(Claim::OutputContains("the checked-out commit"))
-            .claim(Claim::OutputContains("the landing is done"))
+            .claim(Claim::OutputContains("the landing has landed"))
             .claim(Claim::DirStands(
                 Machine::A,
                 ".workweaves/proj--w/local/remotes/app",
@@ -19970,6 +19974,32 @@ fn landing_merge_stopped() -> Vec<Step> {
         )
         .expect(Exit::Succeeds),
     ]
+}
+
+/// `--discard-unpublished` consents only at the stop that lists what it lets
+/// go, a landing's retire refused over its stores: a fresh landing and a
+/// landing stopped on a conflict refuse it before anything moves, naming
+/// where it applies.
+pub fn discard_unpublished_applies_only_at_the_retire_stop() -> Scenario {
+    let mut steps = landing_merge_stopped();
+    steps.extend([
+        Step::git(&ww("w"), Repo::App, &["checkout", "--ours", "README"]),
+        Step::git(&ww("w"), Repo::App, &["add", "README"]),
+        Step::rwv(&ww("w"), &["land", "--continue", "--discard-unpublished"])
+            .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+            .claim(Claim::OutputContains("where this landing's retire stopped"))
+            .claim(Claim::LocalStateUnchanged(ww("w"))),
+        Step::rwv(&ww("w"), &["land", "--continue"]).expect(Exit::Succeeds),
+        create("v"),
+        Step::commit(&ww("v"), Repo::Proj, "v-proj"),
+        Step::rwv(&ww("v"), &["land", "--retire", "--discard-unpublished"])
+            .expect(Exit::refuses_kind(RefusalKind::InapplicableFlag))
+            .claim(Claim::LocalStateUnchanged(ww("v"))),
+    ]);
+    scenario(
+        "--discard-unpublished applies only at the retire stop",
+        steps,
+    )
 }
 
 /// [`landing_merge_stopped`], resolved and continued: the project gets one

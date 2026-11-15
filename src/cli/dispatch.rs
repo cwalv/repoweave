@@ -1582,6 +1582,13 @@ pub fn run() -> anyhow::Result<()> {
             discard_unpublished,
             do_continue,
         }) => {
+            if discard_unpublished && !do_continue {
+                crate::refuse!(
+                    RefusalKind::InapplicableFlag,
+                    "`--discard-unpublished` applies only with `--continue`, where a landing's \
+                     retire stopped over what the stores it removes hold, which that stop lists"
+                );
+            }
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(origin_dir, project_override.clone(), binding)?;
             let request = if do_continue {
