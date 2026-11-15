@@ -53,16 +53,20 @@ mod armed {
     const RELEASE_DEADLINE: Duration = Duration::from_secs(120);
 
     pub(super) fn trace(name: &str) {
+        if let Some(file) = std::env::var_os("RWV_TEST_PAUSE_TRACE") {
+            trace_to(Path::new(&file), name);
+        }
+    }
+
+    pub(super) fn trace_to(file: &Path, name: &str) {
         use std::io::Write;
-        let Some(file) = std::env::var_os("RWV_TEST_PAUSE_TRACE") else {
-            return;
-        };
-        let mut file = std::fs::OpenOptions::new()
+        let mut out = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&file)
-            .unwrap_or_else(|e| panic!("cannot open {}: {e:#}", Path::new(&file).display()));
-        writeln!(file, "{name}").expect("a trace line is written");
+            .open(file)
+            .unwrap_or_else(|e| panic!("cannot open {}: {e:#}", file.display()));
+        out.write_all(format!("{name}\n").as_bytes())
+            .expect("a trace line is written");
     }
 
     pub(super) fn wait_at(name: &str) {
@@ -98,14 +102,13 @@ mod tests {
     fn a_traced_pass_through_a_point_appends_its_name() {
         let dir = crate::tempdir().unwrap();
         let file = dir.path().join("trace");
-        std::env::set_var("RWV_TEST_PAUSE_TRACE", &file);
-        super::point("first-point");
-        super::point("second-point");
-        super::point("first-point");
-        std::env::remove_var("RWV_TEST_PAUSE_TRACE");
-        super::point("untraced-point");
+        for name in ["first-point", "second-point", "first-point"] {
+            super::armed::trace_to(&file, name);
+        }
         let traced = std::fs::read_to_string(&file).unwrap();
-        let mine: Vec<&str> = traced.lines().filter(|l| l.ends_with("-point")).collect();
-        assert_eq!(mine, ["first-point", "second-point", "first-point"]);
+        assert_eq!(
+            traced.lines().collect::<Vec<_>>(),
+            ["first-point", "second-point", "first-point"]
+        );
     }
 }
