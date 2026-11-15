@@ -2181,7 +2181,7 @@ fn a_merge_killed_where_the_move_swaps_a_file_for_a_directory_is_finished_by_the
     for verb in [&["land"][..], &["lock"], &["doctor", "--fix"]] {
         let out = common::cli::run(verb, &f.ww);
         let stderr = common::cli::refused(&out, State::EditsSetBack);
-        assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(!common::cli::prose(&stderr).contains("commit"), "{verb:?}:\n{stderr}");
         assert!(
             stderr.contains("rwv doctor --fix --merge-edited-drift"),
             "{verb:?}:\n{stderr}"
@@ -2331,7 +2331,7 @@ fn untracked_content_where_the_move_adds_a_path_holds_the_checkout_until_moved_a
     let out = common::cli::run(&["lock"], &f.ww);
 
     let stderr = common::cli::refused(&out, State::EditsMovedAndEdited);
-    assert!(!stderr.contains("commit"), "{stderr}");
+    assert!(!common::cli::prose(&stderr).contains("commit"), "{stderr}");
     assert!(stderr.contains("move out of the way"), "{stderr}");
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
     std::fs::rename(f.ww_lib.join("todo"), f.scratch.join("todo")).unwrap();
@@ -2527,7 +2527,7 @@ fn drift_at_a_name_that_is_not_utf8_is_exited_by_the_printed_stash() {
         let out = common::cli::run(verb, &f.ww);
         let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
         assert!(stderr.contains("could not be read"), "{verb:?}:\n{stderr}");
-        assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(!common::cli::prose(&stderr).contains("commit"), "{verb:?}:\n{stderr}");
     }
     let said = common::cli::describe(&common::cli::run(&["doctor"], &f.ww));
     assert!(said.contains("could not be read"), "{said}");
@@ -2721,7 +2721,7 @@ fn a_project_manifest_moved_and_edited_is_held_until_merged() {
             listing_under(&stderr, "edits moved and edited").contains(&"rwv.toml".to_owned()),
             "{verb:?}:\n{stderr}"
         );
-        assert!(!stderr.contains("commit"), "{verb:?}:\n{stderr}");
+        assert!(!common::cli::prose(&stderr).contains("commit"), "{verb:?}:\n{stderr}");
         assert_eq!(common::git_in(&project, &["rev-parse", "HEAD"]), moved);
     }
     let out = common::cli::run(&["lock", "--commit"], &f.ww);
@@ -3356,7 +3356,7 @@ fn a_refresh_killed_between_its_writes_then_a_second_move_offers_no_commit() {
         vec!["u.txt".to_owned()],
         "{stderr}"
     );
-    assert!(!stderr.contains("commit"), "{stderr}");
+    assert!(!common::cli::prose(&stderr).contains("commit"), "{stderr}");
     let out = run_printed(&stderr, "merge-edited-drift", &f.ww);
     let said = common::cli::describe(&out);
     assert_eq!(common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]), second);
@@ -4014,7 +4014,7 @@ fn a_move_under_a_checkout_with_no_reflog_entry_is_held_with_no_commit_offered()
                 stderr.contains("where this checkout of"),
                 "{how:?} {verb:?}:\n{stderr}"
             );
-            assert!(!stderr.contains("commit"), "{how:?} {verb:?}:\n{stderr}");
+            assert!(!common::cli::prose(&stderr).contains("commit"), "{how:?} {verb:?}:\n{stderr}");
             assert_eq!(
                 path_state(&f.ww_lib, &["notes.txt", "new.txt"]),
                 before,
@@ -4114,7 +4114,7 @@ fn a_move_under_a_checkout_with_an_emptied_log_is_held_on_reftable() {
         stderr.contains("holds no record of where this checkout"),
         "{stderr}"
     );
-    assert!(!stderr.contains("commit"), "{stderr}");
+    assert!(!common::cli::prose(&stderr).contains("commit"), "{stderr}");
     run_every_choice(&stderr, &f.ww);
     let out = common::cli::run(&["lock"], &f.ww);
     assert!(out.status.success(), "{}", common::cli::describe(&out));
@@ -4133,7 +4133,7 @@ fn a_held_checkout_with_a_path_marked_to_be_added_is_offered_unmarking_it_first(
 
     let stderr = common::cli::refused(&out, State::EditsDriftLeftInPlace);
     assert_eq!(printed_commands(&stderr).len(), 2, "{stderr}");
-    assert!(!stderr.contains("commit"), "{stderr}");
+    assert!(!common::cli::prose(&stderr).contains("commit"), "{stderr}");
     run_every_choice(&stderr, &f.ww);
     assert_eq!(
         read(&f.ww_lib.join("marked.txt")).as_deref(),
@@ -4268,7 +4268,7 @@ fn a_hand_add_of_one_file_after_a_refresh_killed_between_its_writes_is_finished_
     let said = common::cli::describe(&out);
     assert!(said.contains("refreshed drift"), "{said}");
     assert!(said.contains("spare.txt"), "{said}");
-    assert!(!said.contains("commit"), "{said}");
+    assert!(!common::cli::prose(&said).contains("commit"), "{said}");
     assert_eq!(
         common::git_in(&f.ww_lib, &["status", "--porcelain"]),
         "",
@@ -4385,4 +4385,12 @@ fn the_printed_stash_and_its_pop_end_the_hold_unless_the_setting_forbids_an_entr
             assert!(stderr.contains(" commit"), "{how:?}:\n{stderr}");
         }
     }
+}
+
+#[test]
+fn a_word_naming_a_place_is_not_text_an_absence_is_asserted_of() {
+    assert_eq!(
+        common::cli::prose("move /tmp/commit-test/a out, then C:\\commit\\b stays"),
+        "move out, then stays"
+    );
 }

@@ -116,7 +116,7 @@ fn nothing_writes_a_history_the_operator_did_not_name() {
                 "{path} reads as set:\n{text}"
             );
         }
-        assert!(!text.contains("history"), "a history was written:\n{text}");
+        assert!(!common::cli::prose(&text).contains("history"), "a history was written:\n{text}");
     }
 }
 

@@ -72,6 +72,15 @@ pub fn route_block(stderr: &str) -> Option<Vec<&str>> {
     })
 }
 
+/// `text` without the words that name a place: a word holding a path
+/// separator. A sandbox directory named after its test can hold any word the
+/// test asserts is absent, and the text says nothing of it.
+pub fn prose(text: &str) -> String {
+    text.split_inclusive(char::is_whitespace)
+        .filter(|word| !word.contains(['/', '\\']))
+        .collect()
+}
+
 /// Whether `line` is a judged line for `state`: `…: <axis> <state>`, with
 /// the subject in parentheses after it where the state names one.
 pub fn is_judged_line(line: &str, state: State) -> bool {
