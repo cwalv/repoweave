@@ -2450,7 +2450,7 @@ fn judge_stores(
         let Some(nested) = nested else {
             continue;
         };
-        if store.join(".git").symlink_metadata().is_err() {
+        if !vcs.is_repo(store) {
             continue;
         }
         let files = vcs
