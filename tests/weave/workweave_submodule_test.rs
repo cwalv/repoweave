@@ -679,10 +679,9 @@ fn a_second_seat_places_submodule_files_from_the_first() {
     }
 }
 
-/// The submodule stores the workweave made go with it. Their remotes are cut
-/// off, so what they hold beyond what those remotes last gave cannot be
-/// confirmed: the delete refuses, and lets them go with
-/// `--discard-unpublished`.
+/// The submodule stores the workweave made go with it. They hold only what
+/// they fetched, so the delete asks no remote of them: their remotes are cut
+/// off, and nothing connects.
 #[test]
 fn deleting_the_workweave_removes_the_submodule_repositories_it_made() {
     for role in ["owned", "reference"] {
@@ -694,26 +693,8 @@ fn deleting_the_workweave_removes_the_submodule_repositories_it_made() {
         ));
         assert!(repository.is_dir());
 
-        let refused = common::rwv()
-            .args(["workweave", "delete", "--project", PROJECT, "one"])
-            .current_dir(&weave.primary)
-            .output()
-            .unwrap();
-        common::cli::refused(
-            &refused,
-            repoweave::refusal::RefusalKind::RemotesUnconfirmed,
-        );
-        assert!(repository.is_dir());
-
         rwv(
-            &[
-                "workweave",
-                "delete",
-                "--project",
-                PROJECT,
-                "one",
-                "--discard-unpublished",
-            ],
+            &["workweave", "delete", "--project", PROJECT, "one"],
             &weave.primary,
         );
 
@@ -724,6 +705,7 @@ fn deleting_the_workweave_removes_the_submodule_repositories_it_made() {
             repository.display()
         );
         assert_checked_out_in_canonical(&weave);
+        weave.trap.assert_untouched();
     }
 }
 

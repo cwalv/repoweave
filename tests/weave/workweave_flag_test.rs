@@ -335,8 +335,10 @@ fn w_flag_separates_a_broken_registry_entry_from_an_unrecorded_address() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!out.status.success(), "a stale entry must refuse");
     assert!(
-        stderr.contains("does not round-trip") && stderr.contains("rwv doctor --fix"),
-        "the remedy for a broken entry is doctor, not a typo hunt: {stderr}"
+        stderr.contains("the directory it is recorded at is gone")
+            && stderr.contains("run `rwv doctor --fix` inside it")
+            && stderr.contains("`rwv workweave delete feat --project myproj`"),
+        "the remedy for a gone entry is the verb that ends it, not a typo hunt: {stderr}"
     );
     assert!(
         !stderr.contains("no workweave is addressable"),

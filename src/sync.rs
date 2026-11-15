@@ -2403,7 +2403,7 @@ pub(crate) fn judge_stores_kept_for_gone(
         (Err(e), Some(_)) => {
             eprintln!(
                 "rwv: {repo}: removing the record of {} with the stores kept for it, which \
-                 could not be listed: {e}",
+                 could not be listed: {e:#}",
                 checkout.display()
             );
             Vec::new()
@@ -2411,7 +2411,7 @@ pub(crate) fn judge_stores_kept_for_gone(
         (Err(e), None) => crate::refuse!(
             RefusalKind::DroppedRepoHasUniqueCommits,
             "{}{repo}: {situation}, but the stores kept for its checkout could not be listed \
-             ({e}), so whether they hold what no remote has cannot be told; or remove it with \
+             ({e:#}), so whether they hold what no remote has cannot be told; or remove it with \
              them: `{}`",
             cause.preface(),
             cause.discarding(workspace, repo)
@@ -2576,7 +2576,7 @@ fn stores_removed_with(
         (Err(e), Some(_)) => {
             eprintln!(
                 "rwv: {repo}: removing {} with the stores nested inside it, which could not be \
-                 listed: {e}",
+                 listed: {e:#}",
                 dest.display()
             );
             Vec::new()
@@ -2584,7 +2584,7 @@ fn stores_removed_with(
         (Err(e), None) => crate::refuse!(
             RefusalKind::DroppedRepoHasUniqueCommits,
             "{}{repo}: {situation}, but the stores nested inside its checkout could not be \
-             listed ({e}), so whether they hold what no remote has cannot be told; or remove it \
+             listed ({e:#}), so whether they hold what no remote has cannot be told; or remove it \
              with them: `{}`",
             cause.preface(),
             cause.discarding(workspace, repo)
@@ -3346,8 +3346,9 @@ fn run_machine(
                     RefusalKind::InapplicableFlag,
                     "`--discard-unpublished` applies only where this landing's retire stopped \
                      over what the stores it removes hold, which that stop lists; this landing \
-                     is mid `{}`, and `rwv land --continue` resumes it",
-                    op.record.phase
+                     is mid `{}`, and `{}` resumes it",
+                    op.record.phase,
+                    op_state::resume_command(op_state::OpVerb::Land)
                 );
             }
             *discard_unpublished
