@@ -3635,18 +3635,7 @@ fn linked_workweaves(
 /// The workspace roots, other than `ws_root`, that the project clone's linked
 /// checkouts sit in.
 fn linked_roots(ws_root: &Path, project: &crate::manifest::ProjectName) -> Vec<PathBuf> {
-    let primary = CanonicalPath::of(ws_root);
-    let depth = crate::workspace::project_rel_dir(project)
-        .components()
-        .count();
-    crate::vcs::project_vcs()
-        .list_worktrees(&project_dir(ws_root, project))
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|checkout| checkout.ancestors().nth(depth))
-        .filter(|root| CanonicalPath::of(root) != primary)
-        .map(Path::to_path_buf)
-        .collect()
+    crate::workweave::linked_workspace_roots(ws_root, project)
 }
 
 /// Every directory of `ws_root`'s `project` whose marker claims `name`: among
@@ -6342,16 +6331,18 @@ pub fn scan_state_hygiene(
 }
 
 /// Every workspace of a weave that may hold an operation record, from the
-/// primary and the indexes, never from what sits in a container: the
-/// directories that stand, and why any other cannot be read.
+/// primary, the indexes and the project clones' registered checkouts, never
+/// from what sits in a container: the directories that stand, and why any
+/// other cannot be read.
 pub struct OpHolders {
     pub dirs: Vec<PathBuf>,
     pub unknown: Vec<String>,
 }
 
 impl OpHolders {
-    /// The primary at `primary` and every workweave a project's index
-    /// records, wherever its directory is.
+    /// The primary at `primary`, every workweave a project's index records,
+    /// wherever its directory is, and every workspace a checkout of a
+    /// project's clone is registered in, recorded or not.
     pub fn of(primary: &Path) -> Self {
         let mut dirs = vec![primary.to_path_buf()];
         let mut unknown = Vec::new();
@@ -6379,6 +6370,21 @@ impl OpHolders {
                 }
             }
         }
+        for project in crate::workspace::discover_projects(primary) {
+            for root in linked_roots(primary, &project) {
+                if root.is_dir() {
+                    dirs.push(root);
+                } else {
+                    unknown.push(format!(
+                        "the directory {} a checkout of project `{project}`'s clone is \
+                         registered in is not there",
+                        root.display()
+                    ));
+                }
+            }
+        }
+        dirs.sort();
+        dirs.dedup();
         Self { dirs, unknown }
     }
 }

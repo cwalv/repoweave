@@ -157,8 +157,11 @@ fn stop_a_sync() -> Stopped {
 /// `rwv doctor --fix` from `at` drops none of the stopped sync's savepoints,
 /// and the seat's `rwv abort` then puts its member and project repo back on
 /// their branches at the tips they had before the sync.
-fn doctor_fix_elsewhere_leaves_the_abort_whole(at: impl Fn(&Stopped) -> &Path) {
+fn doctor_fix_elsewhere_leaves_the_abort_whole(at: impl Fn(&Stopped) -> &Path, recorded: bool) {
     let stopped = stop_a_sync();
+    if !recorded {
+        unrecord_the_seat(&stopped);
+    }
     let lib_before = savepoints(&stopped.primary.lib);
     let project_before = savepoints(&stopped.primary.project);
 
@@ -179,14 +182,39 @@ fn doctor_fix_elsewhere_leaves_the_abort_whole(at: impl Fn(&Stopped) -> &Path) {
     common::assert_on_branch(&stopped.seat.project, &format!("{PROJECT}--s1"));
 }
 
+/// Drop the stopped seat's entry from the project's index, as an index
+/// rebuilt while its marker disagreed would leave it: the project clone still
+/// registers the seat's checkout.
+fn unrecord_the_seat(stopped: &Stopped) {
+    let index = common::index_file_of(&stopped.primary.project);
+    let mut recorded: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&index).unwrap()).unwrap();
+    recorded["workweaves"]
+        .as_object_mut()
+        .unwrap()
+        .remove("s1")
+        .expect("the index records the seat");
+    std::fs::write(&index, serde_json::to_string(&recorded).unwrap()).unwrap();
+}
+
 #[test]
 fn the_primarys_doctor_fix_keeps_the_savepoints_of_a_dir_seats_stopped_sync() {
-    doctor_fix_elsewhere_leaves_the_abort_whole(|stopped| &stopped.primary.root);
+    doctor_fix_elsewhere_leaves_the_abort_whole(|stopped| &stopped.primary.root, true);
 }
 
 #[test]
 fn a_sibling_seats_doctor_fix_keeps_the_savepoints_of_a_stopped_sync() {
-    doctor_fix_elsewhere_leaves_the_abort_whole(|stopped| &stopped.sibling.root);
+    doctor_fix_elsewhere_leaves_the_abort_whole(|stopped| &stopped.sibling.root, true);
+}
+
+#[test]
+fn the_primarys_doctor_fix_keeps_the_savepoints_of_an_unrecorded_seats_stopped_sync() {
+    doctor_fix_elsewhere_leaves_the_abort_whole(|stopped| &stopped.primary.root, false);
+}
+
+#[test]
+fn a_sibling_seats_doctor_fix_keeps_the_savepoints_of_an_unrecorded_seats_stopped_sync() {
+    doctor_fix_elsewhere_leaves_the_abort_whole(|stopped| &stopped.sibling.root, false);
 }
 
 /// The primary's doctor reads the workweaves the index records wherever

@@ -4499,35 +4499,47 @@ fn list_workweave_dirs_for_project(
     Ok(result)
 }
 
-/// Every workweave of `ws_root`'s primary that a project's index records,
-/// wherever its directory is, with its identity: each recorded directory that
-/// stands and whose marker agrees with the entry.
+/// Every workweave of `ws_root`'s primary, with its identity: each directory
+/// a project's index records, wherever it is, and each workspace a checkout
+/// of a project's clone is registered in, whose marker names this primary and
+/// that project (and, for a recorded one, the name recorded).
 ///
-/// **Registry-backed.** The index is the one record of which workweaves a
-/// weave has; a directory on disk that no index records is reported by
-/// doctor's `unregistered-workweave` finding, which scans the containers, and
-/// is listed here once `--fix` has adopted it. A project whose index cannot
-/// be read lists none: [`unreadable_indexes`] names it.
+/// **Record-backed.** The index and the clones' registered checkouts are what
+/// a weave records of its workweaves; a directory in a container that neither
+/// names is reported by doctor's `unregistered-workweave` finding, which
+/// scans the containers. A project whose index cannot be read contributes
+/// only its registered checkouts: [`unreadable_indexes`] names it.
 pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     let primary = CanonicalPath::of(ws_root);
+    let mut seen = std::collections::HashSet::new();
     let mut result: Vec<(WorkweaveId, PathBuf)> = Vec::new();
     for project in crate::workspace::discover_projects(ws_root) {
-        let Ok(Some(index)) = workweave_index::read(ws_root, &project) else {
-            continue;
-        };
-        for (name, entry) in index.workweaves {
-            let dir = entry.path.as_path().to_path_buf();
-            let agrees = matches!(
-                WorkweaveMarker::read(&dir),
-                Ok(Some(marker)) if marker.names_primary(&primary)
-                    && marker.project() == &project
-                    && marker.name() == &name
-            );
-            if agrees {
+        let recorded = workweave_index::read(ws_root, &project)
+            .ok()
+            .flatten()
+            .map(|index| {
+                index
+                    .workweaves
+                    .into_iter()
+                    .map(|(name, entry)| (Some(name), entry.path.as_path().to_path_buf()))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let registered = linked_workspace_roots(ws_root, &project)
+            .into_iter()
+            .map(|dir| (None, dir));
+        for (name, dir) in recorded.into_iter().chain(registered) {
+            let Ok(Some(marker)) = WorkweaveMarker::read(&dir) else {
+                continue;
+            };
+            let agrees = marker.names_primary(&primary)
+                && marker.project() == &project
+                && name.as_ref().is_none_or(|name| marker.name() == name);
+            if agrees && seen.insert(CanonicalPath::of(&dir)) {
                 result.push((
                     WorkweaveId {
                         project: project.clone(),
-                        name,
+                        name: marker.name().clone(),
                     },
                     dir,
                 ));
@@ -4536,6 +4548,21 @@ pub fn list_workweave_dirs(ws_root: &Path) -> Vec<(WorkweaveId, PathBuf)> {
     }
     result.sort_by(|a, b| a.0.cmp(&b.0));
     result
+}
+
+/// The workspace roots, other than `ws_root`, that a checkout of the
+/// project clone of `project` is registered in, standing or not.
+pub fn linked_workspace_roots(ws_root: &Path, project: &ProjectName) -> Vec<PathBuf> {
+    let primary = CanonicalPath::of(ws_root);
+    let depth = project_rel_dir(project).components().count();
+    project_vcs()
+        .list_worktrees(&project_dir(ws_root, project))
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|checkout| checkout.ancestors().nth(depth))
+        .filter(|root| CanonicalPath::of(root) != primary)
+        .map(Path::to_path_buf)
+        .collect()
 }
 
 /// Each project of `ws_root`'s primary whose workweave index cannot be read,
