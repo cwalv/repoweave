@@ -1174,11 +1174,27 @@ fn stable_holding_lib_behind() -> Vec<Step> {
 
 pub fn feature_off_stable() -> Scenario {
     let mut steps = stable_holding_lib_behind();
-    steps.push(Step::pending(
-        "a feature off stable, landed into it",
-        MissingVerb::Land,
-    ));
-    scenario("feature off stable", steps)
+    steps.extend([
+        Step::rwv(&a(), &["switch", "stable"]).expect(Exit::Succeeds),
+        create("p"),
+        Step::commit(&ww("p"), Repo::App, "off-stable-app"),
+        Step::rwv(&ww("p"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("p")))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "off-stable-app",
+            })
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Proj,
+                branch: "stable",
+            }),
+    ]);
+    scenario("a feature off stable, landed into it", steps)
 }
 
 pub fn permanent_seat() -> Scenario {
@@ -1254,22 +1270,91 @@ pub fn review_colleague_fix() -> Scenario {
 }
 
 pub fn stable_end_to_end() -> Scenario {
-    let mut steps = stable_holding_lib_behind();
-    steps.push(Step::pending(
-        "a hotfix landed into stable, then a bump",
-        MissingVerb::Land,
-    ));
-    scenario("stable end to end", steps)
+    let mut steps = published_release_line();
+    steps.extend(hotfix_lands_into_the_line());
+    steps.extend([
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "b",
+                "--new-branch",
+                "bump-lib",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::git(
+            &ww("b"),
+            Repo::Lib,
+            &["merge", "--no-ff", "--no-edit", "origin/main"],
+        ),
+        Step::rwv(&ww("b"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("b"), &["land", "--retire"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["push", "--branch", "stable"])
+            .pushes(Remote::origin(Repo::Lib), "stable-lib")
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .pushes(Remote::origin(Repo::App), "release-1")
+            .expect(Exit::Succeeds),
+        Step::forge_delete_branch(Repo::App, "hf-app"),
+        Step::forge_delete_branch(Repo::Proj, "hf-app"),
+        Step::forge_delete_branch(Repo::Lib, "bump-lib"),
+        Step::forge_delete_branch(Repo::Proj, "bump-lib"),
+        Step::rwv(&a(), &["fetch"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "delete",
+                "stable",
+                "--target",
+                "main",
+                "--discard-unlanded",
+                "--delete-remote-unlanded",
+                "projects/proj",
+            ],
+        )
+        .expect(Exit::refuses(Repo::Proj, State::ProtectedDeclaredMode))
+        .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(
+            &a(),
+            &[
+                "branch",
+                "delete",
+                "stable",
+                "--target",
+                "main",
+                "--discard-unlanded",
+            ],
+        )
+        .expect(Exit::Code(3))
+        .claim(Claim::OutputContains("left: projects/proj stable: open-head")),
+    ]);
+    scenario("a release line from its cut to its retirement", steps)
 }
 
 pub fn main_change_into_stable() -> Scenario {
-    scenario(
-        "bring a main change into stable",
-        vec![
-            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
-            Step::pending("bring a main change into stable", MissingVerb::Land),
-        ],
-    )
+    let mut steps = stable_lines();
+    steps.extend([
+        Step::commit(&a(), Repo::App, "main-fix"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("local/remotes/app: copied")),
+        Step::rwv(&ww("p"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("p"))),
+        Step::git(&a(), Repo::App, &["log", "--format=%s", "stable-app"])
+            .claim(Claim::OutputLine("main-fix")),
+    ]);
+    scenario("bring a main change into stable", steps)
 }
 
 fn shared_member(name: &'static str, branch: &'static str) -> Scenario {
@@ -1899,16 +1984,42 @@ pub fn worktree_add_force_on_weave_branch() -> Scenario {
 }
 
 pub fn cherry_pick_onto_stable() -> Scenario {
-    scenario(
-        "cherry-pick onto stable a commit adding a member",
-        vec![
-            Step::rwv(&a(), &["branch", "create", "stable", "--declared"]).expect(Exit::Succeeds),
-            Step::pending(
-                "cherry-pick a commit adding a member",
-                MissingVerb::CherryPick,
-            ),
-        ],
-    )
+    let mut steps = vec![Step::rwv(&a(), &["member", "remove", DOCS]).expect(Exit::Succeeds)];
+    steps.extend(stable_lines());
+    steps.extend([
+        Step::rwv(&a(), &["member", "add", "url:origin:docs"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::Docs, "docs-fix"),
+        Step::git(&a(), Repo::Docs, &["push", "origin", "main"])
+            .pushes(Remote::origin(Repo::Docs), "main"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ]);
+    steps.extend(feature_onto_stable());
+    steps.extend([
+        Step::rwv(&ww("p"), &["cherry-pick", "main"])
+            .expect(Exit::refuses(Repo::Docs, State::PortNotListed))
+            .claim(Claim::LocalStateUnchanged(ww("p"))),
+        Step::rwv_printed(&ww("p"), "rwv member add ").expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["member", "pin", DOCS, "HEAD~1", "--commit"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Docs])
+            .claim(Claim::Judged(Repo::Docs, State::PinAhead)),
+        Step::rwv(
+            &ww("p"),
+            &["member", "set-branch", DOCS, "stable-docs", "--new"],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("p"), &["land"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::Lacks {
+                at: a(),
+                repo: Repo::Docs,
+                rev: "stable-docs",
+                mark: "docs-fix",
+            }),
+        Step::git(&a(), Repo::Proj, &["show", "stable:rwv.toml"])
+            .claim(Claim::OutputContains("stable-docs")),
+    ]);
+    scenario("cherry-pick onto stable a commit adding a member", steps)
 }
 
 /// A PR closed unmerged: the feature was published, then its remote branches
@@ -28674,4 +28785,304 @@ pub fn a_removed_rwv_toml_stops_as_unparseable(taking_in: TakingIn) -> Scenario 
     ]);
     steps.extend(aborted_from(Step::rwv(&ww("w"), &["abort"]), &ww("w"), &[]));
     scenario("a removed rwv.toml stops as unparseable", steps)
+}
+
+/// `stable`, recorded `declared` with `app`, `lib` and `docs` each on a
+/// branch of its own and `lib` held one commit behind `main`'s pin, its
+/// history setting `merge`, published; the primary is back on `main`.
+fn published_release_line() -> Vec<Step> {
+    release_line(true)
+}
+
+fn release_line(docs_on_the_line: bool) -> Vec<Step> {
+    let docs = ["--set-new-branch", "local/remotes/docs=stable-docs"];
+    let mut create_stable = vec![
+        "branch",
+        "create",
+        "stable",
+        "--declared",
+        "--set-new-branch",
+        "local/remotes/app=release-1",
+        "--set-new-branch",
+        "local/remotes/lib=stable-lib",
+    ];
+    if docs_on_the_line {
+        create_stable.extend(docs);
+    }
+    create_stable.extend(["--pin", "local/remotes/lib=HEAD~1"]);
+    let mut publish = publishes_records(Step::rwv(&a(), &["push"]))
+        .pushes(Remote::origin(Repo::App), "release-1")
+        .pushes(Remote::origin(Repo::Lib), "stable-lib")
+        .pushes(Remote::origin(Repo::Lib), "main")
+        .pushes(Remote::origin(Repo::Proj), "stable")
+        .expect(Exit::Succeeds);
+    if docs_on_the_line {
+        publish = publish.pushes(Remote::origin(Repo::Docs), "stable-docs");
+    }
+    vec![
+        Step::commit(&a(), Repo::Lib, "lib-on-main"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &create_stable)
+        .expect(Exit::Succeeds)
+        .claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::Proj,
+            branch: "stable",
+        })
+        .claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::Lib,
+            branch: "stable-lib",
+        }),
+        Step::rwv(&a(), &["branch", "set-history", "merge"]).expect(Exit::Succeeds),
+        publish,
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+    ]
+}
+
+pub fn release_line_create_switch_publish() -> Scenario {
+    let mut steps = published_release_line();
+    steps.extend([
+        Step::rwv(&a(), &["switch", "stable"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "stable-lib",
+            }),
+        Step::rwv(&a(), &["switch", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OnBranch {
+                at: a(),
+                repo: Repo::Lib,
+                branch: "main",
+            }),
+    ]);
+    scenario("release line: create, switch, publish", steps)
+}
+
+/// A hotfix workweave `h1` cut onto `stable`, committed in `app`, published,
+/// landed and retired, then `stable` published from the primary.
+fn hotfix_lands_into_the_line() -> Vec<Step> {
+    vec![
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "h1",
+                "--new-branch",
+                "hf-app",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OnBranch {
+            at: ww("h1"),
+            repo: Repo::App,
+            branch: "hf-app",
+        }),
+        Step::rwv(&ww("h1"), &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "record: proj hf-app: feature onto stable (as declared)",
+            )),
+        Step::commit(&ww("h1"), Repo::App, "hotfix-app"),
+        Step::rwv(&ww("h1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("h1"), &["push"]))
+            .pushes(Remote::origin(Repo::App), "hf-app")
+            .pushes(Remote::origin(Repo::Proj), "hf-app")
+            .expect(Exit::Succeeds),
+        Step::rwv(&ww("h1"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("h1")))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "release-1",
+                mark: "hotfix-app",
+            }),
+        Step::rwv(&a(), &["push", "--branch", "stable"])
+            .pushes(Remote::origin(Repo::App), "release-1")
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::App),
+                branch: "release-1",
+                mark: "hotfix-app",
+            }),
+    ]
+}
+
+pub fn release_line_hotfix() -> Scenario {
+    let mut steps = published_release_line();
+    steps.extend(hotfix_lands_into_the_line());
+    scenario("release line: a hotfix", steps)
+}
+
+pub fn release_line_hotfix_changes_a_member_the_line_leaves_on_main() -> Scenario {
+    let mut steps = release_line(false);
+    steps.extend([
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "h1",
+                "--new-branch",
+                "hf-docs",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(
+            &ww("h1"),
+            &["member", "set-branch", DOCS, "stable-docs", "--new"],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains(
+            "local/remotes/docs: branch main -> stable-docs",
+        ))
+        .claim(Claim::OutputContains("created stable-docs at")),
+        Step::commit(&ww("h1"), Repo::Docs, "hotfix-docs"),
+        Step::rwv(&ww("h1"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&ww("h1"), &["land", "--retire"])
+            .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
+            .claim(Claim::OutputContains(
+                "rwv land --allow-member-change local/remotes/docs",
+            ))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv(
+            &ww("h1"),
+            &["land", "--retire", "--allow-member-change", DOCS],
+        )
+        .expect(Exit::Succeeds)
+        .claim(Claim::WorkweaveGone(ww("h1")))
+        .claim(Claim::Contains {
+            at: a(),
+            repo: Repo::Docs,
+            rev: "stable-docs",
+            mark: "hotfix-docs",
+        })
+        .claim(Claim::OnBranch {
+            at: a(),
+            repo: Repo::Docs,
+            branch: "main",
+        }),
+    ]);
+    scenario("release line: a hotfix changing a member the line leaves on main", steps)
+}
+
+pub fn release_line_bump_a_member() -> Scenario {
+    let mut steps = published_release_line();
+    steps.extend([
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "b",
+                "--new-branch",
+                "bump-lib",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::git(
+            &ww("b"),
+            Repo::Lib,
+            &["merge", "--no-ff", "--no-edit", "origin/main"],
+        ),
+        Step::rwv(&ww("b"), &["lock", "--commit"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&ww("b"), &["push"]))
+            .pushes(Remote::origin(Repo::Lib), "bump-lib")
+            .pushes(Remote::origin(Repo::Proj), "bump-lib")
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("pushed 1 member repo(s)")),
+        Step::rwv(&ww("b"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("b")))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "stable-lib",
+                mark: "lib-on-main",
+            }),
+        Step::rwv(&a(), &["push", "--branch", "stable"])
+            .pushes(Remote::origin(Repo::Lib), "stable-lib")
+            .pushes(Remote::origin(Repo::Proj), "stable")
+            .expect(Exit::Succeeds)
+            .claim(Claim::RemoteContains {
+                remote: Remote::origin(Repo::Lib),
+                branch: "stable-lib",
+                mark: "lib-on-main",
+            }),
+    ]);
+    scenario("release line: bump a member", steps)
+}
+
+pub fn release_line_bump_every_member_with_sync() -> Scenario {
+    let mut steps = published_release_line();
+    steps.extend([
+        Step::commit(&a(), Repo::App, "app-on-main"),
+        Step::commit(&a(), Repo::Docs, "docs-on-main"),
+        Step::rwv(&a(), &["member", "set-recurse-submodules", DOCS, "false"])
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                "b",
+                "--new-branch",
+                "bump-all",
+                "--target",
+                "stable",
+            ],
+        )
+        .expect(Exit::Succeeds),
+        Step::rwv(&ww("b"), &["sync", "--from", "main"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "local/remotes/docs: member-changed recurse-submodules: true -> false",
+            ))
+            .claim(Claim::Contains {
+                at: ww("b"),
+                repo: Repo::App,
+                rev: "HEAD",
+                mark: "app-on-main",
+            }),
+        Step::rwv(&ww("b"), &["land"])
+            .expect(Exit::refuses(Repo::Docs, State::TargetMemberChanges))
+            .claim(Claim::LocalStateUnchanged(a())),
+        Step::rwv_printed(&ww("b"), "rwv member set-recurse-submodules").expect(Exit::Succeeds),
+        Step::rwv(&ww("b"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::WorkweaveGone(ww("b")))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "release-1",
+                mark: "app-on-main",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Docs,
+                rev: "stable-docs",
+                mark: "docs-on-main",
+            }),
+    ]);
+    scenario("release line: bump every member with sync", steps)
 }

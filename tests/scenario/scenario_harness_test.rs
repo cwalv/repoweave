@@ -976,6 +976,11 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    release_line_bump_every_member_with_sync,
+    release_line_bump_a_member,
+    release_line_hotfix_changes_a_member_the_line_leaves_on_main,
+    release_line_hotfix,
+    release_line_create_switch_publish,
     unparseable_merged_manifest(
         scenarios::TakingIn::SyncLinear,
         scenarios::LeftBy::StagedFix
@@ -2119,14 +2124,10 @@ macro_rules! pending_on {
 pending_on!(
     resume_on_machine_b => Land,
     feature_in_primary_while_main_moves => Land,
-    feature_off_stable => Land,
     review_colleague_fix => Review,
-    stable_end_to_end => Land,
     detached_head_in_workweave => Land,
     switch_c_wip_in_workweave => Land,
     worktree_add_force_on_weave_branch => Land,
-    main_change_into_stable => Land,
-    cherry_pick_onto_stable => CherryPick,
 );
 
 #[test]
@@ -8651,4 +8652,43 @@ fn sync_continue_names_abort_for_a_branch_deleted_under_its_rebase() {
 fn cherry_pick_continue_names_a_change_staged_by_hand() {
     runner::run(scenarios::cherry_pick_continue_names_a_change_staged_by_hand())
         .assert_fully_decided_green();
+}
+
+#[test]
+fn a_release_line_is_created_published_and_switched_bare() {
+    runner::run(scenarios::release_line_create_switch_publish()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_hotfix_lands_into_the_release_line_and_the_line_is_published() {
+    runner::run(scenarios::release_line_hotfix()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_hotfix_changing_a_member_the_line_leaves_on_main_names_the_member_at_landing() {
+    runner::run(scenarios::release_line_hotfix_changes_a_member_the_line_leaves_on_main())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_bump_by_a_no_ff_merge_lands_into_the_held_member_branch_by_fast_forward() {
+    runner::run(scenarios::release_line_bump_a_member()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_sync_from_main_bumps_every_member_and_carries_an_entry_main_changed() {
+    runner::run(scenarios::release_line_bump_every_member_with_sync())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_commit_adding_a_member_is_ported_by_the_verbs_that_add_pin_and_set_its_branch() {
+    runner::run(scenarios::cherry_pick_onto_stable()).assert_fully_decided_green();
+}
+
+#[test]
+fn the_stable_tracers_run_decided() {
+    runner::run(scenarios::feature_off_stable()).assert_fully_decided_green();
+    runner::run(scenarios::stable_end_to_end()).assert_fully_decided_green();
+    runner::run(scenarios::main_change_into_stable()).assert_fully_decided_green();
 }
