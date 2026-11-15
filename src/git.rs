@@ -393,51 +393,27 @@ pub(crate) fn is_superseded_lock_attribute(line: &str) -> bool {
         .any(|driver| line.trim() == lock_attribute_line(driver))
 }
 
-/// How a `.gitattributes` text declares the lock's merge driver.
-fn lock_attribute_in(text: Option<&str>) -> LockDriverPart {
-    let lines = || text.into_iter().flat_map(str::lines);
-    if lines().any(is_superseded_lock_attribute) {
-        return LockDriverPart::Superseded;
-    }
-    let current = lock_attribute_line(RWV_MERGE_DRIVER_NAME);
-    if lines().any(|line| line.trim() == current) {
-        LockDriverPart::Current
-    } else {
-        LockDriverPart::Absent
-    }
-}
-
-/// `text` with every superseded lock line dropped and the current one
-/// present once; `None` when it already is exactly that.
+/// `text` with every lock line dropped and the current one last, where no
+/// other line of the file can outrank it; `None` when it already is the only
+/// one and last.
 fn declare_lock_driver_in(text: Option<&str>) -> Option<String> {
     let existing = text.unwrap_or("");
-    if lock_attribute_in(text) == LockDriverPart::Current {
+    let current = lock_attribute_line(RWV_MERGE_DRIVER_NAME);
+    let is_lock_line = |line: &str| is_superseded_lock_attribute(line) || line.trim() == current;
+    let lock_lines = existing.lines().filter(|line| is_lock_line(line)).count();
+    let last = existing.lines().rev().find(|line| !line.trim().is_empty());
+    if lock_lines == 1 && last.map(str::trim) == Some(&current) {
         return None;
     }
-    let current = lock_attribute_line(RWV_MERGE_DRIVER_NAME);
-    let mut out = String::with_capacity(existing.len() + current.len() + 1);
-    let mut wrote = false;
-    for line in existing.split_inclusive('\n') {
-        let bare = line.trim_end_matches(['\n', '\r']);
-        if is_superseded_lock_attribute(bare) || bare.trim() == current {
-            if !wrote {
-                out.push_str(&current);
-                out.push_str(&line[bare.len()..]);
-                wrote = true;
-            }
-            continue;
-        }
-        out.push_str(line);
-    }
-    if !wrote {
-        if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str(&current);
-        out.push('\n');
-    } else if !out.ends_with('\n') {
+    let mut out: String = existing
+        .split_inclusive('\n')
+        .filter(|line| !is_lock_line(line.trim_end_matches(['\n', '\r'])))
+        .collect();
+    if !out.is_empty() && !out.ends_with('\n') {
         out.push('\n');
     }
+    out.push_str(&current);
+    out.push('\n');
     Some(out)
 }
 
@@ -3606,33 +3582,22 @@ impl Vcs for GitVcs {
             Absent::Revision,
         )?
         .is_some();
-        let declaring = if born {
-            let listed = Self::run_trimmed(
-                ["ls-tree", "--name-only", "HEAD", "--", ATTRIBUTES_FILE],
-                repo,
-            )?;
-            if listed.is_empty() {
-                None
-            } else {
-                Some(Self::run(
-                    ["show", &format!("HEAD:{ATTRIBUTES_FILE}")],
-                    repo,
-                )?)
-            }
-        } else {
-            match std::fs::read_to_string(repo.join(ATTRIBUTES_FILE)) {
-                Ok(text) => Some(text),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => {
-                    return Err(VcsError::Io {
-                        ctx: format!("failed to read {}", repo.join(ATTRIBUTES_FILE).display()),
-                        source: e,
-                    })
-                }
-            }
-        };
+        let mut args = Argv::from(["check-attr", "-z"]);
+        if born {
+            args = args.text("--source").text("HEAD");
+        }
+        let fields = nul_terminated_fields(&Self::run(
+            args.text("merge")
+                .text("--")
+                .text(crate::manifest::LockFile::FILE_NAME),
+            repo,
+        )?);
         Ok(LockDriverSetup {
-            declaration: lock_attribute_in(declaring.as_deref()),
+            declaration: match fields.get(2).map(String::as_str) {
+                Some(RWV_MERGE_DRIVER_NAME) => LockDriverPart::Current,
+                Some(name) if SUPERSEDED_LOCK_DRIVERS.contains(&name) => LockDriverPart::Superseded,
+                _ => LockDriverPart::Absent,
+            },
             definition: lock_driver_config_part(repo)?,
         })
     }
@@ -9462,22 +9427,24 @@ mod merge_driver_vocabulary_tests {
     }
 
     #[test]
-    fn a_declaration_rewrite_drops_every_superseded_lock_line_and_keeps_the_rest() {
+    fn a_declaration_rewrite_puts_the_one_current_lock_line_last_and_keeps_the_rest() {
         let text =
             "docs/** merge=rwv-ours\nrwv.lock merge=ours\r\n* text=auto\nrwv.lock merge=rwv-ours";
-        assert_eq!(lock_attribute_in(Some(text)), LockDriverPart::Superseded);
         let rewritten = declare_lock_driver_in(Some(text)).expect("a superseded line is rewritten");
         assert_eq!(
             rewritten,
-            "docs/** merge=rwv-ours\nrwv.lock merge=rwv-lock\r\n* text=auto\n"
+            "docs/** merge=rwv-ours\n* text=auto\nrwv.lock merge=rwv-lock\n"
         );
-        assert_eq!(lock_attribute_in(Some(&rewritten)), LockDriverPart::Current);
         assert_eq!(declare_lock_driver_in(Some(&rewritten)), None);
+        assert_eq!(
+            declare_lock_driver_in(Some("rwv.lock merge=rwv-lock\n*.lock merge=union\n"))
+                .as_deref(),
+            Some("*.lock merge=union\nrwv.lock merge=rwv-lock\n")
+        );
         assert_eq!(
             declare_lock_driver_in(None).as_deref(),
             Some("rwv.lock merge=rwv-lock\n")
         );
-        assert_eq!(lock_attribute_in(None), LockDriverPart::Absent);
     }
 }
 

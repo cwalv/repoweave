@@ -3797,16 +3797,15 @@ pub trait Vcs: Send + Sync {
 
     /// How the lock merge driver stands in the project repo `repo`.
     ///
-    /// The declaration is read from the checked-out commit, or from the
-    /// working copy where no commit is checked out yet: the committed form is
-    /// the one that travels with the branch. The definition is read from every
-    /// scope of configuration the VCS consults.
+    /// The declaration is the one in force for the lock as of the
+    /// checked-out commit, or the working copy where no commit is checked out
+    /// yet: the committed form is the one that travels with the branch. The
+    /// definition is read from every scope of configuration the VCS consults.
     ///
-    /// For git: `.gitattributes` carrying `rwv.lock merge=rwv-lock`, and
-    /// `merge.rwv-lock.driver` naming `rwv lock --merge-driver %O %A %B`.
-    /// A `merge=rwv-ours` or `merge=ours` line for the lock, a local
-    /// `merge.rwv-ours.*` entry, or `merge.rwv-lock.driver` naming another
-    /// command, is superseded.
+    /// For git: `merge` as `check-attr` reads it, `rwv-lock` for `rwv.lock`,
+    /// and `merge.rwv-lock.driver` naming `rwv lock --merge-driver %O %A %B`.
+    /// `rwv-ours` or `ours`, a local `merge.rwv-ours.*` entry, or
+    /// `merge.rwv-lock.driver` naming another command, is superseded.
     fn lock_driver_setup(&self, repo: &Path) -> Result<LockDriverSetup, VcsError>;
 
     /// The file, relative to a project repo's root, that declares the lock
@@ -3814,8 +3813,9 @@ pub trait Vcs: Send + Sync {
     fn lock_driver_declaration_file(&self) -> &'static str;
 
     /// `text`, the content of [`Vcs::lock_driver_declaration_file`] (`None`
-    /// for no file), rewritten to declare the lock merge driver once and
-    /// nothing superseded beside it; `None` when it already does exactly that.
+    /// for no file), rewritten to declare the lock merge driver once, last
+    /// where no other line of the file can outrank it, and nothing superseded
+    /// beside it; `None` when it already does exactly that.
     fn declare_lock_driver_in(&self, text: Option<&str>) -> Option<String>;
 
     /// Define the lock merge driver's command in `repo`'s clone, replacing a

@@ -1415,21 +1415,23 @@ impl MissingLockMergeDriverKind {
     pub fn entry(self) -> &'static str {
         match self {
             Self::AttributeAbsent => {
-                "The checked-out branch's committed `.gitattributes` has no `rwv.lock \
-                 merge=rwv-lock` line, so a merge rwv does not make merges the lock as text.\n\n\
-                 **What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the \
-                 line to the working file and to the checked-out commit's file and commits only \
-                 that line; any other edit to `.gitattributes` stays uncommitted, and anything \
+                "As of the checked-out commit, `rwv.lock` is not assigned the `rwv-lock` merge \
+                 driver (the `.gitattributes` line `rwv.lock merge=rwv-lock`, or another line or \
+                 attribute source outranking it), so a merge rwv does not make merges the lock \
+                 as text.\n\n\
+                 **What to do:** `rwv doctor --fix`, run in the project's checkout. It puts the \
+                 line last in the working file and in the checked-out commit's file and commits \
+                 only that line; any other edit to `.gitattributes` stays uncommitted, and anything \
                  else marked for the next commit stays marked. It declines, changing nothing, while a merge, rebase or \
                  cherry-pick is in progress in the project repo. Another branch carries its own \
                  file and is migrated where it is checked out."
             }
             Self::AttributeLegacy => {
-                "The checked-out branch's committed `.gitattributes` assigns `rwv.lock` \
-                 `merge=rwv-ours` or `merge=ours`, the driver an earlier release wrote, which \
-                 kept one side of every lock merge. It is not honored.\n\n\
-                 **What to do:** `rwv doctor --fix`, as above: it rewrites the line to \
-                 `rwv.lock merge=rwv-lock`, committing only that."
+                "As of the checked-out commit, `rwv.lock` is assigned `merge=rwv-ours` or \
+                 `merge=ours`, the driver an earlier release wrote, which kept one side of every \
+                 lock merge. It is not honored.\n\n\
+                 **What to do:** `rwv doctor --fix`, as above: it replaces the line with \
+                 `rwv.lock merge=rwv-lock`, last in the file, committing only that."
             }
             Self::ConfigAbsent => {
                 "The clone's config does not define `merge.rwv-lock.driver`. Config does not \

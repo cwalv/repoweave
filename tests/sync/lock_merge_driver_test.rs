@@ -429,7 +429,7 @@ fn doctor_reports_each_part_and_fix_commits_only_the_attribute_line() {
     );
     assert_eq!(
         std::fs::read_to_string(weave.project().join(".gitattributes")).unwrap(),
-        "*.png binary\nrwv.lock merge=rwv-lock\n*.jpg binary\n",
+        "*.png binary\n*.jpg binary\nrwv.lock merge=rwv-lock\n",
         "the working file keeps its other edit, uncommitted"
     );
     assert_eq!(
@@ -699,4 +699,45 @@ fn land_onto_an_unmigrated_target_names_the_directory_its_fix_runs_in() {
         "{}",
         common::cli::describe(&landed)
     );
+}
+
+#[test]
+fn the_finding_reads_the_attribute_in_force_and_fix_puts_the_line_where_it_wins() {
+    let weave = Weave::new();
+    let attributes = weave.project().join(".gitattributes");
+    std::fs::write(
+        &attributes,
+        format!(
+            "{}*.lock merge=union\n*.png binary\n",
+            common::LOCK_DRIVER_ATTRIBUTE
+        ),
+    )
+    .unwrap();
+    common::git_in(
+        weave.project(),
+        &["commit", "-qam", "a later line outranks"],
+    );
+    let reported = |weave: &Weave| {
+        common::doctor_findings(&weave.root)
+            .iter()
+            .any(|f| f.starts_with("missing-lock-merge-driver attribute-absent"))
+    };
+    assert!(
+        reported(&weave),
+        "the line is there, the driver is not in force"
+    );
+    common::cli::refused(
+        &weave.rwv(&["lock"]),
+        State::MissingLockMergeDriverAttributeAbsent,
+    );
+
+    let fix = weave.rwv(&["doctor", "--fix"]);
+    assert!(fix.status.success(), "{}", common::cli::describe(&fix));
+
+    assert!(!reported(&weave), "the fix put the line where it wins");
+    assert_eq!(
+        common::git_in(weave.project(), &["show", "HEAD:.gitattributes"]),
+        "*.lock merge=union\n*.png binary\nrwv.lock merge=rwv-lock"
+    );
+    assert!(weave.rwv(&["lock"]).status.success());
 }

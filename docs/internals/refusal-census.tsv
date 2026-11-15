@@ -69,7 +69,7 @@ src/check.rs	alignment on branch with stray commits	tests/doctor/benign_stalenes
 src/check.rs	alignment project detached	tests/weave/branch_gate_test.rs	1
 src/check.rs	alignment unaligned	-	2
 src/check.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
-src/check.rs	missing-lock-merge-driver attribute absent	-	1
+src/check.rs	missing-lock-merge-driver attribute absent	tests/sync/lock_merge_driver_test.rs	1
 src/check.rs	missing-lock-merge-driver attribute legacy	tests/sync/e2e_sync_lock_replay_test.rs	1
 src/check.rs	missing-lock-merge-driver config absent	-	1
 src/check.rs	missing-lock-merge-driver config legacy	tests/sync/lock_merge_driver_test.rs	1

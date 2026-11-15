@@ -1283,8 +1283,8 @@ impl State {
             Self::MissingLockMergeDriverAttributeAbsent => &StateRow {
                 axis: Axis::MissingLockMergeDriver,
                 name: "attribute absent",
-                means: "the checked-out branch's committed `.gitattributes` assigns `rwv.lock` \
-                        no merge driver, so a merge rwv does not make merges the lock as text",
+                means: "as of the checked-out commit `rwv.lock` is not assigned the `rwv-lock` \
+                        merge driver, so a merge rwv does not make merges the lock as text",
                 refused_by: LOCK_DRIVER_REFUSED_BY,
                 offers: &[Form::MigrateLockDriver],
                 verb_offers: &[],
@@ -1292,9 +1292,9 @@ impl State {
             Self::MissingLockMergeDriverAttributeLegacy => &StateRow {
                 axis: Axis::MissingLockMergeDriver,
                 name: "attribute legacy",
-                means: "the checked-out branch's committed `.gitattributes` assigns `rwv.lock` \
-                        `merge=rwv-ours` or `merge=ours`, a driver an earlier release wrote \
-                        that kept one side of every lock merge",
+                means: "as of the checked-out commit `rwv.lock` is assigned `merge=rwv-ours` or \
+                        `merge=ours`, a driver an earlier release wrote that kept one side of \
+                        every lock merge",
                 refused_by: LOCK_DRIVER_REFUSED_BY,
                 offers: &[Form::MigrateLockDriver],
                 verb_offers: &[],

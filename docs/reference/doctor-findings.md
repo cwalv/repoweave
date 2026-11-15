@@ -508,8 +508,8 @@ A project repo's lock merge driver is not set up as this release sets it up: the
 
 | State | Means | Refused by |
 |---|---|---|
-| `attribute absent` | the checked-out branch's committed `.gitattributes` assigns `rwv.lock` no merge driver, so a merge rwv does not make merges the lock as text | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
-| `attribute legacy` | the checked-out branch's committed `.gitattributes` assigns `rwv.lock` `merge=rwv-ours` or `merge=ours`, a driver an earlier release wrote that kept one side of every lock merge | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
+| `attribute absent` | as of the checked-out commit `rwv.lock` is not assigned the `rwv-lock` merge driver, so a merge rwv does not make merges the lock as text | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
+| `attribute legacy` | as of the checked-out commit `rwv.lock` is assigned `merge=rwv-ours` or `merge=ours`, a driver an earlier release wrote that kept one side of every lock merge | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
 | `config absent` | the clone's config does not define the lock merge driver's command, so git merges the lock as text | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
 | `config legacy` | the clone's config defines a driver that keeps one side: the `merge.rwv-ours` entry an earlier release wrote, or `merge.rwv-lock` naming a command other than `rwv lock --merge-driver %O %A %B` | every verb that writes the project repo or its lock, before it writes anything: `rwv lock`, `rwv sync`, `rwv land` (for the project checkout it composes onto too), `rwv pull`, `rwv cherry-pick`, `rwv update --remote`, the `rwv member` and `rwv integration` verbs, every `rwv branch` verb but `list`, and `rwv workweave create` and `delete`; `rwv doctor` reports it instead |
 
@@ -526,15 +526,15 @@ A project repo's lock merge driver is not set up as this release sets it up: the
 
 #### `attribute-absent`
 
-**Warning. Auto-fixable.** The checked-out branch's committed `.gitattributes` has no `rwv.lock merge=rwv-lock` line, so a merge rwv does not make merges the lock as text.
+**Warning. Auto-fixable.** As of the checked-out commit, `rwv.lock` is not assigned the `rwv-lock` merge driver (the `.gitattributes` line `rwv.lock merge=rwv-lock`, or another line or attribute source outranking it), so a merge rwv does not make merges the lock as text.
 
-**What to do:** `rwv doctor --fix`, run in the project's checkout. It adds the line to the working file and to the checked-out commit's file and commits only that line; any other edit to `.gitattributes` stays uncommitted, and anything else marked for the next commit stays marked. It declines, changing nothing, while a merge, rebase or cherry-pick is in progress in the project repo. Another branch carries its own file and is migrated where it is checked out.
+**What to do:** `rwv doctor --fix`, run in the project's checkout. It puts the line last in the working file and in the checked-out commit's file and commits only that line; any other edit to `.gitattributes` stays uncommitted, and anything else marked for the next commit stays marked. It declines, changing nothing, while a merge, rebase or cherry-pick is in progress in the project repo. Another branch carries its own file and is migrated where it is checked out.
 
 #### `attribute-legacy`
 
-**Warning. Auto-fixable.** The checked-out branch's committed `.gitattributes` assigns `rwv.lock` `merge=rwv-ours` or `merge=ours`, the driver an earlier release wrote, which kept one side of every lock merge. It is not honored.
+**Warning. Auto-fixable.** As of the checked-out commit, `rwv.lock` is assigned `merge=rwv-ours` or `merge=ours`, the driver an earlier release wrote, which kept one side of every lock merge. It is not honored.
 
-**What to do:** `rwv doctor --fix`, as above: it rewrites the line to `rwv.lock merge=rwv-lock`, committing only that.
+**What to do:** `rwv doctor --fix`, as above: it replaces the line with `rwv.lock merge=rwv-lock`, last in the file, committing only that.
 
 #### `config-absent`
 
