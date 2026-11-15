@@ -976,6 +976,11 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
+    dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
+    dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
+    dc07_crash_convergence(scenarios::CrashVerb::SetMode),
+    dc07_crash_convergence(scenarios::CrashVerb::MemberSetBranch),
     schema_history,
     dc26_migration,
     dc24_no_remote_names,
@@ -8732,4 +8737,11 @@ fn a_weave_an_earlier_release_wrote_refuses_naming_its_fix_and_the_fix_converges
 #[test]
 fn a_manifest_of_an_earlier_release_in_history_declares_nothing_and_never_refuses_a_verb() {
     runner::run(scenarios::schema_history()).assert_fully_decided_green();
+}
+
+#[test]
+fn a_verb_killed_at_a_write_is_diagnosed_and_its_rerun_completes() {
+    for verb in scenarios::CrashVerb::ALL {
+        runner::run(scenarios::dc07_crash_convergence(verb)).assert_fully_decided_green();
+    }
 }

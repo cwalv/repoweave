@@ -29555,3 +29555,118 @@ pub fn schema_history() -> Scenario {
         ],
     )
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum CrashVerb {
+    BranchCreate,
+    BranchRename,
+    BranchDelete,
+    SetMode,
+    MemberSetBranch,
+}
+
+impl CrashVerb {
+    pub const ALL: [CrashVerb; 5] = [
+        CrashVerb::BranchCreate,
+        CrashVerb::BranchRename,
+        CrashVerb::BranchDelete,
+        CrashVerb::SetMode,
+        CrashVerb::MemberSetBranch,
+    ];
+
+    fn point(self) -> &'static str {
+        match self {
+            CrashVerb::MemberSetBranch => "durable-file-staged",
+            _ => "records-write",
+        }
+    }
+
+    fn setup(self) -> Vec<Step> {
+        match self {
+            CrashVerb::BranchCreate | CrashVerb::MemberSetBranch => Vec::new(),
+            CrashVerb::BranchRename | CrashVerb::SetMode => {
+                vec![Step::rwv(&a(), &["branch", "create", "feat"]).expect(Exit::Succeeds)]
+            }
+            CrashVerb::BranchDelete => vec![
+                Step::rwv(&a(), &["branch", "create", "feat"]).expect(Exit::Succeeds),
+                Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+            ],
+        }
+    }
+
+    fn args(self) -> Vec<&'static str> {
+        match self {
+            CrashVerb::BranchCreate => vec!["branch", "create", "feat"],
+            CrashVerb::BranchRename => vec!["branch", "rename", "feat2"],
+            CrashVerb::BranchDelete => vec!["branch", "delete", "feat", "--discard-unlanded"],
+            CrashVerb::SetMode => vec!["branch", "set-mode", "feat", "declared"],
+            CrashVerb::MemberSetBranch => vec!["member", "set-branch", LIB, "dev"],
+        }
+    }
+
+    fn after_the_kill(self) -> Vec<Step> {
+        let args = self.args();
+        let status = |claim: Claim| {
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(claim)
+        };
+        match self {
+            CrashVerb::BranchCreate => vec![
+                status(Claim::Judged(Repo::Proj, State::AlignmentProjectMoved)),
+                Step::rwv(&a(), &args)
+                    .expect(Exit::refuses(Repo::Proj, State::NameExists))
+                    .claim(Claim::Judged(Repo::Proj, State::TargetCycle))
+                    .claim(Claim::OutputContains("rwv branch set-mode feat declared")),
+                Step::rwv_printed_exactly(&a(), "rwv branch set-mode feat declared")
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::RecordIs {
+                        machine: Machine::A,
+                        branch: "feat",
+                        record: Some(Record::Declared),
+                    }),
+            ],
+            CrashVerb::BranchRename => vec![
+                status(Claim::Judged(Repo::App, State::AlignmentOnBranch)),
+                Step::rwv(&a(), &args).expect(Exit::Succeeds).claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat2",
+                    record: feat_x_record(),
+                }),
+            ],
+            CrashVerb::BranchDelete => vec![
+                status(Claim::OutputLacks("alignment")),
+                Step::rwv(&a(), &args).expect(Exit::refuses(Repo::Proj, State::NameNoSuchBranch)),
+                Step::rwv(&a(), &["doctor", "--all"]).expect(Exit::Succeeds),
+            ],
+            CrashVerb::SetMode => vec![
+                status(Claim::OutputContains("record: proj feat: feature onto main")),
+                Step::rwv(&a(), &args).expect(Exit::Succeeds).claim(Claim::RecordIs {
+                    machine: Machine::A,
+                    branch: "feat",
+                    record: Some(Record::Declared),
+                }),
+            ],
+            CrashVerb::MemberSetBranch => vec![
+                status(Claim::OutputContains("record: proj main: declared")),
+                Step::rwv(&a(), &args)
+                    .expect(Exit::Succeeds)
+                    .may_rewind(&[Repo::Lib])
+                    .claim(Claim::OutputContains("branch main -> dev")),
+            ],
+        }
+    }
+}
+
+pub fn dc07_crash_convergence(verb: CrashVerb) -> Scenario {
+    let mut steps = verb.setup();
+    steps.extend([
+        Step::rwv_paused(&a(), &verb.args(), verb.point(), "crashing"),
+        Step::kill("crashing"),
+    ]);
+    steps.extend(verb.after_the_kill());
+    scenario(
+        "dc07: a verb killed at a write is diagnosed and its rerun completes",
+        steps,
+    )
+}
