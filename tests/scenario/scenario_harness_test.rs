@@ -1720,6 +1720,7 @@ every_scenario!(
     a_sync_taking_in_an_added_member_leaves_no_savepoint("linear"),
     a_sync_taking_in_an_added_member_leaves_no_savepoint("merge"),
     cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit,
+    cherry_pick_continue_takes_in_a_copy_committed_with_its_own_message,
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncMember),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::SyncProjectKeepYours),
     continue_refuses_a_stopped_repo_moved(scenarios::StoppedMidMerge::LandMember),
@@ -4691,6 +4692,12 @@ fn an_update_remote_stop_marked_resolved_continues() {
 #[test]
 fn cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit() {
     runner::run(scenarios::cherry_pick_continue_takes_in_a_finished_copy_under_a_hand_commit())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn cherry_pick_continue_takes_in_a_copy_committed_with_its_own_message() {
+    runner::run(scenarios::cherry_pick_continue_takes_in_a_copy_committed_with_its_own_message())
         .assert_fully_decided_green();
 }
 

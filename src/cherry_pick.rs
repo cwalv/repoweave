@@ -1393,18 +1393,18 @@ fn off_branch(
     )
 }
 
-/// The copy of `next` the port started, made and not yet recorded: the
-/// commit on `head`'s first-parent chain right after the tip the port left,
-/// recording `next` as its source, whatever was committed on it since.
+/// The copy the port started, made and not yet recorded: the commit on
+/// `head`'s first-parent chain right after the tip the port left, whatever its
+/// message and whatever was committed on it since.
 fn started_copy(
     vcs: &dyn Vcs,
     dir: &Path,
     pick: &MemberPick,
     head: &CommitId,
 ) -> anyhow::Result<Option<CommitId>> {
-    let (true, Some(next)) = (pick.copying, pick.remaining().first()) else {
+    if !pick.copying || pick.remaining().is_empty() {
         return Ok(None);
-    };
+    }
     let chain = vcs.first_parent_chain(dir, head)?;
     let Some(after) = chain
         .iter()
@@ -1414,9 +1414,7 @@ fn started_copy(
         return Ok(None);
     };
     let copy = &chain[after];
-    Ok((vcs.parents(dir, copy)? == [pick.expected().clone()]
-        && vcs.copied_from(dir, copy)?.as_ref() == Some(next))
-    .then(|| copy.clone()))
+    Ok((vcs.parents(dir, copy)? == [pick.expected().clone()]).then(|| copy.clone()))
 }
 
 /// The project repo holds the project commit the port started, made and
