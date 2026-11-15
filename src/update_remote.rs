@@ -1461,8 +1461,7 @@ fn settle_diverged(
             crate::refuse!(
                 crate::refusal::RefusalKind::InapplicableFlag,
                 "`--reset-to-upstream {named}` names no member this update acts on; the project \
-                 repo is reset by `rwv pull --reset-to-upstream {}`",
-                named.repo
+                 repo is reset by `rwv pull --reset-to-upstream`"
             );
         }
     }

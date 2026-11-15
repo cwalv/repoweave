@@ -2820,7 +2820,7 @@ impl Form {
             },
             Self::C3Pull => &FormRow {
                 choice: C::C3,
-                steps: &[Rwv("rwv pull --reset-to-upstream <repo>")],
+                steps: &[Rwv("rwv pull --reset-to-upstream")],
                 at: W::WithBranch,
                 shipped: true,
             },
@@ -5707,7 +5707,7 @@ mod tests {
         let project = judged(Scope::Project);
         assert!(
             project.contains("rwv pull --merge-upstream")
-                && project.contains("rwv pull --reset-to-upstream github/o/lib"),
+                && project.contains("rwv pull --reset-to-upstream\n"),
             "{project}"
         );
     }

@@ -1683,10 +1683,10 @@ pub fn run() -> anyhow::Result<()> {
                 if do_continue {
                     pull::Take::Continue
                 } else {
-                    pull::Take::Fresh(crate::merge_upstream::Flags {
+                    pull::Take::Fresh {
                         merge_upstream,
                         reset_to_upstream,
-                    })
+                    }
                 },
             )?;
         }

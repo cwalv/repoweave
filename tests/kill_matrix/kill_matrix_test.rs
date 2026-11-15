@@ -331,7 +331,7 @@ const LAND_LINEAR_MANIFEST: &[&str] =
     &["land", "--history", "linear", "--allow-member-change", APP];
 const SYNC_LINEAR_MANIFEST: &[&str] = &["sync", "--history", "linear"];
 const PULL_MERGE: &[&str] = &["pull", "--merge-upstream"];
-const PULL_RESET: &[&str] = &["pull", "--reset-to-upstream", "projects/proj"];
+const PULL_RESET: &[&str] = &["pull", "--reset-to-upstream"];
 const PULL_CONTINUE: &[&str] = &["pull", "--continue"];
 const UPDATE_MERGE: &[&str] = &["update", "--remote", "--merge-upstream"];
 const UPDATE_RESET: &[&str] = &["update", "--remote", "--reset-to-upstream", LIB];

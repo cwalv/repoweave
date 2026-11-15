@@ -10,7 +10,7 @@ A branch that is behind its upstream takes it in; one that is at its upstream,
 ahead of it, or has no upstream has nothing to take in; one that has diverged —
 each side holding commits the other lacks — is refused with nothing changed, as
 `push-branch` `diverged`, unless `--merge-upstream` merges it or
-`--reset-to-upstream projects/<name>` moves it to its upstream.
+`--reset-to-upstream` moves it to its upstream.
 
 `--merge-upstream` merges the branch with its upstream, first parent the
 upstream. The merged `rwv.toml` is read before anything moves; each member whose
@@ -52,7 +52,7 @@ the checkout has edits.
 ## Invocation
 
 ```
-rwv pull [--merge-upstream] [--reset-to-upstream projects/<name>]
+rwv pull [--merge-upstream] [--reset-to-upstream]
          [--project <name>] [--role <role>]...
          [--repo <selector>]... [-j <N>] [--json] [--no-materialize]
 rwv pull --continue
@@ -1111,8 +1111,8 @@ rwv pull --repo github/acme/server
 ## Common errors
 
 - *push-branch diverged* — the project branch and its upstream each hold
-  commits the other lacks. `--merge-upstream` or `--reset-to-upstream
-  projects/<name>` takes it in.
+  commits the other lacks. `--merge-upstream` or `--reset-to-upstream`
+  takes it in.
 - *edits dirty* — the project repo has uncommitted changes to files the
   fast-forward would overwrite, listed; commit or set them aside, then rerun.
 - *unparseable-project at* — the upstream tip's `rwv.toml` does not parse, so

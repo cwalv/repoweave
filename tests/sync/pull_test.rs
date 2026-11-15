@@ -272,6 +272,26 @@ fn pull_reports_each_member_entry_the_pulled_manifest_changed() {
 }
 
 #[test]
+fn pull_reset_to_upstream_takes_no_repo_and_a_member_is_reset_by_update_remote() {
+    let weave = weave();
+    let before = weave.git_project(&["rev-parse", "HEAD"]);
+
+    let out = weave.rwv(&[
+        "pull",
+        "--reset-to-upstream",
+        &format!("projects/{PROJECT}"),
+    ]);
+
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("unexpected argument"),
+        "{}",
+        stderr(&out)
+    );
+    assert_eq!(weave.git_project(&["rev-parse", "HEAD"]), before);
+}
+
+#[test]
 fn pull_refuses_a_diverged_project_branch_and_moves_nothing() {
     let weave = weave();
     std::fs::write(weave.project().join("local.txt"), "mine\n").unwrap();
@@ -293,10 +313,7 @@ fn pull_refuses_a_diverged_project_branch_and_moves_nothing() {
         "{err}"
     );
     assert!(err.contains("rwv pull --merge-upstream"), "{err}");
-    assert!(
-        err.contains(&format!("rwv pull --reset-to-upstream projects/{PROJECT}")),
-        "{err}"
-    );
+    assert!(err.contains("rwv pull --reset-to-upstream\n"), "{err}");
     assert!(err.contains("rwv explain push-branch"), "{err}");
     assert_eq!(weave.git_project(&["rev-parse", "HEAD"]), mine);
     assert_eq!(
@@ -408,10 +425,7 @@ fn pull_refuses_an_upstream_manifest_cut_mid_line_before_it_moves() {
 
 #[test]
 fn pull_reset_to_upstream_refuses_an_emptied_upstream_manifest_before_it_moves() {
-    pull_refuses_an_upstream_whose_manifest_does_not_parse(
-        "",
-        &["pull", "--reset-to-upstream", "projects/web-app"],
-    );
+    pull_refuses_an_upstream_whose_manifest_does_not_parse("", &["pull", "--reset-to-upstream"]);
 }
 
 #[test]

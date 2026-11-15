@@ -189,7 +189,7 @@ The others follow.
 | State | Choice | Spelled | Where | Keeps work because |
 |---|---|---|---|---|
 | `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv pull --merge-upstream` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
-| `diverged` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
+| `diverged` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream` | a workspace with the branch checked out | backup first |
 | `diverged` | C2: merge yours and theirs, theirs first (commits they dropped come back, unless only their rewrite held them) | `rwv update --remote --merge-upstream --repo <m>` | a workspace with the branch checked out | a merge discards nothing; never across lineages; `rwv abort` undoes it |
 | `diverged` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
 | `diverged`, for `rwv branch create` | C34: start from this clone's `<T>` | rerun with `--at <T>` | here | starts only |

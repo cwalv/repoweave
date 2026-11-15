@@ -184,7 +184,7 @@ pub fn run_pull(
 ) -> anyhow::Result<()> {
     let resumed = match &take {
         Take::Continue => Some(Op::resume(ctx, OpVerb::Pull)?),
-        Take::Fresh(_) => None,
+        Take::Fresh { .. } => None,
     };
     let fetched = match &resumed {
         Some(_) => None,
@@ -223,8 +223,23 @@ pub fn run_pull(
         )?;
     }
     let how = match (&take, resumed) {
-        (Take::Fresh(flags), None) => How {
-            flags: flags.clone(),
+        (
+            Take::Fresh {
+                merge_upstream,
+                reset_to_upstream,
+            },
+            None,
+        ) => How {
+            flags: Flags {
+                merge_upstream: *merge_upstream,
+                reset_to_upstream: reset_to_upstream
+                    .then(|| crate::manifest::ResetOperand {
+                        repo: RepoOperand::Project(project_name.clone()),
+                        branch: None,
+                    })
+                    .into_iter()
+                    .collect(),
+            },
             resumed: None,
             activation,
             jobs,
@@ -266,7 +281,10 @@ pub fn run_pull(
 
 /// What `pull` was asked to do for a diverged branch.
 pub enum Take {
-    Fresh(Flags),
+    Fresh {
+        merge_upstream: bool,
+        reset_to_upstream: bool,
+    },
     Continue,
 }
 
@@ -360,15 +378,6 @@ fn take_in_project_branch(
     };
     let head = vcs.head_revision(&dir)?;
     let operand = RepoOperand::Project(project.clone());
-    for named in &how.flags.reset_to_upstream {
-        if named.repo != operand || named.branch.is_some() {
-            crate::refuse!(
-                RefusalKind::InapplicableFlag,
-                "`rwv pull --reset-to-upstream` resets the project repo, `{operand}`; `{named}` \
-                 is reset by `rwv update --remote --reset-to-upstream {named}`"
-            );
-        }
-    }
     let contains_upstream = vcs.is_ancestor(&dir, &upstream, &head)?;
     let reset = how.flags.resets(&operand) && head != upstream;
     if head == upstream && !reset {

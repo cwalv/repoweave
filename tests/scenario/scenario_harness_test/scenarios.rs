@@ -5851,11 +5851,9 @@ pub fn merge_upstream_off_lineage() -> Scenario {
     steps.extend([
         Step::rwv(&ww("w"), &["pull", "--merge-upstream"])
             .expect(Exit::refuses(Repo::App, State::PinOffLineage))
-            .claim(Claim::OutputContains(
-                "rwv pull --reset-to-upstream projects/proj",
-            ))
+            .claim(Claim::OutputContains("rwv pull --reset-to-upstream\n"))
             .claim(Claim::LocalStateUnchanged(ww("w"))),
-        Step::rwv(&ww("w"), &["pull", "--reset-to-upstream", "projects/proj"])
+        Step::rwv(&ww("w"), &["pull", "--reset-to-upstream"])
             .expect(Exit::Succeeds)
             .may_rewrite(&[Repo::Proj])
             .may_rewind(&[Repo::Proj, Repo::App])

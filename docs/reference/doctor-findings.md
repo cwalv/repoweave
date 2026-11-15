@@ -363,7 +363,7 @@ A commit a lock pins is not there to be at: the lock has no entry for a member, 
 | `off lineage` | C11: declare a branch for it, or keep, restore or port the entry's value | `rwv member set-branch <m> <b>` | a workspace with the branch checked out | re-pins by name, backup kept |
 | `off lineage`, for `rwv update` | C3: take theirs; yours is kept in a backup | `rwv update --remote --reset-to-upstream <repo> --commit` | a workspace with the branch checked out | backup first |
 | `off lineage`, for `rwv update` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
-| `off lineage`, for `rwv pull` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream <repo>` | a workspace with the branch checked out | backup first |
+| `off lineage`, for `rwv pull` | C3: take theirs; yours is kept in a backup | `rwv pull --reset-to-upstream` | a workspace with the branch checked out | backup first |
 | `off lineage`, for `rwv pull` | C27: publish this commit under a branch name you choose | VCS action (git: `git -C <checkout> push <r> <sha>:refs/heads/<name>`) | any workspace | creates or fast-forwards |
 | `not on declared branch` | C19: wait until the PR lands or its branch is deleted, then rerun | — | nowhere | nothing changes |
 | `not on declared branch` | C15: copy these commits onto `<b>` | VCS action (git: `git -C <checkout> cherry-pick -x <ids>`); then `rwv lock --commit` | where `<b>` is checked out | a copy adds only |

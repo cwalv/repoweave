@@ -228,7 +228,6 @@ src/project_merge.rs	op-parked	-	1
 src/project_merge.rs	unparseable-project mid-operation	-	1
 src/project_merge.rs	untracked-collision	-	1
 src/pull.rs	(untokened:owed)	-	1
-src/pull.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/pull.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	1
 src/pull.rs	push-branch diverged	tests/sync/push_test.rs	1
 src/push.rs	(untokened:environment-passthrough)	-	2

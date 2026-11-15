@@ -561,9 +561,9 @@ pub enum Commands {
         /// Merge a diverged project branch with its upstream, first parent the upstream, merging each member whose pin both sides changed first, and recording the merged pins in the commit. Runs under an operation record: a conflict stops it, `--continue` resumes it, and `rwv abort` puts everything back
         #[arg(long, conflicts_with = "do_continue")]
         merge_upstream: bool,
-        /// Move the project branch to its upstream, keeping the tip it leaves in a backup. The repo is `projects/<name>`; refused where the upstream is gone, a record lands into the branch, or the checkout has edits
-        #[arg(long, value_name = "REPO", conflicts_with = "do_continue")]
-        reset_to_upstream: Vec<crate::manifest::ResetOperand>,
+        /// Move the project branch to its upstream, keeping the tip it leaves in a backup. Refused where the upstream is gone, a record lands into the branch, or the checkout has edits. A member's branch moves with `rwv update --remote --reset-to-upstream <m>`
+        #[arg(long, conflicts_with = "do_continue")]
+        reset_to_upstream: bool,
         /// With `--continue`, where the VCS left regions of `rwv.toml` in conflict: take this side's value for every entry in them both sides changed differently, `yours` (the branch checked out, or the branch a carry replays) or `incoming` (the side it takes in), and write the merge of both sides, marked resolved, what the VCS merged outside them standing, refused where `rwv.toml` was edited since the stop; or, where the check stopped a text merge of `rwv.toml` that differs from the merge of the values, `text-merge` marks that text merge resolved as the VCS made it, writing nothing
         #[arg(long, value_name = "SIDE", value_enum, requires = "do_continue")]
         keep: Option<crate::manifest_conflict::Side>,
