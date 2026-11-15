@@ -1213,6 +1213,8 @@ every_scenario!(
     j18_a_landing_killed_midway_is_finished,
     j19_a_landing_killed_midway_is_given_up,
     j20_a_colleague_moves_a_nested_repository,
+    j21_an_integration_is_switched_on_by_its_verb,
+    j22_an_in_place_feature_is_landed_from_the_primary,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9173,6 +9175,8 @@ journey_tests!(
     j18_a_landing_killed_midway_is_finished,
     j19_a_landing_killed_midway_is_given_up,
     j20_a_colleague_moves_a_nested_repository,
+    j21_an_integration_is_switched_on_by_its_verb,
+    j22_an_in_place_feature_is_landed_from_the_primary,
 );
 
 #[test]

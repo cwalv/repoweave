@@ -31062,21 +31062,12 @@ pub fn j06_a_published_feature_is_renamed() -> Journey {
             .claim(Claim::OutputContains(
                 "rwv branch delete try-1 --target welcome-field --delete-remote",
             )),
-        publishes_records(Step::rwv(&a(), &["push"]))
-            .pushes(Remote::origin(Repo::App), "welcome-field")
-            .pushes(Remote::origin(Repo::Proj), "welcome-field")
-            .expect(Exit::Succeeds),
-        Step::rwv(
+        publishes_records(Step::rwv_printed_choice(
             &a(),
-            &[
-                "branch",
-                "delete",
-                "try-1",
-                "--target",
-                "welcome-field",
-                "--delete-remote",
-            ],
-        )
+            &["rwv push", "rwv branch delete try-1"],
+        ))
+        .pushes(Remote::origin(Repo::App), "welcome-field")
+        .pushes(Remote::origin(Repo::Proj), "welcome-field")
         .deletes(Remote::origin(Repo::App), "try-1")
         .deletes(Remote::origin(Repo::Proj), "try-1")
         .expect(Exit::Succeeds),
@@ -31098,7 +31089,7 @@ pub fn j06_a_published_feature_is_renamed() -> Journey {
                 record: Some(feature_onto("main", Mode::Declared)),
             })],
         path,
-        fault: 6,
+        fault: 5,
         end: vec![
             clean_end(a())
                 .claim(Claim::RemoteContains {
@@ -31204,9 +31195,9 @@ pub fn j09_an_experiment_that_never_landed_is_thrown_away() -> Journey {
             .expect(Exit::Code(3))
             .claim(Claim::WorkweaveGone(workweave.clone()))
             .claim(Claim::OutputContains("unlanded")),
-        Step::rwv(
+        Step::rwv_printed_exactly(
             &a(),
-            &["branch", "delete", "proj--try", "--discard-unlanded"],
+            "rwv branch delete proj--try --target main --discard-unlanded",
         )
         .expect(Exit::Succeeds),
     ];
@@ -31669,16 +31660,18 @@ pub fn j16_a_release_line_is_retired() -> Journey {
         Step::rwv(&a(), &["branch", "delete", "stable", "--target", "main"])
             .expect(Exit::Code(3))
             .claim(Claim::OutputContains("open-head")),
-        Step::rwv_printed_choice(
+        publishes_records(Step::rwv_printed_choice(
             &a(),
-            &["rwv branch set-mode stable", "rwv branch delete stable"],
-        )
+            &[
+                "rwv branch set-mode stable",
+                "rwv branch delete stable",
+                "rwv push",
+            ],
+        ))
         .deletes(Remote::origin(Repo::Proj), "stable")
+        .pushes(Remote::origin(Repo::App), "main")
+        .pushes(Remote::origin(Repo::Proj), "main")
         .expect(Exit::Succeeds),
-        publishes_records(Step::rwv(&a(), &["push"]))
-            .pushes(Remote::origin(Repo::App), "main")
-            .pushes(Remote::origin(Repo::Proj), "main")
-            .expect(Exit::Succeeds),
     ]);
     let fault = path.len() - 1;
     Journey {
@@ -32090,5 +32083,88 @@ pub fn j07_add_a_member_change_its_branch_and_pin_it_back() -> Journey {
                 present: false,
             })
             .claim(Claim::WorkweaveGone(w))],
+    }
+}
+
+/// An integration is switched on with its verb, and the change is published.
+pub fn j21_an_integration_is_switched_on_by_its_verb() -> Journey {
+    let path = vec![
+        Step::rwv(
+            &a(),
+            &["integration", "set-enabled", "vscode-workspace", "true"],
+        )
+        .expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ];
+    let fault = path.len() - 1;
+    Journey {
+        name: "j21: an integration is switched on by its verb and published",
+        seed: Seed::default(),
+        start: 0,
+        holds: vec![Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("enabled = false"))],
+        path,
+        fault,
+        end: vec![
+            clean_end(a()),
+            Step::git(&a(), Repo::Proj, &["show", "origin/main:rwv.toml"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("enabled = true")),
+        ],
+    }
+}
+
+/// A feature started in the primary is landed from it with `--retire`, which
+/// applies the deletion rule there, and published.
+pub fn j22_an_in_place_feature_is_landed_from_the_primary() -> Journey {
+    let path = vec![
+        Step::rwv(&a(), &["branch", "create", "payments"]).expect(Exit::Succeeds),
+        Step::commit(&a(), Repo::App, "pay-app"),
+        Step::commit(&a(), Repo::Lib, "pay-lib"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+        Step::rwv(&a(), &["land", "--retire"]).expect(Exit::Succeeds),
+        publishes_records(Step::rwv(&a(), &["push"]))
+            .pushes(Remote::origin(Repo::App), "main")
+            .pushes(Remote::origin(Repo::Lib), "main")
+            .pushes(Remote::origin(Repo::Proj), "main")
+            .expect(Exit::Succeeds),
+    ];
+    let fault = path.len() - 1;
+    Journey {
+        name: "j22: an in-place feature is landed from the primary and its branches are gone",
+        seed: Seed::default(),
+        start: 0,
+        holds: vec![Step::rwv(&a(), &["branch", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("payments"))],
+        path,
+        fault,
+        end: vec![
+            clean_end(a())
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::App),
+                    branch: "main",
+                    mark: "pay-app",
+                })
+                .claim(Claim::RemoteContains {
+                    remote: Remote::origin(Repo::Lib),
+                    branch: "main",
+                    mark: "pay-lib",
+                })
+                .claim(Claim::PinContains {
+                    site: LockSite::remote_main(Repo::Proj),
+                    member: Repo::App,
+                    mark: "pay-app",
+                }),
+            Step::rwv(&a(), &["branch", "list"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("payments")),
+            Step::git(&a(), Repo::App, &["branch", "--list", "payments"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("payments")),
+        ],
     }
 }
