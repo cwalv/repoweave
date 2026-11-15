@@ -37,6 +37,12 @@ pub fn builtin_integrations() -> Vec<Box<dyn Integration>> {
 /// The `tool-missing` finding for the tool `integration` declares, when it is
 /// not on `PATH`. `consequence` follows the sentence, for an integration that
 /// carries on without the tool.
+/// The consequence of a missing tool that writes `file` at the weave root: the
+/// weave-root link surfaced for it points at nothing until the tool runs.
+pub(crate) fn unwritten_file(file: &str) -> String {
+    format!("; {file}, which it writes, does not exist, and its weave-root link points at nothing until it does")
+}
+
 pub(crate) fn tool_missing_issue<I: crate::integration::DrivesTool>(
     integration: &I,
     consequence: &str,

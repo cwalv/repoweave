@@ -510,7 +510,10 @@ impl Integration for UvWorkspace {
         }
 
         let mut issues = Vec::new();
-        issues.extend(super::tool_missing_issue(self, ""));
+        issues.extend(super::tool_missing_issue(
+            self,
+            &super::unwritten_file("uv.lock"),
+        ));
         Ok(issues)
     }
 

@@ -133,7 +133,10 @@ impl Integration for PnpmWorkspaces {
         }
 
         let mut issues = Vec::new();
-        issues.extend(super::tool_missing_issue(self, ""));
+        issues.extend(super::tool_missing_issue(
+            self,
+            &super::unwritten_file("pnpm-lock.yaml"),
+        ));
         Ok(issues)
     }
 

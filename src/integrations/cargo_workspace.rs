@@ -820,7 +820,10 @@ impl Integration for CargoWorkspace {
         }
 
         let mut issues = Vec::new();
-        issues.extend(super::tool_missing_issue(self, ""));
+        issues.extend(super::tool_missing_issue(
+            self,
+            &super::unwritten_file("Cargo.lock"),
+        ));
 
         // Surface nested-workspace conflicts as errors during `rwv doctor`
         // so operators see the same diagnostic without having to run lock.

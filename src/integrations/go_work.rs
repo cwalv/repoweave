@@ -219,7 +219,10 @@ impl Integration for GoWork {
         let mut issues = Vec::new();
         issues.extend(super::tool_missing_issue(
             self,
-            "; using hand-edit fallback for go.work",
+            &format!(
+                "; using hand-edit fallback for go.work{}",
+                super::unwritten_file("go.work.sum")
+            ),
         ));
         Ok(issues)
     }

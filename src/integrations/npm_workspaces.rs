@@ -202,7 +202,10 @@ impl Integration for NpmWorkspaces {
         }
 
         let mut issues = Vec::new();
-        issues.extend(super::tool_missing_issue(self, ""));
+        issues.extend(super::tool_missing_issue(
+            self,
+            &super::unwritten_file("package-lock.json"),
+        ));
         Ok(issues)
     }
 
