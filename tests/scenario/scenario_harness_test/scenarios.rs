@@ -945,6 +945,280 @@ pub fn a_workweave_removal_judges_an_untouched_submodule_store_offline(
     )
 }
 
+/// `app` at `at` commits a new commit of its submodule `sub` and moves its
+/// gitlink to it, then `at` relocks.
+fn moves_the_submodule(at: &Place, publish: bool) -> Vec<Step> {
+    let mut steps = vec![
+        Step::git(
+            at,
+            Repo::App,
+            &[
+                "-C",
+                "sub",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "sub-moved",
+            ],
+        ),
+        Step::git(at, Repo::App, &["add", "sub"]),
+        Step::git(at, Repo::App, &["commit", "-qm", "move sub"]),
+        Step::rwv(at, &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    if publish {
+        steps.extend([
+            Step::git(
+                at,
+                Repo::App,
+                &["-C", "sub", "push", "-q", "origin", "HEAD:main"],
+            )
+            .pushes(Remote::origin(Repo::Lib), "main"),
+            Step::git(at, Repo::App, &["push", "-q", "origin", "main"])
+                .pushes(Remote::origin(Repo::App), "main"),
+            Step::git(at, Repo::Proj, &["push", "-q", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+        ]);
+    }
+    steps
+}
+
+/// The verbs whose alignment follows a submodule its member moved.
+#[derive(Debug, Clone, Copy)]
+pub enum FollowedBy {
+    /// A sync in a workweave of the target that moved it.
+    Sync,
+    /// A landing's alignment of its target, from a workweave that moved it.
+    Land,
+    /// A pull on another machine of the upstream that moved it.
+    Pull,
+    /// `rwv update` on another machine, once its project branch took in the
+    /// upstream that moved it.
+    Update,
+}
+
+/// A populated submodule of a member that recurses, detached and clean,
+/// follows the commit its member records once a verb moves the member:
+/// the alignment moves it, and the checkout reads clean after.
+pub fn a_moved_submodule_is_followed_by_the_alignment(by: FollowedBy) -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    let followed = match by {
+        FollowedBy::Sync => {
+            steps.push(create("w"));
+            steps.extend(moves_the_submodule(&a(), false));
+            steps.push(Step::rwv(&ww("w"), &["sync"]).expect(Exit::Succeeds));
+            ww("w")
+        }
+        FollowedBy::Land => {
+            steps.extend([
+                Step::git(&a(), Repo::App, &["-C", "sub", "switch", "-q", "--detach"]),
+                create("w"),
+            ]);
+            steps.extend(moves_the_submodule(&ww("w"), false));
+            steps.push(
+                Step::git(
+                    &ww("w"),
+                    Repo::App,
+                    &["-C", "sub", "push", "-q", "origin", "HEAD:main"],
+                )
+                .pushes(Remote::origin(Repo::Lib), "main"),
+            );
+            steps.push(Step::rwv(&ww("w"), &["land"]).expect(Exit::Succeeds));
+            a()
+        }
+        FollowedBy::Pull | FollowedBy::Update => {
+            steps.extend([
+                Step::git(&a(), Repo::Proj, &["push", "-q", "origin", "main"])
+                    .pushes(Remote::origin(Repo::Proj), "main"),
+                Step::new_machine(Machine::B),
+                Step::git(
+                    &b(),
+                    Repo::App,
+                    &[
+                        "-c",
+                        "protocol.file.allow=always",
+                        "submodule",
+                        "update",
+                        "-q",
+                        "--init",
+                    ],
+                ),
+            ]);
+            steps.extend(moves_the_submodule(&a(), true));
+            if let FollowedBy::Update = by {
+                steps.extend([
+                    Step::git(&b(), Repo::Proj, &["pull", "-q", "--ff-only"])
+                        .may_leave_unresolved(&[Repo::App]),
+                    Step::rwv(&b(), &["fetch", "--repo", APP]).expect(Exit::Succeeds),
+                ]);
+            }
+            steps.push(
+                match by {
+                    FollowedBy::Pull => Step::rwv(&b(), &["pull"]),
+                    _ => Step::rwv(&b(), &["update"]),
+                }
+                .expect(Exit::Succeeds),
+            );
+            b()
+        }
+    };
+    let last = steps.pop().expect("the verb");
+    steps.extend([
+        last.claim(Claim::OutputContains(
+            "local/remotes/app/sub: submodule moved to",
+        )),
+        Step::git(&followed, Repo::App, &["status", "--porcelain"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("sub")),
+    ]);
+    scenario("a moved submodule is followed by the alignment", steps)
+}
+
+/// A member that does not recurse into its submodules leaves a moved one
+/// where it stands, as plain git does; a removal of its clone then judges it
+/// a submodule behind its member, whose one choice moves it and runs as
+/// printed, and the removal goes through.
+pub fn a_non_recursing_members_moved_submodule_is_offered_its_update() -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.push(
+        Step::rwv(&a(), &["member", "set-recurse-submodules", APP, "false"]).expect(Exit::Succeeds),
+    );
+    steps.extend(moves_the_submodule(&a(), true));
+    steps.extend([
+        Step::git(
+            &a(),
+            Repo::App,
+            &["-C", "sub", "checkout", "-q", "--detach", "HEAD~1"],
+        ),
+        Step::rwv(&a(), &["update"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("submodule moved")),
+        Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+            .expect(Exit::refuses(Repo::App, State::EditsSubmoduleBehind)),
+        Step::rwv_printed_holding(&a(), "git -C ", "submodule update --checkout -- sub")
+            .expect(Exit::Succeeds),
+        Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+    ]);
+    scenario(
+        "a non-recursing member's moved submodule is offered its update",
+        steps,
+    )
+}
+
+/// What keeps a submodule's checkout where it stands when its member moves.
+#[derive(Debug, Clone, Copy)]
+pub enum SubmoduleKept {
+    OnABranch,
+    Edited,
+    OnACommitOnlyItHolds,
+    CommitHeldNowhereHere,
+}
+
+/// A submodule on a branch, holding edits, or recording a commit nothing
+/// here holds is left where it stands by a sync's alignment, with a line
+/// naming why and the line that moves it, which runs as printed.
+pub fn a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+    kept: SubmoduleKept,
+) -> Scenario {
+    let mut steps = app_gains_a_submodule();
+    steps.push(create("w"));
+    let why = match kept {
+        SubmoduleKept::OnABranch => {
+            steps.push(Step::git(
+                &ww("w"),
+                Repo::App,
+                &["-C", "sub", "switch", "-q", "-c", "mine"],
+            ));
+            "it is on branch mine"
+        }
+        SubmoduleKept::Edited => {
+            steps.extend([
+                Step::git(
+                    &ww("w"),
+                    Repo::App,
+                    &["config", "submodule.sub.ignore", "dirty"],
+                ),
+                Step::hand_edit(&ww("w"), Repo::App, "sub/README", "lib", "hours of work"),
+            ]);
+            "it holds edits"
+        }
+        SubmoduleKept::OnACommitOnlyItHolds => {
+            steps.extend([
+                Step::git(
+                    &ww("w"),
+                    Repo::App,
+                    &["config", "submodule.sub.ignore", "all"],
+                ),
+                Step::git(
+                    &ww("w"),
+                    Repo::App,
+                    &[
+                        "-C",
+                        "sub",
+                        "commit",
+                        "-q",
+                        "--allow-empty",
+                        "-m",
+                        "by-hand",
+                    ],
+                ),
+            ]);
+            "which nothing else in its store holds"
+        }
+        SubmoduleKept::CommitHeldNowhereHere => "is held nowhere here",
+    };
+    match kept {
+        SubmoduleKept::CommitHeldNowhereHere => {
+            steps.push(create("w2"));
+            steps.extend(moves_the_submodule(&ww("w2"), false));
+            steps.push(
+                Step::rwv(&ww("w2"), &["land"])
+                    .expect(Exit::Succeeds)
+                    .claim(Claim::OutputContains("is held nowhere here")),
+            );
+        }
+        _ => steps.extend(moves_the_submodule(&a(), false)),
+    }
+    steps.push(
+        Step::rwv(&ww("w"), &["sync"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains(
+                "submodule left behind the commit its member records",
+            ))
+            .claim(Claim::OutputContains(why)),
+    );
+    if let SubmoduleKept::CommitHeldNowhereHere = kept {
+        steps.extend([
+            Step::git(
+                &ww("w2"),
+                Repo::App,
+                &[
+                    "-C",
+                    "sub",
+                    "push",
+                    "-q",
+                    "origin",
+                    "HEAD:refs/heads/w2-sub",
+                ],
+            )
+            .pushes(Remote::origin(Repo::Lib), "w2-sub"),
+            Step::git(&ww("w"), Repo::App, &["-C", "sub", "fetch", "-q", "origin"]),
+        ]);
+    }
+    steps.extend([
+        Step::rwv_printed_quoted(&ww("w"), "git -C ", "checkout --detach")
+            .expect(Exit::Succeeds)
+            .may_strand(&[Repo::Lib]),
+        Step::git(&ww("w"), Repo::App, &["diff", "--quiet", "--", "sub"]).expect(Exit::Succeeds),
+    ]);
+    scenario(
+        "a moved submodule the alignment cannot follow is left with a line",
+        steps,
+    )
+}
+
 /// Edits in a workweave checkout's submodule its member is told to ignore
 /// (`submodule.<name>.ignore = all`) still refuse the delete that would remove
 /// them, judged in the submodule itself, with choices run there.

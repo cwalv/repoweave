@@ -291,6 +291,31 @@ pub(crate) fn align_after_landing(
     )
 }
 
+/// Move the populated submodules of each member checkout of `ctx`'s
+/// workspace that recurses into them to the commits their members record.
+fn follow_member_submodules(
+    ctx: &WorkspaceContext,
+    project_dir: &Path,
+    selection: &MemberSelection,
+    verb: &str,
+) -> anyhow::Result<()> {
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    for (repo_path, entry) in manifest.iter_entries() {
+        if !selection.covers(repo_path, entry.role)
+            || entry.recurse_submodules == crate::manifest::SubmoduleRecursion::Skip
+        {
+            continue;
+        }
+        let member = ctx.active_path().join(repo_path.as_path());
+        if !member.exists() {
+            continue;
+        }
+        crate::share::follow_submodules(vcs_for(entry.vcs_type).as_ref(), &member)
+            .report(&format!("rwv {verb}: "), repo_path);
+    }
+    Ok(())
+}
+
 /// The alignment `sync` runs once the project branch has taken in its
 /// source: `rwv update`'s, reported under `sync`'s name.
 pub(crate) fn align_after_sync(
@@ -499,6 +524,7 @@ fn update_members_for(
     };
     report.outcomes_merge(&aligned);
     report.judged.extend(aligned.judged.iter().cloned());
+    follow_member_submodules(ctx, &project_dir, selection, flavor.verb)?;
     if output.is_json() {
         for (rp, dir, files) in &aligned.placed {
             report

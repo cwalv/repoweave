@@ -951,6 +951,84 @@ fn a_workweave_delete_refuses_edits_in_an_ignored_submodule() {
 }
 
 #[test]
+fn a_sync_follows_a_submodule_its_member_moved() {
+    runner::run(scenarios::a_moved_submodule_is_followed_by_the_alignment(
+        scenarios::FollowedBy::Sync,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_follows_a_submodule_into_its_target() {
+    runner::run(scenarios::a_moved_submodule_is_followed_by_the_alignment(
+        scenarios::FollowedBy::Land,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_pull_follows_a_submodule_its_upstream_moved() {
+    runner::run(scenarios::a_moved_submodule_is_followed_by_the_alignment(
+        scenarios::FollowedBy::Pull,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn update_follows_a_submodule_its_project_took_in() {
+    runner::run(scenarios::a_moved_submodule_is_followed_by_the_alignment(
+        scenarios::FollowedBy::Update,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_submodule_on_a_branch_is_left_with_a_line() {
+    runner::run(
+        scenarios::a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+            scenarios::SubmoduleKept::OnABranch,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn an_edited_submodule_is_left_with_a_line() {
+    runner::run(
+        scenarios::a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+            scenarios::SubmoduleKept::Edited,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_submodule_on_a_commit_only_it_holds_is_left_with_a_line() {
+    runner::run(
+        scenarios::a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+            scenarios::SubmoduleKept::OnACommitOnlyItHolds,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_submodule_whose_commit_is_held_nowhere_here_is_left_with_a_line() {
+    runner::run(
+        scenarios::a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+            scenarios::SubmoduleKept::CommitHeldNowhereHere,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_non_recursing_members_moved_submodule_is_offered_its_update() {
+    runner::run(scenarios::a_non_recursing_members_moved_submodule_is_offered_its_update())
+        .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1929,6 +2007,23 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    a_non_recursing_members_moved_submodule_is_offered_its_update,
+    a_moved_submodule_is_followed_by_the_alignment(scenarios::FollowedBy::Sync),
+    a_moved_submodule_is_followed_by_the_alignment(scenarios::FollowedBy::Land),
+    a_moved_submodule_is_followed_by_the_alignment(scenarios::FollowedBy::Pull),
+    a_moved_submodule_is_followed_by_the_alignment(scenarios::FollowedBy::Update),
+    a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+        scenarios::SubmoduleKept::OnABranch
+    ),
+    a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+        scenarios::SubmoduleKept::Edited
+    ),
+    a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+        scenarios::SubmoduleKept::OnACommitOnlyItHolds
+    ),
+    a_moved_submodule_the_alignment_cannot_follow_is_left_with_a_line(
+        scenarios::SubmoduleKept::CommitHeldNowhereHere
+    ),
     workweave_delete_refuses_edits_in_an_ignored_submodule,
     removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
         scenarios::DetachedWorktreeOf::Workweave

@@ -15,9 +15,9 @@ use crate::vcs::{
     RefOrigin, RefRestoreOutcome, RefSavepoint, RefreshScope, RefreshWrite, RegistrationPrune,
     RemoteBranchCopies, RemoteBranchMove, RemoteDefaultBranch, RemoteHandle, RemoteNameTaken,
     RemoteRef, RemoteTip, RemoteTracking, Replace, Replayed, ResolvedEndpoint, ResolvedRevisionId,
-    SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, ToolReadiness, TrackedFile,
-    TrackedFileKind, TreeMerges, UnconfirmedRemote, Unrecorded, Upstream, UrlRemote, Vcs,
-    VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
+    SavepointListing, Site, SubmoduleBirth, SubmoduleCheckout, SubmoduleFollow, ToolReadiness,
+    TrackedFile, TrackedFileKind, TreeMerges, UnconfirmedRemote, Unrecorded, Upstream, UrlRemote,
+    Vcs, VcsAction, VcsError, VerifiedRestoreOutcome, WorkspacePopulation,
 };
 use crate::vcs::{Attribution, CheckoutRestorePlan, Integrates, OwnStep, RefRestorePlan};
 use std::borrow::Cow;
@@ -3302,6 +3302,9 @@ impl Vcs for GitVcs {
             VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
             VcsAction::Unstage => "git -C <checkout> restore --staged -- <paths>",
             VcsAction::TakeBackSetAside => "git -C <checkout> stash apply <set-aside>",
+            VcsAction::FollowSubmodule => {
+                "git -C <checkout> submodule update --checkout -- <paths>"
+            }
             VcsAction::CompareMarked => {
                 "git -C <checkout> update-index --no-assume-unchanged -- <assumed>"
             }
@@ -7682,6 +7685,77 @@ impl WorkspacePopulation for GitVcs {
                 &source,
             )
             .is_ok()
+    }
+
+    fn follow_recorded_commit(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+        module_data: &Path,
+    ) -> Result<SubmoduleFollow, VcsError> {
+        let dest = workspace.join(&submodule.path);
+        if dest.join(".git").symlink_metadata().is_err() {
+            return Ok(SubmoduleFollow::Standing);
+        }
+        let head = Self::run_trimmed(["rev-parse", "--verify", "-q", "HEAD"], &dest)?;
+        if head == submodule.commit.as_str() {
+            return Ok(SubmoduleFollow::Standing);
+        }
+        let commit = format!("{}^{{commit}}", submodule.commit);
+        let held = Self::run(
+            ["-c", "protocol.allow=never", "cat-file", "-e", &commit],
+            &dest,
+        )
+        .is_ok()
+            || self.module_data_holds(module_data, submodule) && {
+                let source = module_repository(module_data, submodule);
+                let source = GitArg::from_path(&source, "module data")?;
+                Self::run(
+                    Argv::from(["fetch", "--quiet"])
+                        .path(&source)
+                        .text(submodule.commit.as_str()),
+                    &dest,
+                )?;
+                true
+            };
+        let follow = format!(
+            "git -C {} checkout --detach {}",
+            crate::workspace::quoted(&dest),
+            submodule.commit
+        );
+        let left = |why: String| {
+            Ok(SubmoduleFollow::Left {
+                why,
+                follow: follow.clone(),
+            })
+        };
+        if !held {
+            return left(format!(
+                "the commit it records, {}, is held nowhere here, so it has to be fetched into \
+                 the submodule first",
+                submodule.commit.short()
+            ));
+        }
+        if let Ok(branch) = Self::run_trimmed(["symbolic-ref", "-q", "--short", "HEAD"], &dest) {
+            return left(format!("it is on branch {branch}"));
+        }
+        if !self.dirty_file_names(&dest)?.is_empty() {
+            return left("it holds edits".to_owned());
+        }
+        if Self::run_trimmed(["for-each-ref", "--count=1", "--contains", &head], &dest)?.is_empty()
+        {
+            return left(format!(
+                "it stands on {}, which nothing else in its store holds",
+                &head[..head.len().min(12)]
+            ));
+        }
+        Self::run(
+            ["checkout", "--quiet", "--detach", submodule.commit.as_str()],
+            &dest,
+        )?;
+        Ok(SubmoduleFollow::Moved {
+            module_data: module_repository(module_data, submodule),
+        })
     }
 
     fn create_unpopulated_submodule(

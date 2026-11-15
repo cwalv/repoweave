@@ -11,8 +11,8 @@
 use crate::manifest::{RepoPath, Role};
 use crate::path_spelling::CanonicalPath;
 use crate::vcs::{
-    FoundBranch, RecordedSubmodule, RefOrigin, ResolvedRevisionId, SubmoduleBirth,
-    SubmoduleCheckout, TrackedFile, Vcs, VcsError, WorkspacePopulation,
+    CommitId, FoundBranch, RecordedSubmodule, RefOrigin, ResolvedRevisionId, SubmoduleBirth,
+    SubmoduleCheckout, SubmoduleFollow, TrackedFile, Vcs, VcsError, WorkspacePopulation,
 };
 use anyhow::Context;
 use schemars::JsonSchema;
@@ -504,6 +504,74 @@ pub(crate) fn populate_submodules(
         sources: sources(vcs, member, &at),
     };
     populate_level(vcs, population, &level, role, fs, &mut done);
+    done
+}
+
+/// What [`follow_submodules`] did, one entry per submodule at any depth, each
+/// named by its path from the member's root.
+#[derive(Debug, Default)]
+pub(crate) struct SubmoduleFollowing {
+    pub(crate) moved: Vec<(String, CommitId)>,
+    /// Left where it stands, with why and the line that follows it by hand.
+    pub(crate) left: Vec<(String, String, String)>,
+}
+
+impl SubmoduleFollowing {
+    /// One stderr line per submodule, each opening with `prefix` and naming
+    /// it under `member`.
+    pub(crate) fn report(&self, prefix: &str, member: &RepoPath) {
+        for (path, commit) in &self.moved {
+            eprintln!(
+                "{prefix}{member}/{path}: submodule moved to {}, the commit its member records",
+                commit.short()
+            );
+        }
+        for (path, why, follow) in &self.left {
+            let by_hand = match follow.is_empty() {
+                true => String::new(),
+                false => format!("; `{follow}` moves it"),
+            };
+            eprintln!(
+                "{prefix}warning: {member}/{path}: submodule left behind the commit its member \
+                 records: {why}{by_hand}"
+            );
+        }
+    }
+}
+
+/// Move every populated submodule of the member at `member`, at depth, to
+/// the commit its checkout records, from the copies its canonical store
+/// holds; nothing is fetched from a remote.
+pub(crate) fn follow_submodules(vcs: &dyn Vcs, member: &Path) -> SubmoduleFollowing {
+    let mut done = SubmoduleFollowing::default();
+    let (Some(population), Some(store)) = (vcs.population(), vcs.store_of(member)) else {
+        return done;
+    };
+    let mut pending = vec![(member.to_path_buf(), String::new(), store)];
+    while let Some((workspace, shown_as, module_data)) = pending.pop() {
+        let Ok(submodules) = population.recorded_submodules(&workspace) else {
+            continue;
+        };
+        for submodule in submodules {
+            if submodule.checkout == SubmoduleCheckout::Declined {
+                continue;
+            }
+            let shown = format!("{shown_as}{}", submodule.path);
+            match population.follow_recorded_commit(&workspace, &submodule, &module_data) {
+                Ok(SubmoduleFollow::Standing) => {}
+                Ok(SubmoduleFollow::Moved { module_data }) => {
+                    done.moved.push((shown.clone(), submodule.commit.clone()));
+                    pending.push((
+                        workspace.join(&submodule.path),
+                        format!("{shown}/"),
+                        module_data,
+                    ));
+                }
+                Ok(SubmoduleFollow::Left { why, follow }) => done.left.push((shown, why, follow)),
+                Err(e) => done.left.push((shown, format!("{e:#}"), String::new())),
+            }
+        }
+    }
     done
 }
 

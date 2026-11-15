@@ -478,6 +478,7 @@ pub enum State {
     EditsMovedAndEdited,
     EditsUnresolved,
     EditsSetBack,
+    EditsSubmoduleBehind,
     EditsMidOperation,
     EditsLockFilesUncommitted,
     EditsLockUnresolved,
@@ -578,12 +579,13 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 88] = [
+    pub const ALL: [State; 89] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMovedAndEdited,
         Self::EditsUnresolved,
         Self::EditsSetBack,
+        Self::EditsSubmoduleBehind,
         Self::EditsMidOperation,
         Self::EditsLockFilesUncommitted,
         Self::EditsLockUnresolved,
@@ -785,6 +787,18 @@ impl State {
                     Form::TakeBackSetAside,
                 ],
                 verb_offers: &[],
+            },
+            Self::EditsSubmoduleBehind => &StateRow {
+                axis: Axis::Edits,
+                name: "submodule behind",
+                means: "each listed submodule's checkout stands at a commit other than the one \
+                        its member records, and holds no edits of its own: the member's \
+                        history moved the submodule and its checkout was not moved with it, as \
+                        for a member that does not recurse into its submodules. Committing it \
+                        would record the commit the checkout stands at, undoing the move",
+                refused_by: "every verb that judges a checkout's edits",
+                offers: &[Form::FollowSubmodule],
+                verb_offers: &[("workweave delete", Form::C13WorkweaveDelete)],
             },
             Self::EditsMidOperation => &StateRow {
                 axis: Axis::Edits,
@@ -1999,6 +2013,7 @@ pub enum ChoiceId {
     RecreateBranchThenMerge,
     ClearRefusalThenMerge,
     TakeBackSetAside,
+    FollowSubmodule,
     CommitEdits,
 }
 
@@ -2362,6 +2377,11 @@ impl ChoiceId {
                          taken back before it brought back is recorded",
                 keeps_work: "the set-aside record stays until you drop it",
             },
+            Self::FollowSubmodule => &ChoiceRow {
+                id: None,
+                phrase: "move each listed submodule to the commit its member records",
+                keeps_work: "the commit it stood at stays in its store",
+            },
             Self::FreeBranchThenMerge => &ChoiceRow {
                 id: None,
                 phrase: "check the branch it left, named in the subject, out of the other \
@@ -2640,6 +2660,7 @@ pub enum Form {
     RecreateBranchThenMerge,
     ClearRefusalThenMerge,
     TakeBackSetAside,
+    FollowSubmodule,
 }
 
 /// A form's choice, steps and Where, and whether its verb has shipped.
@@ -2789,6 +2810,7 @@ impl Form {
         Self::UnstageThenMerge,
         Self::RemoveLockThenMerge,
         Self::TakeBackSetAside,
+        Self::FollowSubmodule,
         Self::StashUnreadDrift,
         Self::UnmarkThenStashUnreadDrift,
         Self::FreeBranchThenMerge,
@@ -3408,6 +3430,12 @@ impl Form {
             Self::TakeBackSetAside => &FormRow {
                 choice: C::TakeBackSetAside,
                 steps: &[Vcs(A::TakeBackSetAside)],
+                at: W::Checkout,
+                shipped: true,
+            },
+            Self::FollowSubmodule => &FormRow {
+                choice: C::FollowSubmodule,
+                steps: &[Vcs(A::FollowSubmodule)],
                 at: W::Checkout,
                 shipped: true,
             },
@@ -4613,10 +4641,41 @@ pub fn dirty(vcs: &dyn Vcs, repo: impl fmt::Display, dir: &Path, files: Vec<Stri
             return held(vcs, repo, dir, &reading);
         }
     }
+    let behind = submodules_behind(vcs, dir);
+    if !files.is_empty() && files.iter().all(|file| behind.contains(file)) {
+        return State::EditsSubmoduleBehind
+            .of(repo)
+            .bind_list("<paths>", &files)
+            .listing(files);
+    }
     let tracked = vcs.tracked_dirty_file_names(dir).unwrap_or_default();
     let mut judging = State::EditsDirty.of(repo);
     judging.untracked = files.iter().any(|file| !tracked.contains(file));
     judging.listing(files)
+}
+
+/// The paths of `dir`'s submodules whose checkout stands at a commit other
+/// than the one `dir` records and holds no edits of its own.
+fn submodules_behind(vcs: &dyn Vcs, dir: &Path) -> Vec<String> {
+    let Some(population) = vcs.population() else {
+        return Vec::new();
+    };
+    population
+        .recorded_submodules(dir)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|submodule| {
+            let checkout = dir.join(&submodule.path);
+            vcs.is_repo(&checkout)
+                && vcs
+                    .head_revision(&checkout)
+                    .is_ok_and(|head| *head.id() != submodule.commit)
+                && vcs
+                    .dirty_file_names(&checkout)
+                    .is_ok_and(|edits| edits.is_empty())
+        })
+        .map(|submodule| submodule.path)
+        .collect()
 }
 
 /// [`dirty`] for a verb about to refuse on or write to `dir`: drift its

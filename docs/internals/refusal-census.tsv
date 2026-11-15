@@ -116,6 +116,7 @@ src/diagnosis.rs	edits drift left in place	tests/sync/land_drift_test.rs	4
 src/diagnosis.rs	edits mid-operation	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	edits moved and edited	tests/sync/land_drift_test.rs	3
 src/diagnosis.rs	edits set back	tests/sync/land_drift_test.rs	2
+src/diagnosis.rs	edits submodule behind	-	1
 src/diagnosis.rs	edits unresolved	tests/sync/land_drift_test.rs	2
 src/diagnosis.rs	unparseable-project here	-	1
 src/durable_file.rs	filesystem-without-exclusive-publish	tests/weave/workweave_test.rs	1
@@ -315,7 +316,7 @@ src/sync.rs	savepoint-unfiled	tests/sync/sync_prune_direction_test.rs	1
 src/sync.rs	target moved mid-operation	tests/sync/crash_matrix_test.rs	2
 src/sync.rs	unparseable-project malformed	-	1
 src/sync.rs	unreadable-op-lease	-	1
-src/sync.rs	unreadable-status	-	1
+src/sync.rs	unreadable-status	-	2
 src/sync.rs	untracked-collision	-	1
 src/update.rs	partial-run-aborted	tests/docs/refusal_arrival_test.rs	3
 src/update_remote.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	3

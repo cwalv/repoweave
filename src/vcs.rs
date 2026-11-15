@@ -425,6 +425,7 @@ pub enum VcsAction {
     ShowStagedFromBackup,
     Unstage,
     TakeBackSetAside,
+    FollowSubmodule,
     CompareMarked,
     CompareOutside,
     RemoveWorktree,
@@ -446,7 +447,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 29] = [
+    pub const ALL: [VcsAction; 30] = [
         Self::AddAll,
         Self::Commit,
         Self::Stash,
@@ -458,6 +459,7 @@ impl VcsAction {
         Self::ShowStagedFromBackup,
         Self::Unstage,
         Self::TakeBackSetAside,
+        Self::FollowSubmodule,
         Self::CompareMarked,
         Self::CompareOutside,
         Self::RemoveWorktree,
@@ -5777,6 +5779,24 @@ pub trait WorkspacePopulation: Send + Sync {
     /// No remote outside this machine is reachable from the new checkout
     /// until [`WorkspacePopulation::connect_submodule_upstream`]: content it
     /// lacks is a failure, never a fetch.
+    /// Move `submodule`'s checkout in `workspace` to the commit `workspace`
+    /// records for it, as the VCS's own submodule update does for a checkout
+    /// on no branch with no edits; content it lacks comes from the copy under
+    /// `module_data` and from nothing else. A checkout on a branch, holding
+    /// edits, standing on a commit nothing else holds, or whose recorded
+    /// commit is held nowhere here is left, with why.
+    ///
+    /// For git: `checkout --detach` in the submodule, after a fetch of the
+    /// commit from its copy under `module_data`'s `modules` where its own
+    /// store lacks it, which runs before anything is judged, so the line a
+    /// checkout left is given runs where it stands.
+    fn follow_recorded_commit(
+        &self,
+        workspace: &Path,
+        submodule: &RecordedSubmodule,
+        module_data: &Path,
+    ) -> Result<SubmoduleFollow, VcsError>;
+
     fn create_unpopulated_submodule(
         &self,
         workspace: &Path,
@@ -5839,6 +5859,19 @@ pub enum SubmoduleCheckout {
     Wanted,
     /// git: `submodule.<name>.update = none`.
     Declined,
+}
+
+/// What [`WorkspacePopulation::follow_recorded_commit`] came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmoduleFollow {
+    /// Its checkout stands at the recorded commit, or it has none.
+    Standing,
+    /// Its checkout was moved, detached, to the recorded commit; its own
+    /// submodules' copies are under `module_data`.
+    Moved { module_data: PathBuf },
+    /// Its checkout was left where it stands: `why`, and `follow`, the VCS
+    /// line that moves it by hand.
+    Left { why: String, follow: String },
 }
 
 /// What [`WorkspacePopulation::create_unpopulated_submodule`] came to.

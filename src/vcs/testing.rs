@@ -1585,6 +1585,15 @@ impl WorkspacePopulation for FakeVcs {
         unsupported("create_unpopulated_submodule")
     }
 
+    fn follow_recorded_commit(
+        &self,
+        _workspace: &Path,
+        _submodule: &RecordedSubmodule,
+        _module_data: &Path,
+    ) -> Result<crate::vcs::SubmoduleFollow, VcsError> {
+        unsupported("follow_recorded_commit")
+    }
+
     fn connect_submodule_upstream(
         &self,
         _workspace: &Path,

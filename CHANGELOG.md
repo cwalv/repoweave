@@ -263,6 +263,17 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
 - `rwv cherry-pick --continue` over a copy whose branch moved outside the
   checkout refuses as moved, naming `rwv abort` alone, also where the checkout
   records nothing of where it stood.
+- The alignment `rwv update`, `rwv sync`, `rwv land` and `rwv pull` run moves
+  each checked-out submodule of a member that recurses into its submodules to
+  the commit its member records, where it is on no branch and holds no edits,
+  fetching the commit only from the copies the canonical clone holds. One on
+  a branch, holding edits, on a commit nothing else in its store holds, or
+  whose commit is held nowhere here is left, with a line naming why and the
+  VCS line that moves it. A submodule left behind its member is judged
+  `edits` `submodule behind`, whose one choice moves it.
+- A removal asks each submodule checkout it takes for its own edits, whatever
+  the member's `ignore` setting for it, and counts a commit only another
+  worktree of a submodule's store holds.
 - `rwv member remove --delete --discard-unpublished` removes the clone with
   what no remote is confirmed to hold, a remote that does not answer counting
   as holding what it last gave, and lists what went first. Both refusals, and
