@@ -30521,6 +30521,39 @@ pub fn dc24_no_remote_names() -> Scenario {
     }
 }
 
+/// The rehearsal's seat land after the upgrade: a seat forked where `rwv.toml`
+/// still named an earlier release's keys, the primary and the seat each
+/// migrated by their own `rwv doctor --fix`, the trunk given its history
+/// after. The merge base reads as the rename makes it, so the seat changed no
+/// history, and its landing leaves the target's in place.
+pub fn a_seat_forked_before_the_key_rename_lands_keeping_the_targets_history() -> Scenario {
+    let lib_main = declared_branch_text(Repo::Lib, "main");
+    let lib_old = lib_main.replace("branch =", "version =");
+    scenario(
+        "a seat forked before the key rename lands keeping the target's history",
+        vec![
+            create("w"),
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &lib_main, &lib_old),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["commit", "-qam", "an earlier release's keys"],
+            ),
+            Step::git(&ww("w"), Repo::Proj, &["merge", "-q", "--ff-only", "main"]),
+            Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["doctor", "--fix"]).expect(Exit::Succeeds),
+            Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::App, "w-app"),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("member changes")),
+            Step::git(&a(), Repo::Proj, &["show", "main:rwv.toml"])
+                .claim(Claim::OutputContains("history = \"linear\"")),
+        ],
+    )
+}
+
 pub fn dc26_migration() -> Scenario {
     let lib_main = declared_branch_text(Repo::Lib, "main");
     let lib_old = lib_main.replace("branch =", "version =");

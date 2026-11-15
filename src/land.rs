@@ -689,7 +689,9 @@ impl Sides {
         Ok(Self {
             ours,
             theirs,
-            base: base_commit.as_ref().and_then(|b| manifest_at(vcs, dir, b)),
+            base: base_commit
+                .as_ref()
+                .and_then(|b| base_manifest_at(vcs, dir, b)),
             our_lock: lock_at(vcs, dir, head),
             their_lock: lock_at(vcs, dir, target_tip),
             base_lock: base_commit.as_ref().and_then(|b| lock_at(vcs, dir, b)),
@@ -877,6 +879,20 @@ fn manifest_error_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Str
     Manifest::from_toml_str(&text)
         .err()
         .map(|e| format!("{e:#}"))
+}
+
+/// The `rwv.toml` a merge base declares, as a base the two sides are judged
+/// against: one naming member-entry keys an earlier release wrote reads as
+/// `rwv doctor --fix` rewrites it, so the rewrite alone is no change of either
+/// side.
+pub(crate) fn base_manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
+    let text = vcs
+        .read_file_at_revision(dir, &rev(commit), Path::new(Manifest::FILE_NAME))
+        .ok()?;
+    Manifest::from_toml_str(&text).ok().or_else(|| {
+        let rewritten = crate::manifest::rewrite_pre_schema_keys(&text).ok()??;
+        Manifest::from_toml_str(&rewritten).ok()
+    })
 }
 
 pub(crate) fn manifest_at(vcs: &dyn Vcs, dir: &Path, commit: &CommitId) -> Option<Manifest> {
@@ -1471,7 +1487,9 @@ pub fn rejudge_resolved(resumed: &Resumed<'_>, source_root: &Path) -> anyhow::Re
     let sides = Sides {
         ours,
         theirs,
-        base: base_commit.as_ref().and_then(|b| manifest_at(vcs, &dir, b)),
+        base: base_commit
+            .as_ref()
+            .and_then(|b| base_manifest_at(vcs, &dir, b)),
         our_lock: None,
         their_lock: None,
         base_lock: None,

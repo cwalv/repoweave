@@ -785,7 +785,9 @@ fn plan(sync: &Sync<'_>, as_mode: Option<Mode>, resets: &[RepoOperand]) -> anyho
     };
     let their_lock = lock_at(vcs, dir, &source);
     let base_commit = vcs.merge_bases(dir, &head, &source)?.into_iter().next();
-    let base_manifest = base_commit.as_ref().and_then(|b| manifest_at(vcs, dir, b));
+    let base_manifest = base_commit
+        .as_ref()
+        .and_then(|b| crate::land::base_manifest_at(vcs, dir, b));
     let history = match &sync.from {
         SyncFrom::Target(_) => PinHistory::of(vcs, dir, &source)?.since(&head),
         SyncFrom::From(_) => PinHistory::default(),
