@@ -218,3 +218,18 @@ fn the_only_paths_kept_from_lf_are_the_named_crlf_fixtures() {
          named CRLF fixtures"
     );
 }
+
+#[test]
+fn no_log_file_is_tracked() {
+    let logs: Vec<String> = HeadCheckout::new()
+        .tracked()
+        .into_iter()
+        .filter(|path| path.ends_with(".log"))
+        .collect();
+    assert!(
+        logs.is_empty(),
+        "a gate or test log is tracked; remove it with `git rm --cached` and keep it out of \
+         the index:\n  {}",
+        logs.join("\n  ")
+    );
+}
