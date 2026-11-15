@@ -68,7 +68,7 @@ The role is machine-readable in `rwv.toml` and surfaces in `rwv status --json` s
 
 ## The recommended pattern: agent workweave as gravity well
 
-The standard workflow for agent delegation is to give the agent its own workweave. *This is a recommended pattern, not a separate tool mode* — the primitives (workweaves, sync, `--retire`, parent tracking) compose into the pattern directly.
+The standard workflow for agent delegation is to give the agent its own workweave. *This is a recommended pattern, not a separate tool mode* — the primitives (workweaves, sync, `--retire`, branch records) compose into the pattern directly.
 
 The shape:
 
@@ -93,7 +93,7 @@ Three properties make this pattern work:
 
 1. **Isolation from human state.** The agent's workweave has its own `node_modules/`, `.venv/`, `target/`. The human's in-progress edits in the primary weave can't disturb the agent's build, and vice versa. Repos with `role = "reference"` get a worktree like every other repo, with read-only tracked files. Where the filesystem allows, a workweave's files share storage with another workspace's copy — by copy-on-write clone, or for a `reference` repo's read-only files by hard link — so a large study-material tree (e.g. a 270 MB upstream codebase) is not duplicated into every workweave, and neither side's edits reach the other.
 2. **Project context preserved.** Unlike "clone a repo into a tempdir," the agent sees the *full* workspace — every repo at the project's lock, with `package.json` workspaces / `go.work` / `Cargo.toml [workspace]` wired up. Cross-repo imports work, integration tests work, the agent's refactors can span repos.
-3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor log --against main --diff`) before running `rwv land --retire` from inside the workweave. `land` lands the workweave's feature into its target — composed in the workweave, then fast-forwarded into the primary. Asymmetric in cost: the workweave absorbs the parent's latest state in step 1 (mostly a no-op on the happy path); then the target fast-forwards to the workweave's tip.
+3. **Verification, then landing.** The human inspects the workweave's state (`rwv -w web-app--agent-refactor log --against main --diff`) before running `rwv land --retire` from inside the workweave. `land` lands the workweave's feature into its target — composed in the workweave, then fast-forwarded into the primary. Asymmetric in cost: the workweave absorbs the target's latest state in step 1 (mostly a no-op on the happy path); then the target fast-forwards to the workweave's tip.
 
 ### When an agent's landing stops
 
@@ -126,6 +126,6 @@ Agents take a path, not a session. The landed tool surface — `rwv prime` for d
 - [Workspace lens](./workspace.md) — the project-as-coordination-entity model
 - [Monorepo lens](./monorepo.md) — workweaves as parallel-work primitive
 - [Hand task to agent](../../how-to/hand-task-to-agent.md) — the operational recipe
-- [Workweave hierarchy](../joints/workweave-hierarchy.md) — parent tracking, one-hop sync
+- [Workweave hierarchy](../joints/workweave-hierarchy.md) — the record that says where a branch lands, and the workweave a branch was created from as provenance
 - [Sync semantics](../joints/sync-semantics.md) — phase model, `--retire`, parallel sync
 - [reference/cli — Scripting helpers](../../reference/cli.md#scripting-helpers) — `prime`, `resolve`, `explain` side by side

@@ -109,7 +109,7 @@ repoweave is a coordination layer, not a VCS wrapper. Two things follow from tha
 
 **Global visibility, local control.** `rwv status`, `rwv doctor` give a bird's-eye view across N repos — branches, tips, lock relations, drift detection. You don't have to round-robin through repositories to find out where things stand.
 
-Ordinary VCS commands stay first-class inside each member repo: `git commit`, `git log`, `git diff` work exactly as they always do, and rwv wraps none of them. What rwv adds is the project layer: `rwv branch` and `rwv switch` move the project repo and every member together, because a branch of the weave is not a branch of one repo.
+Ordinary VCS commands stay first-class inside each member repo: `git commit`, `git log`, `git diff` work exactly as they always do, and rwv wraps none of them. What rwv adds is the project layer: `rwv branch` and `rwv switch` move the project repo and every member together, because a branch of the weave is not a branch of one repo. rwv integrates between project branches because labels make that cross-repo; per-repo porcelain on one member stays the VCS's.
 
 For *coordinated* cross-repo operations where the value is in the coordination — role-aware push policy, lock-precondition checks, manifest-aware ordering — `rwv push` earns its keep. For ad-hoc bulk operations where the coordination is just "do this in each repo," `rwv each` — a plugin, not a core verb — is the right shape. See [verb-vs-composition](../joints/verb-vs-composition.md) for the design principle and [run a command across repos](../../how-to/run-a-command-across-repos.md) for canonical recipes.
 
@@ -141,12 +141,12 @@ A useful heuristic for staying inside the monorepo-ergonomics envelope:
 
 Examples of things this rules out by analogy:
 
-- **You can't cherry-pick between sibling branches of a monorepo subtree to share work** without going through trunk. Likewise, don't cross-pick between sibling workweaves. Coordinate via the shared parent (sync up, then sync down).
+- **You can't cherry-pick between sibling branches of a monorepo subtree to share work** without going through trunk. Likewise, don't cross-pick between sibling workweaves. Coordinate through the branch both land into (`rwv sync` takes it in, `rwv land` lands into it).
 - **You can branch a whole monorepo at once.** The weave equivalent is a project-level branch: `rwv branch create <name>` makes the project branch and a matched branch in every `owned` and `fork` member in one step.
 
 The heuristic is a guideline, not a hard rule. Two patterns worth being explicit about:
 
-**Long-lived workweaves are fine** when the flow direction is clear. A persistent workweave that always tracks the latest released lock is a reasonable architecture, not an anti-pattern. The tool tracks parent edges; the discipline is just "don't skip levels and don't cross-pick."
+**Long-lived workweaves are fine** when the flow direction is clear. A persistent workweave that always tracks the latest released lock is a reasonable architecture, not an anti-pattern. Where a branch lands is its record, not the workweave it was created from; the discipline is just "land where the record says and don't cross-pick."
 
 **Cross-repo branch-name consistency is a UX direction, not a hard rule.** Having `main` everywhere (or all `develop`) reduces cognitive load — but if some member repo's branch is `master` and another's is `trunk`, the workspace still works. The real UX gap is the absence of a one-verb cross-repo branch operation, not the names themselves.
 
@@ -154,8 +154,8 @@ The heuristic is a guideline, not a hard rule. Two patterns worth being explicit
 
 A few discipline-level patterns that keep a weave inside monorepo-ergonomics territory:
 
-- **Don't skip levels in the workweave hierarchy.** Workweaves can form a tree (primary → long-lived workweave → feature workweave); changes propagate one hop at a time. Rebasing a feature workweave directly onto primary (skipping its parent) creates state that's hard to reason about. The tool tracks the parent edge; the operator respects flow direction.
-- **Don't cross-pick between sibling workweaves.** Coordinate through the shared parent. Cross-picks are the polyrepo equivalent of branching off a sibling rather than trunk — git lets you do it, but the result is messy history.
+- **Land where the record says.** A feature records the branch it lands into, written by the spelling that created or opened it; bare `rwv sync` takes that branch in and bare `rwv land` lands into it. The workweave a branch was created from is provenance, and no verb reads it to decide where work goes. Landing a feature somewhere its record does not name is a named one-run `--target`, not a habit.
+- **Don't cross-pick between sibling workweaves.** Coordinate through the branch both land into. Cross-picks are the polyrepo equivalent of branching off a sibling rather than trunk — git lets you do it, but the result is messy history.
 - **Long-lived workweaves are good when upstream/downstream is clear.** A persistent workweave with an explicit "this syncs from primary" or "this is the workweave everyone else syncs from" role is fine; an ambiguous long-lived workweave that's neither tracking nor tracked is a recipe for drift.
 
 These are *guidelines*, not enforced constraints. The tool warns where it can (skip-rebase, sibling sync); the rest is operator awareness. See [workweave hierarchy](../joints/workweave-hierarchy.md) for what the tool tracks vs. what is discipline.

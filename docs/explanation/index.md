@@ -20,7 +20,7 @@
 
 ### Workweaves & branches
 
-- [Workweave hierarchy](./joints/workweave-hierarchy.md) — parent-child relationships between workweaves and flat `<project>--<workweave>` branch naming
+- [Workweave hierarchy](./joints/workweave-hierarchy.md) — the tree of provenance between workweaves, flat `<project>--<workweave>` branch naming, and the records that say where each branch lands
 - [Workweave lifecycle](./joints/workweave-lifecycle.md) — creating, syncing, landing (`land --retire`), and deleting workweaves
 - [Records and modes](./joints/branch-records.md) — how a weave branch is used, written once as its record and published with it
 - [Alignment](./joints/alignment.md) — where members sit for the checked-out branch, and what is reported when they do not
@@ -29,7 +29,7 @@
 
 ### Lock & sync
 
-- [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` is computed from member HEADs on mutation and read as the target only when `clone`, `update` or `sync` materializes it
+- [Lock-as-derived](./joints/lock-as-derived.md) — why `rwv.lock` records the commit each member is pinned at on its branch, is written by verbs from member HEADs and computed across a merge, and is never edited or conflict-resolved by hand
 - [Sync semantics](./joints/sync-semantics.md) — taking a target's work into a branch with `rwv sync`
 - [History and lineage](./joints/history-and-lineage.md) — the history setting, rebasing and stacks, and the lineage rule
 - [Landing](./joints/landing.md) — `rwv land`: compose in the source, then move the target

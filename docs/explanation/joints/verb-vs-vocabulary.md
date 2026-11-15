@@ -138,7 +138,7 @@ is yours to rewrite; under `merge`, a merge commit is composed in CWD
 instead, and the target still only fast-forwards. A `push`/`pull` vocabulary
 would imply the VCS-remote contract (remote is authoritative; local rewrites
 are dangerous) and obscure the local-ownership property that makes either
-choice a local one.
+choice a local one. The target's setting decides how work is integrated; work moving between published branches moves by merge or cherry-pick, whatever the setting; and a rebased published branch is republished only by a named, leased `push --overwrite <repo>`.
 
 The single-repo analog is `sl rebase --dest <bookmark>` or `git rebase
 <branch> && git merge --ff-only`: strategy is available, just without a
