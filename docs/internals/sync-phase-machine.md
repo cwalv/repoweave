@@ -456,8 +456,9 @@ exactly the auto-relock commit Phase 3 writes. That commit is purely
 derived, so manifest tip equality is the accurate "work has converged"
 signal.
 
-Retire is only meaningful inside a workweave. Run from a primary weave,
-it emits a warning and is otherwise a no-op.
+Run from a primary weave, retire removes nothing: it aligns the primary, then
+applies the deletion rule to the feature it landed (`TakeInRecord::feature`,
+recorded with the plan) and reports what survives.
 
 Before retire runs, once the record says `retire`, a landing clears its lease
 on the target's workspace and releases its claim on the target

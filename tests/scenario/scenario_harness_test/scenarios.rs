@@ -7061,6 +7061,39 @@ pub fn a_stopped_sync_with_an_unresolved_lock_prints_the_way_on() -> Scenario {
     )
 }
 
+/// `land --retire` from the primary, whose checkout is the feature: nothing is
+/// removed, and the deletion rule deletes what landed, the feature's branches
+/// and its record, leaving the primary on the target.
+pub fn land_retire_from_the_primary_deletes_what_landed() -> Scenario {
+    let mut steps = two_member_feature_in_primary();
+    steps.extend([
+        Step::rwv(&a(), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .may_rewrite(&[Repo::App, Repo::Lib])
+            .claim(Claim::OutputContains(
+                "deleted projects/proj feat-x (local)",
+            ))
+            .claim(Claim::OutputContains("dropped the record of feat-x"))
+            .claim(Claim::OutputLacks("only meaningful inside a workweave")),
+        Step::git(
+            &a(),
+            Repo::Proj,
+            &["rev-parse", "--verify", "-q", "refs/heads/feat-x"],
+        )
+        .expect(Exit::Code(1)),
+        Step::git(
+            &a(),
+            Repo::App,
+            &["rev-parse", "--verify", "-q", "refs/heads/feat-x"],
+        )
+        .expect(Exit::Code(1)),
+        Step::rwv(&a(), &["branch", "list"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("feat-x")),
+    ]);
+    scenario("land --retire from the primary deletes what landed", steps)
+}
+
 /// A landing's rebase of `app` stops on a file both sides changed. The
 /// refusal names the verb that ran, the repo and the file, and each printed
 /// line runs as printed: the file marked resolved, then the landing continued.

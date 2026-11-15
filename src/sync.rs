@@ -4854,6 +4854,7 @@ fn guard_and_mark<'a>(
             .map(ToString::to_string)
             .collect(),
         merged: plan.merged.iter().cloned().collect(),
+        feature: retire.then(|| landing.feature.to_string()),
         ..op_state::TakeInRecord::default()
     };
     take_in.receiving.insert(
@@ -8410,13 +8411,60 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
             ctx.handler.record_retired(&retired);
             Ok(())
         }
-        Checkout::Primary { .. } => {
-            if emit_text {
-                eprintln!("warning: --retire is only meaningful inside a workweave; ignoring");
-            }
-            Ok(())
-        }
+        Checkout::Primary { .. } => retire_feature_in_primary(ctx),
     }
+}
+
+/// `--retire` from the primary: nothing is removed, and the deletion rule
+/// judges the feature's branches against the branch the landing went into. A
+/// feature the primary still has checked out stays, listed.
+fn retire_feature_in_primary(ctx: &OpContext<'_>) -> anyhow::Result<()> {
+    let project = &ctx.cwd_project_name;
+    let vcs = ctx.project_vcs.as_ref();
+    let Some(feature) = op_state::read_owner(&ctx.owner_workspace_dir)?
+        .and_then(|owner| owner.take_in)
+        .and_then(|take_in| take_in.feature)
+    else {
+        return Ok(());
+    };
+    let feature = crate::branch::named(vcs, project, &ctx.cwd_project_dir, &feature)?;
+    let target = landed_into(ctx, project)?;
+    align_after_landing(ctx, &ctx.cwd_ctx, false);
+    if matches!(
+        vcs.head_attachment(&ctx.cwd_project_dir)?,
+        HeadAttachment::Attached(on) if on.to_string() == feature.as_str()
+    ) {
+        if ctx.handler.emit_text() {
+            eprintln!(
+                "left: {} {feature}: still checked out here, so --retire leaves it and its \
+                 members' branches",
+                crate::workspace::project_rel_path(project)
+            );
+        }
+        ctx.retire_left
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        return Ok(());
+    }
+    let remote_deletes = crate::deletion::RemoteDeletes::default();
+    let rule = crate::deletion::Rule::open(crate::deletion::Request {
+        primary: ctx.cwd_ctx.primary_path(),
+        project,
+        branch: feature,
+        target,
+        discard_unlanded: None,
+        remote_deletes: &remote_deletes,
+        leaving: None,
+        verb: "land",
+    })?;
+    let outcome = rule.apply()?;
+    if ctx.handler.emit_text() {
+        outcome.print();
+    }
+    if outcome.left_something() {
+        ctx.retire_left
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
