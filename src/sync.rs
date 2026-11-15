@@ -2547,7 +2547,7 @@ fn judge_stores(
                 )
             })
             .map_err(|e| crate::refusal::refusing(RefusalKind::UnreadableStatus, e))?;
-        let label = format!("{repo} in submodule {}", crate::workspace::shown(nested));
+        let label = in_submodule(repo, nested);
         if let Some(judged) = crate::diagnosis::judge_edits_as_found(vcs, label, store, files, None)
         {
             dirty.add(judged);
@@ -2674,16 +2674,15 @@ struct Held {
     held: crate::vcs::HeldAlone,
 }
 
+fn in_submodule(held: impl std::fmt::Display, nested: &Path) -> String {
+    format!("{held} in submodule {}", crate::workspace::shown(nested))
+}
+
 impl std::fmt::Display for Held {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match &self.nested {
             None => write!(f, "{}", self.held),
-            Some(nested) => write!(
-                f,
-                "{} in submodule {}",
-                self.held,
-                crate::workspace::shown(nested)
-            ),
+            Some(nested) => f.write_str(&in_submodule(&self.held, nested)),
         }
     }
 }
