@@ -4,7 +4,7 @@ Reference for the on-disk files repoweave reads and writes.
 
 ## `rwv.toml` — project manifest
 
-The source of truth for which repos belong to a project. Committed in the project repo at `projects/<name>/rwv.toml`. The one file on this page you author by hand; rwv writes the rest.
+The source of truth for which repos belong to a project. Committed in the project repo at `projects/<name>/rwv.toml`. Every change to it has a verb (`rwv member …`, `rwv branch set-history`, `rwv lock --commit`), and the file stays plain enough to read and edit: a hand edit is recoverable, and the next verb converges whatever it left. rwv writes the rest.
 
 ```toml
 history = "linear"
