@@ -2275,6 +2275,7 @@ every_scenario!(
     update_remote_at_a_diverged_pin_prints_every_way_on,
     a_replayed_recorded_resolution_stops_the_sync_as_a_conflict,
     a_stopped_sync_with_an_unresolved_lock_prints_the_way_on,
+    a_landing_stopped_on_a_member_conflict_prints_the_way_on,
     a_branchs_dependent_is_no_rebind_candidate,
     a_landing_that_cannot_prune_the_target_prints_the_removal_there,
     a_landings_unpinned_target_member_offers_only_what_runs,
@@ -6297,6 +6298,12 @@ fn a_blocked_prune_prints_the_removal_in_the_blocking_workspace() {
 #[test]
 fn a_dependent_is_left_out_of_the_rebind_candidates() {
     runner::run(scenarios::a_branchs_dependent_is_no_rebind_candidate())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_landing_stopped_on_a_member_conflict_prints_its_way_on() {
+    runner::run(scenarios::a_landing_stopped_on_a_member_conflict_prints_the_way_on())
         .assert_fully_decided_green();
 }
 

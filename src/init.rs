@@ -209,10 +209,13 @@ pub(crate) fn judge_commit_identity(vcs: &dyn crate::vcs::Vcs, dir: &Path) -> an
 }
 
 /// Make the cloned repo at `project_dir`, which holds no `rwv.toml`, a project:
-/// write the skeleton `rwv.toml` and the lock driver's attribute line, and
+/// write the skeleton `rwv.toml` and the lock driver's attribute line, author
+/// the integration files the empty manifest implies as `rwv init` does, and
 /// commit those and nothing else.
 pub(crate) fn make_cloned_repo_a_project(
     vcs: &dyn crate::vcs::Vcs,
+    root: &Path,
+    name: &crate::manifest::ProjectName,
     project_dir: &Path,
     source: &str,
 ) -> anyhow::Result<()> {
@@ -222,6 +225,13 @@ pub(crate) fn make_cloned_repo_a_project(
     if crate::lock_driver::declare_in_working_copy(vcs, project_dir)? {
         written.insert(PathBuf::from(vcs.lock_driver_declaration_file()));
     }
+    crate::activate::author_integration_files(root, name)?;
+    let manifest = Manifest::from_path(&project_dir.join(Manifest::FILE_NAME))?;
+    written.extend(
+        crate::activate::owned_paths(root, name, &manifest)
+            .into_iter()
+            .map(PathBuf::from),
+    );
     commit_written(
         vcs,
         project_dir,

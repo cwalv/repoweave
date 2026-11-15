@@ -7061,6 +7061,40 @@ pub fn a_stopped_sync_with_an_unresolved_lock_prints_the_way_on() -> Scenario {
     )
 }
 
+/// A landing's rebase of `app` stops on a file both sides changed. The
+/// refusal names the verb that ran, the repo and the file, and each printed
+/// line runs as printed: the file marked resolved, then the landing continued.
+pub fn a_landing_stopped_on_a_member_conflict_prints_the_way_on() -> Scenario {
+    scenario(
+        "a landing stopped on a member conflict prints the way on",
+        vec![
+            create("w"),
+            Step::hand_commit(&ww("w"), Repo::App, "proj--w", &[("x.txt", "w\n")]),
+            Step::git(&ww("w"), Repo::App, &["reset", "-q", "--hard"]),
+            Step::rwv(&ww("w"), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::hand_commit(&a(), Repo::App, "main", &[("x.txt", "main\n")]),
+            Step::git(&a(), Repo::App, &["reset", "-q", "--hard"]),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            Step::rwv(&ww("w"), &["land", "--history", "linear"])
+                .expect(Exit::refuses_kind(RefusalKind::OpParked))
+                .may_strand(&[Repo::App])
+                .may_rewrite(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .claim(Claim::OutputContains("land hit conflicts in a member repo"))
+                .claim(Claim::OutputContains("edit x.txt in "))
+                .claim(Claim::OutputLacks("<repo>"))
+                .claim(Claim::OutputLacks("<files>")),
+            Step::git(&ww("w"), Repo::App, &["checkout", "--theirs", "x.txt"]),
+            Step::rwv_printed_holding(&ww("w"), "git -C", "add -- x.txt").expect(Exit::Succeeds),
+            Step::rwv_printed_exactly(&ww("w"), "rwv land --continue")
+                .expect(Exit::Succeeds)
+                .may_rewrite(&[Repo::App])
+                .may_rewind(&[Repo::App])
+                .resolved_by_hand(&[Repo::App]),
+        ],
+    )
+}
+
 /// The VCS replays a recorded resolution of `rwv.toml` and stages it, so the
 /// merge a sync makes stops with nothing unmerged: the sync stops as at any
 /// conflict, naming the continue and the abort, and the continue concludes.

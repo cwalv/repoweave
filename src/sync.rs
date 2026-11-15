@@ -1654,37 +1654,77 @@ impl Phase {
 /// `{resume}` line IS the continue step; merge/cherry-pick
 /// hints still carry their VCS-native continue since rwv cannot resume those.
 fn manifest_repo_failure_message(
-    vcs: &dyn Vcs,
     verb: OpVerb,
     owner: &Path,
-    live_conflict: Option<ConflictOp>,
+    conflicts: &[ConflictedRepo<'_>],
 ) -> String {
     let resume = op_state::resume_command_at(verb, owner);
     let abort = op_state::abort_command_at(owner);
-    match live_conflict {
-        Some(op) => {
-            let hint = vcs.conflict_resolution_hint(op);
-            format!(
-                "sync hit conflicts in one or more member repos (see per-repo lines above).\n\
-                 \n\
-                 To resolve each conflicted repo:\n\
-                   cd <repo>\n\
-                 {hint}\n\
-                 then resume (repos already composed are left as they are):\n\
-                   {resume}\n\
-                 \n\
-                 If you'd rather roll everything back: `{abort}`."
-            )
-        }
-        None => format!(
-            "sync hit failures in one or more member repos (see per-repo lines above).\n\
+    if conflicts.is_empty() {
+        return format!(
+            "{verb} hit failures in one or more member repos (see per-repo lines above).\n\
              \n\
              Fix the underlying issue in each failed repo, then resume (repos already \
              composed are left as they are):\n\
                {resume}\n\
              \n\
              If you'd rather roll everything back: `{abort}`."
-        ),
+        );
+    }
+    let steps: String = conflicts
+        .iter()
+        .map(|conflict| {
+            let checkout = conflict.checkout.display();
+            match conflict.op {
+                ConflictOp::Rebase if !conflict.files.is_empty() => format!(
+                    "  edit {} in {checkout}, then mark them resolved:\n    {}\n",
+                    conflict.files.join(", "),
+                    conflict
+                        .vcs
+                        .hint(crate::vcs::VcsAction::MarkResolved)
+                        .replace("<checkout>", &crate::workspace::quoted(&conflict.checkout))
+                        .replace("<paths>", &conflict.files.join(" ")),
+                ),
+                op => {
+                    let hint =
+                        fill_files(conflict.vcs.conflict_resolution_hint(op), &conflict.files);
+                    format!("  cd {checkout}\n{hint}\n")
+                }
+            }
+        })
+        .collect();
+    let (many, s) = if conflicts.len() == 1 {
+        ("a member repo", "")
+    } else {
+        ("member repos", "s")
+    };
+    format!(
+        "{verb} hit conflicts in {many} (see per-repo lines above).\n\
+         \n\
+         To resolve the conflict{s}:\n\
+         {steps}\
+         then resume (repos already composed are left as they are):\n\
+           {resume}\n\
+         \n\
+         If you'd rather roll everything back: `{abort}`."
+    )
+}
+
+/// A member repo a composing merge or rebase left stopped in a conflict.
+struct ConflictedRepo<'a> {
+    vcs: &'a dyn Vcs,
+    checkout: PathBuf,
+    op: ConflictOp,
+    files: Vec<String>,
+}
+
+/// `hint`, a VCS's resolution steps, with `<files>` replaced by the conflicted
+/// paths where they are known.
+fn fill_files(hint: String, files: &[String]) -> String {
+    if files.is_empty() {
+        hint
+    } else {
+        hint.replace("<files>", &files.join(" "))
     }
 }
 
@@ -1713,9 +1753,12 @@ fn phase1_or_phase3_failure_message(
     let repo_display = cwd_project_dir.display();
     match live_conflict {
         Some(op) => {
-            let hint = vcs.conflict_resolution_hint(op);
+            let hint = fill_files(
+                vcs.conflict_resolution_hint(op),
+                &vcs.unmerged_paths(cwd_project_dir).unwrap_or_default(),
+            );
             format!(
-                "sync failed in {phase_label} (see error above).\n\
+                "{verb} failed in {phase_label} (see error above).\n\
                  \n\
                  Resolve the conflict in {repo_display}:\n\
                    cd {repo_display}\n\
@@ -1727,7 +1770,7 @@ fn phase1_or_phase3_failure_message(
             )
         }
         None => format!(
-            "sync failed in {phase_label} (see error above).\n\
+            "{verb} failed in {phase_label} (see error above).\n\
              \n\
              Fix the underlying issue, then: {resume}\n\
              If you'd rather roll everything back: `{abort}`."
@@ -1772,7 +1815,7 @@ fn per_conflict_bail_message(
     let repo_display = repo.display();
     let entries: String = entries.iter().map(|line| format!("{line}\n")).collect();
     format!(
-        "sync hit a conflict in {repo_display} during {op_label} ({detail}).\n\
+        "{verb} hit a conflict in {repo_display} during {op_label} ({detail}).\n\
          \n\
          To resolve:\n\
            cd {repo_display}\n\
@@ -6431,24 +6474,21 @@ fn run_replay(ctx: &OpContext<'_>) -> anyhow::Result<()> {
         // genuinely left mid-op. Probe the involved repos for a
         // live conflict rather than assuming one from the strategy — a batch of
         // fetch/head-unreadable failures leaves no rebase to `--continue`.
-        let live_conflict = sync_tasks.iter().find_map(|t| {
-            t.vcs
-                .mid_op(&t.abs)
-                .map(|op| (t.vcs.as_ref(), composed_conflict(op)))
-        });
+        let conflicts: Vec<ConflictedRepo<'_>> = sync_tasks
+            .iter()
+            .filter_map(|t| {
+                Some(ConflictedRepo {
+                    vcs: t.vcs.as_ref(),
+                    checkout: t.abs.clone(),
+                    op: composed_conflict(t.vcs.mid_op(&t.abs)?),
+                    files: t.vcs.unmerged_paths(&t.abs).unwrap_or_default(),
+                })
+            })
+            .collect();
         crate::refuse!(
             RefusalKind::OpParked,
             "{}",
-            match live_conflict {
-                Some((vcs, op)) =>
-                    manifest_repo_failure_message(vcs, ctx.verb, &ctx.owner_workspace_dir, Some(op)),
-                None => manifest_repo_failure_message(
-                    ctx.project_vcs.as_ref(),
-                    ctx.verb,
-                    &ctx.owner_workspace_dir,
-                    None,
-                ),
-            }
+            manifest_repo_failure_message(ctx.verb, &ctx.owner_workspace_dir, &conflicts)
         );
     }
 
@@ -12810,7 +12850,7 @@ mod tests {
         .to_string();
 
         assert!(
-            line.contains("strictly ahead of the source's committed tip by 2 commits"),
+            line.contains("2 commits ahead of the source's committed tip, which it contains"),
             "the line must name the baseline it was given; got: {line}"
         );
         assert!(
@@ -13976,8 +14016,8 @@ mod tests {
     /// `rwv abort` strictly AFTER it.
     fn assert_resolution_first_abort_last(msg: &str) {
         let add_pos = msg
-            .find("git add <files>")
-            .unwrap_or_else(|| panic!("expected resolution hint `git add <files>` in: {msg}"));
+            .find(" add ")
+            .unwrap_or_else(|| panic!("expected resolution hint ` add ` in: {msg}"));
         let abort_pos = msg
             .find("rwv abort")
             .unwrap_or_else(|| panic!("expected `rwv abort` mentioned in: {msg}"));
@@ -13995,12 +14035,27 @@ mod tests {
     // step — rwv resumes the rebase natively).
     #[test]
     fn manifest_repo_failure_message_live_conflict_includes_vcs_and_verb_resume() {
+        let vcs = git_vcs();
         let msg = manifest_repo_failure_message(
-            git_vcs().as_ref(),
             OpVerb::Land,
             Path::new("/ws"),
-            Some(ConflictOp::Rebase),
+            &[ConflictedRepo {
+                vcs: vcs.as_ref(),
+                checkout: PathBuf::from("/ws/github/o/lib"),
+                op: ConflictOp::Rebase,
+                files: vec!["a.txt".to_owned(), "b.txt".to_owned()],
+            }],
         );
+        assert!(
+            msg.starts_with("land hit conflicts in a member repo"),
+            "{msg}"
+        );
+        assert!(
+            msg.contains("edit a.txt, b.txt in /ws/github/o/lib, then mark them resolved:")
+                && msg.contains("git -C /ws/github/o/lib add -- a.txt b.txt"),
+            "the repo and its files are filled in: {msg}"
+        );
+        assert!(!msg.contains("<repo>") && !msg.contains("<files>"), "{msg}");
         assert!(
             !msg.contains("git rebase --continue"),
             "rebase hint must NOT spell raw `git rebase --continue`; got: {msg}"
@@ -14022,8 +14077,7 @@ mod tests {
     // message points straight at the verb-derived resume.
     #[test]
     fn manifest_repo_failure_message_no_conflict_omits_vcs_hint() {
-        let msg =
-            manifest_repo_failure_message(git_vcs().as_ref(), OpVerb::Sync, Path::new("/ws"), None);
+        let msg = manifest_repo_failure_message(OpVerb::Sync, Path::new("/ws"), &[]);
         assert!(
             !msg.contains("git rebase --continue")
                 && !msg.contains("git merge --continue")

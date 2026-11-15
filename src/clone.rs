@@ -178,7 +178,13 @@ pub fn run_clone(
             );
         }
         (false, true) => {
-            crate::init::make_cloned_repo_a_project(project_vcs.as_ref(), &project_dir, source)?;
+            crate::init::make_cloned_repo_a_project(
+                project_vcs.as_ref(),
+                workspace_root,
+                &name,
+                &project_dir,
+                source,
+            )?;
         }
     }
 

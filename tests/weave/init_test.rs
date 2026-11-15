@@ -1096,7 +1096,7 @@ fn clone_of_a_repo_with_no_manifest_refuses_leaves_nothing_and_its_printed_line_
     assert_eq!(commit_count(&project), "3");
     assert_eq!(
         common::git_in(&project, &["diff", "--name-only", "HEAD~1", "HEAD"]),
-        ".gitattributes\nrwv.toml"
+        ".gitattributes\nplain.code-workspace\nrwv.toml"
     );
     assert_eq!(
         common::git_in(&project, &["show", "HEAD:.gitattributes"]),
@@ -1115,6 +1115,11 @@ fn clone_of_a_repo_with_no_manifest_refuses_leaves_nothing_and_its_printed_line_
             .trim(),
         "plain"
     );
+    let findings = common::doctor_findings(&ws);
+    assert!(
+        !findings.iter().any(|f| f.starts_with("managed-file")),
+        "the clone ends with no drift: {findings:?}"
+    );
 }
 
 #[test]
@@ -1131,7 +1136,10 @@ fn clone_of_an_empty_repo_refuses_and_its_printed_line_makes_the_first_commit() 
     rwv().args(&line[1..]).current_dir(&ws).assert().success();
     let project = ws.join("projects/unborn");
     assert_eq!(commit_count(&project), "1");
-    assert_eq!(tree_at(&project, "HEAD"), [".gitattributes", "rwv.toml"]);
+    assert_eq!(
+        tree_at(&project, "HEAD"),
+        [".gitattributes", "rwv.toml", "unborn.code-workspace"]
+    );
 }
 
 #[test]

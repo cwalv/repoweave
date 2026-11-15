@@ -34,16 +34,15 @@ then run `rwv sync --continue`, or `rwv abort` to put everything back as it was,
 rwv explain op-parked
 ```
 
-`rwv land` stops the same way and prints a per-repo line, then a longer summary that names `rwv land --continue` and `rwv abort`:
+`rwv land` stops the same way and prints a per-repo line, then a longer summary that names the verb that ran, each conflicted repo with its files filled in, and `rwv land --continue` and `rwv abort`:
 
 ```text
   github/chatly/server: Rebase in <workweave-root>/github/chatly/server hit a conflict; resolve and continue, or abort to roll back
-Error: sync hit conflicts in one or more member repos (see per-repo lines above).
+Error: land hit conflicts in a member repo (see per-repo lines above).
 
-To resolve each conflicted repo:
-cd <repo>
-  # edit conflicted files
-  git add <files>
+To resolve the conflict:
+  edit src/lib.rs in <workweave-root>/github/chatly/server, then mark them resolved:
+    git -C <workweave-root>/github/chatly/server add -- src/lib.rs
 then resume (repos already composed are left as they are):
 rwv land --continue
 
