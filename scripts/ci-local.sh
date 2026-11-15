@@ -196,8 +196,20 @@ cross_check() {
     fi
 }
 
+# A compiler cache server cargo starts on demand inherits the TMPDIR of the run
+# that starts it and keeps it after the run removes it, so every later compile
+# on the host fails to make a temp dir. Starting the server here, under the
+# outer TMPDIR, makes that the one it inherits; one already running is left
+# alone.
+start_compiler_cache_server() {
+    case "${RUSTC_WRAPPER:-}" in
+        sccache | */sccache) "$RUSTC_WRAPPER" --start-server >/dev/null 2>&1 || true ;;
+    esac
+}
+
 with_symlinked_tmpdir() {
     local base gate_tmp status=0
+    start_compiler_cache_server
     base="${TMPDIR:-/tmp}"
     gate_tmp="$(mktemp -d "${base%/}/rwv-gate-tmp.XXXXXX")"
     mkdir "$gate_tmp/real"

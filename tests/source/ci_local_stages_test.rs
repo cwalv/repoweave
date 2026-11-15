@@ -1117,6 +1117,39 @@ fn a_host_that_makes_no_symlink_runs_the_suite_under_the_handed_tmpdir_and_says_
     );
 }
 
+/// A compiler cache server started by the first compile of the run inherits
+/// that run's per-run `TMPDIR` and outlives it, so the script starts the
+/// server itself under the `TMPDIR` it was handed.
+#[test]
+fn a_compiler_cache_server_is_started_under_the_handed_tmpdir_not_the_per_run_one() {
+    let fixture = fixture_repo();
+    let handed = common::tempdir().expect("tempdir");
+    let log_dir = common::tempdir().expect("tempdir");
+    let log = log_dir.path().join("server");
+    let stub = stub_bin_dir();
+    common::write_executable(
+        &stub.path().join("sccache"),
+        "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$TMPDIR\" >> \"$CI_LOCAL_TEST_SERVER_LOG\"\n",
+    );
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=test"],
+        &[
+            ("TMPDIR", handed.path().to_str().unwrap()),
+            ("RUSTC_WRAPPER", "sccache"),
+            ("CI_LOCAL_TEST_SERVER_LOG", log.to_str().unwrap()),
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    assert_eq!(
+        std::fs::read_to_string(&log).unwrap_or_default(),
+        format!("--start-server {}\n", handed.path().display()),
+        "the server must start once, under the handed TMPDIR"
+    );
+}
+
 const FLOOR_HEADER: &str =
     "==> cargo test --release --no-fail-fast --features test-pause (against the oldest git rwv runs on)";
 
