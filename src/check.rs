@@ -3797,7 +3797,7 @@ fn copy_of_another(dir: &Path, checkout: &Path) -> Option<(PathBuf, CopyState)> 
         };
         for entry in entries.flatten() {
             let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
-            if is_dir && entry.file_name() != ".git" {
+            if is_dir && entry.file_name() != crate::git::GIT_DIR_ENTRY_NAME {
                 pending.push(entry.path());
             }
         }
