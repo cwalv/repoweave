@@ -1195,12 +1195,8 @@ fn aborted_keeping(
     steps
 }
 
-fn unkilled(shape: &Shape) -> Vec<Step> {
-    unkilled_with(shape, false)
-}
-
-/// [`unkilled`], with the bystander created where its cells create it when
-/// `with_bystander`.
+/// An unkilled run of the shape, with the bystander created where its cells
+/// create it when `with_bystander`.
 fn unkilled_with(shape: &Shape, with_bystander: bool) -> Vec<Step> {
     let mut steps = (shape.setup)();
     if with_bystander {

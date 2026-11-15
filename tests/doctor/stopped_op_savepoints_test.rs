@@ -254,7 +254,7 @@ enum Unreadable {
     /// A checkout registered with a hold on it, its directory gone.
     HeldRegistrationGone,
     /// The index does not parse.
-    IndexUnreadable,
+    IndexDoesNotParse,
     /// A workweave's record names no operation this rwv reads.
     RecordNamesNoOperation,
 }
@@ -264,7 +264,7 @@ impl Unreadable {
         Self::RecordedGone,
         Self::UnrecordedGone,
         Self::HeldRegistrationGone,
-        Self::IndexUnreadable,
+        Self::IndexDoesNotParse,
         Self::RecordNamesNoOperation,
     ];
 
@@ -299,7 +299,7 @@ impl Unreadable {
                 );
                 std::fs::remove_dir_all(&hand).unwrap();
             }
-            Self::IndexUnreadable => std::fs::write(&index, "{ not json").unwrap(),
+            Self::IndexDoesNotParse => std::fs::write(&index, "{ not json").unwrap(),
             Self::RecordNamesNoOperation => {
                 std::fs::write(stopped.sibling.root.join(".rwv-op"), "{}").unwrap();
             }

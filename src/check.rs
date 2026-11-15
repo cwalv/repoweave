@@ -6471,10 +6471,10 @@ pub fn scan_state_hygiene(
         };
         let named_unreadable = unreadable_roots
             .iter()
-            .any(|root| worktree_path.starts_with(root));
+            .any(|root| CanonicalPath::of(root).contains(&CanonicalPath::of(worktree_path)));
         let held = held_roots
             .iter()
-            .any(|root| worktree_path.starts_with(root));
+            .any(|root| CanonicalPath::of(root).contains(&CanonicalPath::of(worktree_path)));
         if !(withheld && named_unreadable) && !held {
             violations.push(finding);
         }
@@ -6536,7 +6536,7 @@ pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> 
     stores.dedup();
     for store in stores.iter().filter(|store| vcs.is_repo(store)) {
         for checkout in vcs.list_worktrees(store).unwrap_or_default() {
-            if !checkout.starts_with(gone) {
+            if !CanonicalPath::of(gone).contains(&CanonicalPath::of(&checkout)) {
                 continue;
             }
             vcs.release_registration_hold(store, &checkout)?;

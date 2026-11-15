@@ -305,7 +305,7 @@ const ALLOWLIST: &[Allowed] = &[
         callers: &[
             ("remove_worktree", 4),
             ("prune_orphan_worktrees_for", 2),
-            ("prune_stale_worktree_registration", 4),
+            ("prune_stale_worktree_registration", 5),
         ],
         justification: "remove_worktree. NOTE the `--force`: git will remove \
             a DIRTY worktree here, so what protects each caller has to be \
@@ -357,7 +357,12 @@ const ALLOWLIST: &[Allowed] = &[
             workweave::materialize_member, which drops the \
             registration of the very slot it is about to give a worktree, \
             only when nothing stands there; workweave::create_workweave, \
-            which does the same for the project checkout's destination; and \
+            which does the same for the project checkout's destination; \
+            check::forget_gone_workspace, reached only through `rwv doctor --fix \
+            --forget-gone-workspace <dir>`, the operator's consent that the \
+            workspace at <dir> is gone for good, refused when anything stands \
+            at <dir> or an index records it, and dropping only registrations \
+            at or inside <dir> after releasing the hold on each; and \
             workweave::prune_registrations_under, which drops only \
             registrations at or inside a directory its caller removed or never \
             made, each read as stale first: the clean-ups of a workweave delete, \
