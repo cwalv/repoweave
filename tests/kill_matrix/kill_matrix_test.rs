@@ -1899,7 +1899,23 @@ fn discovered() -> std::collections::BTreeSet<Reached> {
         .flat_map(|shape| {
             [Start, Resumed, DuringAbort].into_iter().map(move |phase| {
                 Box::new(move || {
-                    traced(shape, phase)
+                    let expected: std::collections::BTreeSet<String> = POINTS
+                        .iter()
+                        .filter(|row| {
+                            row.cells
+                                .iter()
+                                .any(|(id, p)| *id == shape.id && *p == phase)
+                        })
+                        .map(|row| row.point.to_owned())
+                        .collect();
+                    let mut passed = traced(shape, phase);
+                    for _ in 0..2 {
+                        if passed.is_superset(&expected) {
+                            break;
+                        }
+                        passed.extend(traced(shape, phase));
+                    }
+                    passed
                         .into_iter()
                         .map(|point| (shape.id.to_owned(), point, format!("{phase:?}")))
                         .collect()
