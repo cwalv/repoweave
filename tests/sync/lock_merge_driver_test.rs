@@ -622,3 +622,39 @@ fn the_driver_run_by_hand_with_files_that_are_not_there_refuses_naming_its_form(
         .unwrap();
     assert_eq!(two.status.code(), Some(2), "clap refuses a wrong count");
 }
+
+#[test]
+fn a_clone_of_a_project_with_a_legacy_attribute_is_reported_and_doctor_fix_clears_it() {
+    let tmp = common::tempdir().unwrap();
+    let root = tmp.path().join("ws");
+    std::fs::create_dir_all(root.join("projects")).unwrap();
+    let bare = bare_project(tmp.path(), "legacy", Some("rwv.lock merge=ours\n"));
+    let out = common::rwv()
+        .args(["clone", &common::file_url(&bare)])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", common::cli::describe(&out));
+    let reported = |root: &std::path::Path| {
+        common::doctor_findings(root)
+            .iter()
+            .any(|f| f.starts_with("missing-lock-merge-driver attribute-legacy"))
+    };
+    assert!(reported(&root));
+
+    let fixed = common::rwv()
+        .args(["doctor", "--fix"])
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(fixed.status.success(), "{}", common::cli::describe(&fixed));
+
+    assert!(!reported(&root));
+    assert_eq!(
+        common::git_in(
+            &root.join("projects/legacy"),
+            &["show", "HEAD:.gitattributes"]
+        ),
+        "rwv.lock merge=rwv-lock"
+    );
+}
