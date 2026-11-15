@@ -269,6 +269,9 @@ pub enum Tamper {
     RepointMarkerParent(Place),
     /// Overwrite the operation record with text no parser reads.
     CorruptOpRecord(Place),
+    /// Rewrite the operation record as a release that stamped no schema
+    /// wrote it.
+    OldSchemaOpRecord(Place),
     /// Overwrite the op-state lease with text no parser reads.
     CorruptOpLease(Place),
     DeleteIndex(Machine),
@@ -1974,6 +1977,18 @@ impl Run<'_> {
                     return Err(format!("{}: no operation record", record.display()));
                 }
                 std::fs::write(&record, "{ not a record").map_err(|e| io(&record, e))
+            }
+            Tamper::OldSchemaOpRecord(at) => {
+                let record = sb.place_root(at).join(".rwv-op");
+                let text = std::fs::read_to_string(&record).map_err(|e| io(&record, e))?;
+                let mut value: serde_json::Value = serde_json::from_str(&text)
+                    .map_err(|e| format!("{}: {e}", record.display()))?;
+                value
+                    .as_object_mut()
+                    .ok_or_else(|| format!("{}: not an object", record.display()))?
+                    .remove("schema");
+                std::fs::write(&record, serde_json::to_string(&value).unwrap())
+                    .map_err(|e| io(&record, e))
             }
             Tamper::CorruptOpLease(at) => {
                 let lease = sb.place_root(at).join(".rwv-op-lease");

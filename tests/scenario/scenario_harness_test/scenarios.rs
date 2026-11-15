@@ -5904,7 +5904,7 @@ pub fn sync_refuses_a_pre_schema_target_tip() -> Scenario {
             ),
             Step::git(&a(), Repo::Proj, &["commit", "-am", "old keys"]),
             Step::rwv(&ww("w"), &["sync"])
-                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
                 .claim(Claim::OutputContains("only that, in "))
                 .claim(Claim::OutputContains(
                     "machine-a/weave\n    rwv doctor --fix",
@@ -6557,7 +6557,7 @@ pub fn a_landing_onto_an_emptied_manifest_refuses_as_a_sync_does() -> Scenario {
             Step::hand_commit(&a(), Repo::Proj, "main", &[("rwv.toml", "")]),
             Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
             Step::rwv(&ww("w"), &["land"])
-                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
                 .claim(Claim::OutputContains("holds no `repositories` table"))
                 .claim(Claim::OutputContains(
                     "a commit on main that makes its rwv.toml parse fixes it",
@@ -22261,7 +22261,7 @@ pub fn a_sync_onto_an_emptied_manifest_refuses() -> Scenario {
             Step::hand_commit(&a(), Repo::Proj, "main", &[("rwv.toml", "")]),
             Step::git(&a(), Repo::Proj, &["reset", "-q", "--hard"]),
             Step::rwv(&ww("w"), &["sync"])
-                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectAt))
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
                 .claim(Claim::OutputContains("holds no `repositories` table"))
                 .claim(Claim::OutputContains(
                     "a commit on main that makes its rwv.toml parse fixes it",
@@ -29397,4 +29397,112 @@ pub fn dc24_no_remote_names() -> Scenario {
         seed: Seed::default().forks(),
         steps,
     }
+}
+
+pub fn dc26_migration() -> Scenario {
+    let lib_main = declared_branch_text(Repo::Lib, "main");
+    let lib_old = lib_main.replace("branch =", "version =");
+    scenario(
+        "dc26: a weave an earlier release wrote refuses naming its fix, and the fix converges",
+        vec![
+            Step::hand_edit(&a(), Repo::Proj, "rwv.toml", &lib_main, &lib_old),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["commit", "-qam", "an earlier release's keys"],
+            ),
+            Step::rwv(&a(), &["lock"])
+                .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectHere))
+                .claim(Claim::OutputContains("rwv doctor --fix")),
+            Step::rwv_printed_exactly(&a(), "rwv doctor --fix").expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["show", "--name-only", "--format=", "HEAD"],
+            )
+            .claim(Claim::OutputLine("rwv.toml")),
+            Step::rwv(&a(), &["lock"]).expect(Exit::Succeeds),
+            Step::hand_edit(
+                &a(),
+                Repo::Proj,
+                ".gitattributes",
+                "merge=rwv-lock",
+                "merge=rwv-ours",
+            ),
+            Step::git(&a(), Repo::Proj, &["config", "merge.rwv-ours.driver", "true"]),
+            Step::git(&a(), Repo::Proj, &["commit", "-qam", "the old driver"]),
+            Step::rwv(&a(), &["lock", "--commit"])
+                .expect(Exit::refuses(
+                    Repo::Proj,
+                    State::MissingLockMergeDriverAttributeLegacy,
+                ))
+                .claim(Claim::Judged(
+                    Repo::Proj,
+                    State::MissingLockMergeDriverConfigLegacy,
+                ))
+                .claim(Claim::OutputContains("rwv doctor --fix")),
+            Step::rwv_printed_exactly(&a(), "rwv doctor --fix").expect(Exit::Succeeds),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["show", "--name-only", "--format=", "HEAD"],
+            )
+            .claim(Claim::OutputLine(".gitattributes")),
+            Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+            create("w1"),
+            Step::tamper(
+                "write the index as an earlier release kept it",
+                Tamper::MoveIndexToOldPath(Machine::A),
+            ),
+            Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
+                .expect(Exit::refuses_kind(RefusalKind::UnreadableWorkweaveIndex))
+                .claim(Claim::OutputContains("doctor --fix")),
+            Step::rwv_printed(&a(), "rwv -C")
+                .expect(Exit::Succeeds)
+                .claim(Claim::IndexFile {
+                    machine: Machine::A,
+                    at: IndexAt::Common,
+                    present: true,
+                })
+                .claim(Claim::IndexBasedir {
+                    machine: Machine::A,
+                    dir: None,
+                }),
+            Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
+                .pushes(Remote::origin(Repo::Proj), "main"),
+            Step::commit(&a(), Repo::Proj, "tombstoned"),
+            Step::git(
+                &a(),
+                Repo::Proj,
+                &["update-ref", "refs/rwv/pre-op/1779769917405921588", "HEAD"],
+            ),
+            Step::git(&a(), Repo::Proj, &["reset", "--hard", "HEAD~1"])
+                .may_rewrite(&[Repo::Proj])
+                .may_strand(&[Repo::Proj]),
+            Step::rwv(&a(), &["doctor", "--fix"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "orphaned-savepoint for projects/proj: kept as a backup",
+                )),
+            Step::rwv(&a(), &["backup", "list", "--project", "proj"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(" tombstoned")),
+            Step::commit(&ww("w1"), Repo::App, "w1-app"),
+            Step::rwv_paused(&ww("w1"), &["land"], "composed", "landing"),
+            Step::kill("landing"),
+            Step::tamper(
+                "rewrite w1's op record as an earlier release wrote it",
+                Tamper::OldSchemaOpRecord(ww("w1")),
+            ),
+            Step::rwv(&ww("w1"), &["abort"])
+                .expect(Exit::refuses_kind(RefusalKind::UnreadableOpRecord))
+                .claim(Claim::OutputContains("abort --discard-unreadable-record")),
+            Step::rwv_printed(&ww("w1"), "rwv -C")
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("released the lease on")),
+            Step::rwv(&ww("w1"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("operation record")),
+        ],
+    )
 }
