@@ -472,6 +472,8 @@ pub fn corpus() -> Vec<CheckViolation> {
         },
         CheckViolation::ProjectlessDir {
             dir: path("/ws/projects/scaffold"),
+            entry_count: 1,
+            first_entries: vec!["notes.txt".into()],
         },
         CheckViolation::UnnameableProject {
             dir: path("/ws/projects/bad--name"),

@@ -239,15 +239,17 @@ fn doctor_reports_both_states_and_only_when_they_are_there() {
     );
 }
 
-/// The text report carries the remedy, and the remedy is not one the state
-/// blocks: `rwv init` mints the directory and refuses one that is there, so
-/// the line names writing the manifest instead.
+/// A projectless directory holding something is reported with what it holds
+/// and the way out that keeps it; `rwv init` refuses a directory that is
+/// there, so it is not the repair named.
 #[test]
-fn the_projectless_report_names_a_remedy_the_state_allows() {
+fn the_projectless_report_names_what_the_directory_holds_and_a_remedy_the_state_allows() {
     let tmp = common::tempdir().unwrap();
     let ws = make_weave(tmp.path());
     make_project(&ws, "alpha");
-    std::fs::create_dir_all(ws.join("projects").join("scaffold")).unwrap();
+    let scaffold = ws.join("projects").join("scaffold");
+    std::fs::create_dir_all(&scaffold).unwrap();
+    std::fs::write(scaffold.join("notes.txt"), "mine").unwrap();
 
     let out = common::rwv()
         .args(["doctor", "--all"])
@@ -260,14 +262,55 @@ fn the_projectless_report_names_a_remedy_the_state_allows() {
         .find(|l| l.contains("scaffold"))
         .unwrap_or_else(|| panic!("the text report must name the directory:\n{text}"));
     assert!(
-        line.contains("rwv.toml") && line.contains("remove the directory"),
-        "the line must say what to do next: {line}"
+        line.contains("holds 1 entry (notes.txt)")
+            && line.contains("rwv.toml")
+            && line.contains("remove the directory"),
+        "the line must say what it holds and what to do next: {line}"
     );
+    assert!(!line.contains("rwv init"), "{line}");
+
+    common::rwv()
+        .args(["doctor", "--all", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
     assert!(
-        !line.contains("rwv init"),
-        "`rwv init` refuses a directory that already exists, so naming it as \
-         the repair sends the operator into a refusal: {line}"
+        scaffold.join("notes.txt").exists(),
+        "--fix must not remove a directory that holds something"
     );
+}
+
+/// An empty projectless directory holds nothing to lose: `doctor --fix`
+/// removes it, and the report before the fix says so.
+#[test]
+fn doctor_fix_removes_an_empty_projectless_directory() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_weave(tmp.path());
+    make_project(&ws, "alpha");
+    let scaffold = ws.join("projects").join("scaffold");
+    std::fs::create_dir_all(&scaffold).unwrap();
+
+    let before = common::rwv()
+        .args(["doctor", "--all"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&before.stdout).into_owned();
+    assert!(
+        text.lines().any(|l| l.contains("scaffold")
+            && l.contains("it is empty, and `rwv doctor --fix` removes it")),
+        "{text}"
+    );
+
+    let fixed = common::rwv()
+        .args(["doctor", "--all", "--fix"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&fixed.stdout).into_owned();
+    assert!(text.contains("[fixed] core: projectless-dir"), "{text}");
+    assert!(!scaffold.exists());
+    assert!(!doctor_kinds(&ws).contains(&"projectless-dir".to_string()));
 }
 
 /// The orientation surfaces and the registry passes name the same set. Bare

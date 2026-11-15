@@ -1783,11 +1783,26 @@ Schema:
           "type": "object",
           "required": [
             "absolute_path",
+            "entry_count",
+            "first_entries",
             "kind"
           ],
           "properties": {
             "absolute_path": {
               "$ref": "#/definitions/WirePath"
+            },
+            "entry_count": {
+              "description": "How many entries the directory holds directly.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0.0
+            },
+            "first_entries": {
+              "description": "The first of their names, in order.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "kind": {
               "type": "string",

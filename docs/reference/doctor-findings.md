@@ -75,7 +75,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`lock-pinned-by-name`](#lock-pinned-by-name) | Warning | Report-only |
 | [`head-unreadable`](#head-unreadable) | Error | Report-only |
 | [`projects-dir-unreadable`](#projects-dir-unreadable) | Error | Report-only |
-| [`projectless-dir`](#projectless-dir) | Warning | Report-only |
+| [`projectless-dir`](#projectless-dir) | Warning | Auto-fixable when the directory is empty; otherwise Report-only |
 | [`unnameable-project`](#unnameable-project) | Warning | Report-only |
 | [`missing-lock-merge-driver`](#missing-lock-merge-driver) (`attribute-absent`, `attribute-legacy`, `config-absent`, `config-legacy`) | Warning | Auto-fixable |
 | [`lock-merge-driver-unreadable`](#lock-merge-driver-unreadable) | Warning | Report-only |
@@ -460,8 +460,8 @@ permissions (or whatever is blocking the listing) and re-run `rwv doctor`.
 
 ### `projectless-dir`
 
-**Warning. Report-only.** A directory under `projects/` with no `rwv.toml`
-anywhere below it. A project is a directory under `projects/` that holds an
+**Warning. Auto-fixable when the directory is empty; otherwise Report-only.**
+A directory under `projects/` with no `rwv.toml` anywhere below it. A project is a directory under `projects/` that holds an
 `rwv.toml`, named by its path relative to `projects/`, so this directory is
 not one and contains none — nothing enumerates it, and no verb can act on it.
 
@@ -472,9 +472,12 @@ listing rwv prints. A directory that only *holds* projects — `projects/acme/`
 above `projects/acme/web-app/` — is not reported: it has a manifest below it,
 which is what makes it a namespace rather than a stray.
 
-**What to do:** write an `rwv.toml` in it — a bare `[repositories]` table is
-enough — or remove the directory. `rwv init` is not the repair: it mints the
-directory, and refuses one that is already there.
+**What to do:** an empty directory holds nothing: `rwv doctor --fix` removes it.
+One that holds something is reported with its entry count and first names, and
+is left: write an `rwv.toml` in it — a bare `[repositories]` table is enough —
+or move what you want out and remove the directory. `rwv init` is not the
+repair: it mints the directory, and refuses one that is already there. The
+finding carries `entry_count` and `first_entries`.
 
 ### `unnameable-project`
 

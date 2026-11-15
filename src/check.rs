@@ -154,8 +154,15 @@ pub enum CheckViolation {
     /// A directory under `projects/` holding no `rwv.toml` at any depth below
     /// it. It is not a project and contains none, so every enumeration walks
     /// past it in silence — which is what an operator who created it by hand
-    /// reads as rwv having accepted it.
-    ProjectlessDir { dir: PathBuf },
+    /// reads as rwv having accepted it. `--fix` removes one that holds
+    /// nothing at all.
+    ProjectlessDir {
+        dir: PathBuf,
+        /// How many entries the directory holds directly.
+        entry_count: usize,
+        /// The first of their names, in order.
+        first_entries: Vec<String>,
+    },
 
     /// A directory under `projects/` that holds an `rwv.toml` but whose path
     /// relative to `projects/` is not a name [`ProjectName::new`] accepts.
@@ -700,11 +707,18 @@ impl CheckViolation {
             | CheckViolation::LockMergeDriverUnreadable { .. }
             | CheckViolation::HeadUnreadable { .. }
             | CheckViolation::ProjectsDirUnreadable { .. }
-            | CheckViolation::ProjectlessDir { .. }
             | CheckViolation::UnnameableProject { .. }
             | CheckViolation::LockPinnedByName { .. }
             | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
+
+            CheckViolation::ProjectlessDir { entry_count, .. } => {
+                if *entry_count == 0 {
+                    Auto
+                } else {
+                    ReportOnly
+                }
+            }
 
             CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
@@ -2131,6 +2145,10 @@ pub enum ViolationOutput {
     },
     ProjectlessDir {
         absolute_path: WirePath,
+        /// How many entries the directory holds directly.
+        entry_count: usize,
+        /// The first of their names, in order.
+        first_entries: Vec<String>,
     },
     UnnameableProject {
         absolute_path: WirePath,
@@ -2590,8 +2608,14 @@ impl ViolationOutput {
                 path: WirePath::of(&path),
                 error,
             },
-            CheckViolation::ProjectlessDir { dir } => Self::ProjectlessDir {
+            CheckViolation::ProjectlessDir {
+                dir,
+                entry_count,
+                first_entries,
+            } => Self::ProjectlessDir {
                 absolute_path: WirePath::of(&dir),
+                entry_count,
+                first_entries,
             },
             CheckViolation::UnnameableProject {
                 dir,
@@ -6972,14 +6996,30 @@ impl CheckViolation {
                      is invisible to this scan",
                 path.display()
             ),
-            CheckViolation::ProjectlessDir { dir } => format!(
-                "{}: directory under projects/ holds no {} at any depth, so it is \
-                     not a project and rwv lists nothing for it; write a {} there \
-                     (`[repositories]` alone is enough) or remove the directory",
-                dir.display(),
-                Manifest::FILE_NAME,
-                Manifest::FILE_NAME,
-            ),
+            CheckViolation::ProjectlessDir {
+                dir,
+                entry_count,
+                first_entries,
+            } => {
+                let held = if entry_count == 0 {
+                    "it is empty, and `rwv doctor --fix` removes it".to_owned()
+                } else {
+                    format!(
+                        "it holds {entry_count} entr{} ({}): write a {} there \
+                         (`[repositories]` alone is enough), or move what you want out and \
+                         remove the directory",
+                        if entry_count == 1 { "y" } else { "ies" },
+                        first_entries.join(", "),
+                        Manifest::FILE_NAME,
+                    )
+                };
+                format!(
+                    "{}: directory under projects/ holds no {} at any depth, so it is \
+                     not a project and rwv lists nothing for it; {held}",
+                    dir.display(),
+                    Manifest::FILE_NAME,
+                )
+            }
             CheckViolation::UnnameableProject {
                 dir,
                 derived,
@@ -9514,6 +9554,27 @@ fn apply_finding_repairs(
                 None => false,
             },
 
+            CheckViolation::ProjectlessDir {
+                dir,
+                entry_count: 0,
+                ..
+            } => match std::fs::remove_dir(dir) {
+                Ok(()) => {
+                    outln!(
+                        "[fixed] core: projectless-dir: removed the empty directory {}",
+                        dir.display()
+                    );
+                    true
+                }
+                Err(e) => {
+                    fix_errors.push(format!(
+                        "projectless-dir --fix failed: {} was not removed: {e}",
+                        dir.display()
+                    ));
+                    true
+                }
+            },
+
             CheckViolation::UnrecognizedSavepointRef {
                 workweave,
                 repo,
@@ -11108,7 +11169,20 @@ fn collect_doctor_violations(
         });
     }
     for dir in &world.project_scan.projectless {
-        violations.push(CheckViolation::ProjectlessDir { dir: dir.clone() });
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        violations.push(CheckViolation::ProjectlessDir {
+            dir: dir.clone(),
+            entry_count: names.len(),
+            first_entries: names.iter().take(3).cloned().collect(),
+        });
     }
     for unnameable in &world.project_scan.unnameable {
         violations.push(CheckViolation::UnnameableProject {
