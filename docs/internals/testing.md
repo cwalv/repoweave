@@ -505,7 +505,12 @@ between sandboxes), each branch's tree listing (without `rwv.lock` and
 `rwv.toml`, whose text carries the sandbox path), the backups under
 `refs/rwv/backup` (a tip-named backup as `<tip>`), status, and the manifest and
 lock text. Abort leaves the backups as captured but for the slots it keeps,
-named per shape. Steps run with no standing allowance: the killed verb, its
+named per shape. Each shape also has one cell holding its operation (stopped
+where it stops, else killed at the point its abort-phase cells start from) in
+which `rwv doctor --fix` runs in the primary and in a detached seat the
+operation does not touch before the abort, which must end as the plain abort
+does: a repair run elsewhere in the weave leaves an operation what its abort
+restores from. Steps run with no standing allowance: the killed verb, its
 continue and its abort are given only the pins they rewind and the declared
 branches they restore or rewrite, per shape. A point a verb passes before it
 has written its record has a rerun in place of a continue. A point it passes

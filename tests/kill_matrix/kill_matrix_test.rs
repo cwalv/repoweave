@@ -50,6 +50,10 @@ enum Ending {
     Continue,
     Abort,
     AbortInTarget,
+    /// `rwv doctor --fix` in the primary and in a seat the operation does not
+    /// touch, then `rwv abort`: a repair run elsewhere in the weave leaves the
+    /// operation what its abort restores from.
+    AbortAfterDoctorElsewhere,
 }
 
 impl Ending {
@@ -58,6 +62,7 @@ impl Ending {
             Ending::Continue => "continue",
             Ending::Abort => "abort",
             Ending::AbortInTarget => "abort-in-target",
+            Ending::AbortAfterDoctorElsewhere => "abort after doctor elsewhere",
         }
     }
 }
@@ -1120,6 +1125,17 @@ fn in_the_target(shape: &Shape, point: &str) -> InTheTarget {
 }
 
 fn aborted(shape: &Shape, typed_at: Place, point: &str, in_target: bool) -> Vec<Step> {
+    aborted_keeping(shape, typed_at, point, in_target, abort_keeps(shape))
+}
+
+/// [`aborted`], its abort keeping as backups the slots `kept` names.
+fn aborted_keeping(
+    shape: &Shape,
+    typed_at: Place,
+    point: &str,
+    in_target: bool,
+    kept: &'static [&'static str],
+) -> Vec<Step> {
     let ends = if recorded(point) {
         Exit::Succeeds
     } else {
@@ -1149,7 +1165,7 @@ fn aborted(shape: &Shape, typed_at: Place, point: &str, in_target: bool) -> Vec<
     let ender = settled(shape, ender.expect(ends));
     let ender = ender.claim(Claim::BackupsAsCaptured {
         name: "before",
-        kept: abort_keeps(shape),
+        kept,
     });
     steps.push(if shape.refreshes_drift {
         ender.claim(Claim::BranchesAsCaptured("before"))
@@ -1216,8 +1232,36 @@ fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
     }
 }
 
+/// The seat [`Ending::AbortAfterDoctorElsewhere`] runs `rwv doctor --fix` in,
+/// which no shape's operation touches: detached, so it lands into nothing.
+const BYSTANDER: &str = "bystander";
+
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
-    let mut steps = until_stopped(shape, phase, point);
+    let mut steps = match ending {
+        Ending::AbortAfterDoctorElsewhere => vec![Step::rwv(
+            &a(),
+            &[
+                "workweave",
+                "create",
+                "--project",
+                "proj",
+                BYSTANDER,
+                "--detach",
+                "main",
+            ],
+        )
+        .expect(Exit::Succeeds)],
+        _ => Vec::new(),
+    };
+    match (ending, &shape.stop) {
+        (Ending::AbortAfterDoctorElsewhere, Some(stop)) => {
+            steps.extend((shape.setup)());
+            steps.extend(holding(shape));
+            steps.push(Step::capture("before"));
+            steps.push(run_of(shape, (stop.exit)(), shape.start));
+        }
+        _ => steps.extend(until_stopped(shape, phase, point)),
+    }
     if already_ended(shape, point) {
         steps.extend(savepoints_outlive(shape));
         return steps;
@@ -1231,6 +1275,19 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
             point,
             true,
         )),
+        Ending::AbortAfterDoctorElsewhere => {
+            for at in [a(), ww(BYSTANDER)] {
+                steps.push(settled(
+                    shape,
+                    Step::rwv(&at, &["doctor", "--fix"]).expect(Exit::Succeeds),
+                ));
+            }
+            let kept = match shape.stop {
+                Some(_) => &["aborted", "aborted-working-copy"],
+                None => abort_keeps(shape),
+            };
+            steps.extend(aborted_keeping(shape, (shape.at)(), point, false, kept));
+        }
     }
     steps
 }
@@ -1241,6 +1298,9 @@ fn named(shape: &Shape, phase: Phase, point: &str, ending: Ending) -> String {
         Phase::Resumed => " resumed",
         Phase::DuringAbort => " during abort",
     };
+    if point == STOPPED {
+        return format!("{} stopped, {}", shape.id, ending.word());
+    }
     format!("{} killed at {point}{phase}, {}", shape.id, ending.word())
 }
 
@@ -1826,6 +1886,42 @@ fn endings(shape: &Shape, phase: Phase, point: &str) -> Vec<Ending> {
     endings
 }
 
+/// Every cell of the shape: each point it reaches with each ending there,
+/// and once [`Ending::AbortAfterDoctorElsewhere`], holding its operation:
+/// stopped where the shape stops, else killed at `abort_after`, or, for a
+/// landing that waits on another's claim, where it waits.
+fn cell_runs(shape: &Shape) -> Vec<(&'static str, Phase, Ending)> {
+    let mut runs: Vec<_> = cells_of(shape)
+        .into_iter()
+        .flat_map(|(point, phase)| {
+            endings(shape, phase, point)
+                .into_iter()
+                .map(move |ending| (point, phase, ending))
+        })
+        .collect();
+    runs.push((
+        doctor_elsewhere_point(shape),
+        Start,
+        Ending::AbortAfterDoctorElsewhere,
+    ));
+    runs
+}
+
+/// What [`Ending::AbortAfterDoctorElsewhere`] names the place the shape holds
+/// its operation at: [`STOPPED`] for a shape that stops, else the point it is
+/// killed at.
+fn doctor_elsewhere_point(shape: &Shape) -> &'static str {
+    match (&shape.stop, shape.contender) {
+        (Some(_), _) => STOPPED,
+        (None, Some(Contention::Live)) => "landing-claim-held",
+        (None, None) => shape.abort_after,
+    }
+}
+
+/// Where a shape that stops holds its operation, named as a point no source
+/// declares.
+const STOPPED: &str = "its stop";
+
 const STAGE: &str = "scripts/ci-local.sh --stages=kill-matrix";
 
 fn run_shape(id: &str) {
@@ -1836,13 +1932,8 @@ fn run_shape(id: &str) {
     let shape = shape(id);
     let reference = reference_end(shape);
     let reference = reference.as_str();
-    let jobs: Vec<Box<dyn FnOnce() -> Option<String> + Send>> = cells_of(shape)
+    let jobs: Vec<Box<dyn FnOnce() -> Option<String> + Send>> = cell_runs(shape)
         .into_iter()
-        .flat_map(|(point, phase)| {
-            endings(shape, phase, point)
-                .into_iter()
-                .map(move |ending| (point, phase, ending))
-        })
         .filter(|(point, phase, ending)| {
             std::env::var("KILL_MATRIX_ONLY").map_or(true, |only| {
                 named(shape, *phase, point, *ending).contains(&only)
@@ -1942,6 +2033,26 @@ fn every_shape_has_a_test_and_a_cell() {
             shape.id
         );
         assert!(!cells_of(shape).is_empty(), "{} has no cell", shape.id);
+    }
+}
+
+/// Every shape is killed once holding its operation, at its `abort_after`,
+/// and aborted after `rwv doctor --fix` has run elsewhere in the weave.
+#[test]
+fn every_shape_aborts_once_after_a_doctor_fix_elsewhere() {
+    for shape in SHAPES {
+        let point = doctor_elsewhere_point(shape);
+        assert!(recorded(point), "{}", shape.id);
+        let after_doctor: Vec<_> = cell_runs(shape)
+            .into_iter()
+            .filter(|(_, _, ending)| *ending == Ending::AbortAfterDoctorElsewhere)
+            .collect();
+        assert_eq!(
+            after_doctor,
+            [(point, Start, Ending::AbortAfterDoctorElsewhere)],
+            "{}",
+            shape.id
+        );
     }
 }
 
