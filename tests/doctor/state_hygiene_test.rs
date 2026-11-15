@@ -1029,10 +1029,10 @@ fn a_plain_sync_op_does_not_own_a_target_side_savepoint() {
 
 /// A ref under the savepoint namespace that no op id names is not a savepoint
 /// rwv filed: a hand-made ref, a damaged name, or one a different rwv wrote.
-/// It is reported, never dropped (what it points at is unknown), and it is
-/// not mistaken for an orphaned savepoint.
+/// It is reported, removed by `--fix` (a commit only it reaches is kept as a
+/// backup first), and it is not mistaken for an orphaned savepoint.
 #[test]
-fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
+fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_fixed_away() {
     let tmp = common::tempdir().unwrap();
     let root = make_workspace(tmp.path(), "ws");
 
@@ -1091,10 +1091,13 @@ fn a_ref_in_the_savepoint_namespace_that_names_no_op_is_reported_and_kept() {
         "nested/leaf",
         "1700000000000000000/elsewhere/main",
     ] {
-        common::git_in(
-            &repo_abs,
-            &["rev-parse", "--verify", &format!("refs/rwv/pre-op/{name}")],
-        );
+        let held = common::git()
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("refs/rwv/pre-op/{name}"))
+            .current_dir(&repo_abs)
+            .output()
+            .unwrap();
+        assert!(!held.status.success(), "--fix removes the ref {name}");
     }
 }
 

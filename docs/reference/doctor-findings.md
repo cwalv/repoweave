@@ -75,7 +75,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`lock-pinned-by-name`](#lock-pinned-by-name) | Warning | Report-only |
 | [`head-unreadable`](#head-unreadable) | Error | Report-only |
 | [`projects-dir-unreadable`](#projects-dir-unreadable) | Error | Report-only |
-| [`projectless-dir`](#projectless-dir) | Warning | Auto-fixable when the directory is empty; otherwise Report-only |
+| [`projectless-dir`](#projectless-dir) | Warning | Auto-fixable |
 | [`unnameable-project`](#unnameable-project) | Warning | Report-only |
 | [`missing-lock-merge-driver`](#missing-lock-merge-driver) (`attribute-absent`, `attribute-legacy`, `config-absent`, `config-legacy`) | Warning | Auto-fixable |
 | [`lock-merge-driver-unreadable`](#lock-merge-driver-unreadable) | Warning | Report-only |
@@ -89,7 +89,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`unreadable-workweave-index`](#unreadable-workweave-index) | Error | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `dangling-parent`, `unregistered-workweave`, `stale-registry-entry` | Warning | Auto-fixable |
 | [`workweave-tree-integrity`](#workweave-tree-integrity) / `parent-chain-anomaly`, `unregistered-dir`, `foreign-primary`, `foreign-primary-other-workspace`, `unreadable-marker`, `misnamed-dir`, `nested-workweave-dir` | Warning | Report-only |
-| [`workweave-tree-integrity`](#workweave-tree-integrity) / `duplicate-name` | Warning | Auto-fixable for a copy holding no work; otherwise Report-only |
+| [`workweave-tree-integrity`](#workweave-tree-integrity) / `duplicate-name` | Warning | Auto-fixable |
 | [`workweave-drift`](#workweave-drift) / `missing`, `symlink`, `dangling-link` | Error | Auto-fixable |
 | [`workweave-drift`](#workweave-drift) / `missing-unfetched`, `symlink-unfetched` | Error | Report-only |
 | [`workweave-drift`](#workweave-drift) / `dangling-link-unfetched` | Error | Report-only by default (`--abandon-lost-pins`) |
@@ -461,8 +461,7 @@ permissions (or whatever is blocking the listing) and re-run `rwv doctor`.
 
 ### `projectless-dir`
 
-**Warning. Auto-fixable when the directory is empty; otherwise Report-only.**
-A directory under `projects/` with no `rwv.toml` anywhere below it. A project is a directory under `projects/` that holds an
+**Warning. Auto-fixable.** `--fix` removes only an empty one. A directory under `projects/` with no `rwv.toml` anywhere below it. A project is a directory under `projects/` that holds an
 `rwv.toml`, named by its path relative to `projects/`, so this directory is
 not one and contains none — nothing enumerates it, and no verb can act on it.
 
@@ -854,8 +853,7 @@ rwv's to perform, and in the unrecoverable case the target is not derivable.
 
 #### `duplicate-name`
 
-**Warning. Auto-fixable for a copy holding no work; otherwise Report-only.**
-The markers of more than one directory claim one workweave name, as a
+**Warning. Auto-fixable.** `--fix` removes only a copy holding no work. The markers of more than one directory claim one workweave name, as a
 hand-copied or hand-edited marker leaves. The finding
 lists every claimant. Until one claim stands, `rwv doctor --fix` adopts none of
 them over the entry the index holds, the index rebuild lists none of them, a

@@ -1229,15 +1229,15 @@ fn the_doc_check_reports_a_comment_that_drifted_from_the_register() {
     let register = register();
 
     let flipped = CHECK_RS.replace(
-        "    /// A ref under the savepoint namespace that no op id names. rwv filed",
-        "    /// Auto-fixable. A ref under the savepoint namespace that no op id names. rwv filed",
+        "    /// A directory under `projects/` that holds an `rwv.toml` but whose path",
+        "    /// Auto-fixable. A directory under `projects/` that holds an `rwv.toml` but whose path",
     );
     assert_ne!(flipped, CHECK_RS, "the seeded edit matched nothing");
     let found = doc_contradictions(&flipped, &register);
     assert!(
         found
             .iter()
-            .any(|f| f.contains("UnrecognizedSavepointRef") && f.contains("Auto-fixable")),
+            .any(|f| f.contains("UnnameableProject") && f.contains("Auto-fixable")),
         "a doc claiming a repair the register withholds must be reported; got:\n  {}",
         found.join("\n  ")
     );
@@ -1409,6 +1409,19 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
                 "member-permissions/writable-reference",
                 "member-permissions/read-only-member",
             ]),
+        ),
+        // --- apply_finding_repairs -------------------------------------
+        (
+            "a copy of workweave",
+            Findings(&["workweave-tree-integrity/duplicate-name"]),
+        ),
+        (
+            "projectless-dir: removed the empty directory",
+            Findings(&["projectless-dir"]),
+        ),
+        (
+            "unrecognized-savepoint-ref for",
+            Findings(&["unrecognized-savepoint-ref"]),
         ),
         // --- apply_workspace_repairs -----------------------------------
         (

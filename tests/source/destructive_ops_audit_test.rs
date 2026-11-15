@@ -638,6 +638,19 @@ const ALLOWLIST: &[Allowed] = &[
             it still sits at the tip the operation wrote).",
     },
     Allowed {
+        file: "check.rs",
+        pattern: "remove_dir_all",
+        count: 1,
+        callers: &[],
+        justification: "the doctor fix for a duplicate workweave name: removes \
+            a claimant directory only after copy_of_another proved, at scan \
+            time and again immediately before the removal, that its project \
+            checkout is recorded in a directory that still stands and that \
+            every checkout inside it reports no changed or untracked path. \
+            The original is never named, and a copy holding any work is \
+            reported and left.",
+    },
+    Allowed {
         file: "git/records.rs",
         pattern: "\"update-ref\"",
         count: 1,

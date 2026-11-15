@@ -712,13 +712,7 @@ impl CheckViolation {
             | CheckViolation::UnreadableOwnedState { .. }
             | CheckViolation::PhantomMergeDriver { .. } => ReportOnly,
 
-            CheckViolation::ProjectlessDir { entry_count, .. } => {
-                if *entry_count == 0 {
-                    Auto
-                } else {
-                    ReportOnly
-                }
-            }
+            CheckViolation::ProjectlessDir { .. } => Auto,
 
             CheckViolation::DanglingActiveProject { .. }
             | CheckViolation::UnreadableWorkweaveIndex { .. }
@@ -778,13 +772,7 @@ impl CheckViolation {
                 | WorkweaveTreeIntegrityKind::UnreadableMarker { .. }
                 | WorkweaveTreeIntegrityKind::NestedWorkweaveDir { .. }
                 | WorkweaveTreeIntegrityKind::MisnamedDir { .. } => ReportOnly,
-                WorkweaveTreeIntegrityKind::DuplicateName { removable, .. } => {
-                    if removable.is_empty() {
-                        ReportOnly
-                    } else {
-                        Auto
-                    }
-                }
+                WorkweaveTreeIntegrityKind::DuplicateName { .. } => Auto,
             },
             CheckViolation::Provenance { sub_kind, .. } => match sub_kind {
                 ProvenanceKind::OriginUrlMismatch { .. }
@@ -9568,7 +9556,7 @@ fn apply_finding_repairs(
                             removed = true;
                         }
                         Err(e) => fix_errors.push(format!(
-                            "workweave-tree-integrity --fix failed: {} was not removed: {e}",
+                            "workweave-tree-integrity --fix failed: {} was not removed: {e:#}",
                             dir.display()
                         )),
                     }
@@ -9708,7 +9696,7 @@ fn apply_finding_repairs(
                 }
                 Err(e) => {
                     fix_errors.push(format!(
-                        "projectless-dir --fix failed: {} was not removed: {e}",
+                        "projectless-dir --fix failed: {} was not removed: {e:#}",
                         dir.display()
                     ));
                     true
