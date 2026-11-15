@@ -31209,3 +31209,89 @@ pub fn j16_a_release_line_is_retired() -> Journey {
         ],
     }
 }
+
+/// A workspace with commits to two members is being landed and the process
+/// is killed as the first member moves.
+fn two_member_landing_killed_midway() -> Vec<Step> {
+    let w = ww("w");
+    vec![
+        Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
+        documented_create("w"),
+        Step::commit(&w, Repo::App, "w-app"),
+        Step::commit(&w, Repo::Lib, "w-lib"),
+        Step::capture("before the landing"),
+        Step::rwv_paused(&w, &["land", "--retire"], "advance-target", "landing"),
+        Step::kill("landing"),
+    ]
+}
+
+/// The process dies part-way; the status names the operation and the two
+/// ways out, and the printed continue finishes the landing.
+pub fn j18_a_landing_killed_midway_is_finished() -> Journey {
+    let w = ww("w");
+    let mut path = two_member_landing_killed_midway();
+    path.extend([
+        Step::rwv(&w, &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rwv land --continue"))
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::rwv_printed_quoted(&w, "rwv land --continue", "").expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j18: a landing killed midway is found and finished",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![clean_end(a())
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "w-app",
+            })
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::Lib,
+                rev: "main",
+                mark: "w-lib",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                member: Repo::App,
+                mark: "w-app",
+            })
+            .claim(Claim::PinContains {
+                site: LockSite::Checkout(a(), Repo::Proj, "main".to_owned()),
+                member: Repo::Lib,
+                mark: "w-lib",
+            })
+            .claim(Claim::WorkweaveGone(w))],
+    }
+}
+
+/// The same death, given up: everything is put back as it was.
+pub fn j19_a_landing_killed_midway_is_given_up() -> Journey {
+    let w = ww("w");
+    let mut path = two_member_landing_killed_midway();
+    path.extend([
+        Step::rwv(&w, &["status"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("rwv abort")),
+        Step::rwv_printed_quoted(&w, "rwv abort", "")
+            .may_rewind(&[Repo::App, Repo::Lib])
+            .may_restore(&[Repo::App, Repo::Lib, Repo::Proj])
+            .expect(Exit::Succeeds),
+    ]);
+    let fault = path.len() - 1;
+    Journey {
+        name: "j19: a landing killed midway is given up and everything is as it was",
+        seed: Seed::default(),
+        path,
+        fault,
+        end: vec![
+            clean_end(a()).claim(Claim::TipsAsCaptured("before the landing")),
+            Step::rwv(&w, &["status"]).expect(Exit::Succeeds),
+        ],
+    }
+}

@@ -1208,6 +1208,8 @@ every_scenario!(
     j14_a_hotfix_lands_on_the_release_line,
     j15_a_fix_is_ported_from_one_line_to_the_other,
     j16_a_release_line_is_retired,
+    j18_a_landing_killed_midway_is_finished,
+    j19_a_landing_killed_midway_is_given_up,
     dc07_crash_convergence(scenarios::CrashVerb::BranchCreate),
     dc07_crash_convergence(scenarios::CrashVerb::BranchRename),
     dc07_crash_convergence(scenarios::CrashVerb::BranchDelete),
@@ -9089,6 +9091,8 @@ journey_tests!(
     j14_a_hotfix_lands_on_the_release_line,
     j15_a_fix_is_ported_from_one_line_to_the_other,
     j16_a_release_line_is_retired,
+    j18_a_landing_killed_midway_is_finished,
+    j19_a_landing_killed_midway_is_given_up,
 );
 
 #[test]
