@@ -682,9 +682,10 @@ what it held as last fetched may no longer be there.
 **Exits.** Run the removal again once the remote answers. To remove the
 member and keep its clone on disk, run `rwv member remove <repo>` without
 `--delete`. For a remote gone for good, `--discard-unpublished` removes the
-store judged against the remote as last fetched, listing what no remote is
-confirmed to hold before it goes; the refusal prints the line for the verb
-that met it. A landing or sync that meets this skips the prune, keeps the
+store judged against the remote as last fetched; the refusal lists what the
+store holds against it before any consent, and prints the line for the verb
+that met it. A submodule store that holds only what it fetched, nothing made
+or set aside in it, is not asked and never meets this. A landing or sync that meets this skips the prune, keeps the
 checkout, and prints both removals.
 
 **Where this sits.** [Destructive operations](../explanation/destructive-operations.md).

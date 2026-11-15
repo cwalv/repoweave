@@ -267,7 +267,14 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
   --delete` there, a sync's prune, `rwv workweave delete` and `rwv land
   --retire` ask each the same question before the checkout goes. A workweave
   whose checkouts keep none asks no remote. `rwv workweave delete` takes
-  `--discard-unpublished`; a retire it refuses leaves the landing done and
+  `--discard-unpublished`; a submodule store holding only what it fetched,
+  nothing made, tagged or set aside there, is judged without its remote, so
+  a workweave whose submodules were never touched is deleted and retired
+  offline. A repository committed as a gitlink `.gitmodules` does not
+  describe is listed as a submodule store. A workweave whose directory is
+  gone is deleted by the deletion rule over the branch its registration
+  holds. `rwv land` takes `--discard-unpublished` only with `--continue` at
+  the retire stop, which lists what goes; a retire it refuses leaves the landing done and
   the workweave in place, and `rwv land --continue`, or `rwv land --continue
   --discard-unpublished`, retires it.
 - A landing or sync that does not prune a checkout always prints the checkout,

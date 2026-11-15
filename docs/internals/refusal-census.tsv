@@ -95,10 +95,10 @@ src/cherry_pick.rs	unparseable-project commit	-	1
 src/cherry_pick.rs	untracked-collision	-	1
 src/cli/dispatch.rs	(untokened:argv-shim)	-	1
 src/cli/dispatch.rs	ambiguous-workweave-address	-	1
-src/cli/dispatch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
+src/cli/dispatch.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	2
 src/cli/dispatch.rs	malformed-workweave-address	-	2
 src/cli/dispatch.rs	no-such-workweave	-	2
-src/cli/dispatch.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	1
+src/cli/dispatch.rs	stale-registry-entry	tests/doctor/state_hygiene_test.rs	2
 src/cli/dispatch.rs	wrong-address-flag	-	4
 src/clone.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	1
 src/clone.rs	not-a-project	tests/weave/init_test.rs	1
@@ -295,13 +295,13 @@ src/sync.rs	abort-in-its-workspace	-	2
 src/sync.rs	checkout in a raw worktree	-	1
 src/sync.rs	checkout in another workspace	-	1
 src/sync.rs	clone-topology	-	1
-src/sync.rs	dropped-repo-has-unique-commits	tests/sync/backup_verb_test.rs	4
+src/sync.rs	dropped-repo-has-unique-commits	tests/doctor/state_hygiene_test.rs	5
 src/sync.rs	edits dirty	tests/scenario/scenario_harness_test/scenarios.rs	2
 src/sync.rs	edits drift left in place	tests/sync/land_drift_test.rs	2
 src/sync.rs	foreign-tip	-	5
 src/sync.rs	head-not-on-branch	-	2
 src/sync.rs	history not fast-forward	tests/sync/e2e_sync_abort_test.rs	1
-src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	4
+src/sync.rs	inapplicable-flag	tests/docs/refusal_arrival_test.rs	5
 src/sync.rs	no-op-recorded	tests/docs/refusal_arrival_test.rs	3
 src/sync.rs	op-parked	-	7
 src/sync.rs	pin backwards	tests/docs/doc_claims_lock_test.rs	1
@@ -336,7 +336,7 @@ src/workspace.rs	occupied-bootstrap-dir	-	1
 src/workspace.rs	project-dir-missing	-	1
 src/workspace.rs	unreadable-active-project	tests/doctor/unreadable_active_project_test.rs	1
 src/workspace.rs	unregistered-workweave	-	1
-src/workspace/reconcile.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	2
+src/workspace/reconcile.rs	stale-registry-entry	tests/doctor/state_hygiene_test.rs	2
 src/workspace/root_identity.rs	weave-root-identity-conflict	-	1
 src/workweave.rs	(untokened:environment-passthrough)	-	1
 src/workweave.rs	(untokened:hook-input)	-	4
@@ -355,7 +355,7 @@ src/workweave.rs	no-such-workweave	-	1
 src/workweave.rs	pre-flat-branch-shape	-	1
 src/workweave.rs	registry-path-disagreement	tests/weave/workweave_registry_test.rs	2
 src/workweave.rs	repo-without-commits	-	1
-src/workweave.rs	stale-registry-entry	tests/weave/workweave_topology_parent_test.rs	5
+src/workweave.rs	stale-registry-entry	tests/doctor/state_hygiene_test.rs	4
 src/workweave.rs	standalone-in-workweave	-	3
 src/workweave.rs	target-dir-occupied	-	1
 src/workweave.rs	unregistered-workweave	-	1
