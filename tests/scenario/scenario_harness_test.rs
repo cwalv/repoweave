@@ -976,6 +976,8 @@ macro_rules! every_scenario {
 }
 
 every_scenario!(
+    dc23_local_verbs_offline,
+    dc17_backup_namespace,
     mirror_merge_back_of_a_dependency,
     mirror_merge_back,
     release_line_bump_every_member_with_sync,
@@ -8702,4 +8704,14 @@ fn a_merge_back_of_a_line_on_a_mirror_publishes_the_merged_member_to_the_origina
 #[test]
 fn a_line_of_a_dependency_on_a_mirror_is_published_by_the_printed_push_and_merged_back() {
     runner::run(scenarios::mirror_merge_back_of_a_dependency()).assert_fully_decided_green();
+}
+
+#[test]
+fn backups_live_under_their_own_namespace_never_in_a_branch_listing_or_on_a_remote() {
+    runner::run(scenarios::dc17_backup_namespace()).assert_fully_decided_green();
+}
+
+#[test]
+fn local_verbs_run_offline_and_fetch_nothing() {
+    runner::run(scenarios::dc23_local_verbs_offline()).assert_fully_decided_green();
 }

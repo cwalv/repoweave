@@ -29233,3 +29233,91 @@ pub fn mirror_merge_back_of_a_dependency() -> Scenario {
         steps,
     }
 }
+
+/// The backups a weave's repos hold sit under a namespace of their own: no
+/// branch listing shows one and no remote ever holds one.
+fn backups_live_apart_from_branches(repos: &[Repo]) -> Vec<Step> {
+    let mut steps = Vec::new();
+    for &repo in repos {
+        steps.push(
+            Step::git(
+                &a(),
+                repo,
+                &["for-each-ref", "--format=%(refname)", "refs/rwv/backup/"],
+            )
+            .claim(Claim::OutputContains("refs/rwv/backup/")),
+        );
+        steps.push(
+            Step::git(&a(), repo, &["branch", "--all", "--format=%(refname)"])
+                .claim(Claim::OutputLacks("backup"))
+                .claim(Claim::OutputLacks("refs/rwv")),
+        );
+        steps.push(
+            Step::git(&Place::Forge, repo, &["ls-remote", "origin"])
+                .claim(Claim::OutputLacks("refs/rwv")),
+        );
+    }
+    steps
+}
+
+pub fn dc17_backup_namespace() -> Scenario {
+    let mut steps = cross_repo_pr().steps;
+    steps.extend(backups_live_apart_from_branches(&[Repo::App, Repo::Lib]));
+    steps.extend([
+        create("anon"),
+        Step::commit(&ww("anon"), Repo::Docs, "anon-docs"),
+        delete_with("anon", &["--discard-unlanded"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::BackedUp {
+                repo: Repo::Docs,
+                mark: "anon-docs",
+                marked: None,
+            }),
+    ]);
+    steps.extend(backups_live_apart_from_branches(&[
+        Repo::App,
+        Repo::Lib,
+        Repo::Docs,
+    ]));
+    scenario("dc17: backups live apart from branches", steps)
+}
+
+fn every_origin_unreachable() -> Vec<Step> {
+    [Repo::Proj, Repo::App, Repo::Lib, Repo::Docs]
+        .into_iter()
+        .map(|repo| Step::unreachable(Remote::origin(repo)))
+        .collect()
+}
+
+pub fn dc23_local_verbs_offline() -> Scenario {
+    let mut steps = every_origin_unreachable();
+    steps.extend([
+        Step::commit(&a(), Repo::App, "offline-app"),
+        Step::rwv(&a(), &["lock", "--commit"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("unconfirmed")),
+        Step::rwv(&a(), &["member", "set-branch", LIB, "dev"])
+            .expect(Exit::Succeeds)
+            .may_rewind(&[Repo::Lib])
+            .claim(Claim::OutputLacks("unconfirmed")),
+        Step::rwv(&a(), &["branch", "create", "offline-feat"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("unconfirmed")),
+        Step::rwv(&a(), &["switch", "main"]).expect(Exit::Succeeds),
+        create("seat"),
+        Step::commit(&ww("seat"), Repo::App, "seat-app"),
+        Step::rwv(&ww("seat"), &["land", "--retire"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLacks("unconfirmed"))
+            .claim(Claim::Contains {
+                at: a(),
+                repo: Repo::App,
+                rev: "main",
+                mark: "seat-app",
+            }),
+        Step::rwv(&a(), &["member", "remove", DOCS, "--delete"])
+            .expect(Exit::refuses_kind(RefusalKind::RemotesUnconfirmed))
+            .claim(Claim::DirStands(Machine::A, "weave/local/remotes/docs")),
+    ]);
+    scenario("dc23: local verbs run with every remote unreachable", steps)
+}
