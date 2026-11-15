@@ -2286,6 +2286,21 @@ impl GitVcs {
     /// directory. git will accept a `.git` directory as its cwd, but the
     /// behavior differs subtly between porcelain commands, so normalize to
     /// the clone root and leave anything else alone.
+    /// The paths of the index's gitlink entries in the repository at `dir`,
+    /// read from the index alone: an entry `.gitmodules` does not describe
+    /// is listed too.
+    fn gitlinks(dir: &Path) -> Result<Vec<String>, VcsError> {
+        Ok(Self::run(["ls-files", "-s", "-z"], dir)?
+            .split('\0')
+            .filter_map(|record| {
+                let (meta, path) = record.split_once('\t')?;
+                meta.starts_with("160000 ").then(|| path.to_owned())
+            })
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect())
+    }
+
     fn work_dir_for_store(store: &Path) -> PathBuf {
         match store.file_name() {
             Some(name) if name == ".git" => store
@@ -4018,21 +4033,17 @@ impl Vcs for GitVcs {
     }
 
     fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError> {
-        let listed = Self::run(
-            [
-                "submodule",
-                "--quiet",
-                "foreach",
-                "--recursive",
-                "printf '%s\\n' \"$displaypath\"",
-            ],
-            checkout,
-        )?;
-        let mut nested: Vec<PathBuf> = listed
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(PathBuf::from)
-            .collect();
+        let mut nested: Vec<PathBuf> = Vec::new();
+        let mut queue = std::collections::VecDeque::from([PathBuf::new()]);
+        while let Some(within) = queue.pop_front() {
+            for gitlink in Self::gitlinks(&checkout.join(&within))? {
+                let rel = within.join(gitlink);
+                if checkout.join(&rel).join(".git").symlink_metadata().is_ok() {
+                    nested.push(rel.clone());
+                    queue.push_back(rel);
+                }
+            }
+        }
         let git_dir_of = |dir: &Path| -> Result<PathBuf, VcsError> {
             Ok(PathBuf::from(Self::run_trimmed(
                 ["rev-parse", "--absolute-git-dir"],

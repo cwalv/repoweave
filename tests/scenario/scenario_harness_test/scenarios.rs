@@ -839,6 +839,70 @@ pub fn store_removal_of_a_clone_whose_remote_is_gone() -> Scenario {
     )
 }
 
+/// The verbs that remove a checkout of a member holding a nested repository
+/// committed as a gitlink no `.gitmodules` entry describes.
+#[derive(Debug, Clone, Copy)]
+pub enum GitlinkRemovedBy {
+    MemberRemoveDelete,
+    WorkweaveDelete,
+    Retire,
+}
+
+/// `app` in the primary holds a repository at `inner` with a commit of its
+/// own and no remote, committed as a gitlink and no `.gitmodules` entry, as
+/// `git add` of a directory holding a clone leaves it. The primary's clone
+/// is its store, so removing the clone asks it and names what it holds; a
+/// workweave's checkout holds none at that path, so its delete and retire
+/// ask nothing of it.
+pub fn removal_over_a_gitlink_no_gitmodules_describes(by: GitlinkRemovedBy) -> Scenario {
+    let mut steps = vec![
+        Step::git(&a(), Repo::App, &["init", "-q", "inner"]),
+        Step::git(
+            &a(),
+            Repo::App,
+            &[
+                "-C",
+                "inner",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "inner-only",
+            ],
+        ),
+        Step::git(&a(), Repo::App, &["add", "inner"]),
+        Step::git(&a(), Repo::App, &["commit", "-qm", "embed inner"]),
+        Step::git(&a(), Repo::App, &["push", "-q", "origin", "main"])
+            .pushes(Remote::origin(Repo::App), "main"),
+        Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
+    ];
+    match by {
+        GitlinkRemovedBy::MemberRemoveDelete => steps.extend([
+            Step::rwv(&a(), &["member", "remove", APP, "--delete"])
+                .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
+                .claim(Claim::OutputContains("in submodule inner"))
+                .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
+            Step::rwv_printed_quoted(&a(), "rwv member remove ", "--discard-unpublished")
+                .expect(Exit::Succeeds)
+                .claim(Claim::DirGone(Machine::A, "weave/local/remotes/app")),
+        ]),
+        GitlinkRemovedBy::WorkweaveDelete => steps.extend([
+            create("w"),
+            Step::rwv(&a(), &["workweave", "delete", "w"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w"))),
+        ]),
+        GitlinkRemovedBy::Retire => steps.extend([
+            create("w"),
+            Step::commit(&ww("w"), Repo::Proj, "w-proj"),
+            Step::rwv(&ww("w"), &["land", "--retire"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("w"))),
+        ]),
+    }
+    scenario("a removal over a gitlink no .gitmodules describes", steps)
+}
+
 /// The removals of a workweave's checkout of a member.
 #[derive(Debug, Clone, Copy)]
 pub enum CheckoutRemovedBy {

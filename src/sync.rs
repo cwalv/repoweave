@@ -2377,7 +2377,7 @@ pub(crate) fn judge_removed_stores(
     workspace: &Path,
     discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<()> {
-    let stores = stores_removed_with(vcs, dest, removed, repo, &cause.situation())?;
+    let stores = stores_removed_with(vcs, dest, removed, repo, cause, workspace, discard)?;
     judge_stores(vcs, dest, &stores, removed, repo, cause, workspace, discard)
 }
 
@@ -2393,15 +2393,25 @@ pub(crate) fn judge_stores_kept_for_gone(
     discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<()> {
     let situation = cause.situation();
-    let kept = vcs
-        .stores_kept_for(store, checkout)
-        .with_context(|| {
-            format!(
-                "{repo}: {situation}, but the stores kept for its checkout could not be listed; \
-                 refusing to remove them while their unpublished work could not be ruled out"
-            )
-        })
-        .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?;
+    let kept = match (vcs.stores_kept_for(store, checkout), discard) {
+        (Ok(kept), _) => kept,
+        (Err(e), Some(_)) => {
+            eprintln!(
+                "rwv: {repo}: removing the record of {} with the stores kept for it, which \
+                 could not be listed: {e}",
+                checkout.display()
+            );
+            Vec::new()
+        }
+        (Err(e), None) => crate::refuse!(
+            RefusalKind::DroppedRepoHasUniqueCommits,
+            "{}{repo}: {situation}, but the stores kept for its checkout could not be listed \
+             ({e}), so whether they hold what no remote has cannot be told; or remove it with \
+             them: `{}`",
+            cause.preface(),
+            cause.discarding(workspace, repo)
+        ),
+    };
     let stores: Vec<(Option<PathBuf>, PathBuf)> = kept
         .into_iter()
         .map(|kept| (Some(kept.clone()), kept))
@@ -2533,18 +2543,30 @@ fn stores_removed_with(
     dest: &Path,
     removed: StoresRemoved,
     repo: &str,
-    situation: &str,
+    cause: RemovalCause,
+    workspace: &Path,
+    discard: Option<DiscardUnpublishedConsent>,
 ) -> anyhow::Result<Vec<(Option<PathBuf>, PathBuf)>> {
-    let nested = vcs
-        .nested_stores(dest)
-        .with_context(|| {
-            format!(
-                "{repo}: {situation}, but the stores nested inside its checkout could not be \
-                 listed; refusing to remove a checkout whose unpublished work could not be ruled \
-                 out"
-            )
-        })
-        .map_err(|e| crate::refusal::refusing(RefusalKind::DroppedRepoHasUniqueCommits, e))?;
+    let situation = cause.situation();
+    let nested = match (vcs.nested_stores(dest), discard) {
+        (Ok(nested), _) => nested,
+        (Err(e), Some(_)) => {
+            eprintln!(
+                "rwv: {repo}: removing {} with the stores nested inside it, which could not be \
+                 listed: {e}",
+                dest.display()
+            );
+            Vec::new()
+        }
+        (Err(e), None) => crate::refuse!(
+            RefusalKind::DroppedRepoHasUniqueCommits,
+            "{}{repo}: {situation}, but the stores nested inside its checkout could not be \
+             listed ({e}), so whether they hold what no remote has cannot be told; or remove it \
+             with them: `{}`",
+            cause.preface(),
+            cause.discarding(workspace, repo)
+        ),
+    };
     let own = (removed == StoresRemoved::OwnAndNested).then(|| (None, dest.to_path_buf()));
     Ok(own
         .into_iter()
@@ -13586,6 +13608,24 @@ mod tests {
         .perform(git_vcs().as_ref(), &dropped())
         .unwrap();
         assert!(!store.exists());
+    }
+
+    #[test]
+    fn prune_dropped_repo_asks_a_repository_a_gitlink_no_gitmodules_describes_holds() {
+        let tmp = crate::tempdir().unwrap();
+        let (ctx, store, _project) = primary_with_cloned_store(tmp.path());
+        let inner = store.join("inner");
+        init_repo(&inner);
+        git(&store, &["add", "inner"]);
+        git(&store, &["commit", "-qm", "embed inner"]);
+
+        let err = prune_dropped_repo(git_vcs().as_ref(), &ctx, &dropped())
+            .expect_err("the nested repository is its own store and goes with the clone");
+        assert!(
+            format!("{err:#}").contains("in submodule inner"),
+            "got:\n{err:#}"
+        );
+        assert!(store.exists());
     }
 
     #[test]

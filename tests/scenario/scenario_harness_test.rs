@@ -818,6 +818,30 @@ fn a_replayed_resolution_the_check_stops_names_the_manifest_once() {
 }
 
 #[test]
+fn member_remove_delete_over_a_gitlink_no_gitmodules_describes() {
+    runner::run(scenarios::removal_over_a_gitlink_no_gitmodules_describes(
+        scenarios::GitlinkRemovedBy::MemberRemoveDelete,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn workweave_delete_over_a_gitlink_no_gitmodules_describes() {
+    runner::run(scenarios::removal_over_a_gitlink_no_gitmodules_describes(
+        scenarios::GitlinkRemovedBy::WorkweaveDelete,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_retire_over_a_gitlink_no_gitmodules_describes() {
+    runner::run(scenarios::removal_over_a_gitlink_no_gitmodules_describes(
+        scenarios::GitlinkRemovedBy::Retire,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_prune_asks_a_submodule_store_inside_the_clone() {
     runner::run(scenarios::landing_prune_asks_a_submodule_store_inside_the_clone())
         .assert_fully_decided_green();
@@ -1796,6 +1820,9 @@ every_scenario!(
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::SetAsideEdits),
     landing_prune_refuses_a_store_holding(scenarios::StoreHolds::TaggedCommit),
     landing_prune_asks_a_submodule_store_inside_the_clone,
+    removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::MemberRemoveDelete),
+    removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::WorkweaveDelete),
+    removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::Retire),
     a_replayed_resolution_the_check_stops_names_the_manifest_once,
     store_removal_asks_a_submodule_store_with_no_checkout(scenarios::SubmoduleLeft::Deinitialized),
     store_removal_asks_a_submodule_store_with_no_checkout(

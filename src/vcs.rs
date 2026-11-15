@@ -4085,8 +4085,9 @@ pub trait Vcs: Send + Sync {
     /// outermost first, then each other one by its store. Each is a path
     /// relative to `checkout`, or absolute where it lies outside it.
     ///
-    /// For git: every initialized submodule (`git submodule foreach
-    /// --recursive`), then every repository under the `modules` directory of
+    /// For git: every gitlink entry of the index, at any depth, whose path
+    /// holds a repository, whether or not `.gitmodules` describes it, then
+    /// every repository under the `modules` directory of
     /// the checkout's git dir and of each store found, and, where the checkout
     /// is its own store, of each linked worktree's.
     fn nested_stores(&self, checkout: &Path) -> Result<Vec<PathBuf>, VcsError>;
