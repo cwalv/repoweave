@@ -9196,19 +9196,73 @@ fn every_journey_constructor_has_a_test() {
 fn build_a_journey_start_state() {
     let id = std::env::var("RWV_JOURNEY").expect("RWV_JOURNEY names the journey, such as j03");
     let journey = journey_by_id(&id).unwrap_or_else(|| panic!("no journey {id}"));
+    let golden = journey.golden();
     let sandbox = Sandbox::new(journey.seed.clone());
     let report = runner::run_in(&sandbox, journey.start_scenario());
     report.assert_green();
-    let root = sandbox.keep();
-    println!("SANDBOX={}", root.display());
-    println!("HOME={}", root.join("home").display());
-    println!(
-        "MACHINE_A_WEAVE={}",
-        root.join("machine-a").join("weave").display()
-    );
-    println!(
-        "MACHINE_B_WEAVE={}",
-        root.join("machine-b").join("weave").display()
+    for line in start_state_lines(&sandbox.keep(), golden) {
+        println!("{line}");
+    }
+}
+
+/// What `build_a_journey_start_state` prints about the sandbox it left.
+fn start_state_lines(root: &std::path::Path, golden: usize) -> Vec<String> {
+    vec![
+        format!("SANDBOX={}", root.display()),
+        format!("HOME={}", root.join("home").display()),
+        format!(
+            "MACHINE_A_WEAVE={}",
+            root.join("machine-a").join("weave").display()
+        ),
+        format!(
+            "MACHINE_B_WEAVE={}",
+            root.join("machine-b").join("weave").display()
+        ),
+        format!("GOLDEN_RWV_COMMANDS={golden}"),
+    ]
+}
+
+#[test]
+fn the_start_state_helper_prints_each_journeys_golden_count() {
+    for id in ["j01", "j03", "j18"] {
+        let journey = journey_by_id(id).unwrap();
+        let golden = journey.golden();
+        assert!(golden > 0, "{id} has a documented path to count");
+        let lines = start_state_lines(std::path::Path::new("/sandbox"), golden);
+        assert!(
+            lines.contains(&format!("GOLDEN_RWV_COMMANDS={golden}")),
+            "{id}: {lines:?}"
+        );
+    }
+}
+
+/// A journey that needs a capture reports a missing one by name, as a failed
+/// claim, and not as a panic.
+#[test]
+fn a_journey_that_needs_a_capture_leaves_it_on_disk() {
+    for id in ["j04", "j19"] {
+        let journey = journey_by_id(id).unwrap();
+        let sandbox = Sandbox::new(journey.seed.clone());
+        runner::run_in(&sandbox, journey.start_scenario()).assert_green();
+        assert!(sandbox.root.join("captures").is_dir(), "{id}");
+    }
+}
+
+#[test]
+fn a_missing_capture_fails_the_end_check_naming_it() {
+    let journey = journey_by_id("j04").unwrap();
+    let (name, end) = (journey.name, journey.end.clone());
+    let sandbox = Sandbox::new(journey.seed.clone());
+    runner::run_in(&sandbox, journey.start_scenario()).assert_green();
+    assert!(sandbox.root.join("captures").is_dir());
+    std::fs::remove_dir_all(sandbox.root.join("captures")).unwrap();
+    let report = common::scenario_runner::check_in(&sandbox, name, end);
+    assert!(
+        report
+            .unmet
+            .iter()
+            .any(|(_, why)| why.contains("nothing was captured as before the second landing")),
+        "{report}"
     );
 }
 

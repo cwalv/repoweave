@@ -105,10 +105,10 @@ pin; the spare workspace is gone; a clean end.
 ### J03 A landing stops on a conflict; finish it
 
 **Start:** the shared world; two spare workspaces on machine A, each with one commit
-to `server` that writes a different line to the same line of `shared.txt`. The first
+to `server` that writes a different line to the same line of `README`. The first
 has been brought into `main`.
 **Task:** Bring the second one into `main` as well, keeping the line of the second.
-**Check:** `main`'s `shared.txt` in `server` holds the second workspace's line; the
+**Check:** `main`'s `README` in `server` holds the second workspace's line; the
 history of `server` holds both commits; the second workspace is gone; no unfinished
 operation anywhere; a clean end.
 

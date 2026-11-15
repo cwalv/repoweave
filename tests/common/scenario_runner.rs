@@ -2250,15 +2250,21 @@ impl Run<'_> {
 
     /// What was captured as `name`: in this run, else as the run that built
     /// the sandbox left it on disk.
-    fn captured_named(&self, name: &str) -> BTreeMap<Place, Tips> {
+    fn captured_named(&self, name: &str) -> Result<BTreeMap<Place, Tips>, String> {
         if let Some(kept) = self.captured.get(name) {
-            return kept.clone();
+            return Ok(kept.clone());
         }
         let path = self.captures_file(name);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|_| panic!("nothing was captured as {name}"));
+        let text = std::fs::read_to_string(&path).map_err(|_| {
+            format!(
+                "nothing was captured as {name}: {} is missing, so this sandbox was not \
+                 built with the journey's start state",
+                path.display()
+            )
+        })?;
         let stored: BTreeMap<String, serde_json::Value> = serde_json::from_str(&text).unwrap();
-        self.sandbox
+        Ok(self
+            .sandbox
             .live_places()
             .into_iter()
             .filter_map(|place| {
@@ -2281,7 +2287,7 @@ impl Run<'_> {
                     },
                 ))
             })
-            .collect()
+            .collect())
     }
 
     fn tips(&self, at: &Place) -> Tips {
@@ -2772,7 +2778,7 @@ impl Run<'_> {
                 }
             }
             Claim::TipsAsCaptured(name) | Claim::BranchesAsCaptured(name) => {
-                let kept = &self.captured_named(name);
+                let kept = &self.captured_named(name)?;
                 let whole = matches!(claim, Claim::TipsAsCaptured(_));
                 let mut off = Vec::new();
                 for (place, before) in kept {
@@ -2799,7 +2805,7 @@ impl Run<'_> {
                 }
             }
             Claim::BackupsAsCaptured { name, kept } => {
-                let before = &self.captured_named(name);
+                let before = &self.captured_named(name)?;
                 let mut off = Vec::new();
                 for (place, before) in before {
                     let now = self.tips(place).backups;

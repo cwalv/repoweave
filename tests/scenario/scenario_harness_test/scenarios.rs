@@ -30912,10 +30912,16 @@ pub fn j03_a_landing_stops_on_a_conflict_and_is_finished() -> Journey {
             Step::git(&ww("beta"), Repo::App, &["log", "--format=%s"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("beta-line")),
+            Step::git(&ww("beta"), Repo::App, &["show", "HEAD:README"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("beta")),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("alpha-line"))
                 .claim(Claim::WorkweaveGone(ww("alpha"))),
+            Step::git(&a(), Repo::App, &["show", "main:README"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("alpha")),
         ],
         path,
         fault,
@@ -30966,10 +30972,16 @@ pub fn j04_a_stopped_landing_is_abandoned() -> Journey {
             Step::git(&ww("beta"), Repo::App, &["log", "--format=%s"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("beta-line")),
+            Step::git(&ww("beta"), Repo::App, &["show", "HEAD:README"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("beta")),
             Step::git(&a(), Repo::App, &["log", "--format=%s", "main"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::OutputContains("alpha-line"))
                 .claim(Claim::WorkweaveGone(ww("alpha"))),
+            Step::git(&a(), Repo::App, &["show", "main:README"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("alpha")),
         ],
         path,
         fault,
