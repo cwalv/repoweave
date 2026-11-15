@@ -428,9 +428,6 @@ fn a_seat_that_is_away_keeps_its_lease_claim_registrations_and_savepoints() {
     }
     for recorded in [true, false] {
         let ready = ready_to_sync(false);
-        if !recorded {
-            unrecord_the_seat(&ready);
-        }
         let primary_lib = head(&ready.primary.lib);
         let primary_project = head(&ready.primary.project);
         let mut land = common::rwv_std();
@@ -438,6 +435,9 @@ fn a_seat_that_is_away_keeps_its_lease_claim_registrations_and_savepoints() {
         common::pause::Paused::spawn(land, "aligning-target", &ready._tmp.path().join("pause"))
             .expect("the landing reaches its target")
             .kill();
+        if !recorded {
+            unrecord_the_seat(&ready);
+        }
         let lease = ready.primary.root.join(".rwv-op-lease");
         assert!(lease.exists() && ready.seat.root.join(".rwv-op").exists());
         let claims = |root: &Path| {
