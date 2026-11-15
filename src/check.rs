@@ -6387,16 +6387,26 @@ pub fn scan_state_hygiene(
     holders.dirs.sort();
     holders.dirs.dedup();
     let mut live: std::collections::HashSet<SavepointKey> = std::collections::HashSet::new();
-    let mut other_release = false;
     for dir in &holders.dirs {
         if !crate::op_state::OwnerRecord::path_in(dir).exists() {
             continue;
         }
-        if crate::op_state::read_owner_header(dir).is_err() {
-            other_release = true;
-        }
+        let whole = crate::op_state::read_owner_header(dir).is_ok();
         match crate::op_state::read_owner_header_of_any_schema(dir) {
-            Some(state) => live.extend(state.savepoint_keys()),
+            Some(state) if whole => live.extend(state.savepoint_keys()),
+            Some(state) => {
+                live.extend(state.savepoint_keys());
+                holders.unknown.push(UnreadableHolder {
+                    why: format!(
+                        "the operation record at {} is one this release reads only in part, so \
+                         which other savepoints its operation filed cannot be told",
+                        crate::op_state::OwnerRecord::path_in(dir)
+                    ),
+                    line: crate::op_state::discard_unreadable_record_at(dir),
+                    root: Some(dir.clone()),
+                    holds_state: false,
+                });
+            }
             None => holders.unknown.push(UnreadableHolder {
                 why: format!(
                     "the operation record at {} names no operation this rwv reads",
@@ -6430,7 +6440,7 @@ pub fn scan_state_hygiene(
         });
     }
     for (repo, ref_name) in unrecognized {
-        if !holders.unknown.is_empty() || other_release {
+        if !holders.unknown.is_empty() {
             withheld = true;
             continue;
         }
