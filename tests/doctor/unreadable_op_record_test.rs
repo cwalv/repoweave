@@ -474,6 +474,13 @@ fn a_record_an_earlier_release_left_is_ended_by_the_lines_its_refusal_prints_in_
         "the discard must name the member it leaves mid-rebase:\n{stderr}"
     );
     assert!(
+        stderr.lines().any(|line| line
+            .trim()
+            .starts_with(&format!("{}: savepoint ", parked.seat.lib.display()))
+            && (line.contains("is still at") || line.contains("has moved from"))),
+        "each savepoint the discard lists says whether what it holds still stands:\n{stderr}"
+    );
+    assert!(
         stderr.contains(&format!("{}: savepoint ", parked.seat.lib.display())),
         "the primary's doctor --fix keeps the savepoints of the record that stands, and \
          the discard lists them:\n{stderr}"

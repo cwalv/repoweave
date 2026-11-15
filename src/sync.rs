@@ -9060,7 +9060,11 @@ pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<(
                 };
                 for key in listing.keys {
                     if keys.as_ref().is_none_or(|keys| keys.contains(&key)) {
-                        left.push(format!("  {}: savepoint {key}", repo.display()));
+                        left.push(format!(
+                            "  {}: savepoint {key}{}",
+                            repo.display(),
+                            savepoint_standing(vcs.as_ref(), &repo, &key)
+                        ));
                     }
                 }
                 for listed in vcs
@@ -9088,7 +9092,9 @@ pub fn run_discard_unreadable_record(ctx: &WorkspaceContext) -> anyhow::Result<(
     op_state::clear_owner(owner.as_path());
     eprintln!(
         "discarded the operation record at {record}. Nothing the operation moved was put \
-         back: without its record, which tips are its own cannot be told."
+         back: without its record, how far it got cannot be read from it. Each savepoint \
+         listed below says whether the checkout and each branch it filed still stand at the \
+         tip it recorded."
     );
     if !left.is_empty() {
         eprintln!(
@@ -12616,6 +12622,47 @@ fn ff_advance_repo(
         from: target_tip,
         onto: Some(on),
     })
+}
+
+/// Whether what a savepoint holds still stands: the checkout at the tip it
+/// recorded, and each branch it filed at the tip it recorded for it. What
+/// stands there is what the operation had not yet moved.
+fn savepoint_standing(vcs: &dyn Vcs, repo: &Path, key: &crate::op_state::SavepointKey) -> String {
+    let mut parts = Vec::new();
+    if let Some(tip) = vcs.resolve_savepoint(repo, key) {
+        let here = vcs
+            .head_revision(repo)
+            .is_ok_and(|head| head.id() == tip.id());
+        parts.push(format!(
+            "the checkout {} {}",
+            if here {
+                "is still at"
+            } else {
+                "has moved from"
+            },
+            tip.id().short()
+        ));
+    }
+    for saved in vcs.ref_savepoints(repo, key).unwrap_or_default() {
+        let here = vcs
+            .resolve_revision(repo, saved.branch.as_str())
+            .is_ok_and(|tip| *tip.id() == saved.at);
+        parts.push(format!(
+            "'{}' {} {}",
+            saved.branch,
+            if here {
+                "is still at"
+            } else {
+                "has moved from"
+            },
+            saved.at.short()
+        ));
+    }
+    if parts.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", parts.join("; "))
+    }
 }
 
 #[cfg(test)]
