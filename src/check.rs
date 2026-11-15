@@ -1682,8 +1682,8 @@ pub enum WorkweaveTreeIntegrityKind<P> {
         workweave_name: WorkweaveName,
     },
     /// A `.rwv-workweave` marker that parses as neither current JSON nor a
-    /// `migrate_legacy`-repairable legacy shape — YAML with no `primary:`
-    /// for `migrate_legacy` to backfill from, or no valid `project:` for it
+    /// repairable legacy shape — YAML with no `primary:`
+    /// for the migration to backfill from, or no valid `project:` for it
     /// to construct from. Every marker rwv has ever written carries all
     /// three fields, so this is hand-corruption or a truncated write rather
     /// than a shape upgrading produces. Report-only: there is no value here
@@ -2356,7 +2356,7 @@ pub enum ViolationOutput {
     /// See [`CheckViolation::MissingCanonicalClone`].
     MissingCanonicalClone {
         /// Manifest-relative path to the affected repo (same value as
-        /// [`CheckViolation::MissingCanonicalClone::repo`]).
+        /// the violation's `repo`).
         path: String,
         /// Absolute path of the worktree checkout in the workweave.
         absolute_path: WirePath,

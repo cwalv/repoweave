@@ -400,7 +400,7 @@ impl From<&SyncFailure> for SyncFailureOutput {
 ///
 /// Present in a per-repo outcome iff step 3 (advance-target) actually advanced
 /// that repo's branch pointer, and carrying the revisions that advance read
-/// and wrote. Omitted (`skip_serializing_if = "Option::is_none"`) on a no-op
+/// and wrote. Omitted on a no-op
 /// advance — the target was already at CWD's tip — which is the same condition
 /// under which the text line reads `already at <sha>`, because both render one
 /// outcome.

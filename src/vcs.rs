@@ -507,14 +507,13 @@ pub struct ConflictSides {
 
 /// In-flight VCS operation whose conflict needs human resolution.
 ///
-/// Passed to [`Vcs::conflict_resolution_hint`] so sync's conflict-bail
+/// Passed to the backend's conflict-resolution hint so sync's conflict-bail
 /// messages embed VCS-appropriate "how do I resume this?" text without
 /// hardcoding git vocabulary.
 ///
-/// [`Vcs::mid_op`] constructs any variant from a repo's on-disk state, but a
-/// given field can be narrower than the type: every
-/// [`VcsError::RebaseConflict`] raised carries `Rebase`, so `Rebase` is the
-/// only value that field will actually carry.
+/// A repo's on-disk state can construct any variant, but a given field can be
+/// narrower than the type: every rebase conflict raised carries `Rebase`, so
+/// `Rebase` is the only value that field will actually carry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ConflictOp {

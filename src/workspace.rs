@@ -1965,7 +1965,7 @@ impl WorkspaceContext {
 ///
 /// Isomorphic to the plugin env-var envelope
 /// (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`):
-/// both surfaces are pure projections of [`WorkspaceContext::resolution`],
+/// both surfaces are pure projections of the one resolution of the workspace,
 /// never independently computed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Resolution {
@@ -2022,7 +2022,7 @@ pub struct AdvisoryOutput {
     pub inputs: Vec<String>,
 }
 
-/// Closed vocabulary for [`AdvisoryOutput::kind`]. Adding a member is
+/// Closed vocabulary for an advisory's `kind`. Adding a member is
 /// additive — existing consumers keep matching the members they know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -2207,18 +2207,17 @@ impl WorkweaveMarker {
 
 /// Why a `.rwv-workweave` file cannot witness the identity it claims.
 ///
-/// `Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can
-/// repair: `primary:` and a valid `project:` both present, with or without
+/// `Legacy` covers every YAML marker the marker migration can repair: `primary:` and a valid `project:` both present, with or without
 /// the `parent:` field that became required before the format changed (it
 /// backfills from `primary`). A YAML marker missing either — no `primary:`
-/// to backfill from, or no `project:` `migrate_legacy` can construct a
+/// to backfill from, or no `project:` the migration can construct a
 /// [`crate::manifest::ProjectName`] from — is `Unreadable` instead: a defect
 /// naming a repair nothing performs is worse than one that names none.
 ///
 /// `Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can
 /// carry a defect into a doctor finding's wire shape — the same value
-/// `require_exclusive` refuses on, its path respelled by [`Self::into_wire`],
-/// not a re-description of it.
+/// the exclusivity check refuses on, its path respelled for the wire, not a
+/// re-description of it.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 #[schemars(rename = "MarkerDefect")]

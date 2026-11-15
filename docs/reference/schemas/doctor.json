@@ -55,7 +55,7 @@
   },
   "definitions": {
     "AdvisoryKindOutput": {
-      "description": "Closed vocabulary for [`AdvisoryOutput::kind`]. Adding a member is additive — existing consumers keep matching the members they know.",
+      "description": "Closed vocabulary for an advisory's `kind`. Adding a member is additive — existing consumers keep matching the members they know.",
       "oneOf": [
         {
           "description": "Generated ecosystem state may no longer agree with the inputs it was derived from.",
@@ -481,7 +481,7 @@
       }
     },
     "MarkerDefect": {
-      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker [`WorkweaveMarker::migrate_legacy`] can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` `migrate_legacy` can construct a [`crate::manifest::ProjectName`] from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value `require_exclusive` refuses on, its path respelled by [`Self::into_wire`], not a re-description of it.",
+      "description": "Why a `.rwv-workweave` file cannot witness the identity it claims.\n\n`Legacy` covers every YAML marker the marker migration can repair: `primary:` and a valid `project:` both present, with or without the `parent:` field that became required before the format changed (it backfills from `primary`). A YAML marker missing either — no `primary:` to backfill from, or no `project:` the migration can construct a [`crate::manifest::ProjectName`] from — is `Unreadable` instead: a defect naming a repair nothing performs is worse than one that names none.\n\n`Serialize`/`JsonSchema` so `check::WeaveRootIdentityConflictKind` can carry a defect into a doctor finding's wire shape — the same value the exclusivity check refuses on, its path respelled for the wire, not a re-description of it.",
       "oneOf": [
         {
           "type": "object",
@@ -1008,7 +1008,7 @@
       ]
     },
     "Resolution": {
-      "description": "Resolved workspace coordinates for `--json` output and the plugin env-var envelope.\n\nCarries `workspace` (primary root abs path), `workweave` (the `<project>--<name>` identity the registry records), `project` (resolved project name), and `workweave_unregistered`. No `kind` or `location` field: the checkout is one of three states, and two of them are already carried by `workweave`'s presence.\n\nThe third state needs a field of its own. A workweave whose directory no registry entry names has no identity, so `workweave` is absent for it — and absent is what the primary looks like. Without `workweave_unregistered` the two serialize identically, and a consumer reading the documented meaning of that absence is told, positively, that it is at the primary checkout.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`): both surfaces are pure projections of [`WorkspaceContext::resolution`], never independently computed.",
+      "description": "Resolved workspace coordinates for `--json` output and the plugin env-var envelope.\n\nCarries `workspace` (primary root abs path), `workweave` (the `<project>--<name>` identity the registry records), `project` (resolved project name), and `workweave_unregistered`. No `kind` or `location` field: the checkout is one of three states, and two of them are already carried by `workweave`'s presence.\n\nThe third state needs a field of its own. A workweave whose directory no registry entry names has no identity, so `workweave` is absent for it — and absent is what the primary looks like. Without `workweave_unregistered` the two serialize identically, and a consumer reading the documented meaning of that absence is told, positively, that it is at the primary checkout.\n\nResults only — provenance (which chain step resolved the project, which flag addressed the workspace) is deliberately excluded: anything in default `--json` output becomes depended on, and the assertion use case needs the result, not the mechanism. Provenance appears only in the human-facing \"target:\" line printed to stderr.\n\nIsomorphic to the plugin env-var envelope (`RWV_WORKSPACE`/`RWV_WORKWEAVE`/`RWV_WORKWEAVE_UNREGISTERED`/`RWV_PROJECT`): both surfaces are pure projections of the one resolution of the workspace, never independently computed.",
       "type": "object",
       "required": [
         "workspace"
@@ -2500,7 +2500,7 @@
               ]
             },
             "path": {
-              "description": "Manifest-relative path to the affected repo (same value as [`CheckViolation::MissingCanonicalClone::repo`]).",
+              "description": "Manifest-relative path to the affected repo (same value as the violation's `repo`).",
               "type": "string"
             },
             "workweave": {
@@ -2887,7 +2887,7 @@
           "additionalProperties": false
         },
         {
-          "description": "A `.rwv-workweave` marker that parses as neither current JSON nor a `migrate_legacy`-repairable legacy shape — YAML with no `primary:` for `migrate_legacy` to backfill from, or no valid `project:` for it to construct from. Every marker rwv has ever written carries all three fields, so this is hand-corruption or a truncated write rather than a shape upgrading produces. Report-only: there is no value here to guess a repair from.",
+          "description": "A `.rwv-workweave` marker that parses as neither current JSON nor a repairable legacy shape — YAML with no `primary:` for the migration to backfill from, or no valid `project:` for it to construct from. Every marker rwv has ever written carries all three fields, so this is hand-corruption or a truncated write rather than a shape upgrading produces. Report-only: there is no value here to guess a repair from.",
           "type": "object",
           "required": [
             "unreadable-marker"
