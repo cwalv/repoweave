@@ -642,6 +642,17 @@ pub(crate) fn addressed(workspace: &Path, command: &str) -> String {
     }
 }
 
+/// `path` as one line of prose: spelled with escapes, in quotes, where it holds
+/// a control character.
+pub(crate) fn shown(path: &Path) -> String {
+    let text = path.display().to_string();
+    if text.chars().any(char::is_control) {
+        format!("{text:?}")
+    } else {
+        text
+    }
+}
+
 /// `path` as one word a shell reads back as `path`.
 pub(crate) fn quoted(path: &Path) -> String {
     let text = path.display().to_string();

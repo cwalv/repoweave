@@ -1324,6 +1324,7 @@ pub fn removal_counts_a_commit_only_a_detached_worktree_of_a_submodule_holds(
 #[derive(Debug, Clone, Copy)]
 pub enum GitlinkRemovedBy {
     MemberRemoveDelete,
+    MemberRemoveDeleteNamedWithANewline,
     WorkweaveDelete,
     Retire,
 }
@@ -1335,14 +1336,18 @@ pub enum GitlinkRemovedBy {
 /// workweave's checkout holds none at that path, so its delete and retire
 /// ask nothing of it.
 pub fn removal_over_a_gitlink_no_gitmodules_describes(by: GitlinkRemovedBy) -> Scenario {
+    let inner = match by {
+        GitlinkRemovedBy::MemberRemoveDeleteNamedWithANewline => "in\ner",
+        _ => "inner",
+    };
     let mut steps = vec![
-        Step::git(&a(), Repo::App, &["init", "-q", "inner"]),
+        Step::git(&a(), Repo::App, &["init", "-q", inner]),
         Step::git(
             &a(),
             Repo::App,
             &[
                 "-C",
-                "inner",
+                inner,
                 "commit",
                 "-q",
                 "--allow-empty",
@@ -1350,17 +1355,23 @@ pub fn removal_over_a_gitlink_no_gitmodules_describes(by: GitlinkRemovedBy) -> S
                 "inner-only",
             ],
         ),
-        Step::git(&a(), Repo::App, &["add", "inner"]),
+        Step::git(&a(), Repo::App, &["add", inner]),
         Step::git(&a(), Repo::App, &["commit", "-qm", "embed inner"]),
         Step::git(&a(), Repo::App, &["push", "-q", "origin", "main"])
             .pushes(Remote::origin(Repo::App), "main"),
         Step::rwv(&a(), &["lock", "--commit"]).expect(Exit::Succeeds),
     ];
     match by {
-        GitlinkRemovedBy::MemberRemoveDelete => steps.extend([
+        GitlinkRemovedBy::MemberRemoveDelete
+        | GitlinkRemovedBy::MemberRemoveDeleteNamedWithANewline => steps.extend([
             Step::rwv(&a(), &["member", "remove", APP, "--delete"])
                 .expect(Exit::refuses_kind(RefusalKind::DroppedRepoHasUniqueCommits))
-                .claim(Claim::OutputContains("in submodule inner"))
+                .claim(Claim::OutputContains(match by {
+                    GitlinkRemovedBy::MemberRemoveDeleteNamedWithANewline => {
+                        "in submodule \"in\\ner\""
+                    }
+                    _ => "in submodule inner",
+                }))
                 .claim(Claim::DirStands(Machine::A, "weave/local/remotes/app")),
             Step::rwv_printed_quoted(&a(), "rwv member remove ", "--discard-unpublished")
                 .expect(Exit::Succeeds)
@@ -14902,8 +14913,13 @@ pub fn cherry_pick_a_manifest_conflict_stops() -> Scenario {
         ),
         Step::git(&ww("p"), Repo::Proj, &["add", "rwv.toml"]),
         Step::rwv(&ww("p"), &["cherry-pick", "--continue"])
-            .expect(Exit::refuses(Repo::Proj, State::UnparseableProjectMidOperation))
-            .claim(Claim::OutputContains("the resolved rwv.toml does not parse"))
+            .expect(Exit::refuses(
+                Repo::Proj,
+                State::UnparseableProjectMidOperation,
+            ))
+            .claim(Claim::OutputContains(
+                "the resolved rwv.toml does not parse",
+            ))
             .claim(Claim::OutputContains("TOML parse error"))
             .claim(Claim::OutputLacks("Caused by")),
         Step::hand_edit(

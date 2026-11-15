@@ -858,6 +858,14 @@ fn member_remove_delete_over_a_gitlink_no_gitmodules_describes() {
 }
 
 #[test]
+fn member_remove_delete_over_a_gitlink_named_with_a_newline() {
+    runner::run(scenarios::removal_over_a_gitlink_no_gitmodules_describes(
+        scenarios::GitlinkRemovedBy::MemberRemoveDeleteNamedWithANewline,
+    ))
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn workweave_delete_over_a_gitlink_no_gitmodules_describes() {
     runner::run(scenarios::removal_over_a_gitlink_no_gitmodules_describes(
         scenarios::GitlinkRemovedBy::WorkweaveDelete,
@@ -2119,6 +2127,9 @@ every_scenario!(
         false
     ),
     removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::MemberRemoveDelete),
+    removal_over_a_gitlink_no_gitmodules_describes(
+        scenarios::GitlinkRemovedBy::MemberRemoveDeleteNamedWithANewline
+    ),
     removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::WorkweaveDelete),
     removal_over_a_gitlink_no_gitmodules_describes(scenarios::GitlinkRemovedBy::Retire),
     a_replayed_resolution_the_check_stops_names_the_manifest_once,
