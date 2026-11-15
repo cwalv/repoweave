@@ -296,7 +296,9 @@ pub fn registered_workweaves(primary_root: &Path) -> Vec<WorkweaveId> {
 }
 
 /// Return the registered path for a workweave AND require the marker
-/// round-trip to succeed. Used by destructive ops (`delete`, retire).
+/// round-trip to succeed, or the directory to be gone: what is left of a
+/// workweave whose directory is gone is its entry and its registrations,
+/// which a delete removes. Used by destructive ops (`delete`, retire).
 ///
 /// A missing entry surfaces as an actionable "no such workweave" error
 /// rather than falling back to any computed path — the reconstruction
@@ -332,13 +334,7 @@ pub fn ensure_registered_workweave(
             )?;
             Ok(raw.into_path_buf())
         }
-        RegistryEntryValidation::MissingDirectory => crate::refuse!(
-            RefusalKind::StaleRegistryEntry,
-            "workweave `{}` is recorded at {} but that directory no longer \
-             exists; run `rwv doctor --fix` to prune the stale entry",
-            name.as_str(),
-            raw.as_path().display()
-        ),
+        RegistryEntryValidation::MissingDirectory => Ok(raw.into_path_buf()),
         RegistryEntryValidation::MissingMarker => crate::refuse!(
             RefusalKind::StaleRegistryEntry,
             "workweave `{}` is recorded at {} but the directory has no \
@@ -3734,10 +3730,7 @@ pub fn delete_workweave(
     discard_unpublished: Option<DiscardUnpublishedConsent>,
     remote_deletes: &crate::deletion::RemoteDeletes,
 ) -> anyhow::Result<WorkweaveDeletion> {
-    let workweave_dir = match recorded_where_nothing_stands(ws_root, project, name)? {
-        Some(gone) => gone,
-        None => ensure_registered_workweave(ws_root, project, name)?,
-    };
+    let workweave_dir = ensure_registered_workweave(ws_root, project, name)?;
     let claimants = crate::check::workweave_claimants(ws_root, project, name);
     if claimants.len() > 1 {
         crate::refuse!(
@@ -3782,19 +3775,6 @@ pub fn delete_workweave(
         remote_deletes,
         Deleter::Operator,
     )
-}
-
-/// The directory `name` is recorded at, where nothing stands there: what is
-/// left of the workweave is its registrations and its entry, which the
-/// delete drops.
-fn recorded_where_nothing_stands(
-    ws_root: &Path,
-    project: &ProjectName,
-    name: &WorkweaveName,
-) -> anyhow::Result<Option<PathBuf>> {
-    Ok(workweave_index::lookup_raw(ws_root, project, name)?
-        .filter(|recorded| recorded.as_path().symlink_metadata().is_err())
-        .map(|recorded| recorded.into_path_buf()))
 }
 
 /// Keep, as backups, the work in `workweave_dir`'s checkouts that the discard

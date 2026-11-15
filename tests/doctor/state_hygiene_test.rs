@@ -1557,6 +1557,20 @@ fn a_workweave_whose_directory_is_gone_is_deleted_as_the_finding_names() {
     let (_tmp, ws, moved) = a_dir_workweave_moved_away();
     std::fs::remove_dir_all(&moved).unwrap();
 
+    let addressed = rwv_cmd()
+        .args(["-w", "demo--far", "status"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    let refused = common::cli::refused(
+        &addressed,
+        repoweave::refusal::RefusalKind::StaleRegistryEntry,
+    );
+    assert!(
+        refused.contains("`rwv workweave delete far --project demo`"),
+        "a verb addressed at it names the verb that ends it: {refused}"
+    );
+
     let (_, report) = doctor_report(&ws, &["doctor", "--all"]);
     let delete = report
         .split('`')

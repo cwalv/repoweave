@@ -307,6 +307,17 @@ fn resolve_workweave_flag(
 
     match workweave_path {
         Some(path) => Ok((path, project.clone())),
+        None if crate::workweave_index::lookup_raw(&primary_root, project, name)?
+            .is_some_and(|recorded| recorded.as_path().symlink_metadata().is_err()) =>
+        {
+            crate::refuse!(
+                RefusalKind::StaleRegistryEntry,
+                "'-w {raw}' is recorded for project `{project}` as workweave `{name}`, but the \
+                 directory it is recorded at is gone. If it moved, run `rwv doctor --fix` \
+                 inside it, which records it where it stands; if it is gone, `rwv workweave \
+                 delete {name} --project {project}` removes what is left of it."
+            )
+        }
         // Listing `raw` back to the operator as a candidate is what a plain
         // "no such workweave" would do here, since the entry is recorded.
         None => crate::refuse!(
