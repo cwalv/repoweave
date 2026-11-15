@@ -30592,7 +30592,7 @@ pub fn dc26_migration() -> Scenario {
                 })
                 .claim(Claim::IndexBasedir {
                     machine: Machine::A,
-                    dir: None,
+                    dir: Some("old-container"),
                 }),
             Step::git(&a(), Repo::Proj, &["push", "origin", "main"])
                 .pushes(Remote::origin(Repo::Proj), "main"),
