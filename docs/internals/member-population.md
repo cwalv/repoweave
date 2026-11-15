@@ -433,7 +433,18 @@ itself, and the other then reads the wrong tree.
 `extensions.worktreeConfig` does not prevent it: a `git submodule update` in
 the canonical checkout writes `core.worktree` back into the shared config.
 
-**The questions.** `WorkspacePopulation` adds seven:
+**A made checkout follows its member.** The alignment `update_members_for`
+runs (`rwv update`, and the alignment of `sync`, `land` and `pull` once their
+record is gone) calls `follow_submodules` in `src/share.rs` for each member
+checkout of the workspace that recurses: `follow_recorded_commit` moves a
+populated submodule, on no branch and clean by its own status, standing on a
+commit another ref of its store holds, to the commit its member records,
+fetched only from the copy under the canonical store, and walks its own
+submodules after. Anything else is left with a line naming why and the
+backend's line that moves it. A submodule left behind is judged `edits`
+`submodule behind` by `diagnosis::dirty`.
+
+**The questions.** `WorkspacePopulation` adds eight:
 
 - `recorded_submodules`: every submodule a workspace records, with its name,
   path, recorded commit, and whether git declines it. A name that could leave
@@ -442,6 +453,8 @@ the canonical checkout writes `core.worktree` back into the shared config.
 - `create_unpopulated_submodule`: the checkout with no tracked file written.
 - `connect_submodule_upstream`: the remotes of the copy it was made from.
 - `discard_submodule`: the undo.
+- `follow_recorded_commit`: the move of a made checkout to its recorded
+  commit, or why it is left.
 - `check_out_submodule_from_upstream` and `fetch_into_module_data`: the two
   that reach the network, used only by `fetch_submodules`.
 

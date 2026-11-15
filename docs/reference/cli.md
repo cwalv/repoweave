@@ -409,7 +409,7 @@ Change the repo's `role` in `rwv.toml`, regenerate integration-managed workspace
 
 ### `rwv member set-recurse-submodules <path> <true|false>`
 
-Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-managed workspace files. The setting says whether a new checkout of the member populates the submodules it records; a checkout that already exists keeps the submodules it has. `true` is the default and is not written out. If the key was already edited in `rwv.toml` by hand, `rwv member set-recurse-submodules` converges the integration files to match. The change is committed alone, as `member set-role`'s is.
+Set the repo's `recurse-submodules` in `rwv.toml` and regenerate integration-managed workspace files. The setting says whether a new checkout of the member populates the submodules it records, and whether the alignment of `rwv update`, `rwv sync`, `rwv land` and `rwv pull` moves a populated one, on no branch and holding no edits, to the commit its member records; a checkout that already exists keeps the submodules it has. `true` is the default and is not written out. If the key was already edited in `rwv.toml` by hand, `rwv member set-recurse-submodules` converges the integration files to match. The change is committed alone, as `member set-role`'s is.
 
 | Flag | Effect |
 |---|---|

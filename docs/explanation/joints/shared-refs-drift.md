@@ -174,8 +174,14 @@ directory into a file, is refreshed whole.
 
 A submodule is refreshed in the index alone: where the move changed the
 commit it records, its entry takes HEAD's, and its checkout stays at the
-commit it stood at, as git's own checkout and merge leave it; `git submodule
-update` brings it along. A populated submodule the move turns into a file or
+commit it stood at, as git's own checkout and merge leave it. The alignment
+that ends the verb then brings it along for a member that recurses into its
+submodules, as `git submodule update` does: a submodule on no branch, holding
+no edits, on a commit another ref of its store holds, is moved to the commit
+its member records, fetched only from the copies the canonical clone holds.
+One on a branch, holding edits, on a commit nothing else holds, or whose
+commit is held nowhere here is left, with a line naming why and the VCS line
+that moves it; until it moves it is judged `edits` `submodule behind`. A populated submodule the move turns into a file or
 link is an edit while anything is in its directory: git's merge would delete
 that directory whole, files no commit holds included, as `git merge
 --ff-only` does in a single repository. rwv refuses that instead.
