@@ -1538,7 +1538,8 @@ impl Aligner {
             .bind("<b>", &wanted)
             .bind_list("<ids>", &ids);
         if !commits.is_empty() {
-            let already_on_wanted = matches!(off, Off::OnBranch { branch, .. } if branch.to_string() == wanted.to_string());
+            let already_on_wanted =
+                matches!(off, Off::OnBranch { branch, .. } if *branch == wanted.to_string());
             let onto = checked_out_elsewhere(m, &wanted)
                 .unwrap_or_default()
                 .into_iter()
