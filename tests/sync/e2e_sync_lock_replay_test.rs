@@ -501,8 +501,8 @@ fn sync_to_rebase_with_clean_cwd_but_corrupt_source_names_the_source_directory()
     );
     common::assert_names_operator_path(&stderr, &primary.project_dir);
     assert!(
-        stderr.contains("rwv doctor --fix"),
-        "the refusal must direct the operator at `rwv doctor --fix`; got:\n{stderr}"
+        stderr.contains(&format!("rwv -C {} doctor --fix", primary.root.display())),
+        "the refusal must direct the operator at `rwv doctor --fix` in the primary; got:\n{stderr}"
     );
     assert!(
         !stderr.contains(&ww.project_dir.display().to_string()),
