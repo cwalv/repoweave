@@ -954,6 +954,21 @@ fn converged(shape: &Shape) -> Vec<Step> {
     steps
 }
 
+/// A reset keeps the commits it leaves in a backup, so a run that ends has
+/// one holding them, killed or not.
+fn kept_by_a_reset(shape: &Shape) -> Vec<Step> {
+    let subject = match shape.id {
+        "pull_reset_to_upstream" => "b-notes",
+        "update_remote_reset_to_upstream" | "update_remote_merge_and_reset_to_upstream" => {
+            "alpha-lib"
+        }
+        _ => return Vec::new(),
+    };
+    vec![Step::rwv(&(shape.at)(), &["backup", "list"])
+        .expect(Exit::Succeeds)
+        .claim(Claim::OutputContains(subject))]
+}
+
 fn rerun(shape: &Shape) -> Vec<Step> {
     let mut steps = Vec::new();
     match &shape.stop {
@@ -974,6 +989,7 @@ fn continued(shape: &Shape, phase: Phase, point: &str) -> Vec<Step> {
     let mut steps = Vec::new();
     if !recorded(point) {
         steps.extend(rerun(shape));
+        steps.extend(kept_by_a_reset(shape));
         steps.extend(ends_clean(shape, retires_its_seat(shape)));
         return steps;
     }
@@ -988,6 +1004,7 @@ fn continued(shape: &Shape, phase: Phase, point: &str) -> Vec<Step> {
         }
         _ => steps.push(finishing(shape)),
     }
+    steps.extend(kept_by_a_reset(shape));
     steps.extend(ends_clean(shape, retires_its_seat(shape)));
     steps
 }
@@ -1086,6 +1103,7 @@ fn unkilled(shape: &Shape) -> Vec<Step> {
         steps.push(Step::rwv(&ww("w1"), HOLDER).expect(Exit::Succeeds));
     }
     steps.extend(rerun(shape));
+    steps.extend(kept_by_a_reset(shape));
     steps
 }
 
