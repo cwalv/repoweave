@@ -30897,7 +30897,7 @@ pub fn j03_a_landing_stops_on_a_conflict_and_is_finished() -> Journey {
             .claim(Claim::OutputContains("rwv land --continue"))
             .claim(Claim::OutputContains("rwv abort")),
         Step::git(&beta, Repo::App, &["checkout", "--theirs", "README"]),
-        Step::git(&beta, Repo::App, &["add", "README"]),
+        Step::rwv_printed_holding(&beta, "git -C", "add -- README").expect(Exit::Succeeds),
         Step::rwv_printed_exactly(&beta, "rwv land --continue")
             .resolved_by_hand(&[Repo::App])
             .expect(Exit::Succeeds),
@@ -30996,9 +30996,6 @@ pub fn j05_a_landing_loses_a_race() -> Journey {
         Step::rwv(&workweave, &["land", "--retire"]).expect(Exit::Succeeds),
         Step::rwv(&a(), &["push"]).expect(Exit::refuses(Repo::App, State::PushBranchDiverged)),
         Step::rwv_printed_holding(&a(), "rwv update ", "--merge-upstream").expect(Exit::Succeeds),
-        Step::rwv(&a(), &["push"])
-            .expect(Exit::refuses(Repo::Proj, State::EditsLockFilesUncommitted)),
-        Step::rwv_printed(&a(), "rwv lock --commit").expect(Exit::Succeeds),
         publishes_records(Step::rwv(&a(), &["push"]))
             .pushes(Remote::origin(Repo::App), "main")
             .pushes(Remote::origin(Repo::Proj), "main")
@@ -31017,7 +31014,7 @@ pub fn j05_a_landing_loses_a_race() -> Journey {
                 mark: "their-app",
             })],
         path,
-        fault: 9,
+        fault: 7,
         end: vec![clean_end(a())
             .claim(Claim::RemoteContains {
                 remote: Remote::origin(Repo::App),
