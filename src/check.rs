@@ -11480,3 +11480,24 @@ mod verdict_tests {
         assert_eq!(Repair::from_fix_flag(false), Repair::Report);
     }
 }
+
+#[cfg(test)]
+mod misnamed_dir_text_tests {
+    use super::*;
+
+    #[test]
+    fn a_misnamed_directory_with_no_valid_identity_says_what_removing_it_destroys() {
+        let finding = CheckViolation::WorkweaveTreeIntegrity {
+            workweave_dir: PathBuf::from("/ws/.workweaves/stray"),
+            sub_kind: WorkweaveTreeIntegrityKind::MisnamedDir {
+                expected_dir_name: None,
+                detail: "the marker names no project".to_owned(),
+            },
+        };
+        let text = finding.into_text_issue().unwrap().message.to_string();
+        assert!(
+            text.contains("remove the directory, which deletes every checkout in it"),
+            "{text}"
+        );
+    }
+}
