@@ -42,7 +42,8 @@ rwv clone github/chatly/web-app
 ├── github/chatly/protocol/           # ordinary clone
 ├── projects/web-app/                 # project repo
 │   ├── rwv.toml                      # which repos, with what roles
-│   └── rwv.lock                      # the commit pinned for each
+│   ├── rwv.lock                      # the commit pinned for each
+│   └── web-app.code-workspace        # the editor workspace, regenerated from rwv.toml
 └── .rwv-active                       # "web-app"
 ```
 
@@ -54,7 +55,7 @@ The exit status says whether the state reproduced: `0` means every member sits a
 rwv status
 ```
 
-The project repo is on `main`, and `rwv status` ends by saying how `main` is used: `main: declared`. A **declared** branch is one whose members follow the branches `rwv.toml` names for them. The other mode is a **feature**, a branch that lands into a target; the next steps use one.
+The project repo is on `main`, and `rwv status` says how `main` is used on its `record:` line: `main: declared`. A **declared** branch is one whose members follow the branches `rwv.toml` names for them. The other mode is a **feature**, a branch that lands into a target; the next steps use one.
 
 ## 2. Take in the team's work
 
