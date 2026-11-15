@@ -512,3 +512,30 @@ fn doctor_elsewhere_creates_no_checkout_in_a_workspace_an_operation_holds() {
     }
     assert!(docs.is_dir());
 }
+
+/// A ref in the savepoint namespace that names no operation this rwv parses
+/// may be the savepoint of an operation another release recorded: while a
+/// record this release reads only in part stands, `--fix` leaves the ref.
+#[test]
+fn a_ref_no_op_this_release_parses_is_kept_while_another_release_holds_a_record() {
+    let stopped = stopped_by_another_release();
+    let stray = "refs/rwv/pre-op/written-by-another-release";
+    common::git_in(&stopped.primary.lib, &["update-ref", stray, "HEAD"]);
+    for at in [&stopped.primary.root, &stopped.sibling.root] {
+        let fixed = rwv(at, &["doctor", "--fix"]);
+        let report = common::cli::describe(&fixed);
+        assert!(savepoints(&stopped.primary.lib).contains(stray), "{report}");
+    }
+}
+
+/// [`stop_a_sync`] with the seat's record rewritten as a release that kept
+/// no schema number wrote it.
+fn stopped_by_another_release() -> Stopped {
+    let stopped = stop_a_sync();
+    let record = stopped.seat.root.join(".rwv-op");
+    let mut json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    json.as_object_mut().unwrap().remove("schema");
+    std::fs::write(&record, serde_json::to_string(&json).unwrap()).unwrap();
+    stopped
+}
