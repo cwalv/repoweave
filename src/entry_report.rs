@@ -255,8 +255,9 @@ pub(crate) fn render(
         }
         if !list_choices {
             let text = crate::diagnosis::choices_text(vcs.as_ref(), &onto_new, &bindings);
-            if let Some(line) = text.lines().find_map(|l| l.strip_prefix("    ")) {
-                out.push_str(&format!("next: {line}\n"));
+            let mut shown = text.lines().skip(1);
+            if let (Some(phrase), Some(line)) = (shown.next(), shown.next()) {
+                out.push_str(&format!("next: {}: {}\n", phrase.trim(), line.trim()));
             }
             continue;
         }

@@ -4515,9 +4515,11 @@ impl Report {
         }
         let choices = self.choices();
         if !list_choices {
-            let next = choices.iter().find_map(|(_, _, lines)| lines.first());
-            if let Some(line) = next {
-                out.push_str(&format!("next: {line}\n"));
+            let next = choices
+                .iter()
+                .find_map(|(phrase, _, lines)| lines.first().map(|line| (phrase, line)));
+            if let Some((phrase, line)) = next {
+                out.push_str(&format!("next: {phrase}: {line}\n"));
             }
         } else if !choices.is_empty() {
             out.push_str("choices:\n");
@@ -4601,8 +4603,8 @@ pub fn next_text(
 ) -> String {
     choices(vcs, forms, bindings)
         .iter()
-        .find_map(|choice| choice.run.first())
-        .map(|line| format!("next: {line}\n"))
+        .find_map(|choice| choice.run.first().map(|line| (&choice.phrase, line)))
+        .map(|(phrase, line)| format!("next: {phrase}: {line}\n"))
         .unwrap_or_default()
 }
 

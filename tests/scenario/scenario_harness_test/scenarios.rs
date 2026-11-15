@@ -13836,7 +13836,10 @@ pub fn land_reports_the_target_ahead_of_its_push_branch() -> Scenario {
             Step::rwv(&ww("w"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
                 .claim(Claim::Judged(Repo::Proj, State::PushBranchAhead))
-                .claim(Claim::OutputContains("rwv push --branch main")),
+                .claim(Claim::OutputContains(
+                    "next: publish it: rwv push --branch main",
+                ))
+                .claim(Claim::OutputLacks("choices:")),
             publishes_records(Step::rwv(&a(), &["push", "--branch", "main"]))
                 .pushes(Remote::origin(Repo::App), "main")
                 .pushes(Remote::origin(Repo::Proj), "main")
@@ -26130,13 +26133,9 @@ pub fn cherry_pick_continue_takes_in_a_copy_committed_with_its_own_message() -> 
                 rev: "proj--p",
                 mark: "own-message-copy",
             }),
-        Step::git(
-            &ww("p"),
-            Repo::App,
-            &["log", "--format=%s", "proj--p"],
-        )
-        .expect(Exit::Succeeds)
-        .claim(Claim::OutputLine("own-message-copy")),
+        Step::git(&ww("p"), Repo::App, &["log", "--format=%s", "proj--p"])
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputLine("own-message-copy")),
     ]);
     scenario(
         "cherry-pick --continue takes in a copy committed with its own message",

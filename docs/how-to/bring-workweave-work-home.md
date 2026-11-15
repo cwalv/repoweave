@@ -56,6 +56,10 @@ Add `--json` for a machine-readable envelope. To read a workweave from outside i
 - Every repo the landing moves, here and in the target's workspace, must be
   clean; under `--retire`, every checkout of the workweave, untracked files
   included.
+- Under `--retire` (and in `rwv workweave delete`), a submodule of a member whose
+  commits no remote is confirmed to hold, or whose remote does not answer,
+  refuses with `remotes-unconfirmed`; rerun when the remote answers, or pass
+  `--discard-unpublished` to retire anyway, which lists what no remote holds.
 - In the target's workspace, a receiving branch holding commits its lock does
   not record, and no other lock or remote holds, refuses (`pin` `unpinned`).
   The refusal names the target's workspace and prints its choices addressed
