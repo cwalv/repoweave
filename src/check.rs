@@ -6442,6 +6442,14 @@ pub fn scan_state_hygiene(
         });
     }
 
+    let held_roots: Vec<&PathBuf> = holders
+        .dirs
+        .iter()
+        .filter(|dir| {
+            crate::op_state::OwnerRecord::path_in(dir).exists()
+                || crate::op_state::LeaseRecord::path_in(dir).exists()
+        })
+        .collect();
     let unreadable_roots: Vec<&Path> = holders
         .unknown
         .iter()
@@ -6454,7 +6462,10 @@ pub fn scan_state_hygiene(
         let named_unreadable = unreadable_roots
             .iter()
             .any(|root| worktree_path.starts_with(root));
-        if !(withheld && named_unreadable) {
+        let held = held_roots
+            .iter()
+            .any(|root| worktree_path.starts_with(root));
+        if !(withheld && named_unreadable) && !held {
             violations.push(finding);
         }
     }
