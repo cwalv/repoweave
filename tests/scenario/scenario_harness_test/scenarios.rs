@@ -30541,6 +30541,7 @@ pub fn a_seat_forked_before_the_key_rename_lands_keeping_the_targets_history() -
             ),
             Step::git(&ww("w"), Repo::Proj, &["merge", "-q", "--ff-only", "main"]),
             Step::rwv(&a(), &["doctor", "--fix"]).expect(Exit::Succeeds),
+            Step::commit(&ww("w"), Repo::Proj, "w-notes"),
             Step::rwv(&ww("w"), &["doctor", "--fix"]).expect(Exit::Succeeds),
             Step::rwv(&a(), &["branch", "set-history", "linear"]).expect(Exit::Succeeds),
             Step::commit(&ww("w"), Repo::App, "w-app"),
