@@ -886,6 +886,17 @@ fn edits_set_aside_in_the_submodule_take_the_fetch() {
 }
 
 #[test]
+fn a_commit_made_and_published_in_the_submodule_takes_the_fetch() {
+    runner::run(
+        scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
+            scenarios::InTheSubmodule::CommittedAndPublished,
+            false,
+        ),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
 fn a_tag_in_the_submodule_takes_the_fetch() {
     runner::run(
         scenarios::a_workweave_removal_judges_an_untouched_submodule_store_offline(
@@ -1896,6 +1907,10 @@ every_scenario!(
     ),
     a_workweave_removal_judges_an_untouched_submodule_store_offline(
         scenarios::InTheSubmodule::Committed,
+        false
+    ),
+    a_workweave_removal_judges_an_untouched_submodule_store_offline(
+        scenarios::InTheSubmodule::CommittedAndPublished,
         false
     ),
     a_workweave_removal_judges_an_untouched_submodule_store_offline(

@@ -845,6 +845,7 @@ pub fn store_removal_of_a_clone_whose_remote_is_gone() -> Scenario {
 pub enum InTheSubmodule {
     Nothing,
     Committed,
+    CommittedAndPublished,
     SetEditsAside,
     Tagged,
     ExpiredItsHeadLog,
@@ -879,6 +880,28 @@ pub fn a_workweave_removal_judges_an_untouched_submodule_store_offline(
                     "made-here",
                 ],
             ),
+            Step::git(&at, Repo::App, &["-C", "sub", "checkout", "-q", "HEAD~1"]),
+        ]),
+        InTheSubmodule::CommittedAndPublished => steps.extend([
+            Step::git(
+                &at,
+                Repo::App,
+                &[
+                    "-C",
+                    "sub",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "made-here",
+                ],
+            ),
+            Step::git(
+                &at,
+                Repo::App,
+                &["-C", "sub", "push", "-q", "origin", "HEAD:refs/heads/side"],
+            )
+            .pushes(Remote::origin(Repo::Lib), "side"),
             Step::git(&at, Repo::App, &["-C", "sub", "checkout", "-q", "HEAD~1"]),
         ]),
         InTheSubmodule::SetEditsAside => steps.extend([
