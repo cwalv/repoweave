@@ -46,7 +46,7 @@ rwv clone github/chatly/web-app
 └── .rwv-active                       # "web-app"
 ```
 
-The exit status says whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned or its pinned commit is unreachable. `rwv clone` never moves a pin and writes no `rwv.lock`.
+The exit status says whether the state reproduced: `0` means every member sits at its pin, and `3` means a member is unpinned or its pinned commit is unreachable. `rwv clone` never moves a pin and writes no `rwv.lock`. A repository that holds no `rwv.toml` is refused as not a project and left untouched; the refusal prints `rwv clone <source> --init-manifest`, which writes a skeleton `rwv.toml`, commits it, and clones as usual.
 
 `rwv status` shows each member's branch, its tip, the commit the lock pins, and how the two relate:
 

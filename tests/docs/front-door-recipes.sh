@@ -75,24 +75,11 @@ block() {
     on && /^```/ { exit }
     on { print }' "$1"
 }
-# substitute <line>: a spelling that ships with another change runs as the spelling this build has,
-# and is counted as pending until the build has the new one
-substitute() {
-  case "$1" in
-    "rwv member set-url projects/"*)
-      local rest=${1#rwv member set-url projects/} p
-      p=${rest%% *}
-      PENDING=$((PENDING + 1))
-      REPLY="git -C projects/$p remote add origin ${rest#* }" ;;
-    *) REPLY=$1 ;;
-  esac
-}
 # run <page> <first line>: run that block's lines verbatim, in order, in this shell
 run() {
   local page=$1 first=$2 nth=${3:-1} line n=0
   while IFS= read -r line; do
     n=$((n + 1))
-    substitute "$line"; line=$REPLY
     echo "+ $line"
     eval "$line" || { fail "exit $?: $line"; return 1; }
   done < <(block "$page" "$first" "$nth")
