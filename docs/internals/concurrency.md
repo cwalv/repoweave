@@ -191,12 +191,6 @@ the same state-claim mechanism as the workweave index's claim
 the verb refuses as `state-claim-held`, naming the holder. The claim orders rwv's own fetches; a `git fetch` typed by hand into
 the same store takes no `.rwv-fetch.lock`.
 
-The claim also covers the one record a fetch keeps: `FetchClaim::fetch_pruning`
-writes, beside the claim, when each remote the fetch completed did
-(`StateFile::FetchRecord`, `.rwv-fetched`), so the record is per store and per
-remote, as the remote-tracking refs it dates are. It is rwv's record of its own
-fetches, so a transfer from a local path or a hand `git fetch` does not move it.
-
 **A landing claims its target: one landing at a time per target.** `rwv land`
 takes the claim on its target branch (`LandingClaim::take` in
 `src/landing_claim.rs`, the file `.rwv-landing.lock` under `rwv-landings/` in

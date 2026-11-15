@@ -49,8 +49,6 @@ pub enum StateFile {
     IndexClaim,
     /// Claimed, and removed on release.
     FetchClaim,
-    /// Replaced, by a writer holding [`StateFile::FetchClaim`].
-    FetchRecord,
     /// Created exclusively by the landing that claims its target, taken over
     /// by that landing's own `--continue`, and removed on release.
     LandingClaim,
@@ -65,7 +63,7 @@ pub const OPERATOR_AUTHORED: [&str; 2] = [
 ];
 
 impl StateFile {
-    pub const ALL: [StateFile; 14] = [
+    pub const ALL: [StateFile; 13] = [
         StateFile::OwnedDigests,
         StateFile::ActiveProject,
         StateFile::WorkweaveMarker,
@@ -78,7 +76,6 @@ impl StateFile {
         StateFile::OwnedDigestsClaim,
         StateFile::IndexClaim,
         StateFile::FetchClaim,
-        StateFile::FetchRecord,
         StateFile::LandingClaim,
     ];
 
@@ -96,7 +93,6 @@ impl StateFile {
             StateFile::OwnedDigestsClaim => crate::owned_state::OWNED_DIGESTS_CLAIM_FILE,
             StateFile::IndexClaim => crate::workweave_index::INDEX_CLAIM_FILE,
             StateFile::FetchClaim => crate::fetch_claim::FETCH_CLAIM_FILE,
-            StateFile::FetchRecord => crate::fetch_claim::FETCH_RECORD_FILE,
             StateFile::LandingClaim => crate::landing_claim::LANDING_CLAIM_FILE,
         }
     }

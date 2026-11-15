@@ -30,7 +30,6 @@ Each is a variant of `StateFile` (`src/state_file.rs`) and is written through
 | `rwv-workspace-state` | private dir of the project checkout | the workspace | nothing; unreadable reads as absent and is rewritten by the next `update` or `switch` |
 | `rwv.lock` | project, tracked | history | nothing |
 | `.rwv-owned-digests` | project, machine-local | the workspace | nothing: published whole under its claim |
-| `.rwv-fetched` | store of each repo | the store | nothing: published whole under the fetch claim |
 | `.rwv-op` | the workspace that owns an operation | one operation | the record, by design; `rwv abort` or `--continue` ends it |
 | `.rwv-op-lease` | each other workspace an operation mutates | one operation | the lease; `rwv abort` removes it, and `rwv doctor --fix` removes a dead one |
 | `.rwv-landing.lock` | `rwv-landings/<digest>/` in the store of the project clone | one operation (a landing carries it) | the claim; the next landing takes over a dead one |

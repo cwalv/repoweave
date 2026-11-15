@@ -241,7 +241,6 @@ All durable rwv state is files. There is no database and no cache directory.
 | `rwv-workweave-index.lock` | `StateFile::IndexClaim`, `src/workweave_index.rs` | beside the index | The claim every edit of the index holds (`IndexClaim::hold`). |
 | `.rwv-landing.lock` | `StateFile::LandingClaim`, `src/landing_claim.rs` | `rwv-landings/` in the project clone's store (`Vcs::store_of`) | The claim a landing holds on its target branch from before it reads the target's tips until it releases it; it names the op and the workspace holding the op's record. [`docs/internals/landing.md`](docs/internals/landing.md). |
 | `.rwv-fetch.lock` | `StateFile::FetchClaim`, `src/fetch_claim.rs` | a member's or the project clone's store (`Vcs::store_of`) | The claim every pruning fetch into that store holds (`FetchClaim::hold`). |
-| `.rwv-fetched` | `StateFile::FetchRecord`, `src/fetch_claim.rs` | beside `.rwv-fetch.lock` | When rwv's pruning fetch of each remote into the store last completed, written under the fetch claim. No verb reads it: a verb that judges on refs as last fetched prints no age for them. |
 | `.rwv-op` | `OP_STATE_FILE`, `src/op_state.rs` | a weave root | The owner record of an in-flight multi-repo operation. §5. |
 | `.rwv-op-lease` | `OP_LEASE_FILE`, `src/op_state.rs` | every other workspace the operation mutates | A mutex plus a redirect to the owner. Immutable once written. |
 | `.rwv-owned-digests` | `OWNED_DIGESTS_FILE`, `src/owned_state.rs` | beside a generated file | SHA-256 of fully-owned generated content, so drift is detectable. |

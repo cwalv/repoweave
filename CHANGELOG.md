@@ -6,6 +6,10 @@ claim that nothing changed in them.
 
 ## Unreleased
 
+### The `.rwv-fetched` file is no longer written
+
+Nothing read the per-remote fetch times it held. A file an earlier release left in a store is harmless and is neither read nor removed.
+
 ### Upgrade: finish or abort an operation in progress first
 
 An operation a release before this one left in progress cannot be resumed or

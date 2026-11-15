@@ -7,28 +7,12 @@
 
 use crate::durable_file::ClaimFile;
 use crate::refusal::RefusalKind;
-use crate::state_file::{StateFile, StatePath};
+use crate::state_file::StateFile;
 use crate::vcs::{PruningFetch, RemoteHandle, Vcs};
 use anyhow::Context;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub(crate) const FETCH_CLAIM_FILE: &str = ".rwv-fetch.lock";
-pub(crate) const FETCH_RECORD_FILE: &str = ".rwv-fetched";
-
-/// When rwv's pruning fetch of each remote into one store last completed, in
-/// seconds since the Unix epoch, keyed by the remote as its backend renders
-/// it.
-type FetchRecord = BTreeMap<String, u64>;
-
-fn read_record(path: &StatePath) -> anyhow::Result<Option<Vec<u8>>> {
-    match path.read() {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(anyhow::Error::new(e).context(format!("failed to read {path}"))),
-    }
-}
 
 /// A held claim on the object store a repo draws from, released when
 /// [`FetchClaim::hold`] returns.
@@ -65,10 +49,7 @@ impl FetchClaim {
     }
 
     /// The pruning fetch of `only`'s remotes into `repo` (every remote, when
-    /// `only` is `None`), recording when each one it completed did.
-    ///
-    /// A record that does not parse is replaced: it holds nothing a verb
-    /// needs.
+    /// `only` is `None`).
     pub(crate) fn fetch_pruning(
         &self,
         vcs: &dyn Vcs,
@@ -76,22 +57,7 @@ impl FetchClaim {
         only: Option<&[RemoteHandle]>,
         superseded: crate::vcs::Superseded,
     ) -> anyhow::Result<PruningFetch> {
-        let fetched = vcs.fetch_pruning(self, repo, only, superseded)?;
-        if !fetched.fetched.is_empty() {
-            let path = StateFile::FetchRecord.in_dir(&self.store);
-            let mut record: FetchRecord = read_record(&path)?
-                .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-                .unwrap_or_default();
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            for remote in &fetched.fetched {
-                record.insert(remote.to_string(), now);
-            }
-            path.publish(&serde_json::to_vec_pretty(&record)?)?;
-        }
-        Ok(fetched)
+        Ok(vcs.fetch_pruning(self, repo, only, superseded)?)
     }
 
     fn acquire(vcs: &dyn Vcs, repo: &Path) -> anyhow::Result<Self> {
