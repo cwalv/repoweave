@@ -141,11 +141,13 @@ impl Merged {
     }
 }
 
-/// A merge stopped on conflicts in `repo`, whose paths are listed.
+/// A merge stopped in `repo`, whose paths are listed: on conflicts, or, where
+/// `for_check`, with none, for the decision about a clean text merge.
 pub(crate) struct Conflicted {
     pub(crate) repo: String,
     pub(crate) checkout: PathBuf,
     pub(crate) paths: Vec<String>,
+    pub(crate) for_check: bool,
 }
 
 /// What a member merge came to.
@@ -218,6 +220,7 @@ pub(crate) fn merge_member(
                     repo: repo.to_string(),
                     checkout: dir.to_path_buf(),
                     paths,
+                    for_check: false,
                 }));
             }
             let head = vcs.head_revision(dir)?.id().clone();
@@ -279,6 +282,7 @@ pub(crate) fn merge_member(
             repo: repo.to_string(),
             checkout: dir.to_path_buf(),
             paths,
+            for_check: false,
         }));
     }
     let (first, second) = parents(order, head.id(), source);
@@ -377,7 +381,12 @@ pub(crate) fn conflict_stop(
     setters: &[String],
 ) -> anyhow::Error {
     let mut text = format!(
-        "rwv {verb}: merge conflict in {} ({}) at {}.\n{}",
+        "rwv {verb}: {} in {} ({}) at {}.\n{}",
+        if conflicted.for_check {
+            "merge stopped for a check"
+        } else {
+            "merge conflict"
+        },
         conflicted.repo,
         conflicted.paths.join(", "),
         conflicted.checkout.display(),
@@ -669,7 +678,7 @@ impl ProjectMerge<'_> {
         sides: &Sides,
         repo: &str,
     ) -> anyhow::Result<Merged> {
-        let stop = |paths: Vec<String>| {
+        let stop = |paths: Vec<String>, for_check: bool| {
             let setters = crate::manifest_conflict::enter_stop(
                 vcs,
                 dir,
@@ -684,6 +693,7 @@ impl ProjectMerge<'_> {
                     repo: repo.to_owned(),
                     checkout: dir.to_path_buf(),
                     paths,
+                    for_check,
                 },
                 vcs,
                 &setters,
@@ -698,7 +708,7 @@ impl ProjectMerge<'_> {
             if unmerged.is_empty() {
                 return Ok(Merged::Index);
             }
-            return Err(stop(unmerged));
+            return Err(stop(unmerged, false));
         }
         let tracked = vcs.tracked_dirty_file_names(dir)?;
         if let Some(edits) = crate::diagnosis::judge_edits(vcs, repo, dir, tracked, None) {
@@ -749,15 +759,17 @@ impl ProjectMerge<'_> {
             .into_iter()
             .filter(|path| path != LockFile::FILE_NAME)
             .collect();
+        let mut for_check = false;
         if crate::manifest_conflict::check_merge_in_flight(vcs, dir, self.ctx.active_path())?
             && !paths.iter().any(|path| path == Manifest::FILE_NAME)
         {
             paths.push(Manifest::FILE_NAME.to_owned());
+            for_check = true;
         }
         if paths.is_empty() {
             Ok(Merged::Index)
         } else {
-            Err(stop(paths))
+            Err(stop(paths, for_check))
         }
     }
 

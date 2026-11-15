@@ -22356,7 +22356,11 @@ pub fn check_a_text_merge(how: TextMerge) -> Scenario {
                     .claim(Claim::OutputContains(
                         "or edit rwv.toml into what you mean and mark it resolved, then continue:",
                     ))
-                    .claim(Claim::OutputLacks("git add <files>")),
+                    .claim(Claim::OutputLacks("git add <files>"))
+                    .claim(Claim::OutputContains(
+                        "rwv sync: merge stopped for a check in projects/proj (rwv.toml)",
+                    ))
+                    .claim(Claim::OutputLacks("merge conflict in")),
                 Step::git(&ww("w"), Repo::Proj, &["ls-files", "-u", "--", "rwv.toml"])
                     .expect(Exit::Succeeds)
                     .claim(Claim::OutputContains("rwv.toml")),
