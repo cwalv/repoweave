@@ -341,8 +341,8 @@ is a question the test must survive:
 ## Deletion, replacement, and what they carry
 
 Deletion is a licensed outcome, not vandalism — this repo has done it on
-principle and recorded it ([branch-model.md](branch-model.md) §4.4: an
-invariant checked by construction should not also carry a tripwire). Three
+principle: an invariant checked by construction should not also carry a
+tripwire (the type split in [branch-model.md](branch-model.md)). Three
 licenses:
 
 - **By-construction supersession.** The invariant became unrepresentable —

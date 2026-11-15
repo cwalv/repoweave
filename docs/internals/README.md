@@ -65,12 +65,25 @@ backstop unnecessary.
 - [repin-record](./repin-record.md) — the `Rwv-Repin` annotation a by-name
   lock commit carries, the one function that writes it, and how `pin`
   `waived` reads it.
-- [branch-model](./branch-model.md) — the MOVE / ATTACH / DESTROY /
-  DESTROY-STORE classification, the deletion rule, and the type split
-  (`AttachedRef`, `DestroyProof`, consent tokens) that makes ref discipline hold by
-  construction. Cited by section from `docs/reference/explain/doctor.md` and
-  `docs/reference/schemas/doctor.json`, so its section numbering is
-  load-bearing.
+- [branch-model](./branch-model.md) — what a branch is for, the MOVE / ATTACH /
+  DESTROY / DESTROY-STORE classification of every ref write, the deletion rule,
+  backups and their marks, and the type split (`AttachedRef`, `DestroyProof`,
+  `BackupWitness`, consent tokens) that makes ref discipline hold by
+  construction.
+- [records-branch](./records-branch.md) — how each weave branch's mode and
+  landing record is stored on the records branch, folded across remotes,
+  written by compare-and-swap, dropped and published.
+- [alignment-engine](./alignment-engine.md) — the one engine that decides and
+  applies where each member of a workspace sits, and the workspace state it
+  keeps.
+- [landing](./landing.md) — the history setting, the lineage rule, what a
+  landing plans, how it is composed before any ref moves, the landing claim,
+  and stacks.
+- [store-removal](./store-removal.md) — the judgment in front of every removal
+  of a checkout that removes an object store: fetch first, refuse what no remote
+  has, `--discard-unpublished`.
+- [vcs-backend-contract](./vcs-backend-contract.md) — what the `Vcs` seam
+  requires of a backend, by capability, and what core never does.
 - [casefold-filesystem](./casefold-filesystem.md) — building a loopback ext4
   image with the `casefold` feature to measure the filesystem-identity match
   in workweave name resolution for real, and what each of the four affected
