@@ -47,12 +47,33 @@ RWV_JOURNEY=j03 cargo test --release --features test-pause --test scenario -- \
   build_a_journey_start_state --ignored --nocapture
 ```
 
-It prints `SANDBOX`, `HOME`, `MACHINE_A_WEAVE` (the operator's `~/work`) and
-`MACHINE_B_WEAVE`. A probe runs with `HOME` set to the printed one, the `rwv`
-under test on `PATH`, and the weave as its working directory. The sandbox's
-names differ from the task text's: `server` is `app`, `protocol` is `lib`, the
-other code repository is `docs`, the project is `proj`, and the hosting service
-is the bare repositories under `SANDBOX/remotes/`.
+It prints `SANDBOX`, `HOME`, `MACHINE_A_WEAVE` (the operator's `~/work`),
+`MACHINE_B_WEAVE` and `GOLDEN_RWV_COMMANDS`, the number of rwv commands the documented
+path runs after the start state. A probe runs with `HOME` set to the printed one, the
+`rwv` under test on `PATH`, and the weave as its working directory.
+
+The build that makes the start state is the test build, `--features test-pause`, at
+`target/release/rwv`: J18 and J19 hold a landing at a pause point and kill it, which a
+plain build cannot do. The binary the agent works with is the plain build
+(`cargo build --release` without the feature, copied elsewhere before the test build
+overwrites it). The sandbox's names differ from the task text's: `server` is `app`,
+`protocol` is `lib`, the third code repository is `docs` (`web` in a task that has one,
+`docs` in one that adds one), the project is `proj`, and the hosting service is the
+bare repositories under `SANDBOX/remotes/`.
+
+When the agent is done, the end check runs against the same sandbox:
+
+```sh
+RWV_JOURNEY=j03 SANDBOX=<root> cargo test --release --features test-pause --test scenario -- \
+  check_a_journey_end_state --ignored --nocapture
+```
+
+It is the task's **Check**: refs, pins, records, published state, no operation in
+progress, doctor clean. A claim about a commit finds it by its subject, so a task that
+wants a commit the agent makes identified says its message (J01, J08), and one that
+wants content checked says the file and its text (J14 to J16). A test reads each journey's `holds` list on
+its built start state, so a start state that lacks what its task text presupposes
+fails in the suite, and runs every journey's end check mark-free after its own path.
 
 ## Tasks
 
@@ -61,7 +82,7 @@ is the bare repositories under `SANDBOX/remotes/`.
 **Start:** the shared world, machine A.
 **Task:** The welcome screen needs a new field. Add a `welcome.txt` containing
 `welcome: string` to `protocol` and a `welcome.txt` containing `serve the welcome` to
-`server`, as one change, without touching `~/work` until the change is ready. When it
+`server`, as one change (the commits' messages are `welcome-lib` and `welcome-app`), without touching `~/work` until the change is ready. When it
 is ready, have it in `main` in `~/work` and published for the team.
 **Check:** the hosting service's `main` of `protocol`, `server` and the project each
 holds the change; the project's lock on the hosting service pins each of the two at
@@ -71,13 +92,13 @@ workspace and no branch of the change remains on machine A; a clean end.
 ### J02 Pick up a colleague's landing and carry on
 
 **Start:** the shared world; on machine A a change to `server` is in progress in a
-spare workspace and committed there. Meanwhile the colleague has published a change to
-`protocol` and one to `web` into `main`, and in the same landing added a fourth
-repository, `docs`, to the project.
+spare workspace and committed there. Meanwhile the colleague has
+published a change to `protocol` into `main`, and in the same landing added a
+fourth repository, `docs`, to the project.
 **Task:** Get the colleague's changes into your own copy of the project, then finish
 your in-progress change so that `main` holds yours on top of theirs, and publish.
-**Check:** hosting `main` of every repository holds both the colleague's commits and
-the operator's, in that order; the hosting project's description lists `docs` and its
+**Check:** hosting `main` of `protocol` holds the colleague's commit and `server`'s the
+operator's; the hosting project's description lists `docs` and its
 lock pins every repository at its `main` tip; `~/work` has a `docs` checkout at its
 pin; the spare workspace is gone; a clean end.
 
@@ -139,7 +160,7 @@ pins `docs` at `v2`'s tip and `server` at its older commit; `~/work` has `docs` 
 **Start:** the shared world; on machine A a feature `a` is under way in a spare
 workspace, with a commit in `server`.
 **Task:** Start a second feature `b`, which needs `a`'s commit, so that it begins from
-the first feature rather than from `main`. Make a commit in `protocol` for `b`. Bring
+the first feature rather than from `main`. Make a commit in `protocol` for `b`, with the message `b-lib`. Bring
 `a` into `main`, then `b`, and publish.
 **Check:** hosting `main` of `server` holds `a`'s commit, hosting `main` of `protocol`
 holds `b`'s commit; the project's history shows `a`'s change before `b`'s; both
@@ -166,13 +187,13 @@ the project's active branch; a clean end.
 
 ### J11 Turn a repository that is not yet a project into one
 
-**Start:** the shared world, except that the hosting service holds `web-app` as an
-ordinary repository with a `README` and no project description, and nothing is set up
-on machine B.
-**Task:** On machine B, take that repository as the project `web-app`, with `web`
-and `server` as its code repositories, and publish what you set up so machine A can
+**Start:** the shared world, except that the hosting service also holds `docs` as an
+ordinary repository with a `README` and no project description, and machine B has the
+team's project set up.
+**Task:** On machine B, take `docs` as a second project, named `docs`, with `server`
+and `protocol` as its code repositories, and publish what you set up so machine A can
 take it from there.
-**Check:** the hosting project has a description listing `web` and `server` and a
+**Check:** the hosting `docs` has a description listing `server` and `protocol` and a
 lock pinning both; machine A, setting the project up from the hosting service, ends
 in the state machine B has; both clean ends.
 
@@ -189,32 +210,35 @@ and lock agree with the checkouts; a clean end.
 
 ### J13 Cut a release line
 
-**Start:** the shared world; the project's `main` has been published with `server` and
-`protocol` each at a release commit tagged `v1.0`, followed by one more commit each.
-**Task:** Start a line of releases at `v1.0` for `server` and `protocol` so fixes to
-the released version can go in without taking `main`'s newer work; `web` keeps
-following `main`. Publish the line.
+**Start:** the shared world; `server` and `protocol` each have a release commit on
+`main` (in `server`, `welcome.txt` reads `helo, world`), and the project records them.
+**Task:** Start a line of releases at that state for `server` and `protocol` so fixes
+to the released version can go in without taking `main`'s newer work; the third
+repository keeps following `main`. Publish the line.
 **Check:** the hosting service has a project branch `stable` whose description names
-`v1` for `server` and `protov1` for `protocol`, each at the `v1.0` commit, and `web` on
-`main`; the record of `stable` is published as a line that follows those branches; a
+`v1` for `server` and `protov1` for `protocol`, each at the release commit, and the
+third repository on `main`; the record of `stable` is published as a line that follows those branches; a
 clean end.
 
 ### J14 Land a hotfix on a release line
 
-**Start:** as J13 after the line exists and is published; a spare workspace is wanted.
-**Task:** The released welcome message has a typo. Fix it in `server` for the released
-version only, put the fix in the line and publish it, and leave `main` alone.
-**Check:** hosting `v1` of `server` holds the fix and hosting `main` of `server` does
-not; hosting `stable` pins `server` at the fixed commit; no spare workspace remains;
+**Start:** as J13 after the line exists and is published, and `main` has moved on by
+one commit in `server`.
+**Task:** The released `welcome.txt` in `server` reads `helo, world`; it should read
+`hello, world`. Fix it for the released version only, put the fix in the line and
+publish it, and leave `main` alone.
+**Check:** hosting `v1` of `server` has `welcome.txt` reading `hello`, hosting `main`
+of `server` still reads `helo`; hosting `stable` pins `server` at the fixed commit; no spare workspace remains;
 the project's `main` is where it was; a clean end.
 
 ### J15 Port a fix from one line to the other
 
 **Start:** as J14 after the hotfix is published.
-**Task:** The same fix is needed on `main`. Take it over from the release line without
-dragging along anything else of the line, and publish.
-**Check:** hosting `main` of `server` holds a commit with the fix's change and no
-other commit of the line; the project's `main` lock pins `server` there; a clean end.
+**Task:** The same fix is needed on `main`: its `welcome.txt` reads `helo, world`. Take
+the fix over from the release line without dragging along anything else of the line,
+and publish.
+**Check:** hosting `main` of `server` has `welcome.txt` reading `hello` and keeps its
+own newer commit; the project's `main` lock pins `server` there; a clean end.
 
 ### J16 Retire a release line
 
@@ -227,9 +251,9 @@ branches `v1` and `protov1` of the members remain; a clean end.
 
 ### J17 A landing stops because a retired workspace holds unpublished work
 
-**Start:** the shared world; `server` has a nested repository inside it
-(`server/vendor/lib`). A spare workspace on machine A has a commit in `server`, and a
-commit inside `vendor/lib` made in that workspace that is on no other computer.
+**Start:** the shared world; `server` has a nested repository at `sub`, a clone of
+`protocol`. A spare workspace on machine A has a commit in `server` that records a
+new commit inside `sub`, which is on no other computer.
 **Task:** Bring the change into `main` and remove the spare workspace. When it will
 not be removed without losing the nested commit, publish the nested commit and finish
 the removal.
@@ -239,8 +263,8 @@ service has the nested commit; the spare workspace is gone; a clean end.
 ### J18 Recover after the machine dies mid-landing
 
 **Start:** the shared world; a spare workspace on machine A with commits to `server`
-and `protocol`. The process bringing it into `main` is killed part-way (after the
-first repository has moved), then the machine is back.
+and `protocol`. The process bringing it into `main` is killed part-way,
+then the machine is back.
 **Task:** Find out what state `~/work` and the workspace are in and finish bringing
 the change into `main`.
 **Check:** `main` of `server` and `protocol` hold the change once each; the project's
@@ -257,8 +281,7 @@ holds its commits; no unfinished operation; a clean end.
 ### J20 A repository with a nested repository: take in a colleague's change to it
 
 **Start:** the shared world, except that `server` holds a nested repository at
-`vendor/lib`, whose own hosting service holds a `main` with two commits and which
-`server` records at the first. On machine A a spare workspace has a commit in `web`.
+`sub`, a clone of `protocol` that `server` records at an older commit of its `main`. On machine A a spare workspace has a commit in `web`.
 The colleague has published a change to `server` that moves the nested repository to its
 second commit.
 **Task:** Take in the colleague's change, keeping your own work, and bring yours into
