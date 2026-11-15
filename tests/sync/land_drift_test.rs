@@ -2916,6 +2916,14 @@ const SWEPT: &[(&str, &[&[&str]])] = &[
     ("init", &[&["init", "fresh"]]),
     ("member add", &[&["member", "add", "<other>"]]),
     ("member remove", &[&["member", "remove", LIB]]),
+    (
+        "integration set-enabled",
+        &[&["integration", "set-enabled", "gita", "true"]],
+    ),
+    (
+        "integration set",
+        &[&["integration", "set", "static-files", "files", "[]"]],
+    ),
     ("member set-role", &[&["member", "set-role", LIB, "fork"]]),
     ("member pin", &[&["member", "pin", LIB, "HEAD"]]),
     (

@@ -687,6 +687,10 @@ impl Vcs for FakeVcs {
         unsupported("resolve_savepoint")
     }
 
+    fn savepoint_branch(&self, _repo: &Path, _key: &SavepointKey) -> Option<RawRefName> {
+        unsupported("savepoint_branch")
+    }
+
     fn drop_savepoint(&self, _repo: &Path, _key: &SavepointKey) {
         unsupported("drop_savepoint")
     }

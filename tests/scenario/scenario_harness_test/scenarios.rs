@@ -9093,7 +9093,12 @@ pub fn landing_writes_no_relock_of_its_own(how: ProjectLands) -> Scenario {
         Step::git(
             &a(),
             Repo::Proj,
-            &["rev-list", "--count", "--grep=auto-relock", "main"],
+            &[
+                "rev-list",
+                "--count",
+                "--grep=relock for the landing",
+                "main",
+            ],
         )
         .claim(Claim::OutputLine(if how == ProjectLands::Merge {
             "0"
@@ -10337,7 +10342,7 @@ pub fn plain_drift_judged_by(verb: HeldVerb) -> Scenario {
             .claim(Claim::OutputLacks("stale.txt")),
         match verb {
             HeldVerb::Switch => Step::rwv(&at, args)
-                .expect(Exit::refuses(Repo::Proj, State::CheckoutInRawWorktree))
+                .expect(Exit::refuses(Repo::Proj, State::CheckoutInAnotherWorkspace))
                 .claim(Claim::OutputLacks("edits")),
             HeldVerb::WorkweaveDelete => {
                 Step::rwv(&at, &["workweave", "delete", "me", "--discard-unlanded"])
@@ -26246,8 +26251,12 @@ pub fn a_stop_marked_resolved_continues(which: StoppedOnApp) -> Scenario {
             )
         })
         .expect("the stop");
+    let staging = match which {
+        S::LandLinear | S::LandMerge => "then mark them resolved:",
+        _ => "git add <files>",
+    };
     steps[stop].expect.claims.extend([
-        Claim::OutputContains("git add <files>"),
+        Claim::OutputContains(staging),
         Claim::OutputContains(printed),
     ]);
     steps.extend([

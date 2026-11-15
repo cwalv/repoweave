@@ -36,6 +36,7 @@ Commands:
   clone        Clone a project and each of its members at the commit `rwv.lock` pins. A member the lock does not pin, or pins at a commit no ref reaches, is cloned at its declared branch's tip and listed; the exit status is then 3
   init         Initialize a new project
   member       Add a repo to the active project, remove one, pin one at a commit, or change a member's role or submodule setting
+  integration  Turn an integration on or off, or set one key of its table in the project's `rwv.toml`
   branch       Create a weave branch, record how one is used, list the weave branches with their records, rename one, or delete one
   switch       Put the project repo on a weave branch and align the members to it, or detach the workspace at a revision. A recorded branch reopens bare; an unrecorded one is refused until `rwv branch set-mode` records it; one checked out in another workspace is refused. Aligning for the checked-out branch is `rwv update`
   workweave    Create, delete, or list workweaves

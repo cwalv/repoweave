@@ -373,10 +373,6 @@ pub struct TakeInRecord {
     /// The source's project tip a landing composes from.
     #[serde(default)]
     pub source_tip: Option<CommitId>,
-    /// The feature a landing that retires lands, as the source's project
-    /// checkout had it checked out before anything moved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub feature: Option<String>,
     /// The tip of each member the source's lock was behind when a landing
     /// began, which its project commit records: read once, before anything
     /// moved.

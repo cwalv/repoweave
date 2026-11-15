@@ -4008,10 +4008,6 @@ const NON_TOKEN_WORDS: &[(&str, &str)] = &[
     ("git-repo", "another tool"),
     ("maturin-import-hook", "a Python package"),
     ("write-file-atomic", "an npm package"),
-    (
-        "hide-dotfile",
-        "a misspelled settings key, shown being refused",
-    ),
     ("remote-url-mismatch", "a rename a page weighs"),
     ("vcs-seam", "a gate of this repository's build"),
 ];

@@ -4854,7 +4854,6 @@ fn guard_and_mark<'a>(
             .map(ToString::to_string)
             .collect(),
         merged: plan.merged.iter().cloned().collect(),
-        feature: retire.then(|| landing.feature.to_string()),
         ..op_state::TakeInRecord::default()
     };
     take_in.receiving.insert(
@@ -8421,13 +8420,10 @@ fn run_retire(ctx: &OpContext<'_>) -> anyhow::Result<()> {
 fn retire_feature_in_primary(ctx: &OpContext<'_>) -> anyhow::Result<()> {
     let project = &ctx.cwd_project_name;
     let vcs = ctx.project_vcs.as_ref();
-    let Some(feature) = op_state::read_owner(&ctx.owner_workspace_dir)?
-        .and_then(|owner| owner.take_in)
-        .and_then(|take_in| take_in.feature)
-    else {
+    let Some(feature) = vcs.savepoint_branch(&ctx.cwd_project_dir, &ctx.savepoint_key()) else {
         return Ok(());
     };
-    let feature = crate::branch::named(vcs, project, &ctx.cwd_project_dir, &feature)?;
+    let feature = crate::branch::named(vcs, project, &ctx.cwd_project_dir, feature.as_str())?;
     let target = landed_into(ctx, project)?;
     align_after_landing(ctx, &ctx.cwd_ctx, false);
     if matches!(

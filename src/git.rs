@@ -3913,6 +3913,13 @@ impl Vcs for GitVcs {
             .map(|(_, at)| ResolvedRevisionId::from(at))
     }
 
+    fn savepoint_branch(&self, repo: &Path, key: &SavepointKey) -> Option<RawRefName> {
+        match self.checkout_savepoint(repo, key).ok().flatten()? {
+            (SavedCheckout::On(branch), _) => Some(branch),
+            (SavedCheckout::Detached | SavedCheckout::Unnamed, _) => None,
+        }
+    }
+
     fn drop_savepoint(&self, repo: &Path, key: &SavepointKey) {
         if let Ok(filed) = Self::savepoints_under(repo, key) {
             for filed in filed {

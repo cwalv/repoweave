@@ -65,6 +65,8 @@ const REFUSED: &[&str] = &[
     "clone",
     "fetch",
     "init",
+    "integration set",
+    "integration set-enabled",
     "land",
     "lock",
     "materialize",

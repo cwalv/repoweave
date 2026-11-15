@@ -3974,6 +3974,10 @@ pub trait Vcs: Send + Sync {
     /// For git: reads `refs/rwv/pre-op/<key>`.
     fn resolve_savepoint(&self, repo: &Path, key: &SavepointKey) -> Option<ResolvedRevisionId>;
 
+    /// The branch `repo`'s checkout was on when the savepoint under `key` was
+    /// taken, or `None` where it was on none or there is no savepoint.
+    fn savepoint_branch(&self, repo: &Path, key: &SavepointKey) -> Option<RawRefName>;
+
     /// Drop every savepoint filed under `key` in `repo`'s store, the
     /// checkout's and each branch's. No-op when there is none; ignores
     /// ref-update failures (a savepoint is purely a recovery aid — its
