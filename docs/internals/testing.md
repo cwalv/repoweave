@@ -511,7 +511,9 @@ branches they restore or rewrite, per shape. A point a verb passes before it
 has written its record has a rerun in place of a continue. A point it passes
 once its record is gone (`aligning-source`) has neither: the cell checks that
 `rwv status` shows a member the verb left without a checkout as missing and
-that `rwv doctor --all` names `rwv doctor --fix`, then compares the end state.
+that `rwv doctor --all` names `rwv doctor --fix`, then compares the end state;
+a pull, which aligns its workspace as `rwv update` does, leaves that alignment
+to `rwv update`, which the cell runs before it compares.
 Two ends are by decision, the single-repo parity of a kill in a verb's last
 instant: a landing with `--retire` killed at `ending` or `records-write` leaves
 savepoints that `rwv doctor` reports as `orphaned-savepoint` and `rwv doctor
