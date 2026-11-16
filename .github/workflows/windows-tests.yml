@@ -152,7 +152,7 @@
 # untouched. What it buys is that the red belongs to the whole suite rather
 # than to whichever target happened to run first.
 #
-# TWO JOBS, SPLIT BY ONE NAME
+# TWO JOBS, SPLIT BY ONE NAME, THE SECOND SPLIT BY TEST
 #
 # The suite runs as two jobs on two runners at once, each under a cap of its
 # own: `scenario` runs the scenario binary alone, by that name, and `suite`
@@ -162,6 +162,11 @@
 # directory added later lands in `suite` without anyone hearing about it. The
 # one name written here is the one the other job runs; renaming that binary
 # would make `suite` run it as well, a slower run rather than a missing one.
+#
+# The scenario job is three legs, each running the tests of that binary whose
+# names hash to its share (scripts/test-shard.sh, the partition ci-checks.yml's
+# macOS legs use), since the binary does not fit one job's cap. The shares
+# are of the names the binary itself lists, so no list is kept here.
 #
 # A dispatch may set `tests` to a space-separated list of targets and skip
 # the rest of the suite, to watch one fix without the full wall time. `suite`
@@ -284,17 +289,23 @@ jobs:
           cargo test --locked --no-fail-fast --features test-pause "${args[@]}"
 
   scenario:
-    name: Scenario binary on Windows (advisory, not a gate)
+    name: Scenario binary on Windows, shard ${{ matrix.shard }} (advisory, not a gate)
     if: ${{ !github.event.inputs.tests }}
     runs-on: windows-latest
-    # 360 is GitHub's cap for a hosted job, and the estimate does not fit
-    # under it. On run 43911404494 this binary ran about 33 minutes before
-    # that run's cap and finished 61 of its 849 tests: about 32s a test at
-    # four threads, where the Linux release job takes 1740s for all 849
-    # (2.05s a test). At that rate the binary needs about 7.5 hours here; if
-    # its first tests are its slowest, less. A canceled run of this job is
-    # that arithmetic coming true, not a hang.
-    timeout-minutes: 360
+    # The binary is split by test name across the legs (scripts/test-shard.sh):
+    # a third of its 849 tests is about 283 at 32s, two and a half hours, under
+    # the 240 minutes below with the setup and a compile on top.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1/3, 2/3, 3/3]
+    # On run 43911404494 this binary ran about 33 minutes before that run's
+    # cap and finished 61 of its 849 tests: about 32s a test at four threads,
+    # where the Linux release job takes 1740s for all 849 (2.05s a test). At
+    # that rate the whole binary needs about 7.5 hours here, over GitHub's
+    # 360-minute cap for a hosted job, so each leg runs a third of it. A
+    # canceled run of this job is that arithmetic coming true, not a hang.
+    timeout-minutes: 240
 
     steps:
       - uses: actions/checkout@v6
@@ -312,8 +323,10 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
 
-      - name: Run the scenario binary
+      - name: Run this shard of the scenario binary
         shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
-          echo "The scenario binary alone; the suite job runs every other target."
-          cargo test --locked --no-fail-fast --features test-pause --test scenario
+          echo "Shard $SHARD of the scenario binary alone; the suite job runs every other target."
+          bash scripts/test-shard.sh --only-test scenario "$SHARD" --locked --no-fail-fast --features test-pause

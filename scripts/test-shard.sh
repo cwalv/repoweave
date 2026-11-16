@@ -129,7 +129,7 @@ run_selected() {
 }
 
 messages="$(cargo test ${cargo_args[@]+"${cargo_args[@]}"} --no-run --message-format=json)"
-targets="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | [.target.kind[0], .target.name, .executable] | join("\t")' <<<"$messages" | sort -u)"
+targets="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test == true and .executable != null) | [.target.kind[0], .target.name, .executable] | join("\t")' <<<"$messages" | tr -d '\r' | sort -u)"
 
 while IFS=$'\t' read -r kind name executable; do
     [ -n "$kind" ] || continue

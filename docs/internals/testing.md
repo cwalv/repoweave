@@ -445,7 +445,12 @@ invocation with `-- --exact <names>`, a target with none does not run, and all
 run before the exit status is read. With no `--tier` or `--stages`, shard 1 of N
 also runs every stage that is not the suite and the others run only the suite
 stages; an explicit `--tier` or `--stages` names what runs in every share.
-`kill-matrix` is one test and is not split. `tests/source/ci_local_stages_test.rs`
+Names go to a target in as many invocations as keep each command line under
+12000 bytes, so a share of the scenario binary fits Windows' command-line
+limit. `scripts/test-shard.sh --only-test NAME K/N <cargo test arguments>`
+shards one integration-test target and runs nothing else, which is how
+windows-tests.yml runs the scenario binary as three jobs without going through
+`ci-local.sh`. `kill-matrix` is one test and is not split. `tests/source/ci_local_stages_test.rs`
 holds that the shares partition the stub cargo's targets for several N and that
 a malformed shard is refused before any stage runs. It needs `jq`.
 

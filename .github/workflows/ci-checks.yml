@@ -27,28 +27,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macOS runs the suite as eight jobs, each one share of every test
+        # macOS runs the suite as twelve jobs, each one share of every test
         # (scripts/ci-local.sh --test-shard): one job on its 3 cores did not
         # finish inside the bound. Shard 1 also runs every stage that is not
         # the suite. Changing the count means changing this list only.
         include:
           - os: ubuntu-latest
           - os: macos-latest
-            test-shard: 1/8
+            test-shard: 1/12
           - os: macos-latest
-            test-shard: 2/8
+            test-shard: 2/12
           - os: macos-latest
-            test-shard: 3/8
+            test-shard: 3/12
           - os: macos-latest
-            test-shard: 4/8
+            test-shard: 4/12
           - os: macos-latest
-            test-shard: 5/8
+            test-shard: 5/12
           - os: macos-latest
-            test-shard: 6/8
+            test-shard: 6/12
           - os: macos-latest
-            test-shard: 7/8
+            test-shard: 7/12
           - os: macos-latest
-            test-shard: 8/8
+            test-shard: 8/12
+          - os: macos-latest
+            test-shard: 9/12
+          - os: macos-latest
+            test-shard: 10/12
+          - os: macos-latest
+            test-shard: 11/12
+          - os: macos-latest
+            test-shard: 12/12
 
     steps:
       - uses: actions/checkout@v6
