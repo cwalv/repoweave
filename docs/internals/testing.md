@@ -644,7 +644,13 @@ the compare then reads. `RWV_TEST_PAUSE_TRACE=<file>` appends the name of every
 point a process passes to `<file>`, which is how a test learns what a verb
 reaches without holding it. `RWV_TEST_GIT_TRACE=<file>` appends the arguments
 of every git the process starts, one start per line, which is how a test
-counts them without a clock.
+counts them without a clock. Every rwv given the same file appends to it, and
+an rwv that git runs, such as the lock merge driver, inherits the variable. It is an
+instrument, not a gate: no test holds a command to a count.
+`git_spawns_test::git_started_per_command` in `tests/scenario/`, ignored by
+default, prints the count and a tally by arguments for each of a fixed set of
+commands in a project of three members and two workweaves; run it with
+`--ignored --nocapture`.
 
 The driving side is `tests/common/pause.rs`, and in the harness it is a pair
 of steps: one spawns rwv armed at a point and ends once it is held, and one
@@ -667,9 +673,9 @@ build without it.
 build without the feature carries no pause is held by
 `tests/test_pause_build/test_pause_build_test.rs`: the gate's `no-test-pause` stage builds it
 with no feature flags, as releases build, and asserts the spawned binary
-holds no byte of the arming variable's name, whatever the feature defaults
-are. In the test stages the same file asserts the binary does hold it, so
-the scan is shown able to see it.
+holds no `RWV_TEST_` bytes, the prefix of every variable the feature reads,
+whatever the feature defaults are. In the test stages the same file asserts
+the binary does hold them, so the scan is shown able to see them.
 
 ### No verdict depends on elapsed time
 

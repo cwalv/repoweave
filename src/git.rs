@@ -32,7 +32,6 @@ mod carry_edits;
 mod conflict_markers;
 mod merge;
 mod pick;
-mod recalled;
 mod records;
 mod replay;
 #[cfg(test)]
@@ -51,10 +50,7 @@ use scratch::Scratch;
 /// elsewhere cannot assemble one, so `error[E0603]` answers "did anyone spell
 /// a git command outside the seam" without a text scan having to.
 fn git_command() -> GitCommand {
-    GitCommand::new().on_start(|command| {
-        crate::test_pause::git_started(command);
-        recalled::forget_if_reshaping(command.get_args());
-    })
+    GitCommand::new().on_start(crate::test_pause::git_started)
 }
 
 impl From<NotUtf8> for VcsError {
@@ -754,7 +750,7 @@ fn head_log_has_entry(repo: &Path) -> Result<bool, VcsError> {
         Absent::ConfigKey,
     )?;
     if storage.as_deref() != Some("reftable") {
-        let log = GitVcs::where_is(
+        let log = GitVcs::run_trimmed(
             [
                 "rev-parse",
                 "--path-format=absolute",
@@ -1662,12 +1658,6 @@ impl GitVcs {
         Self::run(args, dir).map(|s| s.trim().to_string())
     }
 
-    /// [`GitVcs::run_trimmed`] for a question about where `dir`'s repository
-    /// and git directories are, which [`recalled`] may answer again.
-    fn where_is<const N: usize>(args: [&str; N], dir: &Path) -> Result<String, VcsError> {
-        recalled::recalled(dir, &args.join(" "), || Self::run_trimmed(args, dir))
-    }
-
     /// [`GitVcs::run`] for a command that answers "nothing there" with the
     /// exit status `absent`: `None` for that answer, an error for any other
     /// failure.
@@ -2002,7 +1992,7 @@ struct Registrations {
 
 impl Registrations {
     fn of(dir: &Path) -> Option<Registrations> {
-        let common = GitVcs::where_is(
+        let common = GitVcs::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             dir,
         )
@@ -2328,7 +2318,7 @@ impl GitVcs {
     /// the bisect with nothing to resume from. That is the state the
     /// detached-MOVE precondition exists to see.
     pub fn mid_op_state(repo: &Path) -> Option<MidOperation> {
-        let git_dir = match Self::where_is(["rev-parse", "--git-dir"], repo) {
+        let git_dir = match Self::run_trimmed(["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = printed_path(&s);
                 if p.is_absolute() {
@@ -2374,7 +2364,7 @@ impl GitVcs {
         let fallback = "see in-flight rebase state for conflicting paths".to_owned();
 
         // Resolve the .git directory so we can locate rebase-merge/stopped-sha.
-        let git_dir = match Self::where_is(["rev-parse", "--git-dir"], repo) {
+        let git_dir = match Self::run_trimmed(["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
                 let p = printed_path(s.trim());
                 if p.is_absolute() {
@@ -2995,13 +2985,7 @@ impl Vcs for GitVcs {
     fn resolve_revision(&self, repo: &Path, rev: &str) -> Result<ResolvedRevisionId, VcsError> {
         let deref = format!("{rev}^{{commit}}");
         let args = ["rev-parse", "--verify", "--quiet", &deref];
-        let resolved = match CommitId::parse(rev) {
-            Ok(_) => recalled::recalled_found(repo, &args.join(" "), || {
-                Self::run_trimmed_or_absent(args, repo, Absent::Revision)
-            })?,
-            Err(_) => Self::run_trimmed_or_absent(args, repo, Absent::Revision)?,
-        };
-        match resolved {
+        match Self::run_trimmed_or_absent(args, repo, Absent::Revision)? {
             Some(canonical) => Ok(ResolvedRevisionId::from_canonical(
                 commit_id_printed(&canonical, &args, repo)?,
                 Some(rev.to_string()),
@@ -3029,7 +3013,7 @@ impl Vcs for GitVcs {
         if !path.join(".git").exists() {
             return false;
         }
-        let Ok(top) = Self::where_is(["rev-parse", "--show-toplevel"], path) else {
+        let Ok(top) = Self::run_trimmed(["rev-parse", "--show-toplevel"], path) else {
             return false;
         };
         match (
@@ -4043,13 +4027,13 @@ impl Vcs for GitVcs {
             }
         }
         let git_dir_of = |dir: &Path| -> Result<PathBuf, VcsError> {
-            Ok(printed_path(Self::where_is(
+            Ok(printed_path(Self::run_trimmed(
                 ["rev-parse", "--absolute-git-dir"],
                 dir,
             )?))
         };
         let own = git_dir_of(checkout)?;
-        let common = printed_path(Self::where_is(
+        let common = printed_path(Self::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             checkout,
         )?);
@@ -4361,7 +4345,7 @@ impl Vcs for GitVcs {
         if !workspace.exists() {
             return None;
         }
-        let raw = Self::where_is(
+        let raw = Self::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             workspace,
         )
@@ -4377,7 +4361,7 @@ impl Vcs for GitVcs {
         if !checkout.exists() {
             return None;
         }
-        let dirs = Self::where_is(
+        let dirs = Self::run_trimmed(
             [
                 "rev-parse",
                 "--path-format=absolute",
@@ -4479,7 +4463,7 @@ impl Vcs for GitVcs {
         store: &Path,
         checkout: &Path,
     ) -> Result<Option<PathBuf>, VcsError> {
-        let common = Self::where_is(
+        let common = Self::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             &Self::work_dir_for_store(store),
         )?;
@@ -4669,10 +4653,7 @@ impl Vcs for GitVcs {
     }
 
     fn files_at(&self, repo: &Path, commit: &CommitId) -> Result<Vec<CommittedFile>, VcsError> {
-        let repo = Self::work_dir_for_store(repo);
-        recalled::recalled(&repo, &format!("files {commit}"), || {
-            Self::files_of_commit(&repo, commit)
-        })
+        Self::files_of_commit(&Self::work_dir_for_store(repo), commit)
     }
 
     fn write_commit(
@@ -4821,10 +4802,7 @@ impl Vcs for GitVcs {
     ) -> Result<String, VcsError> {
         let file = GitArg::from_path(file_path, "file path")?;
         let rev_path = format!("{}:{}", revision.id().as_str(), file.as_str());
-        let shown = recalled::recalled(repo, &format!("show {rev_path}"), || {
-            Self::run(["show", &rev_path], repo)
-        });
-        let failure = match shown {
+        let failure = match Self::run(["show", &rev_path], repo) {
             Ok(content) => return Ok(content),
             Err(failure @ VcsError::CommandFailed { .. }) => failure,
             Err(e) => return Err(e),
@@ -5087,35 +5065,6 @@ impl Vcs for GitVcs {
         if !self.is_repo(repo) {
             return Err(VcsError::NotARepo(repo.to_path_buf()));
         }
-        // `--symbolic-full-name` applies only to the arguments after it, so
-        // one rev-parse names HEAD's commit and then the ref HEAD is on, or
-        // `HEAD` when detached. An unborn or unreadable HEAD fails it, and
-        // the questions below tell those apart.
-        if let Ok(born) = Self::run(
-            [
-                "rev-parse",
-                "HEAD^{commit}",
-                "--symbolic-full-name",
-                "HEAD",
-                "--",
-            ],
-            repo,
-        ) {
-            let mut lines = born.lines();
-            if let (Some(at), Some(full)) = (
-                lines
-                    .next()
-                    .and_then(ResolvedRevisionId::from_rev_parse_output),
-                lines.next(),
-            ) {
-                return match full {
-                    "HEAD" => Ok(HeadObservation::Detached { at }),
-                    full => Ok(HeadObservation::Attached {
-                        name: Self::local_branch_name_from_full_ref(full, repo)?,
-                    }),
-                };
-            }
-        }
         // The full ref, then strip the namespace here. `--short` would ask
         // git for the shortest *unambiguous* name instead of the branch
         // name: with a tag of the same name present it answers `heads/main`
@@ -5365,7 +5314,7 @@ impl Vcs for GitVcs {
     }
 
     fn private_dir(&self, checkout: &Path) -> Result<PathBuf, VcsError> {
-        Ok(printed_path(Self::where_is(
+        Ok(printed_path(Self::run_trimmed(
             ["rev-parse", "--absolute-git-dir"],
             checkout,
         )?))
@@ -11250,16 +11199,14 @@ mod wording_tests {
         let no_revision = GitVcs.read_file_at_revision(&repo, &absent_commit(), Path::new("f"));
         assert!(is_not_found(&no_revision), "{no_revision:?}");
 
-        let (_lost_tmp, losing) = self::repo();
-        let head = at(&losing, "HEAD");
-        let blob = git(&losing, &["rev-parse", "HEAD:f"]);
-        let loose = losing
+        let blob = git(&repo, &["rev-parse", "HEAD:f"]);
+        let loose = repo
             .join(".git")
             .join("objects")
             .join(&blob[..2])
             .join(&blob[2..]);
         std::fs::remove_file(loose).unwrap();
-        let lost = GitVcs.read_file_at_revision(&losing, &head, Path::new("f"));
+        let lost = GitVcs.read_file_at_revision(&repo, &head, Path::new("f"));
         assert!(
             matches!(lost, Err(VcsError::CommandFailed { .. })),
             "a blob the store lost is a failure, not an absence: {lost:?}"

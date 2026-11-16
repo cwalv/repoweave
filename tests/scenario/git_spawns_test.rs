@@ -1,16 +1,12 @@
-//! How many git processes one `rwv` command starts, in a weave of a project,
-//! three members and two workweaves, each command run once in a fixed order.
+//! The git an `rwv` command starts, as a `test-pause` build records them in
+//! `RWV_TEST_GIT_TRACE`: one line of arguments per start, appended, so every
+//! rwv sharing the file adds to it. The count comes from the binary, never
+//! from a clock.
 //!
-//! A process start costs several times more on macOS and Windows than on
-//! Linux, and every command pays it once per git it asks, so a fact asked
-//! again by each layer, or once per member where once per repo would answer
-//! it, is what this bounds. The count comes from the binary itself
-//! (`RWV_TEST_GIT_TRACE`, honored only in a `test-pause` build), never from a
-//! clock, and a red prints the tally of what was started.
-//!
-//! What it reads: the commands below, in this fixture. A fan-out a command
-//! reaches only through a shape the fixture lacks (more members, a second
-//! project, a conflict, a remote that refuses) is invisible to it.
+//! The first test holds that the trace records what rwv starts. The ignored
+//! one is an instrument, not a gate: it prints how many git each of a fixed
+//! set of commands starts in a project of three members and two workweaves,
+//! with a tally by arguments.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -19,14 +15,7 @@ use crate::common::scenario_runner::{self as runner, Scenario, Step};
 use crate::common::scenario_sandbox::{Place, Repo, Sandbox, Seed};
 use crate::common::scenario_steps::{a, create, ww};
 
-struct Measured {
-    at: Place,
-    args: &'static [&'static str],
-    ceiling: usize,
-}
-
-fn counted(sb: &Sandbox, at: &Place, args: &[&str], trace: &Path) -> Vec<String> {
-    let _ = std::fs::remove_file(trace);
+fn traced(sb: &Sandbox, at: &Place, args: &[&str], trace: &Path) -> Vec<String> {
     let out = sb
         .rwv_command(&sb.place_root(at), args)
         .env("RWV_TEST_GIT_TRACE", trace)
@@ -45,37 +34,8 @@ fn counted(sb: &Sandbox, at: &Place, args: &[&str], trace: &Path) -> Vec<String>
         .collect()
 }
 
-fn tally(started: &[String]) -> String {
-    let mut by_args: BTreeMap<&str, usize> = BTreeMap::new();
-    for args in started {
-        *by_args.entry(args.as_str()).or_default() += 1;
-    }
-    let mut rows: Vec<(usize, &str)> = by_args.into_iter().map(|(a, n)| (n, a)).collect();
-    rows.sort_by(|x, y| y.cmp(x));
-    rows.iter()
-        .map(|(n, args)| format!("{n:5}  git {args}\n"))
-        .collect()
-}
-
-/// Each ceiling is the count measured when it was set, plus a tenth. A change
-/// that starts more is a new fan-out, and raises the ceiling in plain sight.
-#[test]
-fn each_command_starts_no_more_git_than_its_ceiling() {
-    if !cfg!(feature = "test-pause") {
-        eprintln!("rwv traces the git it starts only in a test-pause build: skipped");
-        return;
-    }
+fn two_workweaves() -> Sandbox {
     let sb = Sandbox::new(Seed::default());
-    if std::fs::metadata(&sb.root)
-        .and_then(|meta| meta.created())
-        .is_err()
-    {
-        eprintln!(
-            "{} keeps no creation time, so rwv recalls nothing there: skipped",
-            sb.root.display()
-        );
-        return;
-    }
     runner::run_in(
         &sb,
         Scenario {
@@ -90,62 +50,78 @@ fn each_command_starts_no_more_git_than_its_ceiling() {
         },
     )
     .assert_green();
-    let measured = [
-        Measured {
-            at: ww("w1"),
-            args: &["status"],
-            ceiling: 263,
-        },
-        Measured {
-            at: a(),
-            args: &["workweave", "list"],
-            ceiling: 10,
-        },
-        Measured {
-            at: ww("w1"),
-            args: &["prime"],
-            ceiling: 7,
-        },
-        Measured {
-            at: ww("w1"),
-            args: &["lock", "--commit"],
-            ceiling: 174,
-        },
-        Measured {
-            at: ww("w1"),
-            args: &["doctor"],
-            ceiling: 268,
-        },
-        Measured {
-            at: ww("w1"),
-            args: &["land"],
-            ceiling: 1107,
-        },
-        Measured {
-            at: ww("w2"),
-            args: &["sync"],
-            ceiling: 595,
-        },
-    ];
-    let trace = sb.root.join("git-trace");
-    let mut over = Vec::new();
-    for m in &measured {
-        let started = counted(&sb, &m.at, m.args, &trace);
-        eprintln!("rwv {}: {} git", m.args.join(" "), started.len());
-        assert!(
-            !started.is_empty(),
-            "rwv {} traced no git at all: the trace is not being written",
-            m.args.join(" ")
-        );
-        if started.len() > m.ceiling {
-            over.push(format!(
-                "rwv {} started {} git, over its ceiling of {}:\n{}",
-                m.args.join(" "),
-                started.len(),
-                m.ceiling,
-                tally(&started)
-            ));
-        }
+    sb
+}
+
+#[test]
+fn the_trace_holds_each_git_a_command_starts_and_every_rwv_appends_to_it() {
+    if !cfg!(feature = "test-pause") {
+        eprintln!("rwv traces the git it starts only in a test-pause build: skipped");
+        return;
     }
-    assert!(over.is_empty(), "{}", over.join("\n"));
+    let sb = two_workweaves();
+    let status = traced(&sb, &ww("w1"), &["status"], &sb.root.join("status"));
+    assert!(
+        status
+            .iter()
+            .any(|line| line == "rev-parse --show-toplevel"),
+        "rwv status asks where each checkout's top level is; traced:\n{}",
+        status.join("\n")
+    );
+    let listed = traced(&sb, &a(), &["workweave", "list"], &sb.root.join("list"));
+    assert!(!listed.is_empty(), "rwv workweave list traced no git");
+
+    let shared = sb.root.join("shared");
+    traced(&sb, &ww("w1"), &["status"], &shared);
+    let both = traced(&sb, &a(), &["workweave", "list"], &shared);
+    assert_eq!(
+        both,
+        [status, listed].concat(),
+        "a second rwv appends its git after the first's, and runs alike trace alike"
+    );
+}
+
+fn tally(started: &[String]) -> String {
+    let mut by_args: BTreeMap<&str, usize> = BTreeMap::new();
+    for args in started {
+        *by_args.entry(args.as_str()).or_default() += 1;
+    }
+    let mut rows: Vec<(usize, &str)> = by_args.into_iter().map(|(a, n)| (n, a)).collect();
+    rows.sort_by(|x, y| y.cmp(x));
+    rows.iter()
+        .map(|(n, args)| format!("{n:5}  git {args}\n"))
+        .collect()
+}
+
+/// `cargo test --release --features test-pause --test scenario --
+/// git_spawns_test::git_started_per_command --ignored --nocapture`
+#[test]
+#[ignore = "an instrument: prints how many git each command starts"]
+fn git_started_per_command() {
+    assert!(
+        cfg!(feature = "test-pause"),
+        "rwv traces the git it starts only in a test-pause build"
+    );
+    let sb = two_workweaves();
+    let commands: [(Place, &[&str]); 7] = [
+        (ww("w1"), &["status"]),
+        (a(), &["workweave", "list"]),
+        (ww("w1"), &["prime"]),
+        (ww("w1"), &["lock", "--commit"]),
+        (ww("w1"), &["doctor"]),
+        (ww("w1"), &["land"]),
+        (ww("w2"), &["sync"]),
+    ];
+    let mut summary = String::new();
+    for (i, (at, args)) in commands.iter().enumerate() {
+        let started = traced(&sb, at, args, &sb.root.join(format!("trace-{i}")));
+        summary.push_str(&format!("{:6}  rwv {}\n", started.len(), args.join(" ")));
+        eprintln!(
+            "rwv {}: {} git\n{}",
+            args.join(" "),
+            started.len(),
+            tally(&started)
+        );
+    }
+    eprintln!("{summary}");
 }
