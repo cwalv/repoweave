@@ -658,17 +658,20 @@ the one way it drives one on; both build their argv in `rebase_config_args`
 (`src/git.rs`), so a new call cannot leave a setting out.
 
 **Which commit became which** is what the rebase recorded, never a match on
-authorship or subject. Git keeps that list (`rebase-merge/rewritten-list`)
-only while the rebase is in progress, so every rebase rwv starts carries an
-`--exec` after each pick that copies it to `rwv-replayed-<old tip>-<onto>`
-under the checkout's own git dir. The exec lines are in the rebase's own
-todo, so a continue the operator runs by hand records too. Git notes a
-commit it dropped as left empty against the commit HEAD was on; the reader
-(`src/git/replay.rs`) reads one noted against `onto` or against an earlier
-commit's image as dropped. Every commit of the range must be accounted for
-positively: noted in that list, or absent from the todo git built for the
-replay, which is how git shows a commit it left out before replaying as
-already on the `upstream` side. The rebase runs as `--interactive` with
+authorship or subject. Every rebase rwv starts carries an `--exec` after
+each pick that appends to `rwv-replayed-<old tip>-<onto>`, under the
+checkout's own git dir, the pick just done (the line before the exec itself
+in `rebase-merge/done`) and the commit HEAD stands at. The exec lines are in
+the rebase's own todo, so a continue the operator runs by hand records too.
+A pick that wrote nothing, dropped as empty or as already upstream, leaves
+HEAD where it was, at `onto` or at an earlier commit's image, and the reader
+(`src/git/replay.rs`) reads a commit noted there as dropped. Git's own
+`rebase-merge/rewritten-list` is not read: git 2.56 stopped listing a
+dropped commit in it at all, which would leave a dropped commit
+indistinguishable from an unrecorded one. Every commit of the range must be
+accounted for positively: noted in the record, or absent from the todo git
+built for the replay, which is how git shows a commit it left out before
+replaying as already on the `upstream` side. The rebase runs as `--interactive` with
 `GIT_SEQUENCE_EDITOR` set, for rwv's own child only, to a command that
 copies the todo git hands it to `rwv-replayed-<old tip>-<onto>.todo` and
 leaves it unchanged, so the replay stays non-interactive; git never invokes
@@ -683,8 +686,9 @@ empty commits; git 2.26).
 What the record depends on in git: the documented sequence-editor channel
 for the todo (`GIT_SEQUENCE_EDITOR`, which outranks `sequence.editor`), the
 todo's `<command> <id>` line format for picks, `--exec`, and
-`rebase-merge/rewritten-list`, an internal file of git's sequencer whose
-path and `<old> <new>` line format are not documented. The seam tests in
+`rebase-merge/done`, an internal file of git's sequencer whose path, and
+whose holding the steps done in the todo's line format with the running exec
+last, are not documented. The seam tests in
 `tests/vcs/vcs_test.rs` (a dropped commit, a commit left out as already
 upstream, a hand continue, an aborted and redone replay) pin both formats at
 the gate's git; a git upgrade that changes either turns them red.

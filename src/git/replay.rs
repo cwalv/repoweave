@@ -42,17 +42,16 @@ fn scheduled(todo: &str) -> Vec<String> {
         .collect()
 }
 
-/// What a record's pairs, each replayed commit with the commit git noted
-/// for it, say of `olds` replayed onto `onto` as `written`, given the
-/// commits git's todo scheduled; `None` where a pair names a commit of
-/// neither, or where a scheduled commit has no pair: a replay whose
-/// recording did not run for every commit describes nothing.
+/// What a record's pairs, each replayed commit with the commit HEAD stood
+/// at once its pick was done, say of `olds` replayed onto `onto` as
+/// `written`, given the commits git's todo scheduled; `None` where a pair
+/// names a commit of neither, or where a scheduled commit has no pair: a
+/// replay whose recording did not run for every commit describes nothing.
 ///
-/// Git notes a commit it dropped as left empty against the commit HEAD was
-/// on, which is the image of the commit before it or `onto`: a commit noted
-/// against `onto` or against an earlier commit's image was dropped. A commit
-/// of `olds` git's todo does not schedule is one git left out as already
-/// upstream: dropped too.
+/// A pick that wrote nothing leaves HEAD at the image of the commit before
+/// it or at `onto`: a commit noted against `onto` or against an earlier
+/// commit's image was dropped. A commit of `olds` git's todo does not
+/// schedule is one git left out as already upstream: dropped too.
 fn read_pairs(
     pairs: &[(CommitId, CommitId)],
     scheduled: &[String],
@@ -134,10 +133,9 @@ impl GitVcs {
     }
 
     /// Start the record of a replay of `old` onto `onto`, empty, and return
-    /// the command the replay runs after each commit to keep it, a copy of
-    /// git's own list of what it rewrote, which git keeps only while the
-    /// replay is in progress; and the sequence editor that keeps the todo git
-    /// hands it, unchanged.
+    /// the command the replay runs after each pick to add to it the pick's
+    /// commit, read from the steps git has done, and where HEAD stands; and
+    /// the sequence editor that keeps the todo git hands it, unchanged.
     pub(super) fn start_replay_record(
         repo: &Path,
         old: &CommitId,
@@ -155,8 +153,10 @@ impl GitVcs {
         })?;
         Ok((
             format!(
-                "cp -f \"$(git rev-parse --git-path rebase-merge/rewritten-list)\" \
-                 \"$(git rev-parse --git-path {})\" 2>/dev/null || :",
+                "set -f; set -- $(sed -n 'x;$p' \"$(git rev-parse --git-path rebase-merge/done)\"); \
+                 printf '%s %s\\n' \"$(git rev-parse --verify -q \"$2^{{commit}}\")\" \
+                 \"$(git rev-parse --verify -q HEAD)\" \
+                 >> \"$(git rev-parse --git-path {})\" 2>/dev/null || :",
                 record_name(old, onto)
             ),
             format!(
