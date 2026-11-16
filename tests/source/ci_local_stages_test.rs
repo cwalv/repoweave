@@ -1701,10 +1701,7 @@ fn sharded_suite() -> ShardedSuite {
         let list_file = root.join(format!("{name}.list"));
         std::fs::write(&list_file, listing).unwrap();
         let exe = root.join("exe").join(name);
-        common::write_executable(
-            &exe,
-            format!("#!/bin/sh\ncat '{}'\n", list_file.display()),
-        );
+        common::write_executable(&exe, format!("#!/bin/sh\ncat '{}'\n", list_file.display()));
         messages.push_str(&format!(
             "{}\n",
             serde_json::json!({
@@ -1760,7 +1757,10 @@ fn shard_selections(suite: &ShardedSuite) -> (Vec<(String, String)>, usize) {
     let stdout = calls.as_str();
     let mut picked = Vec::new();
     let mut doc_runs = 0;
-    for line in stdout.lines().filter_map(|l| l.strip_prefix("STUB_CARGO: ")) {
+    for line in stdout
+        .lines()
+        .filter_map(|l| l.strip_prefix("STUB_CARGO: "))
+    {
         if line.contains(ARTIFACT_MESSAGE_FLAG) || line.contains(" --list ") {
             continue;
         }
@@ -1771,7 +1771,10 @@ fn shard_selections(suite: &ShardedSuite) -> (Vec<(String, String)>, usize) {
         let Some((before, names)) = line.split_once(" -- --exact ") else {
             continue;
         };
-        assert!(!names.trim().is_empty(), "an empty filter runs everything: {line}");
+        assert!(
+            !names.trim().is_empty(),
+            "an empty filter runs everything: {line}"
+        );
         let selector = before.rsplit_once(" --features test-pause ").unwrap().1;
         for name in names.split_whitespace() {
             picked.push((selector.to_owned(), name.to_owned()));
@@ -1816,7 +1819,10 @@ fn the_shards_partition_every_test_of_every_target_cargo_lists() {
         }
         union.sort();
         assert_eq!(union, all, "N={count}: every test in exactly one shard");
-        assert_eq!(doc_runs, 1, "N={count}: the doctests run in exactly one shard");
+        assert_eq!(
+            doc_runs, 1,
+            "N={count}: the doctests run in exactly one shard"
+        );
     }
 }
 
@@ -1842,7 +1848,9 @@ fn a_target_with_no_test_in_a_shard_is_not_run_there() {
 #[test]
 fn a_shard_that_is_not_k_of_n_is_refused_before_anything_runs() {
     let suite = sharded_suite();
-    for bad in ["0/3", "4/3", "1/0", "x", "2", "1/2/3", "-1/3", "01/3", "1/", "/3", "a/b"] {
+    for bad in [
+        "0/3", "4/3", "1/0", "x", "2", "1/2/3", "-1/3", "01/3", "1/", "/3", "a/b",
+    ] {
         let out = run_shard(&suite, bad, &[]);
         assert_eq!(out.status.code(), Some(1), "{bad:?}");
         assert!(
@@ -1865,13 +1873,19 @@ fn the_stages_that_are_not_the_suite_run_in_the_first_shard_only() {
     let suite = sharded_suite();
     let first = stdout_of(&run_shard(&suite, "1/3", &[]));
     let second = stdout_of(&run_shard(&suite, "2/3", &[]));
-    for stage in ["==> cargo check\n", "==> cargo clippy --all-targets -- -D warnings"] {
+    for stage in [
+        "==> cargo check\n",
+        "==> cargo clippy --all-targets -- -D warnings",
+    ] {
         assert!(first.contains(stage), "shard 1 runs {stage:?}: {first}");
         assert!(!second.contains(stage), "shard 2 runs {stage:?}: {second}");
     }
     for stdout in [&first, &second] {
         assert!(stdout.contains("(shard "), "{stdout}");
-        assert!(stdout.contains(AMBIENT_AUTOCRLF_HEADER.trim_end_matches(')')), "{stdout}");
+        assert!(
+            stdout.contains(AMBIENT_AUTOCRLF_HEADER.trim_end_matches(')')),
+            "{stdout}"
+        );
     }
     assert!(
         !stdout_of(&run_shard(&suite, "1/3", &[])).contains("\nAll checks passed.\n"),
