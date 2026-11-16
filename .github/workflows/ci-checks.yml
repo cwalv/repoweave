@@ -19,7 +19,7 @@ on:
 
 jobs:
   checks:
-    name: CI (${{ matrix.os }})
+    name: CI (${{ matrix.os }}${{ matrix.test-shard && format(', shard {0}', matrix.test-shard) || '' }})
     runs-on: ${{ matrix.os }}
     # The outer net: scripts/ci-local.sh bounds its own run (three hours by
     # default), and this sits above that bound plus the job's setup.
@@ -27,7 +27,28 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # macOS runs the suite as eight jobs, each one share of every test
+        # (scripts/ci-local.sh --test-shard): one job on its 3 cores did not
+        # finish inside the bound. Shard 1 also runs every stage that is not
+        # the suite. Changing the count means changing this list only.
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+            test-shard: 1/8
+          - os: macos-latest
+            test-shard: 2/8
+          - os: macos-latest
+            test-shard: 3/8
+          - os: macos-latest
+            test-shard: 4/8
+          - os: macos-latest
+            test-shard: 5/8
+          - os: macos-latest
+            test-shard: 6/8
+          - os: macos-latest
+            test-shard: 7/8
+          - os: macos-latest
+            test-shard: 8/8
 
     steps:
       - uses: actions/checkout@v6
@@ -61,7 +82,9 @@ jobs:
         # Single source of truth: scripts/ci-local.sh runs the same checks
         # locally and here.
         shell: bash
-        run: ./scripts/ci-local.sh
+        env:
+          TEST_SHARD: ${{ matrix.test-shard }}
+        run: ./scripts/ci-local.sh ${TEST_SHARD:+--test-shard="$TEST_SHARD"}
 
   git-floor:
     # The suite against the oldest git rwv runs on (MINIMUM_RELEASE in

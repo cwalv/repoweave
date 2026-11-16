@@ -431,6 +431,24 @@ expiry the script stops its own process group, prints the stage that was
 running and exits 124, a status no stage produces. It needs no `timeout`
 binary. A test that moves itself into a group of its own is outside the cut.
 
+`scripts/ci-local.sh --test-shard=K/N` runs the K-th of N shares of the suite in
+every stage that runs it (`test`, `test-ambient-autocrlf`, `git-floor`), for a
+host too slow to run the whole suite inside the bound; CI's macOS job runs it
+as eight jobs. `scripts/test-shard.sh` draws the shares from what cargo lists:
+`cargo test --no-run --message-format=json` names every test target and each
+target's executable lists its tests, so a new target or test is in some share
+without anyone editing a list. The unit of a share is one test, hashed by
+target and name, which splits the scenario binary (by far the largest) across
+shares and balances them by count; the doctests are one unit, run by the share
+"doctests" hashes to. Each target with tests in a share runs as its own cargo
+invocation with `-- --exact <names>`, a target with none does not run, and all
+run before the exit status is read. With no `--tier` or `--stages`, shard 1 of N
+also runs every stage that is not the suite and the others run only the suite
+stages; an explicit `--tier` or `--stages` names what runs in every share.
+`kill-matrix` is one test and is not split. `tests/source/ci_local_stages_test.rs`
+holds that the shares partition the stub cargo's targets for several N and that
+a malformed shard is refused before any stage runs. It needs `jq`.
+
 The kill matrix is not in the full gate. `scripts/ci-local.sh
 --stages=kill-matrix` runs its cells (about a quarter of an hour) and sets
 `RWV_KILL_MATRIX=run`, without which the test that runs them returns at once
