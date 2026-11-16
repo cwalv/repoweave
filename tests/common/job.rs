@@ -19,25 +19,19 @@
 //! a keypress. The test's own process is attached to neither, so it is not
 //! interrupted with the job.
 //!
-//! A job is waited on through [`wait_job`], never `Child::wait`: a job that
-//! does not end within its bound has every process killed and fails its test
-//! with a message, where an unbounded wait would hold the whole suite.
+//! Every wait here ends on an event, never on elapsed time: a job is waited
+//! on until it exits, a recorded pid until its file is written, a process
+//! until it is gone. A job that never ends hangs its test, and the run's own
+//! timeout is what reports it.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Output};
-use std::time::{Duration, Instant};
+use std::process::{Child, Command};
+use std::time::Duration;
 
 pub const ROLE: &str = "RWV_TEST_JOB_ROLE";
 const READY: &str = "RWV_TEST_JOB_READY";
 #[cfg(windows)]
 const CONSOLE_OF: &str = "RWV_TEST_JOB_CONSOLE_OF";
-
-/// Long enough for any job a test starts to end after its interrupt, short
-/// enough that a job that never ends fails its test within the CI run.
-pub const JOB_BOUND: Duration = Duration::from_secs(60);
-const HELPER_BOUND: Duration = Duration::from_secs(20);
-const REAP_BOUND: Duration = Duration::from_secs(10);
 
 /// The file a tree root writes its leaf's pid into, in its working directory.
 pub const LEAF_PID_FILE: &str = "leaf.pid";
@@ -45,8 +39,7 @@ pub const LEAF_PID_FILE: &str = "leaf.pid";
 /// A process that starts a leaf, records the leaf's pid in [`LEAF_PID_FILE`],
 /// and waits on it.
 pub const TREE_ROOT: &str = "tree-root";
-/// A process that would outlive its parent by a minute and takes no action on
-/// an interrupt.
+/// A process that never ends by itself and takes no action on an interrupt.
 const TREE_LEAF: &str = "tree-leaf";
 /// A [`TREE_ROOT`] whose leaf holds none of its stdio, so nothing but the
 /// tree ties the leaf to the command. Its leaf records its own pid once it
@@ -59,8 +52,8 @@ const QUIET_LEAF: &str = "quiet-leaf";
 /// [`HOLD_EXIT`].
 const HOLD: &str = "hold";
 pub const HOLD_EXIT: i32 = 7;
-/// A process that writes its pid into the file [`linger`] names, then sleeps
-/// past any job's bound with every interrupt at its default disposition.
+/// A process that writes its pid into the file [`linger`] names, then waits
+/// forever with every interrupt at its default disposition.
 const LINGER: &str = "linger";
 
 pub fn helper_exe() -> PathBuf {
@@ -97,8 +90,6 @@ pub fn serve<F: Fn()>(job_helper: F) {
         LINGER => linger_with_default_interrupts(),
         #[cfg(windows)]
         CONSOLE_INTERRUPTER => interrupt_console(),
-        #[cfg(windows)]
-        CONSOLE_TERMINATOR => terminate_console(),
         other => panic!("{ROLE}={other} names no helper"),
     }
 }
@@ -121,7 +112,13 @@ fn linger_with_default_interrupts() {
         format!("{}\n", std::process::id()),
     )
     .expect("the ready file is written");
-    std::thread::sleep(JOB_BOUND * 2);
+    forever();
+}
+
+fn forever() -> ! {
+    loop {
+        std::thread::park();
+    }
 }
 
 fn tree_root() {
@@ -136,7 +133,7 @@ fn tree_root() {
 
 fn tree_leaf() {
     ctrlc::set_handler(|| {}).expect("the leaf takes interrupts itself");
-    std::thread::sleep(Duration::from_secs(60));
+    forever();
 }
 
 fn orphaning_root() {
@@ -156,7 +153,7 @@ fn quiet_leaf() {
     ctrlc::set_handler(|| {}).expect("the leaf takes interrupts itself");
     std::fs::write(LEAF_PID_FILE, format!("{}\n", std::process::id()))
         .expect("the leaf pid is recorded");
-    std::thread::sleep(Duration::from_secs(60));
+    forever();
 }
 
 #[cfg(unix)]
@@ -166,12 +163,7 @@ fn wait_for_the_terminal() {
     if !stdin.is_terminal() {
         return;
     }
-    let start = Instant::now();
     while nix::unistd::tcgetpgrp(&stdin) != Ok(nix::unistd::getpgrp()) {
-        assert!(
-            start.elapsed() < HELPER_BOUND,
-            "the terminal was never handed to this group"
-        );
         std::thread::sleep(Duration::from_millis(10));
     }
 }
@@ -225,22 +217,8 @@ pub fn interrupt_foreground_job(job: &Child) {
     killpg(leader, Signal::SIGINT).expect("the job's group is signaled");
 }
 
-#[cfg(unix)]
-pub fn kill_job(leader: u32) -> Result<(), String> {
-    use nix::errno::Errno;
-    use nix::sys::signal::{killpg, Signal};
-    use nix::unistd::Pid;
-    let leader = Pid::from_raw(i32::try_from(leader).expect("a pid fits an i32"));
-    match killpg(leader, Signal::SIGKILL) {
-        Ok(()) | Err(Errno::ESRCH) => Ok(()),
-        Err(e) => Err(format!("killing the job's group failed: {e}")),
-    }
-}
-
 #[cfg(windows)]
 const CONSOLE_INTERRUPTER: &str = "console-interrupter";
-#[cfg(windows)]
-const CONSOLE_TERMINATOR: &str = "console-terminator";
 
 #[cfg(windows)]
 pub fn interrupt_foreground_job(job: &Child) {
@@ -250,12 +228,8 @@ pub fn interrupt_foreground_job(job: &Child) {
 }
 
 #[cfg(windows)]
-pub fn kill_job(owner: u32) -> Result<(), String> {
-    run_console_helper(CONSOLE_TERMINATOR, owner)
-}
-
-#[cfg(windows)]
 fn run_console_helper(role: &str, owner: u32) -> Result<(), String> {
+    use std::io::Read;
     let mut helper = Command::new(helper_exe())
         .args(recorded().selector())
         .env(ROLE, role)
@@ -264,11 +238,9 @@ fn run_console_helper(role: &str, owner: u32) -> Result<(), String> {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .map_err(|e| format!("{role} did not start: {e}"))?;
-    let Some(status) = wait_for(&mut helper, HELPER_BOUND) else {
-        let _ = helper.kill();
-        let _ = helper.wait();
-        return Err(format!("{role} was still running after {HELPER_BOUND:?}"));
-    };
+    let status = helper
+        .wait()
+        .map_err(|e| format!("{role} could not be waited on: {e}"))?;
     if status.success() {
         return Ok(());
     }
@@ -308,92 +280,6 @@ fn interrupt_console() {
     }
 }
 
-/// Every process attached to the job's console is the job, whatever its
-/// parentage.
-#[cfg(windows)]
-fn terminate_console() {
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Console::{AttachConsole, FreeConsole, GetConsoleProcessList};
-    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
-    let owner = console_owner();
-    let mut attached = [0u32; 256];
-    // SAFETY: plain Win32 calls; each opened handle is closed here.
-    unsafe {
-        let _ = FreeConsole();
-        AttachConsole(owner).expect("the job's console can be attached");
-        let count = GetConsoleProcessList(&mut attached) as usize;
-        assert!(
-            (1..=attached.len()).contains(&count),
-            "the console lists {count} processes"
-        );
-        for &pid in attached[..count]
-            .iter()
-            .filter(|&&pid| pid != std::process::id())
-        {
-            let Ok(process) = OpenProcess(PROCESS_TERMINATE, false, pid) else {
-                continue;
-            };
-            let _ = TerminateProcess(process, 1);
-            let _ = CloseHandle(process);
-        }
-    }
-}
-
-fn wait_for(child: &mut Child, limit: Duration) -> Option<ExitStatus> {
-    let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().expect("the child can be polled") {
-            return Some(status);
-        }
-        if start.elapsed() >= limit {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// The job's exit status if it ends within `limit`. Past it, every process
-/// of the job is killed and the job reaped, and the error says the job
-/// outran `limit`.
-pub fn wait_job(job: &mut Child, limit: Duration) -> Result<ExitStatus, String> {
-    if let Some(status) = wait_for(job, limit) {
-        return Ok(status);
-    }
-    let killed = kill_job(job.id());
-    let _ = job.kill();
-    let reaped = wait_for(job, REAP_BOUND);
-    match (killed, reaped) {
-        (Ok(()), Some(_)) => Err(format!(
-            "the job was still running after {limit:?}; every process of it was killed"
-        )),
-        (killed, reaped) => Err(format!(
-            "the job was still running after {limit:?}, and killing it did not finish it: \
-             {killed:?}, reaped {reaped:?}"
-        )),
-    }
-}
-
-/// [`wait_job`] for a job whose stdout and stderr are piped, collecting both.
-pub fn wait_job_with_output(mut job: Child, limit: Duration) -> Result<Output, String> {
-    fn drain(pipe: Option<impl Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            bytes
-        })
-    }
-    let stdout = drain(job.stdout.take());
-    let stderr = drain(job.stderr.take());
-    let status = wait_job(&mut job, limit)?;
-    Ok(Output {
-        status,
-        stdout: stdout.join().expect("stdout is drained"),
-        stderr: stderr.join().expect("stderr is drained"),
-    })
-}
-
 #[cfg(unix)]
 pub fn alive(pid: u32) -> bool {
     use nix::sys::signal::kill;
@@ -424,31 +310,24 @@ pub fn alive(pid: u32) -> bool {
 }
 
 pub fn wait_dead(pid: u32) {
-    let start = Instant::now();
     while alive(pid) {
-        assert!(
-            start.elapsed() < Duration::from_secs(10),
-            "{pid} outlived its tree"
-        );
         std::thread::sleep(Duration::from_millis(20));
     }
 }
 
 /// The pid a [`TREE_ROOT`] running in `dir` recorded, once it has.
-pub fn leaf_pid(dir: &Path, limit: Duration) -> u32 {
-    recorded_pid(&dir.join(LEAF_PID_FILE), limit)
+pub fn leaf_pid(dir: &Path) -> u32 {
+    recorded_pid(&dir.join(LEAF_PID_FILE))
 }
 
 /// The pid written into `path` by a [`TREE_ROOT`] or a [`hold`], once it is.
-pub fn recorded_pid(path: &Path, limit: Duration) -> u32 {
-    let start = Instant::now();
+pub fn recorded_pid(path: &Path) -> u32 {
     loop {
         if let Ok(s) = std::fs::read_to_string(path) {
             if let Some(pid) = s.strip_suffix('\n') {
                 return pid.parse().expect("a recorded pid");
             }
         }
-        assert!(start.elapsed() < limit, "{} never appeared", path.display());
         std::thread::sleep(Duration::from_millis(20));
     }
 }

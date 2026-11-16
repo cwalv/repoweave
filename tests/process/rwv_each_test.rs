@@ -4,7 +4,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -926,21 +926,17 @@ fn the_default_job_count_is_the_core_count_capped_at_eight() {
     let refs: Vec<(&str, &str)> = repos.iter().map(|(p, r)| (p.as_str(), *r)).collect();
     let w = Weave::new(&refs);
     let log = w.ws.join("concurrency.log");
+    let cores = std::thread::available_parallelism().unwrap().get();
     let out = w
         .each_span(&[], &log, None)
+        .env(SPAN_PEAK, cores.min(8).to_string())
         .output()
         .expect("rwv each runs");
     assert!(out.status.success(), "{}", stderr(&out));
-    let (mut running, mut peak) = (0usize, 0usize);
-    for event in std::fs::read_to_string(&log).unwrap().lines() {
-        match event {
-            "start" => running += 1,
-            _ => running -= 1,
-        }
-        peak = peak.max(running);
-    }
-    let cores = std::thread::available_parallelism().unwrap().get();
-    assert_eq!(peak, cores.min(8));
+    assert_eq!(
+        peak_of(&std::fs::read_to_string(&log).unwrap()),
+        cores.min(8)
+    );
 }
 
 /// docs/reference/rwv-each.md, Running: under `--fail-fast` "repos already
@@ -1066,6 +1062,22 @@ fn job_helper() {
 
 const SPAN_LOG: &str = "RWV_TEST_SPAN_LOG";
 const SPAN_FAILS_IN: &str = "RWV_TEST_SPAN_FAILS_IN";
+/// Set, each span waits to end until that many have run at once, so a peak
+/// is reached however slowly the spans start.
+const SPAN_PEAK: &str = "RWV_TEST_SPAN_PEAK";
+
+/// The most spans a span log shows running at once.
+fn peak_of(events: &str) -> usize {
+    let (mut running, mut peak) = (0usize, 0usize);
+    for event in events.lines() {
+        match event {
+            "start" => running += 1,
+            _ => running -= 1,
+        }
+        peak = peak.max(running);
+    }
+    peak
+}
 
 /// The command [`Weave::each_span`] runs in each repo, as this test binary
 /// started again. In an ordinary suite run [`SPAN_LOG`] is unset and it
@@ -1075,7 +1087,14 @@ fn span_helper() {
     let Some(log) = std::env::var_os(SPAN_LOG) else {
         return;
     };
+    let events = || std::fs::read_to_string(&log).unwrap_or_default();
+    let wait_until = |reached: &dyn Fn(&str) -> bool| {
+        while !reached(&events()) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
     if std::env::var_os("RWV_REPO") == std::env::var_os(SPAN_FAILS_IN) {
+        wait_until(&|events| events.lines().any(|event| event == "start"));
         std::process::exit(1);
     }
     let append = |event: &str| {
@@ -1088,7 +1107,13 @@ fn span_helper() {
             .expect("the span log takes the event");
     };
     append("start");
-    std::thread::sleep(Duration::from_secs(1));
+    match std::env::var(SPAN_PEAK) {
+        Ok(peak) => {
+            let peak: usize = peak.parse().expect("a peak is a count");
+            wait_until(&|events| peak_of(events) >= peak);
+        }
+        Err(_) => std::thread::sleep(Duration::from_secs(1)),
+    }
     append("end");
     common::git_in(".", &["config", "each.ran", "yes"]);
 }
@@ -1109,8 +1134,8 @@ impl Weave {
     }
 
     /// `rwv each` running a [`common::job::TREE_ROOT`] in each repo: a
-    /// process with a child of its own that ignores interrupts and would
-    /// outlive it by a minute.
+    /// process with a child of its own that ignores interrupts and never
+    /// ends by itself.
     fn each_tree(&self, flags: &[&str]) -> Command {
         let exe = common::job::helper_exe();
         let mut args: Vec<&str> = flags.to_vec();
@@ -1134,12 +1159,10 @@ impl Weave {
 #[test]
 fn a_timeout_kills_the_whole_tree_grandchildren_included() {
     let w = Weave::standard();
-    let start = Instant::now();
     let out = w
         .each_tree(&["--json", "-j", "2", "--timeout", "2"])
         .output()
         .unwrap();
-    assert!(start.elapsed() < Duration::from_secs(30));
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     let outcomes = envelope(&out)["outcomes"].as_array().unwrap().clone();
     assert_eq!(outcomes.len(), 2, "{}", stdout(&out));
@@ -1147,7 +1170,7 @@ fn a_timeout_kills_the_whole_tree_grandchildren_included() {
         assert_eq!(outcome["status"], "timed-out", "{outcome}");
     }
     for path in [APP, LIB] {
-        let pid = common::job::leaf_pid(&w.ws.join(path), Duration::ZERO);
+        let pid = common::job::leaf_pid(&w.ws.join(path));
         common::job::wait_dead(pid);
     }
 }
@@ -1160,17 +1183,11 @@ fn an_interrupt_reaches_every_running_tree_starts_no_more_and_exits_130() {
     let child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
     let pids: Vec<u32> = ["a/one", "a/three"]
         .iter()
-        .map(|p| common::job::leaf_pid(&w.ws.join(p), Duration::from_secs(20)))
+        .map(|p| common::job::leaf_pid(&w.ws.join(p)))
         .collect();
     common::job::interrupt_foreground_job(&child);
-    let interrupted_at = Instant::now();
-    let out = common::job::wait_job_with_output(child, common::job::JOB_BOUND)
-        .unwrap_or_else(|e| panic!("the interrupted job never ended: {e}"));
+    let out = child.wait_with_output().unwrap();
     assert_eq!(out.status.code(), Some(130), "{}", stderr(&out));
-    assert!(
-        interrupted_at.elapsed() < Duration::from_secs(20),
-        "rwv each waited out a grandchild that ignores interrupts instead of ending its tree"
-    );
     for pid in pids {
         common::job::wait_dead(pid);
     }
@@ -1188,10 +1205,9 @@ fn after_an_interrupt_what_a_command_left_running_is_ended_even_when_it_holds_no
         let mut cmd = w.each_orphaning_tree(&["-j", jobs]);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         let child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
-        let leaf = common::job::leaf_pid(&w.ws.join(APP), Duration::from_secs(20));
+        let leaf = common::job::leaf_pid(&w.ws.join(APP));
         common::job::interrupt_foreground_job(&child);
-        let out = common::job::wait_job_with_output(child, common::job::JOB_BOUND)
-            .unwrap_or_else(|e| panic!("-j {jobs}: the interrupted job never ended: {e}"));
+        let out = child.wait_with_output().unwrap();
         assert_eq!(out.status.code(), Some(130), "-j {jobs}: {}", stderr(&out));
         common::job::wait_dead(leaf);
     }
@@ -1247,10 +1263,9 @@ mod unix {
     fn ctrl_c_typed_under_one_job_ends_what_the_command_left_running() {
         let w = Weave::new(&[(APP, "owned")]);
         let (mut child, mut master) = on_a_terminal(w.each_orphaning_tree(&["-j", "1"]));
-        let leaf = common::job::leaf_pid(&w.ws.join(APP), Duration::from_secs(20));
+        let leaf = common::job::leaf_pid(&w.ws.join(APP));
         master.write_all(b"\x03").unwrap();
-        let status = common::job::wait_job(&mut child, common::job::JOB_BOUND)
-            .unwrap_or_else(|e| panic!("the interrupted job never ended: {e}"));
+        let status = child.wait().unwrap();
         assert_eq!(status.code(), Some(130));
         common::job::wait_dead(leaf);
     }
@@ -1375,10 +1390,7 @@ mod unix {
         );
         let out = w.each(&["--shell", &script]);
         assert!(out.status.success(), "{}", stderr(&out));
-        let left = Reap(common::job::recorded_pid(
-            &pid_file,
-            Duration::from_secs(10),
-        ));
+        let left = Reap(common::job::recorded_pid(&pid_file));
         std::thread::sleep(Duration::from_millis(500));
         assert!(
             common::job::alive(left.0),
@@ -1434,16 +1446,11 @@ mod unix {
             }
         });
 
-        let deadline = Instant::now() + Duration::from_secs(30);
-        let wait_for = |what: &str| {
+        let mut wait_for = |what: &str| {
             while !screen.lock().unwrap().contains(what) {
-                if Instant::now() > deadline {
-                    let _ = nix::sys::signal::killpg(
-                        nix::unistd::Pid::from_raw(child.id() as i32),
-                        nix::sys::signal::Signal::SIGKILL,
-                    );
+                if let Some(status) = child.try_wait().unwrap() {
                     panic!(
-                        "never saw {what:?}; terminal showed {:?}",
+                        "ended ({status}) and never showed {what:?}; terminal showed {:?}",
                         screen.lock().unwrap()
                     );
                 }

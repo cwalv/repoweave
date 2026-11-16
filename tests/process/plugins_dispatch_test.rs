@@ -312,10 +312,9 @@ fn an_interrupt_to_the_whole_job_leaves_rwv_waiting_for_the_plugin_status() {
     // copy would hold a written file open while sibling tests fork.
     let plugin_dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
     let (mut child, ready) = hold_job(plugin_dir.path());
-    common::job::recorded_pid(&ready, std::time::Duration::from_secs(20));
+    common::job::recorded_pid(&ready);
     common::job::interrupt_foreground_job(&child);
-    let status = common::job::wait_job(&mut child, common::job::JOB_BOUND)
-        .unwrap_or_else(|e| panic!("the interrupted job never ended: {e}"));
+    let status = child.wait().unwrap();
     assert_eq!(
         status.code(),
         Some(common::job::HOLD_EXIT),
@@ -343,38 +342,14 @@ fn a_plugin_that_takes_no_interrupt_action_dies_of_the_jobs_interrupt() {
         .stdout(std::process::Stdio::null());
     common::job::linger(&mut cmd, &ready);
     let mut child = common::job::as_foreground_job(&mut cmd).spawn().unwrap();
-    let lingering = common::job::recorded_pid(&ready, std::time::Duration::from_secs(20));
+    let lingering = common::job::recorded_pid(&ready);
     common::job::interrupt_foreground_job(&child);
-    let status = common::job::wait_job(&mut child, common::job::JOB_BOUND)
-        .unwrap_or_else(|e| panic!("the interrupt did not end the plugin: {e}"));
+    let status = child.wait().unwrap();
     common::job::wait_dead(lingering);
     #[cfg(unix)]
     assert_eq!(status.code(), Some(128 + 2), "rwv exited with {status:?}");
     #[cfg(windows)]
     assert_ne!(status.code(), Some(0), "rwv exited with {status:?}");
-}
-
-/// A job that never ends fails its test once its bound passes, with rwv and
-/// the plugin both gone, instead of holding the suite until CI cancels it.
-#[test]
-fn a_job_that_outlives_its_bound_is_killed_whole() {
-    use std::time::Duration;
-    let plugin_dir = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let (mut child, ready) = hold_job(plugin_dir.path());
-    let plugin = common::job::recorded_pid(&ready, Duration::from_secs(20));
-    let rwv = child.id();
-    let bound = Duration::from_secs(2);
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(common::job::wait_job(&mut child, bound));
-    });
-    let Ok(outcome) = rx.recv_timeout(bound + Duration::from_secs(30)) else {
-        let _ = common::job::kill_job(rwv);
-        panic!("a wait bounded at {bound:?} was still waiting 30s past it");
-    };
-    let error = outcome.expect_err("a hold nobody interrupts never exits");
-    assert!(error.contains("every process of it was killed"), "{error}");
-    common::job::wait_dead(plugin);
 }
 
 // ---------------------------------------------------------------------------
