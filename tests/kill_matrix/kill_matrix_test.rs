@@ -792,6 +792,20 @@ fn abort_keeps(shape: &Shape) -> &'static [&'static str] {
     }
 }
 
+/// What the abort of a shape held at its stop keeps beyond the backups it
+/// started with: the commits it discards go to `aborted`, and the conflicted
+/// files of the stopped member to `aborted-working-copy`.
+fn stopped_abort_keeps(shape: &Shape) -> &'static [&'static str] {
+    match shape.id {
+        "sync_linear_manifest_stop" | "land_linear_manifest_stop" => &["aborted"],
+        "sync_linear_own_stop" | "sync_merge_own_stop" | "land_merge_own_stop" => {
+            &["aborted-working-copy"]
+        }
+        "land_linear_own_stop" => &["aborted", "aborted-working-copy"],
+        other => panic!("{other} does not stop"),
+    }
+}
+
 /// What a shape's verb, its continue and its abort move backwards, as
 /// `(pins rewound, declared branches restored, declared branches rewritten)`:
 /// an abort puts back what the verb moved, and a reset moves a declared
@@ -1337,7 +1351,7 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
         },
         Ending::AbortAfterDoctorElsewhere => {
             let kept = match shape.stop {
-                Some(_) => &["aborted", "aborted-working-copy"],
+                Some(_) => stopped_abort_keeps(shape),
                 None => abort_keeps(shape),
             };
             steps.extend(aborted_keeping(shape, (shape.at)(), point, false, kept));
