@@ -234,6 +234,9 @@ pub enum Action {
     /// `rwv.toml` and `rwv.lock`, kept under this name for
     /// [`Claim::TipsAsCaptured`].
     Capture(&'static str),
+    /// Keep only every live place's records, leases and landing claims,
+    /// which reads no VCS, under this name for [`Claim::HoldsAsCaptured`].
+    CaptureHolds(&'static str),
 }
 
 impl Action {
@@ -1116,6 +1119,16 @@ impl Step {
         )
     }
 
+    /// Keep what [`Claim::HoldsAsCaptured`] compares, alone: cheap enough to
+    /// take while another process is held at a pause point.
+    pub fn capture_holds(name: &'static str) -> Step {
+        Step::new(
+            format!("capture holds {name}"),
+            Action::CaptureHolds(name),
+            Expect::succeeds(),
+        )
+    }
+
     pub fn kill(handle: &'static str) -> Step {
         Step::new(
             format!("kill {handle}"),
@@ -1308,6 +1321,7 @@ struct Run<'a> {
     held: BTreeMap<&'static str, Paused>,
     offline: BTreeMap<Remote, Unreachable<'a>>,
     captured: BTreeMap<&'static str, BTreeMap<Place, Tips>>,
+    holds_captured: BTreeMap<&'static str, BTreeMap<Place, String>>,
 }
 
 /// What [`Claim::TipsAsCaptured`] compares for one place.
@@ -1352,6 +1366,7 @@ fn run_steps(sandbox: &Sandbox, name: &'static str, steps: impl Iterator<Item = 
         held: BTreeMap::new(),
         offline: BTreeMap::new(),
         captured: BTreeMap::new(),
+        holds_captured: BTreeMap::new(),
     };
     let mut before = scenario_invariants::snapshot(sandbox);
     for step in steps {
@@ -1928,6 +1943,18 @@ impl Run<'_> {
             },
             Action::TracePoints(on) => {
                 sb.trace_points(*on);
+                (true, String::new())
+            }
+            Action::CaptureHolds(name) => {
+                let kept = sb
+                    .live_places()
+                    .into_iter()
+                    .map(|place| {
+                        let holds = self.held_state(&place);
+                        (place, holds)
+                    })
+                    .collect();
+                self.holds_captured.insert(name, kept);
                 (true, String::new())
             }
             Action::Capture(name) => {
@@ -2893,14 +2920,20 @@ impl Run<'_> {
                 }
             }
             Claim::HoldsAsCaptured(name) => {
-                let kept = &self.captured_named(name)?;
+                let kept = match self.holds_captured.get(name) {
+                    Some(kept) => kept.clone(),
+                    None => self
+                        .captured_named(name)?
+                        .into_iter()
+                        .map(|(place, tips)| (place, tips.holds))
+                        .collect(),
+                };
                 let off: Vec<String> = kept
                     .iter()
                     .filter_map(|(place, before)| {
                         let now = self.held_state(place);
-                        (before.holds != now).then(|| {
-                            format!("{place:?}:\n--- captured\n{}--- now\n{now}", before.holds)
-                        })
+                        (before != &now)
+                            .then(|| format!("{place:?}:\n--- captured\n{before}--- now\n{now}"))
                     })
                     .collect();
                 if off.is_empty() {

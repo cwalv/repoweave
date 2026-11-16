@@ -1326,7 +1326,7 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
                     steps.push(Step::kill("held"));
                 }
             }
-            steps.push(Step::capture("held"));
+            steps.push(Step::capture_holds("held"));
             steps.extend(doctors_elsewhere(shape));
         }
         _ => steps.extend(until_stopped(shape, phase, point)),
