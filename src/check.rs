@@ -767,7 +767,8 @@ impl CheckViolation {
                 RegistrationDirectoryKind::DirectoryGone
                 | RegistrationDirectoryKind::DirectoryMoved => Auto,
                 RegistrationDirectoryKind::DirectoryStands
-                | RegistrationDirectoryKind::WorkweaveDirectoryGone => ReportOnly,
+                | RegistrationDirectoryKind::WorkweaveDirectoryGone
+                | RegistrationDirectoryKind::HeldByOperation => ReportOnly,
             },
             CheckViolation::WorkweaveDrift { kind, .. } => match kind {
                 DriftKind::Missing | DriftKind::Symlink | DriftKind::DanglingLink => Auto,
@@ -1547,6 +1548,11 @@ pub enum RegistrationDirectoryKind {
     /// `--fix` keeps it until the workweave is recorded where it stands
     /// (`rwv doctor --fix` inside it) or deleted (`rwv workweave delete`).
     WorkweaveDirectoryGone,
+    /// Nothing, at a path inside a workspace whose operation record or lease
+    /// stands. Report-only: what is left of the checkout is what that
+    /// operation's abort or `--continue` reads, so `--fix` keeps the
+    /// registration while the operation stands.
+    HeldByOperation,
 }
 
 /// How stale recorded content should be treated.
@@ -6390,7 +6396,7 @@ pub fn scan_state_hygiene(
                 holders.unknown.push(UnreadableHolder {
                     why: format!(
                         "the operation record at {} is one this release reads only in part, so \
-                         which other savepoints its operation filed cannot be told",
+                         which other savepoints its operation filed cannot be told; while it stands, `rwv doctor --fix` judges no savepoint that no readable operation record claims",
                         crate::op_state::OwnerRecord::path_in(dir)
                     ),
                     line: crate::op_state::discard_unreadable_record_at(dir),
@@ -6400,7 +6406,8 @@ pub fn scan_state_hygiene(
             }
             None => holders.unknown.push(UnreadableHolder {
                 why: format!(
-                    "the operation record at {} names no operation this rwv reads",
+                    "the operation record at {} names no operation this rwv reads, so whose \
+                     savepoints it held cannot be told; while it stands, `rwv doctor --fix` judges no savepoint that no readable operation record claims",
                     crate::op_state::OwnerRecord::path_in(dir)
                 ),
                 line: crate::op_state::discard_unreadable_record_at(dir),
@@ -6456,22 +6463,38 @@ pub fn scan_state_hygiene(
         .iter()
         .filter_map(|holder| holder.root.as_deref())
         .collect();
-    for finding in gone_registrations {
-        let CheckViolation::StaleWorktreeRegistration { worktree_path, .. } = &finding else {
+    let mut keeps_registrations: BTreeSet<PathBuf> = BTreeSet::new();
+    for mut finding in gone_registrations {
+        let CheckViolation::StaleWorktreeRegistration {
+            worktree_path,
+            sub_kind,
+            ..
+        } = &mut finding
+        else {
             unreachable!()
         };
-        let named_unreadable = unreadable_roots
+        let registered = CanonicalPath::of(worktree_path);
+        let under_unreadable = unreadable_roots
             .iter()
-            .any(|root| CanonicalPath::of(root).contains(&CanonicalPath::of(worktree_path)));
-        let held = held_roots
-            .iter()
-            .any(|root| CanonicalPath::of(root).contains(&CanonicalPath::of(worktree_path)));
-        if !(withheld && named_unreadable) && !held {
-            violations.push(finding);
+            .find(|root| CanonicalPath::of(root).contains(&registered));
+        if let Some(root) = under_unreadable {
+            keeps_registrations.insert(root.to_path_buf());
+            continue;
         }
+        if held_roots
+            .iter()
+            .any(|root| CanonicalPath::of(root).contains(&registered))
+        {
+            *sub_kind = RegistrationDirectoryKind::HeldByOperation;
+        }
+        violations.push(finding);
     }
     for holder in holders.unknown {
-        if withheld || holder.holds_state {
+        let keeps = holder
+            .root
+            .as_ref()
+            .is_some_and(|root| keeps_registrations.contains(root));
+        if withheld || holder.holds_state || keeps {
             violations.push(CheckViolation::UnreadableHolder {
                 why: holder.why,
                 line: holder.line,
@@ -6496,21 +6519,41 @@ pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> 
             gone.display()
         );
     }
-    for project in crate::workspace::discover_projects(primary) {
-        if let Ok(Some(index)) = crate::workweave_index::read(primary, &project) {
-            if let Some((name, _)) = index.entry_at(gone) {
-                crate::refuse!(
-                    RefusalKind::InapplicableFlag,
-                    "`--forget-gone-workspace {}` names the directory the index of project \
-                     `{project}` records for workweave `{name}`; deleting the workweave releases \
-                     what it holds:\n  rwv -C {} workweave delete {name} --project {project}",
-                    gone.display(),
-                    primary.display()
-                );
-            }
-        }
+    let within = CanonicalPath::of(gone);
+    let recorded: Vec<String> = crate::workspace::discover_projects(primary)
+        .into_iter()
+        .filter_map(|project| {
+            let index = crate::workweave_index::read(primary, &project).ok()??;
+            Some((project, index))
+        })
+        .flat_map(|(project, index)| {
+            index
+                .workweaves
+                .into_iter()
+                .filter(|(_, entry)| within.contains(&entry.path))
+                .map(move |(name, entry)| {
+                    format!(
+                        "workweave `{name}` at {}:\n  rwv -C {} workweave delete {name} --project \
+                         {project}",
+                        entry.path.as_path().display(),
+                        primary.display()
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if !recorded.is_empty() {
+        crate::refuse!(
+            RefusalKind::InapplicableFlag,
+            "`--forget-gone-workspace {}` names a directory at or under which an index records \
+             workweaves; deleting each releases what it holds, and the flag is for a workspace \
+             no index records: {}",
+            gone.display(),
+            recorded.join("; ")
+        );
     }
     let vcs = crate::vcs::project_vcs();
+    let mut released = 0usize;
     let mut stores: Vec<PathBuf> = Vec::new();
     for project in crate::workspace::discover_projects(primary) {
         let dir = project_dir(primary, &project);
@@ -6534,6 +6577,7 @@ pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> 
             if vcs.prune_stale_worktree_registration(store, &checkout)?
                 == crate::vcs::RegistrationPrune::Pruned
             {
+                released += 1;
                 outln!(
                     "[fixed] core: forgot the checkout {} that {} registered",
                     checkout.display(),
@@ -6542,17 +6586,37 @@ pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> 
             }
         }
     }
+    for line in release_holds_of_gone(primary, gone)? {
+        released += 1;
+        outln!("[fixed] core: {line}");
+    }
+    if released == 0 {
+        eprintln!(
+            "rwv doctor: nothing is registered, leased or claimed at or under {}, so \
+             `--forget-gone-workspace` released nothing",
+            gone.display()
+        );
+    }
+    Ok(())
+}
+
+/// Release the lease each workspace of the weave at `primary` holds for an
+/// operation the workspace at `gone`, which is not there, owns, and the
+/// landing claims it owns; what was released, a line each.
+pub fn release_holds_of_gone(primary: &Path, gone: &Path) -> anyhow::Result<Vec<String>> {
+    let vcs = crate::vcs::project_vcs();
+    let mut released = Vec::new();
     let holders = OpHolders::of(vcs.as_ref(), primary);
     for dir in &holders.dirs {
         if let Ok(Some(lease)) = crate::op_state::read_lease(dir) {
             if lease.owner.same_directory(gone) {
                 crate::op_state::clear_lease_owned_by(dir, gone);
-                outln!(
-                    "[fixed] core: released the lease on {} of op {}, owned by {}",
+                released.push(format!(
+                    "released the lease on {} of op {}, owned by {}",
                     dir.display(),
                     lease.id,
                     gone.display()
-                );
+                ));
             }
         }
     }
@@ -6564,16 +6628,16 @@ pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> 
             if CanonicalPath::of(&claim.owner).same_directory(gone)
                 && crate::landing_claim::release_unreachable(&claim, primary)?
             {
-                outln!(
-                    "[fixed] core: released the landing claim at {} of op {}, owned by {}",
+                released.push(format!(
+                    "released the landing claim at {} of op {}, owned by {}",
                     claim.dir.display(),
                     claim.op,
                     gone.display()
-                );
+                ));
             }
         }
     }
-    Ok(())
+    Ok(released)
 }
 
 /// A workspace that may hold an operation and cannot be read, why, and the
@@ -6646,7 +6710,9 @@ impl OpHolders {
             match crate::workweave_index::read(primary, &project) {
                 Err(e) => unknown.push(UnreadableHolder {
                     why: format!(
-                        "the workweave index of project `{project}` cannot be read ({})",
+                        "the workweave index of project `{project}` cannot be read ({}), so which \
+                         workweaves it records is not known; until it is rebuilt, `rwv doctor \
+                         --fix` judges no savepoint that no readable operation record claims",
                         crate::refusal::kind_of(&e)
                             .map_or_else(|| format!("{e:#}"), |kind| kind.token().to_string())
                     ),
@@ -6664,8 +6730,8 @@ impl OpHolders {
                             unknown.push(UnreadableHolder {
                                 why: format!(
                                     "the directory {} the index of project `{project}` records \
-                                     for workweave `{name}` is not there; bring it back, or, if \
-                                     it is gone for good, delete the workweave",
+                                     for workweave `{name}` is not there; while it is not there, `rwv doctor --fix` keeps the registrations of checkouts in it, the leases and landing claims it owns, and every savepoint no readable operation record claims; bring it back, or, if it is gone for good, delete the \
+                                     workweave",
                                     dir.display()
                                 ),
                                 line: format!(
@@ -6688,8 +6754,8 @@ impl OpHolders {
                     unknown.push(UnreadableHolder {
                         why: format!(
                             "the directory {} a checkout of project `{project}`'s clone is \
-                             registered in is not there and no index records it; bring it back, \
-                             or, if it is gone for good, release what it holds",
+                             registered in is not there and no index records it; while it is not there, `rwv doctor --fix` keeps the registrations of checkouts in it, the leases and landing claims it owns, and every savepoint no readable operation record claims; bring it back, or, if it is gone for good, \
+                             release what it holds",
                             root.display()
                         ),
                         line: forget(&root),
@@ -6735,8 +6801,8 @@ impl OpHolders {
                     unknown.push(UnreadableHolder {
                         why: format!(
                             "{what} names the owner workspace {}, which is not there, so whether \
-                             its operation stands cannot be told; bring it back, or, if it is \
-                             gone for good, release what it holds",
+                             its operation stands cannot be told; while it is not there, `rwv doctor --fix` keeps the registrations of checkouts in it, the leases and landing claims it owns, and every savepoint no readable operation record claims; bring it back, or, if it is gone for good, release what it \
+                             holds",
                             owner.display()
                         ),
                         line: forget(&owner),
@@ -7680,11 +7746,9 @@ impl CheckViolation {
                 line,
                 withholds,
             } => format!(
-                "{why}. Until then `rwv doctor --fix` {}leaves every lease and claim it may own; \
-                 this ends it:\n  {line}",
+                "{why}.{} This ends it:\n  {line}",
                 if withholds {
-                    "drops no savepoint no readable operation record claims, prunes no \
-                     registration in it, and "
+                    " Savepoints no readable operation record claims stand, kept for it."
                 } else {
                     ""
                 }
@@ -8155,6 +8219,13 @@ impl CheckViolation {
                             worktree_path.display()
                         )
                     }
+                    RegistrationDirectoryKind::HeldByOperation => format!(
+                        "{location}: stale-worktree-registration: nothing stands at {}, in a \
+                         workspace an operation's record or lease holds, so `rwv doctor --fix` \
+                         keeps the registration while the operation stands; its abort or \
+                         `--continue` reads what is left of the checkout",
+                        worktree_path.display()
+                    ),
                     RegistrationDirectoryKind::DirectoryMoved => format!(
                         "{location}: stale-worktree-registration: the checkout registered \
                          at {} stands at {}, its directory moved by hand (run `rwv doctor \

@@ -1239,6 +1239,13 @@ Schema:
           "enum": [
             "workweave-directory-gone"
           ]
+        },
+        {
+          "description": "Nothing, at a path inside a workspace whose operation record or lease stands. Report-only: what is left of the checkout is what that operation's abort or `--continue` reads, so `--fix` keeps the registration while the operation stands.",
+          "type": "string",
+          "enum": [
+            "held-by-operation"
+          ]
         }
       ]
     },

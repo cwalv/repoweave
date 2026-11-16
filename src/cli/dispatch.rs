@@ -443,6 +443,37 @@ fn writes_project(command: Option<&Commands>) -> bool {
     }
 }
 
+/// The directory a `rwv workweave delete` names, where the index of the
+/// weave at `root` records it and nothing stands there: deleting that
+/// workweave ends what it holds, a lease on the workspace it runs in
+/// included.
+fn gone_workweave_deleted(command: Option<&Commands>, root: &Path) -> Option<PathBuf> {
+    let Some(Commands::Workweave {
+        action: Some(WorkweaveAction::Delete { name, project, .. }),
+        ..
+    }) = command
+    else {
+        return None;
+    };
+    let primary = crate::workspace::WorkweaveMarker::read(root)
+        .ok()
+        .flatten()
+        .map_or_else(
+            || root.to_path_buf(),
+            |marker| marker.primary().as_path().to_path_buf(),
+        );
+    crate::workspace::discover_projects(&primary)
+        .into_iter()
+        .filter(|candidate| project.as_deref().is_none_or(|p| candidate.as_str() == p))
+        .find_map(|candidate| {
+            let name = WorkweaveName::spelled_in(&candidate, name).ok()?;
+            let recorded =
+                crate::workweave_index::lookup_raw(&primary, &candidate, &name).ok()??;
+            (recorded.as_path().symlink_metadata().is_err())
+                .then(|| recorded.as_path().to_path_buf())
+        })
+}
+
 /// `rwv land --continue` resumes the landing as its op record has it, so a
 /// parameter of a fresh landing passed with it is refused.
 fn refuse_flags_on_land_continue(command: Option<&Commands>) -> anyhow::Result<()> {
@@ -897,10 +928,15 @@ pub fn run() -> anyhow::Result<()> {
         commits_project: commits_project(cli.command.as_ref()),
     };
 
+    let enclosing = crate::workspace::enclosing_root(origin_dir);
     super::during_op::refuse_where_held(
         &spelling,
-        crate::workspace::enclosing_root(origin_dir).as_deref(),
+        enclosing.as_deref(),
         binding.commits_project,
+        enclosing
+            .as_deref()
+            .and_then(|root| gone_workweave_deleted(cli.command.as_ref(), root))
+            .as_deref(),
     )?;
 
     // Step 3: the root's marker against the index and the worktree relation,
@@ -1227,10 +1263,17 @@ pub fn run() -> anyhow::Result<()> {
                     } => {
                         let ctx = workweave_context(origin_dir, project, binding)?;
                         let project = ctx.require_active_project_on_disk()?;
+                        let named = WorkweaveName::spelled_in(project, name)?;
+                        let gone = crate::workweave_index::lookup_raw(
+                            ctx.primary_path(),
+                            project,
+                            &named,
+                        )?
+                        .filter(|recorded| recorded.as_path().symlink_metadata().is_err());
                         let deletion = crate::workweave::delete_workweave(
                             ctx.primary_path(),
                             project,
-                            &WorkweaveName::spelled_in(project, name)?,
+                            &named,
                             None,
                             consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
                             consent::DiscardUnlandedConsent::from_flag(discard_unlanded),
@@ -1240,6 +1283,13 @@ pub fn run() -> anyhow::Result<()> {
                                 unlanded: delete_remote_unlanded,
                             },
                         )?;
+                        if let Some(gone) = &gone {
+                            for line in
+                                check::release_holds_of_gone(ctx.primary_path(), gone.as_path())?
+                            {
+                                eprintln!("rwv workweave delete: {line}");
+                            }
+                        }
                         crate::workweave::report_deletion(
                             &deletion,
                             project,

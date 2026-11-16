@@ -133,10 +133,21 @@ pub(crate) fn refuse_where_held(
     spelling: &str,
     workspace: Option<&Path>,
     commits_project: bool,
+    deleting_gone: Option<&Path>,
 ) -> anyhow::Result<()> {
     let Some(workspace) = workspace else {
         return Ok(());
     };
+    if let Some(gone) = deleting_gone {
+        let leased_to_it = !crate::op_state::OwnerRecord::path_in(workspace).exists()
+            && crate::op_state::read_lease(workspace)
+                .ok()
+                .flatten()
+                .is_some_and(|lease| lease.owner.same_directory(gone));
+        if leased_to_it {
+            return Ok(());
+        }
+    }
     match during_an_operation(spelling) {
         DuringAnOperation::Runs => Ok(()),
         DuringAnOperation::Refused => {

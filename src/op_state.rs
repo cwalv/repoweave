@@ -1528,7 +1528,8 @@ fn migrations_before_discard(dir: &Path) -> Vec<String> {
 }
 
 /// The line that releases what the workspace at `gone`, no longer there,
-/// holds in the weave `workspace` belongs to.
+/// holds in the weave `workspace` belongs to: the delete of the workweave an
+/// index records there, else the release of a workspace no index records.
 pub fn forget_gone_workspace_line(workspace: &Path, gone: &Path) -> String {
     let primary = crate::workspace::WorkweaveMarker::read(workspace)
         .ok()
@@ -1537,6 +1538,16 @@ pub fn forget_gone_workspace_line(workspace: &Path, gone: &Path) -> String {
             || workspace.to_path_buf(),
             |marker| marker.primary().as_path().to_path_buf(),
         );
+    for project in crate::workspace::discover_projects(&primary) {
+        if let Ok(Some(index)) = crate::workweave_index::read(&primary, &project) {
+            if let Some((name, _)) = index.entry_at(gone) {
+                return format!(
+                    "rwv -C {} workweave delete {name} --project {project}",
+                    primary.display()
+                );
+            }
+        }
+    }
     format!(
         "rwv -C {} doctor --fix --forget-gone-workspace {}",
         primary.display(),
