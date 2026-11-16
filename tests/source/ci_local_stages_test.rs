@@ -1843,7 +1843,7 @@ fn a_target_with_no_test_in_a_shard_is_not_run_there() {
 fn a_shard_that_is_not_k_of_n_is_refused_before_anything_runs() {
     let suite = sharded_suite();
     for bad in ["0/3", "4/3", "1/0", "x", "2", "1/2/3", "-1/3", "01/3", "1/", "/3", "a/b"] {
-        let out = run_shard(&suite, bad, &["--stages=test"]);
+        let out = run_shard(&suite, bad, &[]);
         assert_eq!(out.status.code(), Some(1), "{bad:?}");
         assert!(
             stderr_of(&out).contains("a test shard is K/N with whole numbers 1 <= K <= N"),
@@ -1851,9 +1851,8 @@ fn a_shard_that_is_not_k_of_n_is_refused_before_anything_runs() {
             stderr_of(&out)
         );
         assert!(
-            !stdout_of(&out).contains("STUB_CARGO"),
-            "{bad:?} ran cargo: {}",
-            stdout_of(&out)
+            !suite.dir.path().join("calls").exists(),
+            "{bad:?} ran cargo before refusing"
         );
     }
 }
