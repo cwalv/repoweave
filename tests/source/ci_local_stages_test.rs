@@ -1669,3 +1669,213 @@ fn a_bound_that_is_not_a_positive_whole_number_is_refused() {
         );
     }
 }
+
+/// What a stub cargo reports of the suite under `--test-shard`: the targets it
+/// says it built, each executable listing its own tests, and the doctests.
+struct ShardedSuite {
+    dir: tempfile::TempDir,
+    targets: Vec<(&'static str, &'static str, Vec<String>)>,
+}
+
+const ARTIFACT_MESSAGE_FLAG: &str = "--message-format=json";
+
+fn sharded_suite() -> ShardedSuite {
+    let names = |prefix: &str, n: usize| -> Vec<String> {
+        (0..n).map(|i| format!("{prefix}::case_{i}")).collect()
+    };
+    let targets = vec![
+        ("lib", "repoweave", names("unit", 31)),
+        ("bin", "rwv", names("main", 5)),
+        ("test", "scenario", names("scenario_harness_test", 53)),
+        ("test", "docs", names("docs_test", 22)),
+        ("test", "only_one", names("lonely", 1)),
+        ("example", "generate-explain", names("gen", 7)),
+    ];
+    let dir = common::tempdir().expect("tempdir");
+    let root = dir.path();
+    std::fs::create_dir_all(root.join("exe")).unwrap();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    let mut messages = String::new();
+    for (kind, name, tests) in &targets {
+        let listing: String = tests.iter().map(|t| format!("{t}: test\n")).collect();
+        let list_file = root.join(format!("{name}.list"));
+        std::fs::write(&list_file, listing).unwrap();
+        let exe = root.join("exe").join(name);
+        common::write_executable(
+            &exe,
+            format!("#!/bin/sh\ncat '{}'\n", list_file.display()),
+        );
+        messages.push_str(&format!(
+            "{}\n",
+            serde_json::json!({
+                "reason": "compiler-artifact",
+                "target": {"kind": [kind], "name": name},
+                "profile": {"test": true},
+                "executable": exe,
+            })
+        ));
+    }
+    messages.push_str(&format!(
+        "{}\n{}\n",
+        serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": {"kind": ["bin"], "name": "built-not-tested"},
+            "profile": {"test": false},
+            "executable": root.join("exe/built-not-tested"),
+        }),
+        serde_json::json!({
+            "reason": "compiler-artifact",
+            "target": {"kind": ["lib"], "name": "no-executable"},
+            "profile": {"test": true},
+            "executable": null,
+        }),
+    ));
+    std::fs::write(root.join("messages.json"), messages).unwrap();
+    std::fs::write(
+        root.join("doctests"),
+        "src/a.rs - a (line 1): test\nsrc/b.rs - b (line 9): test\n",
+    )
+    .unwrap();
+    common::write_executable(
+        &root.join("bin/cargo"),
+        format!(
+            "#!/bin/sh\n\
+             printf 'STUB_CARGO: %s\\n' \"$*\" >> '{0}/calls'\n\
+             case \" $* \" in\n\
+             *\" {ARTIFACT_MESSAGE_FLAG} \"*) cat '{0}/messages.json' ;;\n\
+             *\" --doc \"*\" --list \"*) cat '{0}/doctests' ;;\n\
+             esac\n\
+             exit 0\n",
+            root.display()
+        ),
+    );
+    common::write_executable(&root.join("bin/rustup"), STUB_RUSTUP);
+    ShardedSuite { dir, targets }
+}
+
+/// Every `cargo test <target> -- --exact <names>` a shard's run logged, as
+/// (target selector, test name) pairs, and how many whole `--doc` runs.
+fn shard_selections(suite: &ShardedSuite) -> (Vec<(String, String)>, usize) {
+    let calls = std::fs::read_to_string(suite.dir.path().join("calls")).unwrap_or_default();
+    let stdout = calls.as_str();
+    let mut picked = Vec::new();
+    let mut doc_runs = 0;
+    for line in stdout.lines().filter_map(|l| l.strip_prefix("STUB_CARGO: ")) {
+        if line.contains(ARTIFACT_MESSAGE_FLAG) || line.contains(" --list ") {
+            continue;
+        }
+        if line.ends_with(" --doc") {
+            doc_runs += 1;
+            continue;
+        }
+        let Some((before, names)) = line.split_once(" -- --exact ") else {
+            continue;
+        };
+        assert!(!names.trim().is_empty(), "an empty filter runs everything: {line}");
+        let selector = before.rsplit_once(" --features test-pause ").unwrap().1;
+        for name in names.split_whitespace() {
+            picked.push((selector.to_owned(), name.to_owned()));
+        }
+    }
+    (picked, doc_runs)
+}
+
+fn run_shard(suite: &ShardedSuite, shard: &str, extra: &[&str]) -> Output {
+    let _ = std::fs::remove_file(suite.dir.path().join("calls"));
+    let fixture = fixture_repo();
+    let mut args = vec![format!("--test-shard={shard}")];
+    args.extend(extra.iter().map(|a| (*a).to_owned()));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_ci_local(fixture.path(), &suite.dir.path().join("bin"), &args, &[])
+}
+
+#[test]
+fn the_shards_partition_every_test_of_every_target_cargo_lists() {
+    if common::skip_without_tool("jq") {
+        return;
+    }
+    let suite = sharded_suite();
+    let mut all: Vec<(String, String)> = Vec::new();
+    for (kind, name, tests) in &suite.targets {
+        let selector = match *kind {
+            "lib" => "--lib".to_owned(),
+            other => format!("--{other} {name}"),
+        };
+        all.extend(tests.iter().map(|t| (selector.clone(), t.clone())));
+    }
+    all.sort();
+    for count in [1, 2, 3, 5, 8] {
+        let mut union = Vec::new();
+        let mut doc_runs = 0;
+        for index in 1..=count {
+            let out = run_shard(&suite, &format!("{index}/{count}"), &["--stages=test"]);
+            assert!(out.status.success(), "{index}/{count}: {}", stderr_of(&out));
+            let (picked, docs) = shard_selections(&suite);
+            union.extend(picked);
+            doc_runs += docs;
+        }
+        union.sort();
+        assert_eq!(union, all, "N={count}: every test in exactly one shard");
+        assert_eq!(doc_runs, 1, "N={count}: the doctests run in exactly one shard");
+    }
+}
+
+#[test]
+fn a_target_with_no_test_in_a_shard_is_not_run_there() {
+    if common::skip_without_tool("jq") {
+        return;
+    }
+    let suite = sharded_suite();
+    let mut runs_of_the_lonely_target = 0;
+    for index in 1..=5 {
+        let out = run_shard(&suite, &format!("{index}/5"), &["--stages=test"]);
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let calls = std::fs::read_to_string(suite.dir.path().join("calls")).unwrap();
+        runs_of_the_lonely_target += calls
+            .lines()
+            .filter(|l| l.starts_with("STUB_CARGO: test") && l.contains("--test only_one"))
+            .count();
+    }
+    assert_eq!(runs_of_the_lonely_target, 1);
+}
+
+#[test]
+fn a_shard_that_is_not_k_of_n_is_refused_before_anything_runs() {
+    let suite = sharded_suite();
+    for bad in ["0/3", "4/3", "1/0", "x", "2", "1/2/3", "-1/3", "01/3", "1/", "/3", "a/b"] {
+        let out = run_shard(&suite, bad, &["--stages=test"]);
+        assert_eq!(out.status.code(), Some(1), "{bad:?}");
+        assert!(
+            stderr_of(&out).contains("a test shard is K/N with whole numbers 1 <= K <= N"),
+            "{bad:?}: {}",
+            stderr_of(&out)
+        );
+        assert!(
+            !stdout_of(&out).contains("STUB_CARGO"),
+            "{bad:?} ran cargo: {}",
+            stdout_of(&out)
+        );
+    }
+}
+
+#[test]
+fn the_stages_that_are_not_the_suite_run_in_the_first_shard_only() {
+    if common::skip_without_tool("jq") {
+        return;
+    }
+    let suite = sharded_suite();
+    let first = stdout_of(&run_shard(&suite, "1/3", &[]));
+    let second = stdout_of(&run_shard(&suite, "2/3", &[]));
+    for stage in ["==> cargo check\n", "==> cargo clippy --all-targets -- -D warnings"] {
+        assert!(first.contains(stage), "shard 1 runs {stage:?}: {first}");
+        assert!(!second.contains(stage), "shard 2 runs {stage:?}: {second}");
+    }
+    for stdout in [&first, &second] {
+        assert!(stdout.contains("(shard "), "{stdout}");
+        assert!(stdout.contains(AMBIENT_AUTOCRLF_HEADER.trim_end_matches(')')), "{stdout}");
+    }
+    assert!(
+        !stdout_of(&run_shard(&suite, "1/3", &[])).contains("\nAll checks passed.\n"),
+        "a shard is never the full gate's terminal line"
+    );
+}

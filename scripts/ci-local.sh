@@ -4,7 +4,7 @@
 # and contributors running checks locally. Anything that diverges between local
 # and CI belongs here so it stays in sync.
 #
-# Usage: scripts/ci-local.sh [--tier=seat|landing|release | --stages=check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,kill-matrix,windows-wine,git-floor]
+# Usage: scripts/ci-local.sh [--tier=seat|landing|release | --stages=check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,kill-matrix,windows-wine,git-floor] [--test-shard=K/N]
 #
 # With no argument, runs all stages in the order above but the last three — the
 # full gate, which CI, the release gate and the pre-push hook invoke.
@@ -37,6 +37,17 @@
 # A subset run's terminal line names its tier, if any, and the stages it ran,
 # so a log naming less than every default stage is never mistaken for a full
 # gate.
+#
+# --test-shard=K/N runs the K-th of N shares of the suite in every stage that
+# runs it (test, test-ambient-autocrlf, git-floor), so a host too slow for the
+# whole suite inside the bound runs it as N jobs. scripts/test-shard.sh says
+# how the shares are drawn: every test of every target cargo lists is in
+# exactly one share, by a hash of its name, with no list kept anywhere. The
+# other stages are not shares of anything and run once: with no --tier or
+# --stages, shard 1 runs them all and shards 2 to N run only the suite stages;
+# an explicit --tier or --stages names what runs in every shard, which is how
+# one job carries the other stages beside the shares. The kill-matrix stage is
+# one test and is not split. A run with no --test-shard is the whole suite.
 #
 # Both test stages run the suite with TMPDIR behind a symlink, the geometry
 # macOS's temp root has, on every host that can make one, and with the
@@ -175,7 +186,7 @@ done
 RELEASE_STAGES=("${ALL_STAGES[@]}" kill-matrix git-floor)
 
 usage() {
-    printf 'Usage: %s [--tier=%s | --stages=%s]\n' "$0" "$(IFS='|'; echo "${TIERS[*]}")" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
+    printf 'Usage: %s [--tier=%s | --stages=%s] [--test-shard=K/N]\n' "$0" "$(IFS='|'; echo "${TIERS[*]}")" "$(join_by_comma "${ALL_STAGES[@]}")" >&2
     printf '  seat: %s\n' "$(join_by_comma "${SEAT_STAGES[@]}")" >&2
     printf '  landing: %s\n' "$(join_by_comma "${LANDING_STAGES[@]}")" >&2
     printf '  release: %s\n' "$(join_by_comma "${RELEASE_STAGES[@]}")" >&2
@@ -184,10 +195,16 @@ usage() {
 
 tier=""
 selector=""
+test_shard=""
 stages_csv="$(join_by_comma "${ALL_STAGES[@]}")"
 for arg in "$@"; do
     case "$arg" in
         --tier=* | --stages=*) ;;
+        --test-shard=*)
+            test_shard="${arg#--test-shard=}"
+            "$(dirname "$0")/test-shard.sh" --check "$test_shard" || exit 1
+            continue
+            ;;
         *)
             printf 'unknown argument: %s\n' "$arg" >&2
             usage
@@ -212,6 +229,11 @@ for arg in "$@"; do
     esac
 done
 
+SUITE_STAGES=(test test-ambient-autocrlf)
+if [ -n "$test_shard" ] && [ -z "$selector" ] && [ "${test_shard%/*}" != 1 ]; then
+    stages_csv="$(join_by_comma "${SUITE_STAGES[@]}")"
+fi
+
 IFS=',' read -ra requested <<< "$stages_csv"
 for s in "${requested[@]}"; do
     if ! is_one_of "$s" "${KNOWN_STAGES[@]}"; then
@@ -219,6 +241,8 @@ for s in "${requested[@]}"; do
         exit 1
     fi
 done
+
+SHARD_SCRIPT="$(dirname "$0")/test-shard.sh"
 
 run_stage() {
     is_one_of "$1" "${requested[@]}"
@@ -310,15 +334,20 @@ if run_stage apple; then
 fi
 
 if run_stage test; then
-    header "cargo test --release --no-fail-fast --features test-pause"
     # --no-fail-fast: without it cargo stops at the first failing binary and
     # every later one goes unrun rather than green — this is what makes the
     # red list a list.
-    with_symlinked_tmpdir cargo test --release --no-fail-fast --features test-pause
+    if [ -z "$test_shard" ]; then
+        header "cargo test --release --no-fail-fast --features test-pause"
+        with_symlinked_tmpdir cargo test --release --no-fail-fast --features test-pause
+    else
+        header "cargo test --release --no-fail-fast --features test-pause (shard $test_shard)"
+        with_symlinked_tmpdir "$SHARD_SCRIPT" "$test_shard" --release --no-fail-fast --features test-pause
+    fi
 fi
 
 if run_stage test-ambient-autocrlf; then
-    header "cargo test --release --no-fail-fast --features test-pause (ambient core.autocrlf=true, as Git for Windows installs it)"
+    header "cargo test --release --no-fail-fast --features test-pause (ambient core.autocrlf=true, as Git for Windows installs it)${test_shard:+ (shard $test_shard)}"
     # GIT_CONFIG_SYSTEM, not GIT_CONFIG_GLOBAL: the system tier is where Git
     # for Windows' installer sets it, below anyone's identity rather than in
     # place of it, so a test that sandboxes its own HOME for an identity or a
@@ -326,7 +355,11 @@ if run_stage test-ambient-autocrlf; then
     ambient_config="$(mktemp)"
     printf '[core]\n\tautocrlf = true\n' > "$ambient_config"
     ambient_status=0
-    with_symlinked_tmpdir env GIT_CONFIG_SYSTEM="$ambient_config" cargo test --release --no-fail-fast --features test-pause || ambient_status=$?
+    if [ -z "$test_shard" ]; then
+        with_symlinked_tmpdir env GIT_CONFIG_SYSTEM="$ambient_config" cargo test --release --no-fail-fast --features test-pause || ambient_status=$?
+    else
+        with_symlinked_tmpdir env GIT_CONFIG_SYSTEM="$ambient_config" "$SHARD_SCRIPT" "$test_shard" --release --no-fail-fast --features test-pause || ambient_status=$?
+    fi
     rm -f "$ambient_config"
     [ "$ambient_status" -eq 0 ] || exit "$ambient_status"
 fi
@@ -393,7 +426,7 @@ if run_stage windows-wine; then
 fi
 
 if run_stage git-floor; then
-    header "cargo test --release --no-fail-fast --features test-pause (against the oldest git rwv runs on)"
+    header "cargo test --release --no-fail-fast --features test-pause (against the oldest git rwv runs on)${test_shard:+ (shard $test_shard)}"
     floor_bin="$("$(dirname "$0")/git-floor.sh")"
     floor_release="$("$(dirname "$0")/git-floor.sh" --print-release)"
     found="$(PATH="$floor_bin:$PATH" git version)"
@@ -402,7 +435,11 @@ if run_stage git-floor; then
         exit 1
     fi
     printf '%s from %s\n' "$found" "$floor_bin"
-    with_symlinked_tmpdir env PATH="$floor_bin:$PATH" cargo test --release --no-fail-fast --features test-pause
+    if [ -z "$test_shard" ]; then
+        with_symlinked_tmpdir env PATH="$floor_bin:$PATH" cargo test --release --no-fail-fast --features test-pause
+    else
+        with_symlinked_tmpdir env PATH="$floor_bin:$PATH" "$SHARD_SCRIPT" "$test_shard" --release --no-fail-fast --features test-pause
+    fi
 fi
 
 ran_stages=()
@@ -412,8 +449,8 @@ for s in "${KNOWN_STAGES[@]}"; do
     fi
 done
 
-if [ "${ran_stages[*]}" = "${ALL_STAGES[*]}" ]; then
+if [ -z "$test_shard" ] && [ "${ran_stages[*]}" = "${ALL_STAGES[*]}" ]; then
     printf '\nAll checks passed.\n'
 else
-    printf '\nAll checks passed (%sstages: %s).\n' "${tier:+tier: $tier; }" "$(join_by_comma "${ran_stages[@]}")"
+    printf '\nAll checks passed (%s%sstages: %s).\n' "${tier:+tier: $tier; }" "${test_shard:+test-shard: $test_shard; }" "$(join_by_comma "${ran_stages[@]}")"
 fi
