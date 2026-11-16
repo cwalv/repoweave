@@ -16,6 +16,9 @@
 //! `RWV_TEST_PAUSE_TRACE=<file>` makes every pass through any point append
 //! the point's name to `<file>`, one per line, so a test can learn which
 //! points a run reaches without holding it at each.
+//!
+//! `RWV_TEST_GIT_TRACE=<file>` makes every git the process starts append its
+//! arguments to `<file>`, one start per line, so a test can count them.
 
 pub(crate) fn point(name: &str) {
     #[cfg(feature = "test-pause")]
@@ -25,6 +28,16 @@ pub(crate) fn point(name: &str) {
     }
     #[cfg(not(feature = "test-pause"))]
     let _ = name;
+}
+
+pub(crate) fn git_started(command: &std::process::Command) {
+    #[cfg(feature = "test-pause")]
+    if let Some(file) = std::env::var_os("RWV_TEST_GIT_TRACE") {
+        let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy()).collect();
+        armed::trace_to(std::path::Path::new(&file), &args.join(" "));
+    }
+    #[cfg(not(feature = "test-pause"))]
+    let _ = command;
 }
 
 /// Whether a test withholds the filesystem capability `capability` from the

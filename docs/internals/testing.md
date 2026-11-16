@@ -642,7 +642,9 @@ leaving a process waiting behind it. A point sits immediately before a
 compare-and-swap, so what the test changes while the process waits is what
 the compare then reads. `RWV_TEST_PAUSE_TRACE=<file>` appends the name of every
 point a process passes to `<file>`, which is how a test learns what a verb
-reaches without holding it.
+reaches without holding it. `RWV_TEST_GIT_TRACE=<file>` appends the arguments
+of every git the process starts, one start per line, which is how a test
+counts them without a clock.
 
 The driving side is `tests/common/pause.rs`, and in the harness it is a pair
 of steps: one spawns rwv armed at a point and ends once it is held, and one

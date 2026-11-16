@@ -49,6 +49,23 @@ its answer from the others.
 | Working copy | `dirty_file_names`, `tracked_dirty_file_names`, `carry_edits_onto`, `check_out_branch`, `set_edits_aside`, `stage_paths`, `commit_only`, `has_commit_identity` | edits are observed and carried or set aside by the backend |
 | Lock driver | `lock_driver_setup`, `declare_lock_driver_in`, `define_lock_driver`, `lock_driver_declaration_file` | the VCS runs `rwv lock --merge-driver` when it merges `rwv.lock`; one that cannot run fails the merge into the VCS's ordinary conflict, never a silent side |
 
+## What a backend may answer without asking
+
+Each process start is a cost the operator pays per question, several times
+over on macOS and Windows, and core asks the same question from many layers.
+A backend may give an answer again without asking only where the answer cannot
+change while the repository stands: where the repository and its private and
+shared directories are, and what a full commit id names (its files, a file at
+it, that it resolves). Never a ref, `HEAD`, the index, configuration or the
+worktree list: those move under core between two of its own questions. The git
+backend keeps such answers per process in `src/git/recalled.rs`, reuses one
+only while the directory's `.git` entry is the entry it was read through (same
+kind, same creation time, same bytes for a file), keeps no failure and no
+"nothing there", and forgets them all when it starts a git that can create,
+move or remove a repository or worktree. A filesystem that keeps no creation
+time gets no reuse. `tests/scenario/git_spawns_test.rs` bounds how many git
+each of a fixed set of commands starts.
+
 ## What the seam holds by type
 
 The types in `src/vcs.rs` that carry a rule rather than data:

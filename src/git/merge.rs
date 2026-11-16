@@ -63,7 +63,7 @@ impl GitVcs {
                 let scratch = Scratch::take(repo)?;
                 let attributes = scratch.path("attributes");
                 Self::write_attributes_of(repo, attributes_from, Path::new(&attributes))?;
-                let git_dir = Self::run_trimmed(["rev-parse", "--absolute-git-dir"], repo)?;
+                let git_dir = Self::where_is(["rev-parse", "--absolute-git-dir"], repo)?;
                 command
                     .current_dir(&attributes)
                     .env("GIT_DIR", &git_dir)

@@ -222,14 +222,20 @@ impl GitCommand {
     }
 
     pub(super) fn output(&mut self) -> io::Result<Output> {
+        crate::test_pause::git_started(&self.command);
+        super::recalled::forget_if_reshaping(self.command.get_args());
         self.command.output()
     }
 
     pub(super) fn status(&mut self) -> io::Result<ExitStatus> {
+        crate::test_pause::git_started(&self.command);
+        super::recalled::forget_if_reshaping(self.command.get_args());
         self.command.status()
     }
 
     pub(super) fn spawn(&mut self) -> io::Result<Child> {
+        crate::test_pause::git_started(&self.command);
+        super::recalled::forget_if_reshaping(self.command.get_args());
         self.command.spawn()
     }
 
