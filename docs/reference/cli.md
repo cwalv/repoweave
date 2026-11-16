@@ -962,7 +962,7 @@ cd $(rwv resolve)
 
 Use case: one-shot path resolution from anywhere inside a workspace.
 
-### `rwv explain [<verb>]`
+### `rwv explain [<verb> [<sub-verb>]]`
 
 Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent harnesses.
 
@@ -970,7 +970,8 @@ Per-verb reflection — *replaces hand-maintained `--help` scraping* in agent ha
 |---|---|
 | `rwv explain` | List of explainable verbs |
 | `rwv explain <verb>` | Markdown bundle: purpose, invocation, output description, JSON Schema (for `--json`-capable verbs), exit codes, examples, common errors |
-| `rwv explain <token>` | The entry for a refusal token, a `rwv doctor` finding kind or sub-kind, or a VCS error kind, as [Refusals](./refusals.md), [Doctor findings](./doctor-findings.md) and [VCS errors](./vcs-errors.md) print it. An unknown name refuses (`no-explain-entry`), suggesting a near match. A sub-kind that more than one finding kind carries refuses (`ambiguous-explain-token`), naming the `<kind>/<sub-kind>` spelling for each |
+| `rwv explain <verb> <sub-verb>` | The sub-verb's section of the verb's bundle (`rwv explain member add`), or the whole bundle where the page has no section of that name; a second word that is not a sub-verb of the verb refuses (`no-explain-entry`), naming the sub-verbs |
+| `rwv explain <token>` | The entry for a refusal token, a `rwv doctor` finding kind or sub-kind, or a VCS error kind, as [Refusals](./refusals.md), [Doctor findings](./doctor-findings.md) and [VCS errors](./vcs-errors.md) print it. An unknown name refuses (`no-explain-entry`), suggesting a near match and listing the verbs. A sub-kind that more than one finding kind carries refuses (`ambiguous-explain-token`), naming the `<kind>/<sub-kind>` spelling for each |
 | `rwv explain <kind>/<sub-kind>` | The entry for that kind's sub-kind, or the kind's entry where one entry covers all its sub-kinds |
 
 Every page it serves opens with a `rwv <version>` line — the same string `rwv --version` prints — and a blank line, so a saved copy says which build it describes.

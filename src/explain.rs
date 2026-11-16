@@ -131,7 +131,7 @@ fn entries_headed(token: &str) -> Vec<Entry> {
     found
 }
 
-fn line_offsets(text: &'static str) -> impl Iterator<Item = (usize, &'static str)> {
+fn line_offsets(text: &str) -> impl Iterator<Item = (usize, &str)> {
     let mut offset = 0;
     text.split_inclusive('\n').map(move |raw| {
         let at = offset;
@@ -344,15 +344,23 @@ fn emit(page: &str) -> anyhow::Result<()> {
         .context("failed to write the explain page to stdout")
 }
 
-/// Print the explain bundle for the requested verb, the entry for a token, or
-/// the index when none given.
+/// Print the explain bundle for the requested verb, the section of it for a
+/// verb's sub-verb, the entry for a token, or the index when none given.
 ///
-/// Returns an error only when the name reaches no page, or reaches more than
-/// one entry.
-pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
-    let Some(name) = cmd else {
-        return emit(&format!("{}{INDEX_EXPLAIN}", version_banner()));
-    };
+/// Returns an error only when the words reach no page, or reach more than one
+/// entry.
+pub fn explain(words: &[String]) -> anyhow::Result<()> {
+    match words {
+        [] => emit(&format!("{}{INDEX_EXPLAIN}", version_banner())),
+        [name] => explain_name(name),
+        [verb, sub_verb] if VERB_BUNDLES.iter().any(|&(known, _)| known == verb) => {
+            explain_sub_verb(verb, sub_verb)
+        }
+        _ => no_entry(&words.join(" ")),
+    }
+}
+
+fn explain_name(name: &str) -> anyhow::Result<()> {
     // A verb first, then a token. Verbs win a collision because that is
     // the name the reader typed a command with a moment ago.
     if let Some(&(_, bundle)) = VERB_BUNDLES.iter().find(|&&(verb, _)| verb == name) {
@@ -380,21 +388,80 @@ pub fn explain(cmd: Option<&str>) -> anyhow::Result<()> {
             crate::refusal::RefusalKind::NoExplainEntry,
             "external command; try `rwv {name} --help`"
         ),
-        // A name with a `/` in it is no plugin's.
-        Lookup::Unknown => match suggest(name) {
-            Some(candidate) => crate::refuse!(
-                crate::refusal::RefusalKind::NoExplainEntry,
-                "no explain entry for '{name}'; did you mean: {candidate}? \
-                 Try `rwv explain` for the full index."
-            ),
-            None if name.contains('/') => crate::refuse!(
-                crate::refusal::RefusalKind::NoExplainEntry,
-                "no explain entry for '{name}'. Try `rwv explain` for the full index."
-            ),
-            None => crate::refuse!(
-                crate::refusal::RefusalKind::NoExplainEntry,
-                "external command; try `rwv {name} --help`"
-            ),
-        },
+        Lookup::Unknown => no_entry(name),
     }
+}
+
+/// A verb's section for one of its sub-verbs, or the verb's whole bundle for
+/// a sub-verb whose bundle has no section of its own.
+fn explain_sub_verb(verb: &str, sub_verb: &str) -> anyhow::Result<()> {
+    let sub_verbs = sub_verbs_of(verb);
+    if !sub_verbs.iter().any(|known| known == sub_verb) {
+        let listed = if sub_verbs.is_empty() {
+            format!("`{verb}` has no sub-verbs")
+        } else {
+            format!("its sub-verbs: {}", sub_verbs.join(", "))
+        };
+        crate::refuse!(
+            crate::refusal::RefusalKind::NoExplainEntry,
+            "no explain entry for `{verb} {sub_verb}`; `rwv explain {verb}` serves the verb; \
+             {listed}"
+        )
+    }
+    let bundle = VERB_BUNDLES
+        .iter()
+        .find(|&&(known, _)| known == verb)
+        .map_or("", |&(_, bundle)| bundle);
+    let page = sub_verb_section(bundle, verb, sub_verb).unwrap_or(bundle);
+    emit(&format!("{}{page}\n", version_banner()))
+}
+
+fn sub_verbs_of(verb: &str) -> Vec<String> {
+    use clap::CommandFactory;
+    crate::cli::Cli::command()
+        .find_subcommand(verb)
+        .map(|command| {
+            command
+                .get_subcommands()
+                .map(|sub| sub.get_name().to_owned())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The slice of `bundle` from the heading of `rwv <verb> <sub_verb>` to the
+/// next heading at the same level or above.
+fn sub_verb_section<'a>(bundle: &'a str, verb: &str, sub_verb: &str) -> Option<&'a str> {
+    let opening = format!("`rwv {verb} {sub_verb}");
+    let headings: Vec<(usize, usize, &str)> = line_offsets(bundle)
+        .filter_map(|(offset, line)| {
+            let level = heading_level(line)?;
+            Some((offset, level, &line[level..]))
+        })
+        .collect();
+    let (i, &(start, level, _)) = headings.iter().enumerate().find(|&(_, &(_, _, title))| {
+        title
+            .trim()
+            .strip_prefix(&opening)
+            .is_some_and(|rest| rest.starts_with('`') || rest.starts_with(' '))
+    })?;
+    let end = headings[i + 1..]
+        .iter()
+        .find(|&&(_, l, _)| l <= level)
+        .map_or(bundle.len(), |&(offset, _, _)| offset);
+    Some(bundle[start..end].trim_end_matches('\n'))
+}
+
+/// The refusal for a name that reaches no page: the nearest spelling when one
+/// is close, the verbs there are, and where the tokens are.
+fn no_entry(name: &str) -> anyhow::Result<()> {
+    let did_you_mean = suggest(name)
+        .map(|candidate| format!("did you mean: {candidate}? "))
+        .unwrap_or_default();
+    crate::refuse!(
+        crate::refusal::RefusalKind::NoExplainEntry,
+        "no explain entry for `{name}`; {did_you_mean}verbs: {}; a refusal or finding token \
+         is read with `rwv explain <token>`; `rwv explain` lists them",
+        known_verbs().collect::<Vec<_>>().join(", ")
+    )
 }

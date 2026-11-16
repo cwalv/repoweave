@@ -668,8 +668,8 @@ pub enum Commands {
     },
     /// Agent-oriented reflection: per-verb markdown bundle (purpose, invocation, output, JSON Schema)
     Explain {
-        /// Verb to explain. Omit to list explainable verbs.
-        command: Option<String>,
+        /// A verb, a verb and its sub-verb, or a refusal or finding token. Omit to list explainable verbs.
+        words: Vec<String>,
     },
     /// Register Claude Code integration (hooks and settings) for this user
     Setup {

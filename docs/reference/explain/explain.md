@@ -24,19 +24,26 @@ match. CI fails on drift between Rust types and committed artifacts.
 
 ```
 rwv explain [<verb>]
+rwv explain <verb> <sub-verb>
 rwv explain <token>
 rwv explain <kind>/<sub-kind>
 ```
 
 - With no argument, prints the index of explainable verbs.
 - With a verb, prints that verb's markdown bundle.
+- With a verb and one of its sub-verbs (`rwv explain member add`), prints the
+  sub-verb's section of the verb's bundle, or the whole bundle when the verb's
+  page has no section of that name. A second word that is not a sub-verb of
+  the verb is refused, naming the sub-verbs it has.
 - With a refusal kind or token, a `rwv doctor` finding kind or sub-kind, or a
   VCS error kind, prints that token's entry. A kind's entry lists its states
   and the choices each prints, generated from the table refusals are printed
   from.
 - With a finding's `<kind>/<sub-kind>`, prints the sub-kind's entry, or the
   kind's entry where one entry covers all its sub-kinds.
-- Unknown verbs return non-zero with a friendly pointer to the index.
+- A name that is no verb, token or plugin returns non-zero and says there is
+  no entry for it, lists the verbs, and points at `rwv explain <token>` for
+  tokens.
 
 Run `rwv explain --help` for the full clap surface.
 
@@ -76,14 +83,14 @@ cat docs/reference/schemas/doctor.json
 
 ## Common errors
 
-- *no explain entry for '<verb>'; did you mean: <candidate>?* — the verb
+- *no explain entry for `<name>`; did you mean: <candidate>?* — the verb
   isn't in the explain registry, but its spelling is within edit distance
   of a known core verb. Try the suggestion, or run `rwv explain` (no args)
   for the full index.
 - *`<sub-kind>` is a sub-kind of more than one finding kind* — the
   refusal lists `rwv explain <kind>/<sub-kind>` for each kind; run the one
   for the finding you met.
-- *external command; try `rwv <verb> --help`* — the verb isn't a core
-  verb. `explain` reflects over `rwv`'s CI-checked surfaces only and never
+- *external command; try `rwv <verb> --help`* — the name is a plugin on
+  `$PATH`, not a core verb. `explain` reflects over `rwv`'s CI-checked surfaces only and never
   execs PATH content, so third-party `rwv-<verb>` executables document
   themselves through their own `--help`.

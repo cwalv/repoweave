@@ -122,7 +122,7 @@ src/diagnosis.rs	edits unresolved	tests/sync/land_drift_test.rs	2
 src/diagnosis.rs	unparseable-project here	-	1
 src/durable_file.rs	filesystem-without-exclusive-publish	tests/weave/workweave_test.rs	1
 src/explain.rs	ambiguous-explain-token	-	1
-src/explain.rs	no-explain-entry	-	4
+src/explain.rs	no-explain-entry	-	3
 src/feature_sync.rs	(untokened:environment-passthrough)	-	6
 src/feature_sync.rs	(untokened:owed)	-	1
 src/feature_sync.rs	checkout in another workspace	tests/weave/workweave_idempotent_test.rs	1

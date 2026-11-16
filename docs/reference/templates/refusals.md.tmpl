@@ -562,13 +562,13 @@ spelling for a bare repository on disk).
 
 ### `no-explain-entry`
 
-**Condition.** `rwv explain` has no page for the name given.
+**Condition.** `rwv explain` has no page for the words given: no verb, token or plugin by that name, or a second word that is not a sub-verb of the verb before it.
 
 **Why.** `rwv explain` is reflection over core's committed, CI-checked
 surfaces. It never consults `$PATH`, so a plugin's name is not an entry here
 even when the plugin is installed and dispatchable.
 
-**Exits.** `rwv explain` with no argument lists everything served. For a
+**Exits.** The refusal lists the verbs and names `rwv explain <token>` for tokens; when the second word is wrong it lists the verb's sub-verbs. `rwv explain` with no argument lists everything served. For a
 plugin, its own `--help` is the documentation.
 
 **Where this sits.** [Plugin boundary](../explanation/joints/plugin-boundary.md).

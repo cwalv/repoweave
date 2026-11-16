@@ -207,20 +207,82 @@ fn explain_self_referential_entry() {
         .stdout(predicate::str::contains("# rwv explain").and(predicate::str::contains("JIT")));
 }
 
+/// A name that is no verb, no token and no plugin on `PATH` is not called an
+/// external command: the refusal says there is no entry and lists where
+/// entries are.
 #[test]
-fn explain_unknown_verb_exits_nonzero_with_friendly_pointer() {
-    // With external-subcommand fallthrough, `rwv explain <foo>`
-    // for a non-core `foo` that is NOT a close typo of a core verb redirects
-    // the operator to `rwv foo --help`. explain deliberately never execs PATH
-    // content — plugins own their own `--help`.
-    rwv()
+fn explain_unknown_topic_says_so_and_lists_what_exists() {
+    let assert = rwv()
         .args(["explain", "no-such-verb"])
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("external command")
-                .and(predicate::str::contains("rwv no-such-verb --help")),
+            predicate::str::contains("no explain entry for `no-such-verb`")
+                .and(predicate::str::contains("rwv explain <token>"))
+                .and(predicate::str::contains("external command").not()),
         );
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    for verb in known_verbs() {
+        assert!(stderr.contains(verb), "verb {verb} not listed:\n{stderr}");
+    }
+}
+
+#[test]
+fn explain_verb_and_sub_verb_serves_the_sub_verbs_section() {
+    let assert = rwv()
+        .args(["explain", "member", "add"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("## `rwv member add`")
+                .and(predicate::str::contains("## `rwv member remove`").not()),
+        );
+    let stdout = String::from_utf8(assert.get_output().stdout.clone()).unwrap();
+    assert!(stdout.starts_with("rwv "), "{stdout}");
+}
+
+#[test]
+fn explain_verb_and_sub_verb_serves_a_section_headed_with_its_arguments() {
+    rwv()
+        .args(["explain", "workweave", "list"])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("### `rwv workweave list [--project <name>]`")
+                .and(predicate::str::contains("### `rwv workweave create <name>`").not()),
+        );
+    rwv()
+        .args(["explain", "workweave", "create"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("### `rwv workweave create <name>`"));
+}
+
+#[test]
+fn explain_a_verb_with_a_word_that_is_not_its_sub_verb_refuses_naming_the_sub_verbs() {
+    rwv()
+        .args(["explain", "member", "frobnicate"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("no explain entry for `member frobnicate`")
+                .and(predicate::str::contains("its sub-verbs: add"))
+                .and(predicate::str::contains("external command").not()),
+        );
+    rwv()
+        .args(["explain", "status", "frobnicate"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("`status` has no sub-verbs"));
+}
+
+#[test]
+fn explain_two_words_whose_first_is_no_verb_refuses_as_one_topic() {
+    rwv()
+        .args(["explain", "nosuch", "thing"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no explain entry for `nosuch thing`"));
 }
 
 #[test]
@@ -254,8 +316,7 @@ fn explain_close_typo_suggests_land() {
 #[test]
 fn a_short_token_does_not_answer_for_an_unrelated_input() {
     rwv().args(["explain", "xyo"]).assert().failure().stderr(
-        predicate::str::contains("external command")
-            .and(predicate::str::contains("rwv xyo --help"))
+        predicate::str::contains("no explain entry for `xyo`")
             .and(predicate::str::contains("did you mean").not()),
     );
 }
@@ -271,8 +332,7 @@ fn explain_far_typo_no_spurious_suggestion() {
         .assert()
         .failure()
         .stderr(
-            predicate::str::contains("external command")
-                .and(predicate::str::contains("rwv frobnicate --help"))
+            predicate::str::contains("no explain entry for `frobnicate`")
                 .and(predicate::str::contains("did you mean").not()),
         );
 }

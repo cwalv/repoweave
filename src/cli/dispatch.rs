@@ -1838,8 +1838,8 @@ pub fn run() -> anyhow::Result<()> {
             crate::stdout::write_bytes(&script)
                 .context("failed to write the completions to stdout")?;
         }
-        Some(Commands::Explain { command }) => {
-            explain::explain(command.as_deref())?;
+        Some(Commands::Explain { words }) => {
+            explain::explain(&words)?;
         }
         Some(Commands::Setup { action }) => match action {
             SetupAction::Claude { uninstall } => {
