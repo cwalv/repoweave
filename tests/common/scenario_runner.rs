@@ -2378,6 +2378,19 @@ impl Run<'_> {
                 }
             }
         }
+        let holds = self.held_state(at);
+        Tips {
+            exact,
+            backups,
+            branches,
+            holds,
+        }
+    }
+
+    /// What [`Claim::HoldsAsCaptured`] compares for one place: files only, no
+    /// VCS call, so a claim on it costs nothing while a process is held.
+    fn held_state(&self, at: &Place) -> String {
+        let sb = self.sandbox;
         let mut holds = String::new();
         let root = sb.place_root(at);
         for file in [".rwv-op", ".rwv-op-lease"] {
@@ -2386,12 +2399,10 @@ impl Run<'_> {
             }
         }
         if matches!(at, Place::Primary(_)) {
-            let project = sb.checkout(at, Repo::Proj);
-            let common = sb.git_ok(
-                &project,
-                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-            );
-            let landings = PathBuf::from(common.trim()).join("rwv-landings");
+            let landings = sb
+                .checkout(at, Repo::Proj)
+                .join(".git")
+                .join("rwv-landings");
             let mut claims: Vec<String> = std::fs::read_dir(&landings)
                 .into_iter()
                 .flatten()
@@ -2408,12 +2419,7 @@ impl Run<'_> {
             claims.sort();
             holds.push_str(&claims.concat());
         }
-        Tips {
-            exact,
-            backups,
-            branches,
-            holds,
-        }
+        holds
     }
 
     fn local_state(&self, at: &Place) -> String {
@@ -2891,7 +2897,7 @@ impl Run<'_> {
                 let off: Vec<String> = kept
                     .iter()
                     .filter_map(|(place, before)| {
-                        let now = self.tips(place).holds;
+                        let now = self.held_state(place);
                         (before.holds != now).then(|| {
                             format!("{place:?}:\n--- captured\n{}--- now\n{now}", before.holds)
                         })
