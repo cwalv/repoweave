@@ -663,3 +663,168 @@ fn doctor_elsewhere_while_a_landing_is_held_leaves_what_it_holds_and_it_complete
         assert!(!ready.seat.root.join(".rwv-op").exists(), "{point}");
     }
 }
+
+/// Kill the seat's landing at `point` and return once it is killed.
+fn kill_the_landing_at(ready: &Stopped, point: &str) {
+    let mut land = common::rwv_std();
+    land.args(["land"]).current_dir(&ready.seat.root);
+    common::pause::Paused::spawn(land, point, &ready._tmp.path().join("pause"))
+        .expect("the landing reaches its point")
+        .kill();
+}
+
+/// The paths `repo`'s store registers checkouts at.
+fn worktrees(repo: &Path) -> Vec<String> {
+    common::git_in(repo, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A recorded seat gone for good while its killed landing leases the
+/// primary: every line the refusals print, run as printed in the primary,
+/// leads to the state ending, and the primary then takes work again.
+#[test]
+fn the_lines_a_gone_seats_lease_prints_end_it_when_run_in_turn() {
+    if !cfg!(feature = "test-pause") {
+        common::report_skip("kills rwv land at a pause point, which needs --features test-pause");
+        return;
+    }
+    let ready = ready_to_sync(false);
+    kill_the_landing_at(&ready, "target-fast-forwarded");
+    let lease = ready.primary.root.join(".rwv-op-lease");
+    assert!(lease.exists());
+    std::fs::remove_dir_all(&ready.seat.root).unwrap();
+
+    let mut ran = Vec::new();
+    for _ in 0..4 {
+        let out = rwv(&ready.primary.root, &["lock", "--commit"]);
+        if out.status.success() {
+            break;
+        }
+        let text = common::cli::describe(&out);
+        let line = text
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("rwv -C "))
+            .next_back()
+            .unwrap_or_else(|| panic!("no line ends it after {ran:?}:\n{text}"))
+            .to_owned();
+        assert!(
+            !ran.contains(&line),
+            "{line} printed again after {ran:?}:\n{text}"
+        );
+        let done = common::run_advised(&line, &ready.primary.root);
+        assert!(
+            done.status.success() || done.status.code() == Some(3),
+            "{line}:\n{}",
+            common::cli::describe(&done)
+        );
+        ran.push(line);
+    }
+    let locked = rwv(&ready.primary.root, &["lock", "--commit"]);
+    assert!(
+        locked.status.success(),
+        "after {ran:?}: {}",
+        common::cli::describe(&locked)
+    );
+    assert!(!lease.exists(), "{ran:?}");
+    assert_eq!(ran.len(), 1, "one printed line ends it: {ran:?}");
+    assert!(ran[0].contains("workweave delete s1"), "{ran:?}");
+}
+
+/// `--forget-gone-workspace` given the directory recorded workweaves sit in
+/// refuses, naming each with its delete line, and releases nothing.
+#[test]
+fn the_forget_flag_refuses_a_directory_holding_recorded_workweaves() {
+    let stopped = stop_a_sync();
+    let container = stopped.sibling.root.parent().unwrap().to_path_buf();
+    let away = stopped._tmp.path().join("unmounted");
+    std::fs::rename(&container, &away).unwrap();
+    let before = worktrees(&stopped.primary.lib);
+    let out = rwv(
+        &stopped.primary.root,
+        &[
+            "doctor",
+            "--fix",
+            "--forget-gone-workspace",
+            &container.to_string_lossy(),
+        ],
+    );
+    let refusal = common::cli::refused(&out, repoweave::refusal::RefusalKind::InapplicableFlag);
+    assert!(
+        refusal.contains("workweave delete s2 --project app"),
+        "{refusal}"
+    );
+    assert_eq!(worktrees(&stopped.primary.lib), before);
+}
+
+/// An unrecorded seat that is away while its landing, killed at `claimed`,
+/// has filed no savepoint: `--fix`, twice, keeps its checkouts'
+/// registrations and names it; back, its abort ends the landing.
+#[test]
+fn an_away_unrecorded_seat_keeps_its_registrations_before_any_savepoint() {
+    if !cfg!(feature = "test-pause") {
+        common::report_skip("kills rwv land at a pause point, which needs --features test-pause");
+        return;
+    }
+    let ready = ready_to_sync(false);
+    kill_the_landing_at(&ready, "claimed");
+    unrecord_the_seat(&ready);
+    assert!(
+        savepoints(&ready.primary.lib).is_empty(),
+        "fixture: no savepoint yet"
+    );
+    let lib = worktrees(&ready.primary.lib);
+    let project = worktrees(&ready.primary.project);
+    let away = ready._tmp.path().join("unmounted");
+    std::fs::rename(&ready.seat.root, &away).unwrap();
+    for _ in 0..2 {
+        let fixed = rwv(&ready.primary.root, &["doctor", "--fix"]);
+        let report = common::cli::describe(&fixed);
+        assert!(!report.contains("pruned"), "{report}");
+        assert!(report.contains("unreadable-holder"), "{report}");
+        assert_eq!(worktrees(&ready.primary.lib), lib, "{report}");
+        assert_eq!(worktrees(&ready.primary.project), project, "{report}");
+    }
+    std::fs::rename(&away, &ready.seat.root).unwrap();
+    succeed(&ready.seat.root, &["abort"]);
+    assert!(!ready.seat.root.join(".rwv-op").exists());
+}
+
+/// A forget naming a path nothing is registered, leased or claimed under
+/// says it released nothing.
+#[test]
+fn a_forget_that_releases_nothing_says_so() {
+    let stopped = stop_a_sync();
+    let never = stopped._tmp.path().join("never-was");
+    let out = rwv(
+        &stopped.primary.root,
+        &[
+            "doctor",
+            "--fix",
+            "--forget-gone-workspace",
+            &never.to_string_lossy(),
+        ],
+    );
+    let text = common::cli::describe(&out);
+    assert!(
+        text.contains("released nothing") && text.contains(&*never.to_string_lossy()),
+        "{text}"
+    );
+}
+
+/// A checkout removed by hand inside a seat stopped in a sync is kept
+/// registered while the operation stands, and reported so.
+#[test]
+fn a_gone_registration_kept_under_a_held_workspace_is_reported() {
+    let stopped = stop_a_sync();
+    std::fs::remove_dir_all(&stopped.seat.lib).unwrap();
+    let out = rwv(&stopped.primary.root, &["doctor", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let reported = json["violations"].as_array().unwrap().iter().any(|v| {
+        v["kind"] == "stale-worktree-registration" && v.to_string().contains("held-by-operation")
+    });
+    assert!(reported, "{json:#}");
+}
