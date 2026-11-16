@@ -834,7 +834,7 @@ const PANIC_ON_LOOKUP: &[(&str, &str, usize, LookupKind, &str)] = &[
     ),
     (
         "tests/common/mod.rs",
-        "tool_only_bin",
+        "tool_only_bin_under",
         1,
         LookupKind::HostTool,
         "the shim directory exists to expose one real tool on an otherwise empty `PATH`; without the tool the shim has no content, and every caller needs it to drive the subject",
