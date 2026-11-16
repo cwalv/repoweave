@@ -112,14 +112,52 @@ fn a_diverged_main_whose_merge_conflicts_is_published_under_another_name_then_re
     runner::run(scenarios::main_diverged_conflicting_published()).assert_fully_decided_green();
 }
 
+fn run_under_a_dir_named(word: &str, scenario: Scenario) -> Report {
+    let parent = common::tempdir().unwrap();
+    let named = parent.path().join(word);
+    std::fs::create_dir(&named).unwrap();
+    let sandbox = Sandbox::new_under(&named, scenario.seed.clone());
+    runner::run_in(&sandbox, scenario)
+}
+
 #[test]
 fn a_printed_step_is_chosen_by_its_words_not_by_the_sandbox_path_it_names() {
-    let parent = common::tempdir().unwrap();
-    let push = parent.path().join("push");
-    std::fs::create_dir(&push).unwrap();
-    let scenario = scenarios::main_diverged_conflicting_published();
-    let sandbox = sandbox::Sandbox::new_under(&push, scenario.seed.clone());
-    runner::run_in(&sandbox, scenario).assert_fully_decided_green();
+    run_under_a_dir_named("push", scenarios::main_diverged_conflicting_published())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn a_word_the_output_must_lack_may_stand_in_the_sandbox_path() {
+    run_under_a_dir_named(
+        "conflict",
+        scenarios::a_rebase_that_stops_without_a_conflict_is_not_reported_as_one(),
+    )
+    .assert_fully_decided_green();
+}
+
+#[test]
+fn a_word_the_output_must_hold_is_not_found_in_the_sandbox_path() {
+    let report = run_under_a_dir_named(
+        "quokka",
+        Scenario {
+            name: "a word only the sandbox path holds",
+            seed: Seed::default(),
+            steps: vec![Step::git(
+                &Place::Primary(Machine::A),
+                Repo::Lib,
+                &["rev-parse", "--show-toplevel"],
+            )
+            .expect(Exit::Succeeds)
+            .claim(Claim::OutputContains("quokka"))],
+        },
+    );
+    assert!(
+        report
+            .unmet
+            .iter()
+            .any(|(_, why)| why.contains("does not hold \"quokka\"")),
+        "{report}"
+    );
 }
 
 #[test]

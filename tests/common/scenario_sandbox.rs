@@ -273,6 +273,9 @@ fn refuse_records_hook() -> String {
     )
 }
 
+/// What a sandbox's root reads as in the text a claim judges.
+pub const ROOT_MASK: &str = "\u{27e8}sandbox\u{27e9}";
+
 /// A hermetic set of remotes and the machines that clone them.
 ///
 /// Every origin is a bare repository on branch `main`; `proj` declares `app`,
@@ -495,6 +498,17 @@ impl Sandbox {
             self.git_ok(&project, &["rev-parse", "--absolute-git-dir"])
                 .trim(),
         )
+    }
+
+    /// `text` with each spelling of this sandbox's root replaced by
+    /// [`ROOT_MASK`]: the path the suite happens to run under is no word a
+    /// claim can find or miss. [`Sandbox::rooted`] puts it back.
+    pub fn unrooted(&self, text: &str) -> String {
+        text.replace(self.root.to_string_lossy().as_ref(), ROOT_MASK)
+    }
+
+    pub fn rooted(&self, text: &str) -> String {
+        text.replace(ROOT_MASK, self.root.to_string_lossy().as_ref())
     }
 
     pub fn place_root(&self, place: &Place) -> PathBuf {

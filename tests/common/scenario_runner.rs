@@ -1386,7 +1386,8 @@ fn run_steps(sandbox: &Sandbox, name: &'static str, steps: impl Iterator<Item = 
             .collect();
         run.last_code = None;
         run.ran_printed_vcs_action = false;
-        let (succeeded, output) = run.perform(&step.action);
+        let (succeeded, printed) = run.perform(&step.action);
+        let output = sandbox.unrooted(&printed);
         if step.action.runs_rwv() && !run.ran_printed_vcs_action {
             run.last_rwv_output = output.clone();
         }
@@ -1420,7 +1421,7 @@ fn run_steps(sandbox: &Sandbox, name: &'static str, steps: impl Iterator<Item = 
             label: step.label,
             succeeded,
             decided: step.expect.is_decided(),
-            output,
+            output: printed,
         });
         before = after;
     }
@@ -1686,11 +1687,8 @@ impl Run<'_> {
                 holding,
                 fill,
             } => {
-                let root = sb.root.to_string_lossy().into_owned();
-                const ROOT: &str = "\u{0}";
-                let unrooted = self.last_rwv_output.replace(&root, ROOT);
                 let Some(line) =
-                    unrooted
+                    self.last_rwv_output
                         .lines()
                         .map(str::trim)
                         .find_map(|line| match found {
@@ -1717,7 +1715,7 @@ impl Run<'_> {
                 };
                 let line = fill
                     .iter()
-                    .fold(line.replace(ROOT, &root), |line, (placeholder, value)| {
+                    .fold(sb.rooted(line), |line, (placeholder, value)| {
                         line.replace(placeholder, value)
                     });
                 let mut words = line.split_whitespace();
@@ -1754,6 +1752,7 @@ impl Run<'_> {
                             ),
                         );
                     };
+                    let line = sb.rooted(line);
                     let mut words = line.split_whitespace();
                     let program = words.next();
                     let args: Vec<&str> = words.collect();
@@ -2168,7 +2167,9 @@ impl Run<'_> {
     ) -> Result<(), String> {
         let out = self.sandbox.git(dir, &["log", "--format=%s", rev]);
         if out.status.success()
-            && String::from_utf8_lossy(&out.stdout)
+            && self
+                .sandbox
+                .unrooted(&String::from_utf8_lossy(&out.stdout))
                 .lines()
                 .any(|line| subject_matches(line, subject))
         {
@@ -3056,7 +3057,7 @@ impl Run<'_> {
                     &sb.remote_path(*remote),
                     &["show", &format!("{branch}:{path}")],
                 );
-                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                let text = sb.unrooted(&String::from_utf8_lossy(&out.stdout));
                 if text.contains(has) == *present {
                     Ok(())
                 } else {
@@ -3081,7 +3082,7 @@ impl Run<'_> {
                 let store = scenario_invariants::store_for(sb, after, site, *member)
                     .ok_or_else(|| format!("no repository backs {} at {site:?}", member.name()))?;
                 let out = sb.git(&store, &["show", &format!("{pin}:{path}")]);
-                let text = String::from_utf8_lossy(&out.stdout).into_owned();
+                let text = sb.unrooted(&String::from_utf8_lossy(&out.stdout));
                 if text.contains(has) == *present {
                     Ok(())
                 } else {
