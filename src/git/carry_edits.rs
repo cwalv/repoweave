@@ -253,9 +253,8 @@ fn in_the_way(repo: &Path, kept: &CommitId, paths: &[String]) -> Result<Vec<Stri
     let mut blocked = Vec::new();
     for path in paths {
         let deleted = !held.contains(path);
-        let native = crate::path_spelling::native_relative(path);
-        let stands = std::fs::symlink_metadata(repo.join(&native)).is_ok();
-        let mut ancestor = native.parent();
+        let stands = std::fs::symlink_metadata(repo.join(path)).is_ok();
+        let mut ancestor = Path::new(path).parent();
         let mut over_a_dir = false;
         while let Some(dir) = ancestor.filter(|d| !d.as_os_str().is_empty()) {
             if std::fs::symlink_metadata(repo.join(dir)).is_ok_and(|m| !m.is_dir()) {
