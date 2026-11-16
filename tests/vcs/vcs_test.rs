@@ -1185,6 +1185,45 @@ fn mktree(repo: &Path, listing: &str) -> String {
 }
 
 #[test]
+fn a_merge_as_refs_reads_attributes_from_the_kept_commit_even_when_it_holds_none() {
+    let (_dir, bare, [main, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
+    let listing: String = common::git_in(&bare, &["ls-tree", main.as_str()])
+        .lines()
+        .filter(|line| !line.ends_with("\t.gitattributes"))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    let tree = mktree(&bare, &listing);
+    let held = repoweave::vcs::CommitId::parse(&common::git_in(
+        &bare,
+        &[
+            "commit-tree",
+            &tree,
+            "-p",
+            main.as_str(),
+            "-m",
+            "undeclared",
+        ],
+    ))
+    .unwrap();
+    let merged = git_vcs()
+        .merge_as_refs(
+            &bare,
+            &held,
+            &feat,
+            "merge",
+            repoweave::vcs::DerivedContentPolicy::keep_incoming_side(),
+            &feat,
+        )
+        .unwrap();
+    assert_eq!(
+        merged,
+        repoweave::vcs::RefMerge::Conflicted {
+            paths: vec!["DERIVED".to_owned()]
+        }
+    );
+}
+
+#[test]
 fn a_merge_as_refs_writes_no_attributes_outside_the_repository_for_a_tree_naming_a_parent() {
     let (dir, bare, [main, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
     let attributes = common::git_in(&bare, &["rev-parse", "main:.gitattributes"]);

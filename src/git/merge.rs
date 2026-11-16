@@ -120,6 +120,10 @@ impl GitVcs {
     fn write_attributes_of(repo: &Path, commit: &CommitId, into: &Path) -> Result<(), VcsError> {
         let args = ["ls-tree", "-r", "-z", commit.as_str()];
         let listing = Self::run_bytes(&args, repo, &[])?;
+        std::fs::create_dir_all(into).map_err(|e| VcsError::Io {
+            ctx: format!("failed to create {}", into.display()),
+            source: e,
+        })?;
         for record in listing.split(|byte| *byte == 0) {
             let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
                 continue;
