@@ -2249,6 +2249,7 @@ every_scenario!(
     member_pin_names_a_branch_only_the_remote_has,
     branch_delete_of_a_name_nowhere_offers_no_fetch,
     member_pin_behind,
+    status_says_land_records_a_checkout_beyond_its_pin,
     land_without_retire_says_the_workweave_remains,
     records_reserved_name,
     update_remote_writes_lock,
@@ -6212,6 +6213,12 @@ fn branch_delete_of_a_name_nowhere_offers_no_fetch() {
 #[test]
 fn land_without_retire_says_the_workweave_remains() {
     runner::run(scenarios::land_without_retire_says_the_workweave_remains())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn status_says_land_records_a_checkout_beyond_its_pin() {
+    runner::run(scenarios::status_says_land_records_a_checkout_beyond_its_pin())
         .assert_fully_decided_green();
 }
 

@@ -33,6 +33,11 @@ Run `rwv status --help` for the full clap surface.
 Default text output is a fixed-column table: one repo per row, with
 `path branch tip lock: <sha> [<relation>] [<mid-op>]`.
 
+Where an `owned` or `fork` member of a checked-out feature holds commits beyond
+its pin (`pin` `ahead` or `unpinned`), a line below the table reads `rwv land
+records these pins:` and lists the members: a landing records them itself, so
+no `rwv lock --commit` is needed first.
+
 When this workspace owns an in-flight `sync`/`land` op, or leases one to
 another workspace, a header line prints ahead of the table: verb, op id,
 phase, age, and the owning workspace, followed by the two remedies

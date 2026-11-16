@@ -337,6 +337,7 @@ pub fn run_status(
     let mut unreadable_projects: Vec<UnreadableProject> = Vec::new();
     let mut judged = crate::diagnosis::Report::default();
     let mut entry_changes = String::new();
+    let mut recorded_by_land: Vec<String> = Vec::new();
     let mut records: Vec<crate::branch::BranchRecordStatus> = Vec::new();
     let mut aligned: Vec<AlignedStatus> = Vec::new();
     let mut operator_branches: Vec<OperatorBranch> = Vec::new();
@@ -589,6 +590,23 @@ pub fn run_status(
                         let held = live.get(repo_path).map(Vec::as_slice).unwrap_or_default();
                         match crate::pins::standing(vcs.as_ref(), &repo_abs, head, pin, held) {
                             Ok(standing) => {
+                                let feature_checked_out = records.iter().any(|record| {
+                                    record.project == pname
+                                        && matches!(
+                                            record.record,
+                                            crate::branch::RecordOutput::Feature { .. }
+                                        )
+                                });
+                                if feature_checked_out
+                                    && matches!(entry.role, Role::Owned | Role::Fork)
+                                    && matches!(
+                                        standing,
+                                        crate::pins::Standing::Ahead(_)
+                                            | crate::pins::Standing::Unpinned(_)
+                                    )
+                                {
+                                    recorded_by_land.push(repo_path.to_string());
+                                }
                                 let reset = matches!(standing, crate::pins::Standing::Diverged)
                                     .then(|| {
                                         crate::feature_sync::reset_offer(ctx, &pname, repo_path)
@@ -658,6 +676,12 @@ pub fn run_status(
     };
     if op.is_some() {
         judged = judged.without_choices();
+    }
+    if !recorded_by_land.is_empty() {
+        judged.note(format!(
+            "rwv land records these pins: {}",
+            recorded_by_land.join(", ")
+        ));
     }
     let backups = match ctx.active_project() {
         Some(active) if !unreadable_projects.iter().any(|u| &u.project == active) => {

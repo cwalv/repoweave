@@ -748,7 +748,7 @@ The project repo moves as the VCS moves it, carrying edits the move does not ove
 
 ### `rwv status [--json] [...]`
 
-Show per-repo state for the CWD workspace: each repo's branch, tip and lock relation, and below the table what stands apart on the axes `status` reads.
+Show per-repo state for the CWD workspace: each repo's branch, tip and lock relation, and below the table what stands apart on the axes `status` reads. Where an `owned` or `fork` member of a checked-out feature holds commits beyond its pin (`pin` `ahead` or `unpinned`), a line reading `rwv land records these pins:` lists the members: the landing records them itself, so no `rwv lock --commit` is needed first.
 
 | Flag | Effect |
 |---|---|

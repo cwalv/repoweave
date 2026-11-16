@@ -46,6 +46,25 @@ pub fn land_without_retire_says_the_workweave_remains() -> Scenario {
     )
 }
 
+pub fn status_says_land_records_a_checkout_beyond_its_pin() -> Scenario {
+    scenario(
+        "status: a feature checkout beyond its pin is recorded by land, a declared one is not",
+        vec![
+            Step::commit(&a(), Repo::Lib, "main-lib"),
+            Step::rwv(&a(), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("land records")),
+            create("solo"),
+            Step::commit(&ww("solo"), Repo::App, "solo-app"),
+            Step::rwv(&ww("solo"), &["status"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains(
+                    "rwv land records these pins: local/remotes/app",
+                )),
+        ],
+    )
+}
+
 pub fn solo_workweave() -> Scenario {
     scenario(
         "solo workweave",
