@@ -1183,18 +1183,35 @@ fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
     (dir, ci_local)
 }
 
+/// The stage downloads and builds a git on first use, so no default run and
+/// no tier but release reaches it.
 #[test]
-fn default_run_never_runs_the_git_floor_stage() {
-    let fixture = fixture_repo();
+fn only_the_named_stage_and_the_release_tier_run_the_git_floor_stage() {
     let stub = stub_bin_dir();
-    let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
-    let out = run_script(&ci_local, fixture.path(), stub.path(), &[], &[]);
-    assert!(out.status.success(), "{}", stderr_of(&out));
-    assert!(
-        !stdout_of(&out).contains(FLOOR_HEADER),
-        "the default run reached the opt-in git-floor stage:\n{}",
-        stdout_of(&out)
-    );
+    for (args, runs) in [
+        (&[][..], false),
+        (&["--tier=seat"][..], false),
+        (&["--tier=landing"][..], false),
+        (&["--tier=release"][..], true),
+        (&["--stages=git-floor"][..], true),
+    ] {
+        let fixture = fixture_repo();
+        let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+        let out = run_script(
+            &ci_local,
+            fixture.path(),
+            stub.path(),
+            args,
+            &[("CI_LOCAL_TEST_WINDOWS_TARGET_INSTALLED", "1")],
+        );
+        assert!(out.status.success(), "{args:?}: {}", stderr_of(&out));
+        assert_eq!(
+            stdout_of(&out).contains(FLOOR_HEADER),
+            runs,
+            "{args:?}:\n{}",
+            stdout_of(&out)
+        );
+    }
 }
 
 #[test]
@@ -1396,11 +1413,13 @@ fn each_tier_names_itself_and_its_stages_on_the_terminal_line() {
         ),
         (
             "release",
-            "All checks passed (tier: release; stages: check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,kill-matrix).",
+            "All checks passed (tier: release; stages: check,windows,apple,test,test-ambient-autocrlf,no-test-pause,clippy,doc,fmt,drift,kill-matrix,git-floor).",
         ),
     ] {
         let fixture = fixture_repo();
-        let out = run_ci_local(
+        let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+        let out = run_script(
+            &ci_local,
             fixture.path(),
             stub.path(),
             &[&format!("--tier={tier}")],
@@ -1549,7 +1568,9 @@ fn only_the_named_stage_and_the_release_tier_run_the_kill_matrix() {
         (&["--stages=kill-matrix"][..], true),
     ] {
         let fixture = fixture_repo();
-        let out = run_ci_local(
+        let (_scripts, ci_local) = ci_local_beside_a_stub_floor_script();
+        let out = run_script(
+            &ci_local,
             fixture.path(),
             stub.path(),
             args,

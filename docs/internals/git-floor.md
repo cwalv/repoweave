@@ -35,13 +35,22 @@ the one spawn the first capability question would have made.
 
 ## Why 2.40
 
-`merge-tree --write-tree` arrived in 2.38 and `--attr-source`, which reads
-attributes from a commit rather than a work tree a bare repository lacks, in
-2.40. A project merge with a derived-content policy is computed as a tree from
-a bare repository only with both, so every merge the backend computes as refs
-(`merge_commit_as_refs` in `src/git/merge.rs`) runs on them; the merge in a
-scratch worktree that older gits needed is gone, and a floor that kept it would
-carry a path the suite no longer reaches. `git hook run` (2.36), which finishing
+`merge-tree --write-tree`, which every merge the backend computes as refs
+(`merge_commit_as_refs` in `src/git/merge.rs`) runs on, arrived in 2.38; the
+merge in a scratch worktree that older gits needed is gone, and a floor that
+kept it would carry a path the suite no longer reaches. Nothing the backend
+runs needs 2.39 or 2.40; the floor has not been measured at 2.38.
+
+A merge as refs under a derived-content policy reads attributes as of the
+commit it keeps, not from any checkout's files. Git's `--attr-source` does
+that only from 2.41, and `merge-tree` given it crashes before 2.43, so the
+backend does not use it on any release: it writes that commit's
+`.gitattributes` files into a scratch directory in the git dir and runs
+`merge-tree` with that directory as its work tree and an index file that does
+not exist (`GitVcs::write_attributes_of` in `src/git/merge.rs`). A path in the
+commit that would land outside the scratch directory is not written.
+
+`git hook run` (2.36), which finishing
 a workspace whose files rwv placed itself runs (`WorkspacePopulation::finish_checkout`,
 see [member-population.md](member-population.md)), is below the floor.
 
@@ -68,7 +77,6 @@ passing at the floor.
 | `worktree list --porcelain` reporting `prunable` | 2.31 | the floor |
 | `git hook run` | 2.36 | the floor |
 | `merge-tree --write-tree` | 2.38 | the floor |
-| `merge-tree --attr-source` | 2.40 | the floor |
 
 The lock merge driver reads the heads a merge names from the `GITHEAD_<id>`
 variables `git merge` and `git pull` export to a merge driver; 2.40 exports
@@ -85,7 +93,8 @@ for one, is not available to it.
 `scripts/ci-local.sh --stages=git-floor` builds the floor release with
 `scripts/git-floor.sh` into a cache outside the repository (once per machine:
 it needs a C compiler, make and zlib's headers) and runs the test stage with
-that git first on `PATH`. It is opt-in locally, because it downloads; CI runs
-it as its own job in `.github/workflows/ci-checks.yml`. The build leaves out
+that git first on `PATH`. No default run reaches it, because it downloads;
+`--tier=release` runs it, and CI runs it as its own job in
+`.github/workflows/ci-checks.yml`. The build leaves out
 message translations, so a test that switches git to German runs in English
 there and says so.

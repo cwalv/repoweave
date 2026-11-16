@@ -407,7 +407,7 @@ Gates, scans, and summaries are tested like the code they guard:
 ## The gate and its tiers
 
 `scripts/ci-local.sh` with no argument is the full gate, and it is what CI,
-the release gate and the pre-push hook run. Two named tiers split it, and a third adds the kill matrix:
+the release gate and the pre-push hook run. Two named tiers split it, and a third adds the kill matrix and the git floor:
 
 - `scripts/ci-local.sh --tier=seat` runs the stages a change is most likely
   to redden and the ones whose output it must commit — `check`, `test`,
@@ -434,9 +434,16 @@ binary. A test that moves itself into a group of its own is outside the cut.
 The kill matrix is not in the full gate. `scripts/ci-local.sh
 --stages=kill-matrix` runs its cells (about a quarter of an hour) and sets
 `RWV_KILL_MATRIX=run`, without which the test that runs them returns at once
-and prints the stage that runs it; `--tier=release` is every default stage and
-`kill-matrix`. Run it before a release and when a change touches an
-operation's steps, pause points or abort. The source test that `POINTS` matches
+and prints the stage that runs it. Run it before a release and when a change
+touches an operation's steps, pause points or abort.
+
+Nor is the git floor. `scripts/ci-local.sh --stages=git-floor` runs the suite
+against the oldest git release rwv runs on, built on first use into a cache
+outside the repository ([git-floor.md](git-floor.md)); CI runs it as its own
+job.
+
+`--tier=release` is every default stage, `kill-matrix` and `git-floor`, the
+gate to run before a release. The source test that `POINTS` matches
 the source, and the test that every point a shape passes has a cell or a
 `same_as` entry, stay in the `test` stage.
 

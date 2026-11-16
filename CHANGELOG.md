@@ -413,8 +413,9 @@ takes `--discard-unlanded`, `--delete-remote` and `--delete-remote-unlanded`.
 ### Contributor gate: the kill matrix is a named stage
 
 `scripts/ci-local.sh` no longer runs the kill matrix by default. `--stages=kill-matrix`
-runs it, and `--tier=release` is every default stage and it. Run it before a
-release and when a change touches an operation's steps, pause points or abort.
+runs it. Run it before a release and when a change touches an operation's
+steps, pause points or abort. `--tier=release` is every default stage, it, and
+`git-floor`, which runs the suite against the oldest git rwv runs on.
 
 ### Refusals removed
 

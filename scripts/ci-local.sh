@@ -9,17 +9,18 @@
 # With no argument, runs all stages in the order above but the last three — the
 # full gate, which CI, the release gate and the pre-push hook invoke.
 # kill-matrix runs only when named, or by --tier=release, which is every default
-# stage and kill-matrix: it runs tests/kill_matrix's cells, each verb killed at
-# each pause point it passes and then continued and aborted, which take about
-# a quarter of an hour. Run it before a release and when a change touches an
+# stage, kill-matrix and git-floor: kill-matrix runs tests/kill_matrix's cells,
+# each verb killed at each pause point it passes and then continued and
+# aborted, which take about a quarter of an hour. Run it before a release and when a change touches an
 # operation's steps, pause points or abort. The test stages do not run those
 # cells: the binary's test of them returns at once, naming this stage, unless
 # RWV_KILL_MATRIX=run, which this stage sets.
 # windows-wine runs only when named: it is scripts/windows-wine.sh, which
 # downloads several GB on first use and reports reds that belong to Wine
-# rather than to the code. git-floor runs only when named too: it runs the
-# suite against the oldest git release rwv runs on, which scripts/git-floor.sh
-# downloads and builds into a cache outside the repository on first use.
+# rather than to the code. git-floor runs only when named, or by --tier=release:
+# it runs the suite against the oldest git release rwv runs on, which
+# scripts/git-floor.sh downloads and builds into a cache outside the repository
+# on first use.
 #
 # --tier=seat runs the default stages a change is most likely to redden and
 # the ones whose output it must commit, for iterating on that change in its
@@ -171,7 +172,7 @@ for s in "${ALL_STAGES[@]}"; do
     is_one_of "$s" "${SEAT_STAGES[@]}" || LANDING_STAGES+=("$s")
 done
 
-RELEASE_STAGES=("${ALL_STAGES[@]}" kill-matrix)
+RELEASE_STAGES=("${ALL_STAGES[@]}" kill-matrix git-floor)
 
 usage() {
     printf 'Usage: %s [--tier=%s | --stages=%s]\n' "$0" "$(IFS='|'; echo "${TIERS[*]}")" "$(join_by_comma "${ALL_STAGES[@]}")" >&2

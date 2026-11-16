@@ -6920,8 +6920,8 @@ enum WorktreeFiles {
 }
 
 /// The oldest release every operation of this backend runs on, outside the
-/// capabilities it detects. `merge-tree --write-tree` with `--attr-source`,
-/// which computes a merge as a tree from a bare repository, arrived in 2.40.
+/// capabilities it detects. `merge-tree --write-tree`, which computes a merge
+/// as a tree, arrived in 2.38.
 const MINIMUM_RELEASE: (u32, u32) = (2, 40);
 
 /// What `git version` answered, read once per process.

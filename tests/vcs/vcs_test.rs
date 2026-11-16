@@ -1164,6 +1164,78 @@ fn a_merge_as_refs_still_conflicts_on_an_undeclared_path_and_writes_no_ref() {
     assert_eq!(common::git_in(&bare, &["for-each-ref"]), refs);
 }
 
+fn mktree(repo: &Path, listing: &str) -> String {
+    use std::io::Write as _;
+    let mut child = common::git()
+        .arg("mktree")
+        .current_dir(repo)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(listing.as_bytes())
+        .unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+#[test]
+fn a_merge_as_refs_writes_no_attributes_outside_the_repository_for_a_tree_naming_a_parent() {
+    let (dir, bare, [main, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
+    let attributes = common::git_in(&bare, &["rev-parse", "main:.gitattributes"]);
+    let mut parents = mktree(
+        &bare,
+        &format!("100644 blob {attributes}\t.gitattributes\n"),
+    );
+    for _ in 0..3 {
+        parents = mktree(&bare, &format!("040000 tree {parents}\t..\n"));
+    }
+    let listing = format!(
+        "{}\n040000 tree {parents}\tnested\n",
+        common::git_in(&bare, &["ls-tree", main.as_str()])
+    );
+    let tree = mktree(&bare, &listing);
+    let held = repoweave::vcs::CommitId::parse(&common::git_in(
+        &bare,
+        &["commit-tree", &tree, "-p", main.as_str(), "-m", "parents"],
+    ))
+    .unwrap();
+    let merged = git_vcs()
+        .merge_as_refs(
+            &bare,
+            &held,
+            &feat,
+            "merge",
+            repoweave::vcs::DerivedContentPolicy::keep_incoming_side(),
+            &feat,
+        )
+        .unwrap();
+    let repoweave::vcs::RefMerge::Merged(commit) = merged else {
+        panic!("a declared derived path conflicts: {merged:?}");
+    };
+    assert_eq!(
+        common::git_in(&bare, &["show", &format!("{}:DERIVED", commit.as_str())]),
+        "feat"
+    );
+    let mut written = Vec::new();
+    let mut pending = vec![dir.path().to_path_buf()];
+    while let Some(at) = pending.pop() {
+        for entry in fs::read_dir(&at).unwrap().flatten() {
+            if entry.file_type().unwrap().is_dir() {
+                pending.push(entry.path());
+            } else if entry.file_name() == ".gitattributes" {
+                written.push(entry.path());
+            }
+        }
+    }
+    assert_eq!(written, vec![dir.path().join("work/.gitattributes")]);
+}
+
 #[test]
 fn reading_the_setup_outside_a_repo_is_an_error_not_an_absence() {
     let dir = common::tempdir().unwrap();
