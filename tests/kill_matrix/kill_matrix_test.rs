@@ -1257,13 +1257,18 @@ fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
 
 /// `rwv doctor --fix` in the primary of the shape's weave and in the
 /// bystander, twice over, each leaving every record, lease and landing claim
-/// as the held operation left them.
+/// as the held operation left them. A shape whose contender is held at a
+/// pause point, which waits a bounded time for its release, runs one round.
 fn doctors_elsewhere(shape: &Shape) -> Vec<Step> {
     let machine = weave_of(shape)
         .machine()
         .expect("a shape runs on a machine");
     let mut steps = Vec::new();
-    for _ in 0..2 {
+    let rounds = match shape.contender {
+        Some(Contention::Live) => 1,
+        None => 2,
+    };
+    for _ in 0..rounds {
         for at in [weave_of(shape), Place::ww(machine, BYSTANDER)] {
             steps.push(settled(
                 shape,
@@ -1307,8 +1312,8 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
     match ending {
         Ending::AbortAfterDoctorElsewhere | Ending::ContinueAfterDoctorElsewhere => {
             steps.extend((shape.setup)());
-            steps.extend(holding(shape));
             steps.push(bystander(shape));
+            steps.extend(holding(shape));
             steps.push(Step::capture("before"));
             match &shape.stop {
                 Some(stop) => steps.push(run_of(shape, (stop.exit)(), shape.start)),
