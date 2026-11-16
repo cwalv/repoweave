@@ -24,6 +24,7 @@
 use repoweave::diagnosis::State;
 use repoweave::manifest::Role;
 use repoweave::refusal::RefusalKind;
+use std::collections::VecDeque;
 
 use crate::common;
 use crate::common::scenario_runner::{self, Claim, Exit, Scenario, Step};
@@ -1439,7 +1440,7 @@ fn run_cell(
     phase: Phase,
     point: &'static str,
     ending: Ending,
-    reference: &str,
+    reference: &std::sync::OnceLock<String>,
 ) -> Option<String> {
     let name = named(shape, phase, point, ending);
     let steps = steps_of(shape, phase, point, ending);
@@ -1457,7 +1458,7 @@ fn run_cell(
             with_bystander = reference_end_with(shape, true);
             with_bystander.as_str()
         } else {
-            reference
+            reference.get_or_init(|| reference_end(shape))
         };
         let differs = line_diff(reference, &continued);
         let left = left_by_the_kill(shape, point);
@@ -1517,16 +1518,24 @@ fn traced(shape: &Shape, phase: Phase) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
+/// How many jobs [`in_parallel`] runs at once: as many as libtest runs tests,
+/// which the gate sets for every stage that runs the suite.
+fn width() -> usize {
+    std::env::var("RUST_TEST_THREADS")
+        .ok()
+        .and_then(|threads| threads.parse().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(4, usize::from))
+}
+
+/// Runs `jobs` on [`width`] threads, each taking the next job in order as it
+/// finishes one, and returns their results in the order given.
 fn in_parallel<T: Send>(jobs: Vec<Box<dyn FnOnce() -> T + Send + '_>>) -> Vec<T> {
-    let width = std::thread::available_parallelism()
-        .map_or(4, usize::from)
-        .min(8);
-    let queue = std::sync::Mutex::new(jobs.into_iter().enumerate().collect::<Vec<_>>());
+    let queue = std::sync::Mutex::new(jobs.into_iter().enumerate().collect::<VecDeque<_>>());
     let done = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..width {
+        for _ in 0..width() {
             scope.spawn(|| loop {
-                let next = queue.lock().unwrap().pop();
+                let next = queue.lock().unwrap().pop_front();
                 let Some((at, job)) = next else { break };
                 let out = job();
                 done.lock().unwrap().push((at, out));
@@ -2039,35 +2048,71 @@ const STOPPED: &str = "its stop";
 
 const STAGE: &str = "scripts/ci-local.sh --stages=kill-matrix";
 
-fn run_shape(id: &str) {
+/// Every cell of every shape, as one pool of jobs: the unkilled runs a
+/// continue is compared with first, then the cells by the number of steps
+/// they run, most first, so the last to start are the shortest.
+/// `KILL_MATRIX_ONLY` keeps the cells whose name holds it.
+#[test]
+fn every_cell_of_every_shape() {
     if std::env::var("RWV_KILL_MATRIX").as_deref() != Ok("run") {
         println!("kill matrix cells skipped: they run in `{STAGE}`");
         return;
     }
-    let shape = shape(id);
-    let reference = reference_end(shape);
-    let reference = reference.as_str();
-    let jobs: Vec<Box<dyn FnOnce() -> Option<String> + Send>> = cell_runs(shape)
-        .into_iter()
-        .filter(|(point, phase, ending)| {
-            std::env::var("KILL_MATRIX_ONLY").map_or(true, |only| {
-                named(shape, *phase, point, *ending).contains(&only)
-            })
+    let only = std::env::var("KILL_MATRIX_ONLY").ok();
+    let references: Vec<std::sync::OnceLock<String>> =
+        SHAPES.iter().map(|_| std::sync::OnceLock::new()).collect();
+    let mut cells: Vec<(&'static Shape, &'static str, Phase, Ending)> = SHAPES
+        .iter()
+        .flat_map(|shape| {
+            cell_runs(shape)
+                .into_iter()
+                .map(move |(point, phase, ending)| (shape, point, phase, ending))
         })
-        .map(|(point, phase, ending)| {
-            Box::new(move || {
-                let failed =
-                    std::panic::catch_unwind(|| run_cell(shape, phase, point, ending, reference))
-                        .unwrap_or_else(|_| {
-                            Some(format!(
-                                "{}: a step could not run (see the panic above)",
-                                named(shape, phase, point, ending)
-                            ))
-                        });
-                failed
-            }) as Box<dyn FnOnce() -> Option<String> + Send>
+        .filter(|(shape, point, phase, ending)| {
+            only.as_ref()
+                .is_none_or(|only| named(shape, *phase, point, *ending).contains(only))
         })
         .collect();
+    cells.sort_by_cached_key(|(shape, point, phase, ending)| {
+        std::cmp::Reverse(steps_of(shape, *phase, point, *ending).len())
+    });
+    let reference_of = |shape: &Shape| {
+        &references[SHAPES
+            .iter()
+            .position(|listed| listed.id == shape.id)
+            .expect("a cell's shape is listed")]
+    };
+    let compared: std::collections::BTreeSet<&str> = cells
+        .iter()
+        .filter(|(_, _, _, ending)| *ending == Ending::Continue)
+        .map(|(shape, ..)| shape.id)
+        .collect();
+    let mut jobs: Vec<Box<dyn FnOnce() -> Option<String> + Send + '_>> = Vec::new();
+    for id in compared {
+        let shape = shape(id);
+        let reference = reference_of(shape);
+        jobs.push(Box::new(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reference.get_or_init(|| reference_end(shape));
+            }))
+            .err()
+            .map(|_| format!("{id}: the unkilled run could not run (see the panic above)"))
+        }));
+    }
+    for (shape, point, phase, ending) in cells {
+        let reference = reference_of(shape);
+        jobs.push(Box::new(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                run_cell(shape, phase, point, ending, reference)
+            }))
+            .unwrap_or_else(|_| {
+                Some(format!(
+                    "{}: a step could not run (see the panic above)",
+                    named(shape, phase, point, ending)
+                ))
+            })
+        }));
+    }
     let failed: Vec<String> = in_parallel(jobs).into_iter().flatten().collect();
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
@@ -2134,19 +2179,8 @@ fn every_row_names_real_shapes_and_says_why_the_others_do_not_reach_it() {
 }
 
 #[test]
-fn every_shape_has_a_test_and_a_cell() {
-    let source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/kill_matrix/kill_matrix_test.rs"),
-    )
-    .unwrap();
+fn every_shape_has_a_cell() {
     for shape in SHAPES {
-        assert!(
-            source.contains(&format!("    {},\n", shape.id))
-                || source.contains(&format!("{}(", shape.id)),
-            "{} has no test",
-            shape.id
-        );
         assert!(!cells_of(shape).is_empty(), "{} has no cell", shape.id);
     }
 }
@@ -2227,48 +2261,6 @@ fn a_stale_record_is_dropped_by_the_next_deletion_rule() {
     let failed = failures(&report);
     assert!(failed.is_empty(), "{failed}");
 }
-
-macro_rules! shape_tests {
-    ($($id:ident),* $(,)?) => {
-        $(
-            #[test]
-            fn $id() {
-                run_shape(stringify!($id));
-            }
-        )*
-    };
-}
-
-shape_tests!(
-    sync_linear,
-    sync_merge,
-    sync_linear_following,
-    sync_linear_carrying,
-    land_linear_waiting,
-    land_linear_in_place_drifted,
-    sync_merge_carrying,
-    sync_merge_own_stop,
-    sync_linear_own_stop,
-    sync_linear_manifest_stop,
-    land_linear,
-    land_merge,
-    land_linear_retiring,
-    land_linear_in_place,
-    land_linear_as_refs,
-    land_linear_carrying,
-    land_merge_carrying,
-    land_merge_own_stop,
-    land_linear_own_stop,
-    land_linear_manifest_stop,
-    sync_merge_adding,
-    pull_merge_upstream,
-    pull_merge_upstream_adding,
-    pull_reset_to_upstream,
-    update_remote_merge_upstream,
-    update_remote_reset_to_upstream,
-    update_remote_merge_and_reset_to_upstream,
-    cherry_pick,
-);
 
 /// Every shape, phase and point the shape's verb passes.
 type Reached = (String, String, String);
@@ -2351,11 +2343,15 @@ fn the_cells_are_exactly_where_the_shapes_reach_the_points() {
 /// Returning at once is building nothing: the run is given a temp root that
 /// does not exist, where any sandbox it began would fail to be made.
 #[test]
-fn without_the_stage_a_shape_test_returns_at_once_naming_it() {
+fn without_the_stage_the_cells_return_at_once_naming_it() {
     let temp = common::tempdir().unwrap();
     let absent = temp.path().join("absent");
     let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "kill_matrix_test::cherry_pick", "--nocapture"])
+        .args([
+            "--exact",
+            "kill_matrix_test::every_cell_of_every_shape",
+            "--nocapture",
+        ])
         .env_remove("RWV_KILL_MATRIX")
         .env("TMPDIR", &absent)
         .env("TMP", &absent)
@@ -2366,7 +2362,7 @@ fn without_the_stage_a_shape_test_returns_at_once_naming_it() {
     assert!(out.status.success(), "{stdout}");
     assert!(stdout.contains(STAGE), "{stdout}");
     assert!(
-        stdout.contains("test kill_matrix_test::cherry_pick ... ok"),
+        stdout.contains("test kill_matrix_test::every_cell_of_every_shape ... ok"),
         "{stdout}"
     );
 }
