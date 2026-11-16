@@ -89,6 +89,16 @@ pub fn noun_spellings_of(verb: &str) -> Vec<String> {
         .collect()
 }
 
+/// Where a project is set up, for a reader who typed `project` as a verb: rwv
+/// has no project verb group, and the three places that create or configure
+/// a project are named instead.
+pub fn project_verb_pointer(name: &str) -> Option<&'static str> {
+    (name == "project").then_some(
+        "rwv has no `project` verb: `rwv init` creates a project, `rwv clone --init-manifest` \
+         starts one from a repo, and `rwv integration` sets its integrations",
+    )
+}
+
 // Commands are listed in declaration order; that order is the grouping — no
 // labeled help sections. (clap 4 `next_help_heading` applies to args/options,
 // not to flattened Subcommand variants, so heading strings would be dead config.)

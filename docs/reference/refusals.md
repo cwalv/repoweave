@@ -980,7 +980,7 @@ spelling for a bare repository on disk).
 surfaces. It never consults `$PATH`, so a plugin's name is not an entry here
 even when the plugin is installed and dispatchable.
 
-**Exits.** The refusal lists the verbs and names `rwv explain <token>` for tokens; when the second word is wrong it lists the verb's sub-verbs. `rwv explain` with no argument lists everything served. For a
+**Exits.** The refusal lists the verbs and names `rwv explain <token>` for tokens (`project` is pointed at `rwv init`, `rwv clone --init-manifest` and `rwv integration`); when the second word is wrong it lists the verb's sub-verbs. `rwv explain` with no argument lists everything served. For a
 plugin, its own `--help` is the documentation.
 
 **Where this sits.** [Plugin boundary](../explanation/joints/plugin-boundary.md).
@@ -1513,7 +1513,9 @@ on `$PATH`.
 matches neither is a typo or a missing install, and guessing between them
 would run the wrong thing.
 
-**Exits.** `rwv --help` lists core verbs. For a plugin, check it is installed
+**Exits.** `rwv --help` lists core verbs. `project` is not a verb group: the
+refusal names `rwv init`, `rwv clone --init-manifest` and `rwv integration`,
+which create and configure a project. For a plugin, check it is installed
 and named `rwv-<verb>`. `rwv each` is a plugin that every release channel
 installs beside `rwv`; refused here, its `rwv-each` is not on `PATH` — see
 [rwv each](./rwv-each.md#installation). This is distinct from `no-explain-entry`, which

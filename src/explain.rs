@@ -455,9 +455,12 @@ fn sub_verb_section<'a>(bundle: &'a str, verb: &str, sub_verb: &str) -> Option<&
 /// The refusal for a name that reaches no page: the nearest spelling when one
 /// is close, the verbs there are, and where the tokens are.
 fn no_entry(name: &str) -> anyhow::Result<()> {
-    let did_you_mean = suggest(name)
-        .map(|candidate| format!("did you mean: {candidate}? "))
-        .unwrap_or_default();
+    let did_you_mean = match crate::cli::project_verb_pointer(name) {
+        Some(pointer) => format!("{pointer}; "),
+        None => suggest(name)
+            .map(|candidate| format!("did you mean: {candidate}? "))
+            .unwrap_or_default(),
+    };
     crate::refuse!(
         crate::refusal::RefusalKind::NoExplainEntry,
         "no explain entry for `{name}`; {did_you_mean}verbs: {}; a refusal or finding token \

@@ -228,6 +228,16 @@ fn explain_unknown_topic_says_so_and_lists_what_exists() {
 }
 
 #[test]
+fn explain_project_points_at_init_clone_init_manifest_and_integration() {
+    rwv().args(["explain", "project"]).assert().failure().stderr(
+        predicate::str::contains("no explain entry for `project`")
+            .and(predicate::str::contains("`rwv init`"))
+            .and(predicate::str::contains("`rwv clone --init-manifest`"))
+            .and(predicate::str::contains("`rwv integration`")),
+    );
+}
+
+#[test]
 fn explain_verb_and_sub_verb_serves_the_sub_verbs_section() {
     let assert = rwv()
         .args(["explain", "member", "add"])

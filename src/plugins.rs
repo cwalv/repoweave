@@ -385,7 +385,9 @@ pub(crate) fn build_command(
 /// prose. A verb that is a subcommand of a core noun names that spelling.
 fn unknown_verb_error(verb: &str) -> anyhow::Error {
     let spellings = crate::cli::noun_spellings_of(verb);
-    let did_you_mean = if spellings.is_empty() {
+    let did_you_mean = if let Some(pointer) = crate::cli::project_verb_pointer(verb) {
+        format!(" {pointer}.")
+    } else if spellings.is_empty() {
         String::new()
     } else {
         let spelled: Vec<String> = spellings.iter().map(|s| format!("`rwv {s}`")).collect();

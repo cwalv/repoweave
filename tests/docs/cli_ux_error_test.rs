@@ -125,3 +125,31 @@ fn workweave_create_reaches_clap() {
         .failure()
         .stderr(predicate::str::contains("<NAME>"));
 }
+
+/// `project` is not a verb group, and typed as one it is pointed at the three
+/// places a project is created or configured; each pointer parses as printed.
+#[test]
+fn project_as_a_verb_points_at_init_clone_init_manifest_and_integration() {
+    let plugin_dir = common::tempdir().expect("tempdir");
+    for args in [&["project"][..], &["project", "--help"][..]] {
+        let assert = rwv()
+            .args(args)
+            .env("PATH", plugin_dir.path().to_string_lossy().to_string())
+            .assert()
+            .failure()
+            .stderr(
+                predicate::str::contains("unknown verb `project`")
+                    .and(predicate::str::contains("`rwv init`"))
+                    .and(predicate::str::contains("`rwv clone --init-manifest`"))
+                    .and(predicate::str::contains("`rwv integration`")),
+            );
+        drop(assert);
+    }
+    for printed in [
+        &["init", "--help"][..],
+        &["clone", "--init-manifest", "--help"][..],
+        &["integration", "--help"][..],
+    ] {
+        rwv().args(printed).assert().success();
+    }
+}
