@@ -394,12 +394,6 @@ fn backup_corpus() -> Vec<(&'static str, Value)> {
                                 Some(BackupMark::AbortedWorkingCopy),
                                 false,
                             ),
-                            backup(
-                                "proj--anon/taken-out",
-                                '3',
-                                Some(BackupMark::TakenOut),
-                                false,
-                            ),
                         ],
                     },
                     RepoBackupsOutput {
@@ -1257,7 +1251,6 @@ fn status_backups() -> Vec<repoweave::backup::RepoBackupsOutput> {
                 "main/aborted-working-copy",
                 Some(repoweave::vcs::BackupMark::AbortedWorkingCopy),
             ),
-            backup("main/taken-out", Some(repoweave::vcs::BackupMark::TakenOut)),
         ],
     }]
 }
