@@ -248,7 +248,7 @@ fn explain_verb_and_sub_verb_serves_a_section_headed_with_its_arguments() {
         .assert()
         .success()
         .stdout(
-            predicate::str::contains("### `rwv workweave list [--project <name>]`")
+            predicate::str::contains("### `rwv workweave list [--json] [--project <name>]`")
                 .and(predicate::str::contains("### `rwv workweave create <name>`").not()),
         );
     rwv()

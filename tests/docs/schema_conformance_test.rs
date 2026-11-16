@@ -117,7 +117,8 @@ use repoweave::vcs::BackupMark;
 use repoweave::vcs::{ConflictOp, MidOperation, VcsErrorOutput};
 use repoweave::workspace::{AdvisoryKindOutput, AdvisoryOutput, Resolution};
 use repoweave::workweave::{
-    DiscardedOutput, KeptWork, UnlandedBranch, WorkweaveDeleteJsonOutput, WORKWEAVE_SCHEMA_URL,
+    DiscardedOutput, KeptWork, ListedWorkweave, UnlandedBranch, WorkweaveDeleteJsonOutput,
+    WorkweaveListJsonOutput, WORKWEAVE_LIST_SCHEMA_URL, WORKWEAVE_SCHEMA_URL,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -235,6 +236,11 @@ fn cases() -> Vec<VerbCase> {
             verb: "workweave",
             schema_url: WORKWEAVE_SCHEMA_URL,
             corpus: workweave_corpus,
+        },
+        VerbCase {
+            verb: "workweave-list",
+            schema_url: WORKWEAVE_LIST_SCHEMA_URL,
+            corpus: workweave_list_corpus,
         },
     ]
 }
@@ -1821,6 +1827,38 @@ fn branch_delete_corpus() -> Vec<(&'static str, Value)> {
     ]
 }
 
+fn workweave_list_corpus() -> Vec<(&'static str, Value)> {
+    vec![
+        (
+            "attached-and-detached",
+            value(WorkweaveListJsonOutput {
+                schema_url: WORKWEAVE_LIST_SCHEMA_URL.to_owned(),
+                project: "proj".to_owned(),
+                workweaves: vec![
+                    ListedWorkweave {
+                        name: "feat-a".to_owned(),
+                        path: wire("/ws/.workweaves/proj--feat-a"),
+                        branch: Some("proj--feat-a".to_owned()),
+                    },
+                    ListedWorkweave {
+                        name: "look".to_owned(),
+                        path: wire("/ws/.workweaves/proj--look"),
+                        branch: None,
+                    },
+                ],
+            }),
+        ),
+        (
+            "none",
+            value(WorkweaveListJsonOutput {
+                schema_url: WORKWEAVE_LIST_SCHEMA_URL.to_owned(),
+                project: "proj".to_owned(),
+                workweaves: Vec::new(),
+            }),
+        ),
+    ]
+}
+
 fn workweave_corpus() -> Vec<(&'static str, Value)> {
     vec![
         (
@@ -2454,6 +2492,7 @@ fn records_key(verb: &str) -> &'static str {
         "backup" => "repos",
         "branch" => "branches",
         "branch-delete" | "workweave" => "deleted",
+        "workweave-list" => "workweaves",
         "cherry-pick" => "members",
         _ => "outcomes",
     }

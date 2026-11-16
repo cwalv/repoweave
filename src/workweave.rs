@@ -4459,14 +4459,46 @@ fn delete_workweave_inner_at(
 pub fn list_workweaves(
     ws_root: &Path,
     project: &ProjectName,
-) -> anyhow::Result<Vec<WorkweaveName>> {
-    let mut names: Vec<WorkweaveName> = list_workweave_dirs_for_project(ws_root, project)?
+) -> anyhow::Result<Vec<ListedWorkweave>> {
+    let vcs = project_vcs();
+    Ok(list_workweave_dirs_for_project(ws_root, project)?
         .into_iter()
-        .map(|(n, _)| n)
-        .collect();
-    names.sort();
-    Ok(names)
+        .map(|(name, path)| {
+            let branch = match vcs.head_attachment(&project_dir(&path, project)) {
+                Ok(crate::vcs::HeadAttachment::Attached(attached)) => Some(attached.to_string()),
+                Ok(crate::vcs::HeadAttachment::Unborn(unborn)) => {
+                    Some(unborn.name().as_str().to_owned())
+                }
+                Ok(crate::vcs::HeadAttachment::Detached(_)) | Err(_) => None,
+            };
+            ListedWorkweave {
+                name: name.to_string(),
+                path: crate::path_spelling::WirePath::of(&path),
+                branch,
+            }
+        })
+        .collect())
 }
+
+/// One workweave `rwv workweave list` names: where it is, and the branch its
+/// project repo is on, absent when that repo is detached or cannot be read.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct ListedWorkweave {
+    pub name: String,
+    pub path: crate::path_spelling::WirePath,
+    pub branch: Option<String>,
+}
+
+/// The envelope `rwv workweave list --json` prints.
+#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+pub struct WorkweaveListJsonOutput {
+    #[serde(rename = "$schema")]
+    pub schema_url: String,
+    pub project: String,
+    pub workweaves: Vec<ListedWorkweave>,
+}
+
+pub const WORKWEAVE_LIST_SCHEMA_URL: &str = crate::schema_url::schema_url!("workweave-list");
 
 /// Return `(name, path)` pairs for workweaves of `project` under `ws_root`'s
 /// primary. Registry-backed with marker round-trip validation.

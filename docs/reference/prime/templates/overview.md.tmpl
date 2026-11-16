@@ -67,7 +67,7 @@ rwv push
 | `rwv lock` | Record current repo HEAD SHAs as `rwv.lock` pins, forward only (`--commit` to commit) |
 | `rwv push` | Push member repos then the project repo from the primary weave |
 | `rwv workweave create NAME` | Create an isolated workweave on branch `PROJECT--NAME` and run its install hooks |
-| `rwv workweave list` | List active workweaves for a project |
+| `rwv workweave list` | List active workweaves for a project, each with its path |
 | `rwv workweave delete NAME` | Delete a workweave (refuses on uncommitted or unmerged work) |
 | `rwv sync` | Take the target's new work into this feature, or `--from BRANCH` to merge a weave branch in (`--continue` to resume) |
 | `rwv land [TARGET]` | Land CWD's work into target workspace (`--retire` deletes workweave after) |

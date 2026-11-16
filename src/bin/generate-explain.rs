@@ -444,6 +444,11 @@ fn schema_workweave() -> String {
     serde_json::to_string_pretty(&schema).expect("workweave schema serializes")
 }
 
+fn schema_workweave_list() -> String {
+    let schema = schema_for!(repoweave::workweave::WorkweaveListJsonOutput);
+    serde_json::to_string_pretty(&schema).expect("workweave list schema serializes")
+}
+
 fn verbs() -> Vec<Verb> {
     vec![
         Verb {
@@ -1037,6 +1042,14 @@ fn build_msg_registry() -> MsgRegistry {
         format!(
             "```json\n{}\n```",
             flatten_rustdoc_links(&schema_update_remote())
+        ),
+    );
+
+    m.insert(
+        "workweave_list_schema",
+        format!(
+            "```json\n{}\n```",
+            flatten_rustdoc_links(&schema_workweave_list())
         ),
     );
 
@@ -5118,6 +5131,14 @@ fn main() -> anyhow::Result<()> {
         write_if_changed(&schemas_dir.join("branch-delete.json"), &schema)?;
     }
 
+    // `rwv workweave list` shares the `workweave` page, as `branch delete`
+    // shares the `branch` page.
+    {
+        let mut schema = schema_workweave_list();
+        schema.push('\n');
+        write_if_changed(&schemas_dir.join("workweave-list.json"), &schema)?;
+    }
+
     // Sanity-check schema URLs the binary embeds match the artifact paths we
     // just wrote. If a URL drifts (e.g. someone changes the crate version
     // path), this surfaces immediately.
@@ -5177,6 +5198,11 @@ fn main() -> anyhow::Result<()> {
     assert!(
         repoweave::branch::BRANCH_SCHEMA_URL.ends_with("/docs/reference/schemas/branch.json"),
         "BRANCH_SCHEMA_URL no longer points at the committed artifact"
+    );
+    assert!(
+        repoweave::workweave::WORKWEAVE_LIST_SCHEMA_URL
+            .ends_with("/docs/reference/schemas/workweave-list.json"),
+        "WORKWEAVE_LIST_SCHEMA_URL no longer points at the committed artifact"
     );
     assert!(
         repoweave::workweave::WORKWEAVE_SCHEMA_URL

@@ -966,7 +966,7 @@ fn listed_workweaves(ws: &Path) -> Vec<String> {
     String::from_utf8_lossy(&out.stdout)
         .lines()
         .filter(|line| !line.starts_with("target:"))
-        .map(|line| line.trim().to_owned())
+        .map(|line| line.split('\t').next().unwrap_or(line).trim().to_owned())
         .collect()
 }
 

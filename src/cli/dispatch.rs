@@ -1192,14 +1192,27 @@ pub fn run() -> anyhow::Result<()> {
                         .exit();
                 };
                 match action {
-                    WorkweaveAction::List { project } => {
+                    WorkweaveAction::List { json, project } => {
                         let ctx = workweave_context(origin_dir, project, binding)?;
-                        let names = crate::workweave::list_workweaves(
-                            ctx.primary_path(),
-                            ctx.require_active_project_on_disk()?,
-                        )?;
-                        for n in &names {
-                            outln!("{}", n);
+                        let project = ctx.require_active_project_on_disk()?;
+                        let listed =
+                            crate::workweave::list_workweaves(ctx.primary_path(), project)?;
+                        if json {
+                            outln!(
+                                "{}",
+                                serde_json::to_string_pretty(
+                                    &crate::workweave::WorkweaveListJsonOutput {
+                                        schema_url: crate::workweave::WORKWEAVE_LIST_SCHEMA_URL
+                                            .to_owned(),
+                                        project: project.to_string(),
+                                        workweaves: listed,
+                                    }
+                                )?
+                            );
+                        } else {
+                            for workweave in &listed {
+                                outln!("{}\t{}", workweave.name, workweave.path.as_str());
+                            }
                         }
                     }
                     WorkweaveAction::Delete {
@@ -1271,12 +1284,13 @@ pub fn run() -> anyhow::Result<()> {
                             (None, None, Some(rev)) => crate::workweave::BranchChoice::Detach(rev),
                             (None, None, None) => crate::workweave::BranchChoice::Minted,
                         };
+                        let created_name = WorkweaveName::new(name)?;
                         let created =
                             crate::workweave::create_workweave(crate::workweave::CreateWorkweave {
                                 primary_root,
                                 source_root: &source_root,
                                 project,
-                                name: &WorkweaveName::new(name)?,
+                                name: &created_name,
                                 branch,
                                 spelling: spelling_of(target, declared),
                                 at,
@@ -1291,6 +1305,8 @@ pub fn run() -> anyhow::Result<()> {
                         };
                         if hook_mode {
                             outln!("{}", workweave_path.display());
+                        } else {
+                            outln!("workweave {created_name}: {}", workweave_path.display());
                         }
                     }
                     WorkweaveAction::SetDefaultCreateBasedir { path, project } => {

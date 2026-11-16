@@ -838,7 +838,7 @@ Re-running an identical spelling on a clean workweave whose marker matches retur
 2. **Project worktree & marker** — creates the project worktree at `projects/<project>/` on the workweave's branch (or detached) and writes `.rwv-workweave` at the workweave root.
 3. **Activation** — surfaces workweave-root symlinks, fits host settings such as the cargo `rustc-wrapper` key, runs the integration install hooks (`npm install`, `uv sync`, `cargo fetch`, …) in the new workweave, then verifies the integration files in `projects/<project>/`: a missing or drifted one is reported as a warning naming `rwv doctor --fix`, and `create` authors none. `--no-materialize` skips the hooks; `rwv materialize` inside the workweave runs them later.
 
-A failure before the install hooks rolls the workweave back. An install hook that fails after the workweave is created and registered does not: the workweave is kept, and `create` exits 1 with `workweave created at <path>; only its install hooks did not complete. Fix the cause, then run rwv materialize inside it`. Under `--hook-mode` and `--claude-hook` the same failure is a warning on stderr and `create` exits 0, so the agent runtime that asked for the workweave still gets its path. A missing tool is a `tool-missing` warning in every mode.
+On success `create` ends with `workweave <name>: <absolute path>` on stdout (under `--hook-mode` and `--claude-hook`, the path alone). A failure before the install hooks rolls the workweave back. An install hook that fails after the workweave is created and registered does not: the workweave is kept, and `create` exits 1 with `workweave created at <path>; only its install hooks did not complete. Fix the cause, then run rwv materialize inside it`. Under `--hook-mode` and `--claude-hook` the same failure is a warning on stderr and `create` exits 0, so the agent runtime that asked for the workweave still gets its path. A missing tool is a `tool-missing` warning in every mode.
 
 | Flag | Effect |
 |---|---|
@@ -877,9 +877,9 @@ Both refusals cover every checkout under the workweave, not only the members the
 
 `--json` emits the envelope `{"$schema": "...", "project": "...", "discarded": {"edits": [...], "detached_commits": [...], "unlanded_branches": [...]}, "deleted": [...], "survivors": [...], "records_dropped": [...]}`; the last three are the deletion rule's, as `rwv branch delete` emits them, and are empty when the workweave's aligned branch is not a feature.
 
-### `rwv workweave list`
+### `rwv workweave list [--json]`
 
-List workweaves for a project. `--project <name>` names the project.
+List workweaves for a project, one per line: the name, a tab, and the absolute path of the directory it is in. `--project <name>` names the project. `--json` emits `{"$schema": "...", "project": "...", "workweaves": [{"name": "...", "path": "...", "branch": "..."}]}`; `branch` is the branch the workweave's project repo is on, and null when that repo is detached or cannot be read.
 
 ### `rwv workweave [--hook-mode] [--claude-hook]`
 

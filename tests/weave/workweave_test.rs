@@ -956,10 +956,9 @@ fn cli_workweave_create_without_hook_mode() {
 
     let stdout = String::from_utf8(output).expect("stdout should be valid UTF-8");
 
-    // Without hook mode, stdout should be empty (no path printed)
     assert!(
-        stdout.trim().is_empty(),
-        "without --hook-mode stdout should be empty, got: {stdout:?}"
+        stdout.starts_with("workweave normal-test: ") && stdout.trim_end().lines().count() == 1,
+        "without --hook-mode stdout is the one line naming the workweave and its path, got: {stdout:?}"
     );
 }
 
@@ -2044,6 +2043,67 @@ role = "owned"
         !stdout.contains("b-only"),
         "project-a list must not include 'b-only', got:\n{stdout}"
     );
+}
+
+/// A reader finds a workweave without searching: `create` ends by printing
+/// where it put it, `list` prints the path beside each name, and `list --json`
+/// carries name, path and branch.
+#[test]
+fn create_and_list_say_where_the_workweave_is() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
+
+    let created = rwv()
+        .args(["workweave", "create", "--project", "web-app", "where-am-i"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let created = String::from_utf8(created).unwrap();
+    let line = created.lines().last().expect("create prints a line");
+    let path = line
+        .strip_prefix("workweave where-am-i: ")
+        .unwrap_or_else(|| panic!("create's last line names the workweave and its path: {created}"));
+    let path = std::path::Path::new(path);
+    assert!(path.is_absolute(), "{line}");
+    assert!(path.join(".rwv-workweave").is_file(), "{line}");
+
+    let listed = rwv()
+        .args(["workweave", "list", "--project", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let listed = String::from_utf8(listed).unwrap();
+    assert_eq!(
+        listed.trim_end(),
+        format!("where-am-i\t{}", path.display()),
+        "list prints name, a tab, the path"
+    );
+
+    let json = rwv()
+        .args(["workweave", "list", "--json", "--project", "web-app"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&json).unwrap();
+    assert_eq!(json["project"], "web-app");
+    let only = &json["workweaves"][0];
+    assert_eq!(only["name"], "where-am-i");
+    assert_eq!(only["path"], path.display().to_string());
+    assert!(
+        only["branch"].as_str().is_some_and(|b| !b.is_empty()),
+        "{json}"
+    );
+    assert_eq!(json["workweaves"].as_array().unwrap().len(), 1);
 }
 
 /// Old-form on-disk workweaves without a registry entry are NOT visible in

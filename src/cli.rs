@@ -1164,8 +1164,11 @@ pub enum WorkweaveAction {
         #[arg(long)]
         project: Option<String>,
     },
-    /// List existing workweaves
+    /// List existing workweaves, each with the directory it is in
     List {
+        /// Emit one `{ "$schema": ..., "project": ..., "workweaves": [...] }` JSON envelope of each workweave's name, path and branch. See `rwv explain workweave`.
+        #[arg(long)]
+        json: bool,
         /// Operate on this project instead of the active project (does not change `.rwv-active`)
         #[arg(long)]
         project: Option<String>,

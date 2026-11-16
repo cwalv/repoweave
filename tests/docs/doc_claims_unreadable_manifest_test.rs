@@ -182,7 +182,7 @@ fn workweave_list_reads_no_manifest_and_lists_what_the_registry_holds() {
     let weave = Weave::broken();
     let out = run(&["workweave", "list", "--project", "app"], &weave.ws);
     assert!(
-        out.status.success() && String::from_utf8_lossy(&out.stdout).trim() == "one",
+        out.status.success() && String::from_utf8_lossy(&out.stdout).starts_with("one\t"),
         "{}",
         text(&out)
     );

@@ -243,16 +243,17 @@ or `rwv status --json .parent`, never from the branch name. The same adoption
 step runs on `rwv land --retire`, which applies the same rule to the
 retiring workweave's branches.
 
-### `rwv workweave list [--project <name>]`
+### `rwv workweave list [--json] [--project <name>]`
 
-List existing workweave names for the project. One name per line.
+List existing workweaves for the project: each one's name and the absolute
+path of the directory it is in, one per line.
 
 ## Invocation
 
 ```
 rwv workweave create <name> [--new-branch <W> | --branch <W> | --detach <rev>] [--target <T> | --declared] [--at <rev>] [--dir <path> | --basedir <path>] [--project <name>] [--no-materialize]
 rwv workweave delete <name> [--discard-uncommitted] [--discard-unlanded] [--delete-remote] [--delete-remote-unlanded <repo>]... [--json] [--project <name>]
-rwv workweave list [--project <name>]
+rwv workweave list [--json] [--project <name>]
 rwv workweave set-default-create-basedir <path> [--project <name>]
 rwv workweave --hook-mode create <name> [...]
 rwv workweave --claude-hook
@@ -269,10 +270,10 @@ Run `rwv workweave --help` for the full clap surface.
 
 ## Output
 
-`create` — no stdout output on success (workweave path to stdout only when
-`--hook-mode` is set). Progress and warnings go to stderr, and so does the
-output of the install hooks' tools, so the `--hook-mode` path is the only
-thing on stdout. With `--no-materialize` it says so in one line: `[skipped]
+`create` — one line to stdout on success, `workweave <name>: <absolute path>`
+(only the path when `--hook-mode` is set). Progress and warnings go to
+stderr, and so does the output of the install hooks' tools, so that line is
+the only thing on stdout. With `--no-materialize` it says so in one line: `[skipped]
 core: the install hooks did not run (--no-materialize); `rwv materialize` runs
 them`.
 
@@ -550,7 +551,66 @@ Schema:
 }
 ```
 
-`list` — one workweave name per line to stdout.
+`list` — one workweave per line to stdout: its name, a tab, and its absolute
+path. With `--json` it emits one envelope whose `workweaves` array carries each
+workweave's `name`, `path` and `branch` (the branch its project repo is on,
+null when that repo is detached or cannot be read):
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "WorkweaveListJsonOutput",
+  "description": "The envelope `rwv workweave list --json` prints.",
+  "type": "object",
+  "required": [
+    "$schema",
+    "project",
+    "workweaves"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "project": {
+      "type": "string"
+    },
+    "workweaves": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/ListedWorkweave"
+      }
+    }
+  },
+  "definitions": {
+    "ListedWorkweave": {
+      "description": "One workweave `rwv workweave list` names: where it is, and the branch its project repo is on, absent when that repo is detached or cannot be read.",
+      "type": "object",
+      "required": [
+        "name",
+        "path"
+      ],
+      "properties": {
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/definitions/WirePath"
+        }
+      }
+    },
+    "WirePath": {
+      "description": "Absolute path, `/`-separated on every platform.",
+      "type": "string"
+    }
+  }
+}
+```
 
 ## Exit codes
 
