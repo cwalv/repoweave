@@ -57,23 +57,38 @@ fn weave_and_seat(parent: &Path, endings: LineEndings) -> (PathBuf, PathBuf, Pat
     (ws, member, seat)
 }
 
-fn declared_to_clone(dir: &Path) -> Option<bool> {
-    if cfg!(target_os = "macos") {
-        return Some(true);
+/// The mode a verbatim checkout of a read-only member is placed in on the
+/// filesystem under `dir`: the first of reflink, hardlink that the filesystem
+/// accepts, else a write. Hardlinks are only ever offered on Unix.
+fn verbatim_placement(dir: &Path) -> &'static str {
+    let from = dir.join(".placement-probe-from");
+    std::fs::write(&from, "x").unwrap();
+    let to = dir.join(".placement-probe-to");
+    let mode = if reflink_copy::reflink(&from, &to).is_ok() {
+        "reflinked"
+    } else if cfg!(unix) && std::fs::hard_link(&from, to.with_extension("link")).is_ok() {
+        "hardlinked"
+    } else {
+        "written"
+    };
+    for leftover in [&from, &to, &to.with_extension("link")] {
+        let _ = std::fs::remove_file(leftover);
     }
-    if !cfg!(target_os = "linux") {
-        return None;
-    }
-    let out = std::process::Command::new("stat")
-        .args(["-f", "-c", "%T"])
-        .arg(dir)
-        .output()
-        .ok()?;
-    match String::from_utf8_lossy(&out.stdout).trim() {
-        "ext2/ext3" | "tmpfs" => Some(false),
-        "btrfs" => Some(true),
-        _ => None,
-    }
+    mode
+}
+
+fn expected_placement(endings: LineEndings, dir: &Path, files: usize) -> String {
+    let mode = match endings {
+        LineEndings::Converted => "written",
+        LineEndings::Verbatim => verbatim_placement(dir),
+    };
+    let count = |name: &str| if name == mode { files } else { 0 };
+    format!(
+        "{} reflinked, {} hardlinked, {} written",
+        count("reflinked"),
+        count("hardlinked"),
+        count("written")
+    )
 }
 
 fn sync_reports_how_the_files_it_moved_were_placed(endings: LineEndings) {
@@ -110,16 +125,12 @@ fn sync_reports_how_the_files_it_moved_were_placed(endings: LineEndings) {
                 .and_then(|l| l.strip_prefix(&format!("{MEMBER}: files ")))
         })
         .unwrap_or_else(|| panic!("sync reported no file placement for {MEMBER}:\n{stdout}"));
-    let expected = match (endings, declared_to_clone(tmp.path())) {
-        (LineEndings::Converted, _) | (_, Some(false)) => {
-            Some("0 reflinked, 0 hardlinked, 2 written")
-        }
-        (LineEndings::Verbatim, Some(true)) => Some("2 reflinked, 0 hardlinked, 0 written"),
-        (LineEndings::Verbatim, None) => None,
-    };
-    if let Some(expected) = expected {
-        assert_eq!(line, expected, "on {}", std::env::consts::OS);
-    }
+    assert_eq!(
+        line,
+        expected_placement(endings, tmp.path(), 2),
+        "on {}",
+        std::env::consts::OS
+    );
     let checkout = seat.join(MEMBER);
     assert_eq!(common::git_in(&checkout, &["status", "--porcelain"]), "");
     let readme = match endings {
@@ -171,16 +182,15 @@ fn sync_json_reports_the_placement_as_its_own_record(endings: LineEndings) {
         repoweave::path_spelling::resolve(&seat.join(MEMBER)).unwrap()
     );
     let files = &placement["files"];
-    let count = |key: &str| files[key].as_u64().unwrap();
-    assert_eq!(count("reflinked") + count("written"), 1, "{stdout}");
-    assert_eq!(count("hardlinked"), 0);
-    match (endings, declared_to_clone(tmp.path())) {
-        (LineEndings::Converted, _) | (_, Some(false)) => assert_eq!(count("written"), 1),
-        (LineEndings::Verbatim, Some(true)) => {
-            assert_eq!(count("reflinked"), 1, "on {}", std::env::consts::OS)
-        }
-        (LineEndings::Verbatim, None) => {}
-    }
+    let counts = format!(
+        "{} reflinked, {} hardlinked, {} written",
+        files["reflinked"], files["hardlinked"], files["written"]
+    );
+    assert_eq!(
+        counts,
+        expected_placement(endings, tmp.path(), 1),
+        "{stdout}"
+    );
 }
 
 mod verbatim {

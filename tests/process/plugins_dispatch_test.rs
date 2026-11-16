@@ -502,8 +502,8 @@ fn a_plugin_under_c_starts_in_the_c_directory_and_the_envelope_still_names_the_w
 }
 
 /// The plugin's inherited `PWD` names the `-C` directory too. A shell would
-/// correct a stale one on startup, so the plugin here is `env` itself, which
-/// prints the environment exactly as it was handed over.
+/// correct a stale one on startup, so the plugin here is an `awk` program,
+/// which prints the environment exactly as it was handed over.
 #[cfg(unix)]
 #[test]
 fn a_plugin_under_c_inherits_pwd_naming_the_c_directory() {
@@ -511,7 +511,10 @@ fn a_plugin_under_c_inherits_pwd_naming_the_c_directory() {
     let ws = make_minimal_workspace(tmp.path(), "myproj");
     let sub = ws.join("github");
     let plugin_dir = common::tempdir().unwrap();
-    std::os::unix::fs::symlink("/usr/bin/env", plugin_dir.path().join("rwv-envdump")).unwrap();
+    common::write_executable(
+        &plugin_dir.path().join("rwv-envdump"),
+        "#!/usr/bin/awk -f\nBEGIN { for (k in ENVIRON) print k \"=\" ENVIRON[k] }\n",
+    );
 
     let assert = rwv()
         .args(["-C", &sub.to_string_lossy(), "envdump"])
