@@ -101,7 +101,7 @@ recipe_tutorial() {
   local page=$TUTORIAL
   run "$page" 'export SANDBOX=$(mktemp -d) && export HOME=$SANDBOX/home && mkdir -p $HOME'
   case "$HOME" in "$SANDBOX"/*) ;; *) fail "HOME not redirected"; return 1 ;; esac
-  [ "$(rwv -C "$SANDBOX/seed" resolve)" = "$SANDBOX/seed" ] || { fail "seed does not resolve to itself"; return 1; }
+  [ "$(rwv -C "$SANDBOX/seed" resolve)" = "$(cd "$SANDBOX/seed" && pwd -P)" ] || { fail "seed does not resolve to itself"; return 1; }
   run "$page" 'mkdir ~/work && cd ~/work'
   run "$page" 'rwv status'
   teammate_lands first
@@ -414,7 +414,7 @@ recipe_stops() {
   (cd "$ww/web-app--a" && rwv land --retire >/dev/null 2>&1) || fail "land a"
   cd "$ww/web-app--b" || exit 2
   stops "the second landing stops on the conflict" rwv land
-  sed -i 's/"schema": [0-9]*/"schema": 999/' .rwv-op
+  sed 's/"schema": [0-9]*/"schema": 999/' .rwv-op > .rwv-op.edited && mv .rwv-op.edited .rwv-op
   stops "a record rwv cannot read refuses abort" rwv abort
   grep -qF 'rwv explain unreadable-op-record' <<<"$OUT" || fail "claim not met: abort refuses as unreadable-op-record (got: $OUT)"
   expect "status still runs and reports it" rwv status
