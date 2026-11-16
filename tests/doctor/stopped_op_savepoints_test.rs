@@ -586,3 +586,80 @@ fn a_merge_upstream_stopped_in_the_primary_keeps_its_savepoints_through_doctor_i
     common::assert_on_branch(&ready.primary.lib, "main");
     assert!(!record.exists());
 }
+
+/// A landing held mid-way, its lease on the primary and its claim on the
+/// target taken: `rwv doctor --fix` in the primary and in a sibling seat
+/// leaves its record, lease, claim, registrations and savepoints as they
+/// are, and the landing, released, completes. Held at `claimed`, holding
+/// the claim alone, at `leased-in-place`, holding the lease too, and at
+/// `composed`, where it has filed its savepoints.
+#[test]
+fn doctor_elsewhere_while_a_landing_is_held_leaves_what_it_holds_and_it_completes() {
+    if !cfg!(feature = "test-pause") {
+        common::report_skip("holds rwv land at a pause point, which needs --features test-pause");
+        return;
+    }
+    for point in ["claimed", "leased-in-place", "composed"] {
+        let ready = ready_to_sync(false);
+        let mut land = common::rwv_std();
+        land.args(["land"]).current_dir(&ready.seat.root);
+        let held = common::pause::Paused::spawn(land, point, &ready._tmp.path().join("pause"))
+            .expect("the landing reaches its point");
+        let held_state = |stopped: &Stopped| {
+            let common_dir = PathBuf::from(
+                common::git_in(
+                    &stopped.primary.project,
+                    &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                )
+                .trim(),
+            );
+            let mut claims: Vec<String> = std::fs::read_dir(common_dir.join("rwv-landings"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|entry| {
+                    std::fs::read_to_string(entry.path().join(".rwv-landing.lock")).ok()
+                })
+                .collect();
+            claims.sort();
+            (
+                std::fs::read_to_string(stopped.seat.root.join(".rwv-op")).ok(),
+                std::fs::read_to_string(stopped.primary.root.join(".rwv-op-lease")).ok(),
+                claims,
+                common::git_in(&stopped.primary.lib, &["worktree", "list", "--porcelain"]),
+                common::git_in(
+                    &stopped.primary.project,
+                    &["worktree", "list", "--porcelain"],
+                ),
+                savepoints(&stopped.primary.lib),
+                savepoints(&stopped.primary.project),
+            )
+        };
+        let before = held_state(&ready);
+        assert!(
+            before.0.is_some()
+                && !before.2.is_empty()
+                && (point == "claimed") != before.1.is_some(),
+            "{point}: fixture: the landing holds its record and claim, and its lease from \
+             leased-in-place on: {before:?}"
+        );
+        assert!(
+            point != "composed" || !before.5.is_empty(),
+            "{point}: fixture: the landing filed its savepoints"
+        );
+        for at in [&ready.primary.root, &ready.sibling.root] {
+            let fixed = rwv(at, &["doctor", "--fix"]);
+            let report = common::cli::describe(&fixed);
+            assert!(fixed.status.success(), "{point}: {report}");
+            assert_eq!(held_state(&ready), before, "{point}: {report}");
+        }
+        let landed = held.release();
+        assert!(
+            landed.status.success(),
+            "{point}: {}",
+            common::cli::describe(&landed)
+        );
+        assert_eq!(head(&ready.primary.lib), ready.seat_lib, "{point}");
+        assert!(!ready.seat.root.join(".rwv-op").exists(), "{point}");
+    }
+}
