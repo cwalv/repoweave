@@ -51,7 +51,10 @@ use scratch::Scratch;
 /// elsewhere cannot assemble one, so `error[E0603]` answers "did anyone spell
 /// a git command outside the seam" without a text scan having to.
 fn git_command() -> GitCommand {
-    GitCommand::new()
+    GitCommand::new().on_start(|command| {
+        crate::test_pause::git_started(command);
+        recalled::forget_if_reshaping(command.get_args());
+    })
 }
 
 impl From<NotUtf8> for VcsError {

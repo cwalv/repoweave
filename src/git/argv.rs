@@ -169,6 +169,7 @@ fn names_a_gone_work_tree(dir: &Path) -> bool {
 }
 
 pub(super) struct GitCommand {
+    on_start: fn(&Command),
     command: Command,
 }
 
@@ -181,10 +182,22 @@ impl GitCommand {
         #[cfg(test)]
         if speech::translated() {
             speech::translate(&mut command);
-            return GitCommand { command };
+            return GitCommand {
+                command,
+                on_start: |_| {},
+            };
         }
         command.env("LC_ALL", MESSAGE_LOCALE);
-        GitCommand { command }
+        GitCommand {
+            command,
+            on_start: |_| {},
+        }
+    }
+
+    /// Have `hook` see the command each time just before it starts.
+    pub(super) fn on_start(mut self, hook: fn(&Command)) -> GitCommand {
+        self.on_start = hook;
+        self
     }
 
     pub(super) fn args(&mut self, args: impl Into<Argv>) -> &mut GitCommand {
@@ -222,20 +235,17 @@ impl GitCommand {
     }
 
     pub(super) fn output(&mut self) -> io::Result<Output> {
-        crate::test_pause::git_started(&self.command);
-        super::recalled::forget_if_reshaping(self.command.get_args());
+        (self.on_start)(&self.command);
         self.command.output()
     }
 
     pub(super) fn status(&mut self) -> io::Result<ExitStatus> {
-        crate::test_pause::git_started(&self.command);
-        super::recalled::forget_if_reshaping(self.command.get_args());
+        (self.on_start)(&self.command);
         self.command.status()
     }
 
     pub(super) fn spawn(&mut self) -> io::Result<Child> {
-        crate::test_pause::git_started(&self.command);
-        super::recalled::forget_if_reshaping(self.command.get_args());
+        (self.on_start)(&self.command);
         self.command.spawn()
     }
 
