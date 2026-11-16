@@ -602,7 +602,7 @@ holds a lock on `<dir>/driver` for as long as it holds the process, and the
 operating system lets go of a lock when its holder ends, however it ends, on
 every platform: a held process that finds the lock free, or the file gone,
 with no release written stops where it stands and acts on nothing. That is
-what keeps a test killed outright, by a signal or a cancelled run, from
+what keeps a test killed outright, by a signal or a canceled run, from
 leaving a process waiting behind it. A point sits immediately before a
 compare-and-swap, so what the test changes while the process waits is what
 the compare then reads. `RWV_TEST_PAUSE_TRACE=<file>` appends the name of every
