@@ -1686,8 +1686,11 @@ impl Run<'_> {
                 holding,
                 fill,
             } => {
+                let root = sb.root.to_string_lossy().into_owned();
+                const ROOT: &str = "\u{0}";
+                let unrooted = self.last_rwv_output.replace(&root, ROOT);
                 let Some(line) =
-                    self.last_rwv_output
+                    unrooted
                         .lines()
                         .map(str::trim)
                         .find_map(|line| match found {
@@ -1714,7 +1717,7 @@ impl Run<'_> {
                 };
                 let line = fill
                     .iter()
-                    .fold(line.to_owned(), |line, (placeholder, value)| {
+                    .fold(line.replace(ROOT, &root), |line, (placeholder, value)| {
                         line.replace(placeholder, value)
                     });
                 let mut words = line.split_whitespace();

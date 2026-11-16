@@ -328,7 +328,16 @@ impl Sandbox {
     }
 
     pub fn new(seed: Seed) -> Sandbox {
-        let tmp = common::tempdir().expect("a sandbox root");
+        Sandbox::seeded(common::tempdir().expect("a sandbox root"), seed)
+    }
+
+    /// A sandbox rooted in a fresh directory under `parent`, a canonical path.
+    pub fn new_under(parent: &std::path::Path, seed: Seed) -> Sandbox {
+        let tmp = tempfile::TempDir::new_in(parent).expect("a sandbox root");
+        Sandbox::seeded(tmp, seed)
+    }
+
+    fn seeded(tmp: tempfile::TempDir, seed: Seed) -> Sandbox {
         let root = tmp.path().to_path_buf();
         let home = root.join("home");
         std::fs::create_dir_all(&home).unwrap();

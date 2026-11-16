@@ -113,6 +113,16 @@ fn a_diverged_main_whose_merge_conflicts_is_published_under_another_name_then_re
 }
 
 #[test]
+fn a_printed_step_is_chosen_by_its_words_not_by_the_sandbox_path_it_names() {
+    let parent = common::tempdir().unwrap();
+    let push = parent.path().join("push");
+    std::fs::create_dir(&push).unwrap();
+    let scenario = scenarios::main_diverged_conflicting_published();
+    let sandbox = sandbox::Sandbox::new_under(&push, scenario.seed.clone());
+    runner::run_in(&sandbox, scenario).assert_fully_decided_green();
+}
+
+#[test]
 fn a_landing_fast_forwards_a_receiving_branch_the_primary_holds_in_place() {
     runner::run(scenarios::shared_checkout_detached()).assert_fully_decided_green();
 }
