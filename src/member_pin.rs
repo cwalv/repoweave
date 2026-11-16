@@ -115,7 +115,7 @@ pub fn run_pin(
     };
 
     let mut refusals = Report::default();
-    let Ok(to) = vcs.resolve_revision(dir, rev) else {
+    let Some(to) = resolve_pin_target(vcs.as_ref(), dir, rev)? else {
         return Err(State::NameNoSuchBranch
             .of(&path)
             .member()
@@ -185,6 +185,32 @@ pub fn run_pin(
         lock::commit_project_lock(&pending, &BTreeSet::new())?;
     }
     Ok(())
+}
+
+/// The revision `rev` names here: a revision the repo resolves, else the
+/// branch of that name on the repo's url remote as last fetched.
+fn resolve_pin_target(
+    vcs: &dyn crate::vcs::Vcs,
+    dir: &std::path::Path,
+    rev: &str,
+) -> anyhow::Result<Option<crate::vcs::ResolvedRevisionId>> {
+    match vcs.resolve_revision(dir, rev) {
+        Ok(at) => return Ok(Some(at)),
+        Err(crate::vcs::VcsError::RevisionNotFound { .. }) => {}
+        Err(e) => return Err(e.into()),
+    }
+    let Ok(tracking) = crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new(rev))
+    else {
+        return Ok(None);
+    };
+    let Some(remote) = vcs.project_url_remote(dir)? else {
+        return Ok(None);
+    };
+    match vcs.resolve_branch_on_remote(dir, &remote, &tracking.on_remote()) {
+        Ok(at) => Ok(Some(at)),
+        Err(crate::vcs::VcsError::RevisionNotFound { .. }) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn report_lines(lines: Vec<Judged>) {

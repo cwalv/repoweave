@@ -4657,6 +4657,44 @@ pub fn url_change_raw_merge() -> Scenario {
     }
 }
 
+pub fn member_pin_names_a_branch_only_the_remote_has() -> Scenario {
+    let lib = "local/remotes/lib";
+    scenario(
+        "member pin: a branch only the remote has resolves once fetched, by the printed fetch",
+        vec![
+            Step::forge(Forge::Commit {
+                repo: Repo::Lib,
+                branch: "next",
+                mark: "next-unfetched",
+            }),
+            Step::rwv(&a(), &["member", "pin", lib, "next", "--commit"])
+                .expect(Exit::refuses(Repo::Lib, State::NameNoSuchBranch))
+                .claim(Claim::OutputContains("rwv fetch"))
+                .claim(Claim::LocalStateUnchanged(a())),
+            Step::rwv_printed(&a(), "rwv fetch").expect(Exit::Succeeds),
+            Step::rwv(&a(), &["member", "pin", lib, "next", "--commit"])
+                .expect(Exit::refuses(Repo::Lib, State::PinNotOnDeclaredBranch))
+                .claim(Claim::OutputLacks("no-such-branch")),
+        ],
+    )
+}
+
+pub fn branch_delete_of_a_name_nowhere_offers_no_fetch() -> Scenario {
+    scenario(
+        "branch delete: a branch removed by hand refuses without offering a fetch",
+        vec![
+            Step::git(&a(), Repo::Proj, &["branch", "pay"]),
+            Step::rwv(&a(), &["branch", "set-mode", "pay", "feature", "--target", "main"])
+                .expect(Exit::Succeeds),
+            Step::git(&a(), Repo::Proj, &["branch", "-D", "pay"]),
+            Step::rwv(&a(), &["branch", "delete", "pay"])
+                .expect(Exit::refuses(Repo::Proj, State::NameNoSuchBranch))
+                .claim(Claim::OutputLacks("rwv fetch"))
+                .claim(Claim::LocalStateUnchanged(a())),
+        ],
+    )
+}
+
 pub fn set_branch_new() -> Scenario {
     let lib = "local/remotes/lib";
     scenario(

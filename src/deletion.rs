@@ -333,6 +333,7 @@ impl<'a> Rule<'a> {
                 .of(&project_label)
                 .project_repo()
                 .subject(&request.branch)
+                .without(&[crate::diagnosis::ChoiceId::C33])
                 .judge(project_vcs.as_ref())
                 .refused());
         }

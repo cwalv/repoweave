@@ -2246,6 +2246,8 @@ every_scenario!(
     dc25_url_provenance,
     url_change_raw_merge,
     set_branch_new,
+    member_pin_names_a_branch_only_the_remote_has,
+    branch_delete_of_a_name_nowhere_offers_no_fetch,
     member_pin_behind,
     records_reserved_name,
     update_remote_writes_lock,
@@ -6192,6 +6194,18 @@ fn history_set_unset() {
 #[test]
 fn lock_commit_whole_file() {
     runner::run(scenarios::lock_commit_whole_file()).assert_fully_decided_green();
+}
+
+#[test]
+fn member_pin_names_a_branch_only_the_remote_has() {
+    runner::run(scenarios::member_pin_names_a_branch_only_the_remote_has())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn branch_delete_of_a_name_nowhere_offers_no_fetch() {
+    runner::run(scenarios::branch_delete_of_a_name_nowhere_offers_no_fetch())
+        .assert_fully_decided_green();
 }
 
 #[test]

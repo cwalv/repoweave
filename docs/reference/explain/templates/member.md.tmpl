@@ -629,7 +629,7 @@ the member to it. It is the verb that gives a member its first pin when
 ### Arguments
 
 - `<repo>` — manifest-relative path of the member (as listed in `rwv.toml`).
-- `<rev>` — a commit id, or a name that resolves to one in the member's clone.
+- `<rev>` — a commit id, or a name that resolves to one in the member's clone. A branch only the member's remote has, as last fetched, resolves to that remote's tip.
   Where the member follows a declared branch (every member of a declared
   workspace; a `dependency` or `reference` member of a feature), the branch or
   its upstream must reach the commit, or the verb refuses with `pin` `not on
