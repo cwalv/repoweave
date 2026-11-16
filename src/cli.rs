@@ -278,7 +278,8 @@ pub enum Commands {
         /// is gone for good and which no index records, holds in the weave:
         /// every registration of a checkout under it, the leases and the
         /// landing claims of operations it owns. Refused for a path that is
-        /// there or that an index records. Without this flag, `--fix` keeps
+        /// there, or at or under which an index records a workweave (its `rwv
+        /// workweave delete` releases what it holds). Without this flag, `--fix` keeps
         /// them, and the savepoints no readable record claims, for as long as
         /// the workspace cannot be read.
         #[arg(long, requires = "fix", value_name = "DIR")]

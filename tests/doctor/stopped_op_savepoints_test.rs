@@ -707,8 +707,7 @@ fn the_lines_a_gone_seats_lease_prints_end_it_when_run_in_turn() {
         let line = text
             .lines()
             .map(str::trim)
-            .filter(|line| line.starts_with("rwv -C "))
-            .next_back()
+            .rfind(|line| line.starts_with("rwv -C "))
             .unwrap_or_else(|| panic!("no line ends it after {ran:?}:\n{text}"))
             .to_owned();
         assert!(

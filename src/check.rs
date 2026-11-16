@@ -6588,7 +6588,7 @@ pub fn forget_gone_workspace(primary: &Path, gone: &Path) -> anyhow::Result<()> 
     }
     for line in release_holds_of_gone(primary, gone)? {
         released += 1;
-        outln!("[fixed] core: {line}");
+        outln!("[fixed] core: released what the gone workspace held: {line}");
     }
     if released == 0 {
         eprintln!(

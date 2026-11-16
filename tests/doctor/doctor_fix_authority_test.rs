@@ -1500,9 +1500,8 @@ fn repair_bindings() -> Vec<(&'static str, Binding)> {
         ),
         // --- forget_gone_workspace ---------------------------------------
         ("forgot the checkout", Findings(&["unreadable-holder"])),
-        ("released the lease on", Findings(&["unreadable-holder"])),
         (
-            "released the landing claim at",
+            "released what the gone workspace held",
             Findings(&["unreadable-holder"]),
         ),
         ("claim-unreadable at", Findings(&["claim-unreadable"])),

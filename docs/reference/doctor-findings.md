@@ -100,7 +100,7 @@ Schema is `docs/reference/schemas/doctor.json`.
 | [`role-disagreement`](#role-disagreement) | Warning | Report-only |
 | [`history-disagreement`](#history-disagreement) | Warning | Report-only |
 | [`stale-worktree-registration`](#stale-worktree-registration) / `directory-gone`, `directory-moved` | Warning | Auto-fixable |
-| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands`, `workweave-directory-gone` | Warning | Report-only |
+| [`stale-worktree-registration`](#stale-worktree-registration) / `directory-stands`, `workweave-directory-gone`, `held-by-operation` | Warning | Report-only |
 | [`clone-topology`](#clone-topology) / `standalone-in-workweave` | Error | Auto-fixable |
 | [`clone-topology`](#clone-topology) / `disconnected-weave-clone`, `wrong-parent-worktree`, `weave-clone-is-worktree` | Error | Report-only |
 | [`missing-canonical-clone`](#missing-canonical-clone) | Warning | Report-only |
@@ -714,7 +714,7 @@ Otherwise run the line the finding prints:
 | Cannot be read | Line |
 |---|---|
 | the index | `rwv -C <primary> doctor --fix` rebuilds it |
-| a recorded workweave's directory | `rwv -C <primary> workweave delete <name> --project <project>` |
+| a recorded workweave's directory | `rwv -C <primary> workweave delete <name> --project <project>`, which also releases the lease and landing claims that workweave owns |
 | a directory no index records: a registered checkout's, or a lease's or claim's owner | `rwv -C <primary> doctor --fix --forget-gone-workspace <dir>` |
 | a record naming no operation | `rwv -C <workweave> abort --discard-unreadable-record` |
 
@@ -722,7 +722,9 @@ Otherwise run the line the finding prints:
 run in `<dir>` holds: it releases every registration of a checkout under
 `<dir>`, held ones too, the lease each workspace holds for an operation `<dir>`
 owns, and the landing claims `<dir>` owns, then runs the fix. It refuses a path
-that is there, and one an index records, naming the `workweave delete`.
+that is there, and one at or under which an index records a workweave, naming
+each with its `workweave delete`. A path nothing is registered, leased or
+claimed under releases nothing, and the run says so.
 
 ### `unreadable-owned-state`
 
@@ -1192,6 +1194,18 @@ workweave's entry in the index with it. The finding names the workweave.
 records each checkout where it stands, as for `directory-moved`. If it is gone,
 `rwv workweave delete <name> --project <project>` drops its registrations and its
 entry.
+
+#### `held-by-operation`
+
+**Warning. Report-only.** Nothing stands at the registered path, which lies in
+a workspace whose operation record or lease stands. What is left of the
+checkout is what that operation's abort or `--continue` reads, so `--fix` keeps
+the registration while the operation stands. A registration in a workspace
+`rwv doctor` cannot read at all is kept too, and named by
+[`unreadable-holder`](#unreadable-holder).
+
+**What to do:** end the operation with its abort or `--continue`; the next
+`rwv doctor --fix` judges the registration.
 
 ---
 
