@@ -660,8 +660,10 @@ the one way it drives one on; both build their argv in `rebase_config_args`
 **Which commit became which** is what the rebase recorded, never a match on
 authorship or subject. Every rebase rwv starts carries an `--exec` after
 each pick that appends to `rwv-replayed-<old tip>-<onto>`, under the
-checkout's own git dir, the pick just done (the line before the exec itself
-in `rebase-merge/done`) and the commit HEAD stands at. The exec lines are in
+checkout's own git dir, the pick just done (the last pick-like line in
+`rebase-merge/done`, so an exec the operator put ahead of it is no gap) and
+the commit HEAD stands at. It needs nothing but git and the shell's own
+`read` and `case`, so the sh Git for Windows runs an exec under serves. The exec lines are in
 the rebase's own todo, so a continue the operator runs by hand records too.
 A pick that wrote nothing, dropped as empty or as already upstream, leaves
 HEAD where it was, at `onto` or at an earlier commit's image, and the reader
