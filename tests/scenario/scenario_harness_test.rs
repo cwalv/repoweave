@@ -2249,6 +2249,7 @@ every_scenario!(
     member_pin_names_a_branch_only_the_remote_has,
     branch_delete_of_a_name_nowhere_offers_no_fetch,
     member_pin_behind,
+    land_without_retire_says_the_workweave_remains,
     records_reserved_name,
     update_remote_writes_lock,
     detached_create_start,
@@ -6205,6 +6206,12 @@ fn member_pin_names_a_branch_only_the_remote_has() {
 #[test]
 fn branch_delete_of_a_name_nowhere_offers_no_fetch() {
     runner::run(scenarios::branch_delete_of_a_name_nowhere_offers_no_fetch())
+        .assert_fully_decided_green();
+}
+
+#[test]
+fn land_without_retire_says_the_workweave_remains() {
+    runner::run(scenarios::land_without_retire_says_the_workweave_remains())
         .assert_fully_decided_green();
 }
 

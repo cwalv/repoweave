@@ -336,7 +336,10 @@ Run `rwv land --help` for the full clap surface.
 
 ## Output
 
-Default text output reports each phase with one line per repo.
+Default text output reports each phase with one line per repo. A landing run
+in a workweave without `--retire` ends with one line naming the workweave that
+remains, where it is, and the two ways it ends: `rwv workweave delete <name>`,
+or landing with `--retire`.
 
 Under `--json`, output is the pretty-printed envelope, whatever `-j` is:
 

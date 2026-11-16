@@ -3729,6 +3729,20 @@ fn announce_completion(ctx: &OpContext<'_>) {
                 "land complete: {} fast-forwarded to this workspace's tip",
                 target_name(ctx)
             );
+            if !ctx.retire {
+                if let Checkout::Workweave {
+                    dir,
+                    name: crate::workspace::WorkweaveNameRecord::Recorded(name),
+                    ..
+                } = &ctx.cwd_ctx.checkout
+                {
+                    eprintln!(
+                        "workweave {name} remains at {}; end it with: rwv workweave delete {name} \
+                         (or land with --retire)",
+                        dir.as_path().display()
+                    );
+                }
+            }
             if ctx.retire && !ctx.cwd_workspace_dir.exists() {
                 let landed_in = ctx
                     .dest_workspace_dir

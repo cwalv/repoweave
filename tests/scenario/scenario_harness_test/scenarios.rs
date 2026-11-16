@@ -28,6 +28,24 @@ fn scenario(name: &'static str, steps: Vec<Step>) -> Scenario {
     }
 }
 
+pub fn land_without_retire_says_the_workweave_remains() -> Scenario {
+    scenario(
+        "land without --retire names the workweave that remains and how it ends",
+        vec![
+            create("solo"),
+            Step::commit(&ww("solo"), Repo::App, "solo-app"),
+            Step::rwv(&ww("solo"), &["land"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::OutputContains("workweave solo remains at "))
+                .claim(Claim::OutputContains("rwv workweave delete solo"))
+                .claim(Claim::OutputContains("land with --retire")),
+            Step::rwv(&a(), &["workweave", "delete", "solo"])
+                .expect(Exit::Succeeds)
+                .claim(Claim::WorkweaveGone(ww("solo"))),
+        ],
+    )
+}
+
 pub fn solo_workweave() -> Scenario {
     scenario(
         "solo workweave",
@@ -36,6 +54,7 @@ pub fn solo_workweave() -> Scenario {
             Step::commit(&ww("solo"), Repo::App, "solo-app"),
             Step::rwv(&ww("solo"), &["land", "--retire"])
                 .expect(Exit::Succeeds)
+                .claim(Claim::OutputLacks("remains at"))
                 .claim(Claim::OutputLacks("rwv did not create"))
                 .claim(Claim::WorkweaveGone(ww("solo")))
                 .claim(Claim::Contains {
