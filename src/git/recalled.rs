@@ -195,6 +195,44 @@ mod tests {
         assert_eq!(counted(tmp.path(), "q", &asked), "answer 5");
     }
 
+    fn words(line: &str) -> Vec<&OsStr> {
+        line.split(' ').map(OsStr::new).collect()
+    }
+
+    #[test]
+    fn a_git_that_reshapes_a_repository_forgets_every_answer_and_a_listing_does_not() {
+        let tmp = crate::tempdir().unwrap();
+        if !created_times_kept(tmp.path()) {
+            eprintln!("this filesystem keeps no creation time: nothing is recalled here");
+            return;
+        }
+        std::fs::create_dir(tmp.path().join(".git")).unwrap();
+        let asked = Cell::new(0);
+        let before = forgotten();
+        let first = counted(tmp.path(), "q", &asked);
+        forget_if_reshaping(words("worktree list --porcelain").into_iter());
+        let listed = counted(tmp.path(), "q", &asked);
+        assert!(
+            recalled_unless_forgotten(before, &first, &listed),
+            "{first} then {listed}"
+        );
+        for reshaping in [
+            "worktree add ../w main",
+            "worktree remove ../w",
+            "-c x=y clone a b",
+            "init -q",
+            "config core.worktree ../w",
+        ] {
+            let before = counted(tmp.path(), "q", &asked);
+            forget_if_reshaping(words(reshaping).into_iter());
+            assert_ne!(
+                counted(tmp.path(), "q", &asked),
+                before,
+                "after git {reshaping}"
+            );
+        }
+    }
+
     #[test]
     fn a_failure_is_not_kept() {
         let tmp = crate::tempdir().unwrap();
