@@ -3688,6 +3688,33 @@ fn a_set_back_checkout_never_names_another_workspaces_stash() {
     assert!(!said.contains(&seats[0][..12]), "{said}");
 }
 
+/// The seat and the primary stand at one tip on different branches, and a
+/// set-aside finished in the seat leaves a stash based on that tip. A merge
+/// in the primary that conflicts names no stash the seat made, whether or not
+/// the VCS kept one of its own.
+#[test]
+fn a_conflicted_merge_never_names_another_workspaces_stash() {
+    let f = fixture();
+    common::git_in(&f.ww_lib, &["reset", "-q", "--hard", "HEAD~1"]);
+    let fork = common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]);
+    assert_eq!(common::git_in(&f.primary_lib, &["rev-parse", "HEAD"]), fork);
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+    std::fs::write(f.ww_lib.join("notes.txt"), "seat's\n").unwrap();
+    let out = common::cli::run(&SET_ASIDE, &f.ww);
+    assert!(common::cli::describe(&out).contains("set aside as"));
+    let seats = stashes(&f.ww_lib);
+    assert_eq!(seats.len(), 1);
+    f.move_from_elsewhere("main", "notes.txt", "main moved\n");
+    std::fs::write(f.primary_lib.join("notes.txt"), "primary's\n").unwrap();
+
+    let out = common::cli::run(&MERGE, &f.primary);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert!(!said.contains(&seats[0][..12]), "{said}");
+    assert!(!said.contains("stash@{1}"), "{said}");
+}
+
 /// A finished set-aside's stash, kept, and a later merge in the same
 /// workspace set back over a newer tip of the same branch: the judgment names
 /// no stash, since none was made against the tip the files hold now.
