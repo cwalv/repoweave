@@ -4032,7 +4032,7 @@ pub fn dc20_state_location() -> Scenario {
             Step::git(&a(), Repo::Proj, &["clean", "-xfd"]),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLine("w"))
+                .claim(Claim::ListsWorkweave("w"))
                 .claim(Claim::IndexLists {
                     machine: Machine::A,
                     name: "w",
@@ -4274,7 +4274,7 @@ pub fn index_old_path() -> Scenario {
                 }),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLine("w1")),
+                .claim(Claim::ListsWorkweave("w1")),
         ],
     )
 }
@@ -4451,8 +4451,8 @@ pub fn basedir_default() -> Scenario {
                 .claim(Claim::DirStands(Machine::A, "chosen/proj--ww2")),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLine("ww2"))
-                .claim(Claim::OutputLine("ww")),
+                .claim(Claim::ListsWorkweave("ww2"))
+                .claim(Claim::ListsWorkweave("ww")),
         ],
     )
 }

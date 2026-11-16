@@ -543,7 +543,7 @@ fn a_refusal_of_another_state_or_by_the_argument_parser_is_unmet() {
 }
 
 #[test]
-fn an_output_line_claim_is_the_whole_line() {
+fn a_listed_workweave_claim_is_the_whole_name() {
     let report = bad_steps(
         "a list holding ww2 alone",
         vec![
@@ -551,14 +551,14 @@ fn an_output_line_claim_is_the_whole_line() {
                 .expect(Exit::Succeeds),
             Step::rwv(&a(), &["workweave", "list", "--project", "proj"])
                 .expect(Exit::Succeeds)
-                .claim(Claim::OutputLine("ww2"))
-                .claim(Claim::OutputLine("ww")),
+                .claim(Claim::ListsWorkweave("ww2"))
+                .claim(Claim::ListsWorkweave("ww")),
         ],
     );
     let why: Vec<&str> = report.unmet.iter().map(|(_, why)| why.as_str()).collect();
     assert_eq!(why.len(), 1, "{report}");
     assert!(
-        why[0].starts_with("no line of the output is \"ww\""),
+        why[0].starts_with("no line of the output lists \"ww\""),
         "{report}"
     );
 }

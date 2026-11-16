@@ -494,6 +494,9 @@ pub enum Claim {
     OutputLacks(&'static str),
     /// One line of what the step printed is exactly this text.
     OutputLine(&'static str),
+    /// A line of what `rwv workweave list` printed names exactly this
+    /// workweave, before the tab that separates it from its path.
+    ListsWorkweave(&'static str),
     /// `rwv doctor` printed at least one finding, and every finding it
     /// printed is of this kind.
     FindingsOnly(&'static str),
@@ -2458,6 +2461,16 @@ impl Run<'_> {
                     Ok(())
                 } else {
                     Err(format!("no line of the output is {text:?}:\n{output}"))
+                }
+            }
+            Claim::ListsWorkweave(name) => {
+                if output
+                    .lines()
+                    .any(|line| line.split('\t').next() == Some(*name))
+                {
+                    Ok(())
+                } else {
+                    Err(format!("no line of the output lists {name:?}:\n{output}"))
                 }
             }
             Claim::FindingsOnly(kind) => {
