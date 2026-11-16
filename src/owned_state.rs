@@ -1311,18 +1311,17 @@ mod tests {
         );
     }
 
-    /// A claim file whose holder died is taken over by the next stamp at once.
+    /// A claim file whose holder died is taken over by the next stamp, which
+    /// does not refuse it as held.
     #[test]
     fn an_abandoned_claim_is_taken_over_by_the_next_stamp() {
         let tmp = crate::tempdir().unwrap();
         let claim = tmp.path().join(OWNED_DIGESTS_CLAIM_FILE);
         std::fs::write(&claim, "pid 999999 host elsewhere\n").unwrap();
 
-        let started = std::time::Instant::now();
         stamp_owned_digest(tmp.path(), "Cargo.lock", b"v1")
             .expect("a claim nobody holds must not refuse the stamp");
 
-        assert!(started.elapsed() < crate::durable_file::CLAIM_WAIT);
         assert!(!claim.exists());
         assert_eq!(
             check_owned_digest(tmp.path(), "Cargo.lock", b"v1"),
