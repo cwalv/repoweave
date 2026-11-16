@@ -1405,6 +1405,9 @@ pub enum BackupMark {
     /// The checkout's one slot for the working copy `rwv abort` last
     /// discarded on it; the next abort that discards one there overwrites it.
     AbortedWorkingCopy,
+    /// The checkout's one slot for the edits a merge onto its moved branch
+    /// has out of the working copy, dropped once they stand there again.
+    TakenOut,
 }
 
 /// What a backup backs up.
@@ -2573,6 +2576,9 @@ pub enum RefreshWrite {
 pub struct SetBack {
     pub at: CommitId,
     pub branch: String,
+    /// The backup holding the edits a merge stopped with out of the working
+    /// copy, which [`Vcs::put_back_taken_out`] puts back.
+    pub taken_out: Option<CommitId>,
 }
 
 /// What a VCS command did that the VCS may refuse: its result, or its own
@@ -4265,6 +4271,19 @@ pub trait Vcs: Send + Sync {
         branch: &str,
         kept: &BackupWitness,
     ) -> Result<Refusable<()>, VcsError>;
+
+    /// Put back into `repo`, over whatever stands there, the edits a merge
+    /// stopped with out of its working copy, leaving it as `back` was before
+    /// that merge.
+    fn put_back_taken_out(&self, _repo: &Path, _back: &SetBack) -> Result<(), VcsError> {
+        Ok(())
+    }
+
+    /// The paths of the edits a merge stopped with out of `repo`'s working
+    /// copy.
+    fn taken_out_paths(&self, _repo: &Path, _back: &SetBack) -> Result<Vec<String>, VcsError> {
+        Ok(Vec::new())
+    }
 
     /// Put `repo` on `branch` as a plain checkout does, carrying the edits
     /// left in place where the branch's tip does not change their paths; the

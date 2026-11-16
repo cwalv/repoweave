@@ -20,6 +20,7 @@ const REBASED_PREFIX: &str = "rebased-";
 const SUPERSEDED_PREFIX: &str = "superseded-";
 const ABORTED_SLOT: &str = "aborted";
 const ABORTED_WORKING_COPY_SLOT: &str = "aborted-working-copy";
+const TAKEN_OUT_SLOT: &str = "taken-out";
 const EDITS_MESSAGE: &str = "rwv backup of uncommitted edits";
 /// The second parent of an edits backup whose index held content the
 /// working tree no longer does: the index as it stood.
@@ -39,13 +40,14 @@ fn id_text(mark: Option<BackupMark>, hex: &str) -> String {
         Some(BackupMark::Superseded) => format!("{SUPERSEDED_PREFIX}{hex}"),
         Some(BackupMark::Aborted) => ABORTED_SLOT.to_owned(),
         Some(BackupMark::AbortedWorkingCopy) => ABORTED_WORKING_COPY_SLOT.to_owned(),
+        Some(BackupMark::TakenOut) => TAKEN_OUT_SLOT.to_owned(),
     }
 }
 
 fn slot(mark: Option<BackupMark>) -> bool {
     matches!(
         mark,
-        Some(BackupMark::Aborted | BackupMark::AbortedWorkingCopy)
+        Some(BackupMark::Aborted | BackupMark::AbortedWorkingCopy | BackupMark::TakenOut)
     )
 }
 
@@ -54,6 +56,8 @@ fn mark_of(id: &str) -> Option<BackupMark> {
         Some(BackupMark::Aborted)
     } else if id == ABORTED_WORKING_COPY_SLOT {
         Some(BackupMark::AbortedWorkingCopy)
+    } else if id == TAKEN_OUT_SLOT {
+        Some(BackupMark::TakenOut)
     } else if id.starts_with(REBASED_PREFIX) {
         Some(BackupMark::Rebased)
     } else if id.starts_with(SUPERSEDED_PREFIX) {
@@ -70,6 +74,11 @@ pub(super) fn superseded_glob() -> String {
         "--glob={}/*/{SUPERSEDED_PREFIX}*",
         RwvRef::Backup.namespace()
     )
+}
+
+/// The ref of `branch`'s taken-out slot.
+pub(super) fn taken_out_slot(branch: &str) -> String {
+    format!("{}/{branch}/{TAKEN_OUT_SLOT}", RwvRef::Backup.namespace())
 }
 
 fn backup_ref(name: &BackupName) -> String {
@@ -116,7 +125,10 @@ impl GitVcs {
                     "update-ref",
                     "--create-reflog",
                     "-m",
-                    "rwv abort",
+                    match mark {
+                        Some(BackupMark::TakenOut) => "rwv doctor --fix --merge-edited-drift",
+                        _ => "rwv abort",
+                    },
                     &backup_ref(&name),
                     full,
                 ],

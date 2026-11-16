@@ -1716,6 +1716,13 @@ pub(super) const POINTS: &[Row] = &[
         elsewhere: "as drift-merge-read.",
     },
     Row {
+        point: "drift-merge-edits-kept",
+        cells: &[],
+        same_as: &[],
+        timing_dependent: false,
+        elsewhere: "as drift-merge-read. tests/sync/land_drift_test.rs kills the merge there and finishes it with the printed merge.",
+    },
+    Row {
         point: "drift-merge-read",
         cells: &[],
         same_as: &[],
@@ -1728,6 +1735,20 @@ pub(super) const POINTS: &[Row] = &[
         same_as: &[],
         timing_dependent: false,
         elsewhere: "as drift-merge-read.",
+    },
+    Row {
+        point: "drift-merge-switched",
+        cells: &[],
+        same_as: &[],
+        timing_dependent: false,
+        elsewhere: "as drift-merge-read. tests/sync/land_drift_test.rs kills the merge there and finishes it with the printed merge.",
+    },
+    Row {
+        point: "drift-merge-taken-out",
+        cells: &[],
+        same_as: &[],
+        timing_dependent: false,
+        elsewhere: "as drift-merge-read. tests/sync/land_drift_test.rs kills the merge there and finishes it with the printed merge.",
     },
     Row {
         point: "drift-read",

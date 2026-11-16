@@ -180,6 +180,7 @@ destructive patterns:
 - `"read-tree", "-m"` (a merge into the real index, rewriting files)
 - `"read-tree", "--reset"` (index and files put back to a tree, edits
   discarded)
+- `"restore"` (working-tree files overwritten from a tree)
 
 Each hit must appear in the test's `ALLOWLIST` with an exact count and
 a justification that names which precondition (rule 1) protects it,

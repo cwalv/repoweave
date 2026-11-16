@@ -349,15 +349,31 @@ goes. Its first choice is to move that out of the way.
 
 `rwv doctor --fix --merge-edited-drift` hands the edits to git. It keeps
 the working copy and index as a backup, points the checkout's HEAD at the
-tip its files hold, so that only your edits differ from HEAD, records them
-with `git stash create`, which writes no stash entry, checks the branch out
-and has `git stash apply` merge them back onto it. Git merges each edit
-onto the moved tip as it merges a stash, and the checkout refreshes the
-move's other files. A file it does not resolve is left conflicted, both
-versions in it (`ours` is the moved tip, `theirs` your edit), for you to
-resolve and mark resolved; your stash list is untouched. A change staged
-for the next commit is refused first, writing nothing, since the merge
-would keep only the working copy's version of it. Git honors the moved tip's attributes: line endings,
+tip its files hold, so that only your edits differ from HEAD, and records
+them with `git stash create`, which writes no stash entry; that commit is
+kept at once in the branch's backup slot `<branch>/taken-out`. Only then
+does it take the edits out, restoring from HEAD exactly the files they
+change, move the files to the moved tip with git's two-way checkout merge,
+and have `git stash apply` merge the edits back onto it; HEAD moves to the
+branch last, and the slot is dropped once the edits stand in the working
+copy again. Git merges each edit onto the moved tip as it merges a stash,
+and the checkout merge refreshes the move's other files. A file it does not
+resolve is left conflicted, both versions in it (`ours`, labeled `Updated
+upstream`, is the moved tip; `theirs`, labeled `Stashed changes`, your
+edit), for you to resolve and mark resolved; the edits that merged cleanly
+beside it stand unstaged, rerere records nothing, and your stash list is
+untouched. A change staged for the next commit is refused first, writing
+nothing, since the merge would keep only the working copy's version of it,
+and so is an untracked file standing where an edit removed a tracked
+directory, which taking the edits out would remove. Nothing outside the
+files the edits change is written before the checkout merge, so a file
+marked assume-unchanged or skip-worktree that the move does not touch, and
+an untracked file or directory, keep what they hold. Stopped at any step,
+by a kill or by a file git cannot write, the checkout is left `edits` `set
+back`, the slot naming the edits; either flag run again puts them back
+first and finishes. A slot left once HEAD reached the branch is an
+ordinary backup `rwv backup list` shows, and the next merge on that branch
+overwrites it. Git honors the moved tip's attributes: line endings,
 filters, `-merge`, `binary`, `merge=union`. A file declared derived takes
 the moved tip's content, and your edit to it stays in the backup. Links,
 modes, directories that replace files, and files the move renames are all

@@ -9189,6 +9189,16 @@ pub fn carry_set_back(
     back: &crate::vcs::SetBack,
     resolution: crate::vcs::EditResolution,
 ) -> Result<EditedDriftMerge, VcsError> {
+    if back.taken_out.is_some() {
+        if let Some(standing) = vcs.backup_edits(repo)? {
+            eprintln!(
+                "rwv: {}: what stood over the edits a stopped merge took out is kept as {}",
+                repo.display(),
+                backup_named(Some(&standing.backup().name.to_string()))
+            );
+        }
+        vcs.put_back_taken_out(repo, back)?;
+    }
     let mut edits = vcs.staged_against_head(repo)?;
     for path in vcs.unstaged_paths(repo)? {
         if !edits.contains(&path) {

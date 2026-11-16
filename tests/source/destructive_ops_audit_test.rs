@@ -58,6 +58,7 @@ const TRACKED: &[&str] = &[
     "\"stash\"",                  // stash flows hide work; drop and clear lose it
     "\"read-tree\", \"-m\"",      // a merge into the real index, rewriting files with -u
     "\"read-tree\", \"--reset\"", // index and, with -u, files put back to a tree, edits discarded
+    "\"restore\"",                // git restore: working-tree files overwritten from a tree
 ];
 
 /// Patterns that must not appear at all. Each introduces a destruction
@@ -555,14 +556,20 @@ const ALLOWLIST: &[Allowed] = &[
     Allowed {
         file: "git/carry_edits.rs",
         pattern: "\"update-ref\"",
-        count: 1,
+        count: 3,
         callers: &[],
-        justification: "set_back: points an attached HEAD, with --no-deref, at \
-            the tip the checkout's files hold, the branch untouched and \
-            named in the reflog message; index and files are not written. \
-            Reached only from check::merge_edited_drift, after the drift \
-            reading names that tip and, for the merge, after the working \
-            copy and index are kept as a backup.",
+        justification: "(1) set_back: points an attached HEAD, with \
+            --no-deref, at the tip the checkout's files hold, the branch \
+            untouched and named in the reflog message; index and files are \
+            not written. Reached only from check::merge_edited_drift, after \
+            the drift reading names that tip and, for the merge, after the \
+            working copy and index are kept as a backup. (2) carry_edits_onto \
+            writes the branch's taken-out backup slot, \
+            refs/rwv/backup/<branch>/taken-out, at the `git stash create` \
+            commit holding the edits, with a reflog keeping what the slot held \
+            before, ahead of any step that takes them out of the working copy. \
+            (3) drop_taken_out deletes that slot, leased to the commit it \
+            holds, only once the edits stand in the working copy again.",
     },
     Allowed {
         file: "git/carry_edits.rs",
@@ -578,25 +585,41 @@ const ALLOWLIST: &[Allowed] = &[
     },
     Allowed {
         file: "git/carry_edits.rs",
-        pattern: "\"read-tree\", \"--reset\"",
+        pattern: "\"restore\"",
+        count: 2,
+        callers: &[],
+        justification: "restore_from: `git restore --worktree --source <tree> \
+            -- <paths>`, with no hook run. carry_edits_onto takes the edits \
+            out of a set-back checkout by restoring from HEAD exactly the \
+            paths the `git stash create` commit changes, only once that \
+            commit is kept in the checkout's taken-out backup slot and \
+            in_the_way has refused anything not tracked standing where an \
+            edit removed a path; nothing else in the working copy is \
+            written, so an assume-unchanged file or an untracked one is never \
+            touched. Where that restore or the switch to the moved tip fails, \
+            it restores the same paths from the kept commit. \
+            put_back_taken_out restores, from the slot, the paths the kept \
+            commit or a stopped merge touched, after carry_set_back backed up \
+            whatever stands there. The second is the argument list of the \
+            error put_back_taken_out returns, not a call.",
+    },
+    Allowed {
+        file: "git/carry_edits.rs",
+        pattern: "\"read-tree\", \"-m\"",
         count: 1,
         callers: &[],
-        justification: "carry_edits_onto: `git read-tree --reset -u HEAD` \
-            takes the edits out of a checkout set back at the tip its files \
-            hold, so the plain checkout of the branch can run, before `git \
-            stash apply` merges them back onto it. Only after the edits are \
-            recorded by `git stash create`, and the method takes the \
-            BackupWitness of the backup the merge flag of doctor --fix made \
-            of the working copy and index first, so a stop between the \
-            discard and the merge leaves them in that backup; staged changes \
-            are refused before, writing nothing, since the merge would not \
-            keep their version. Where the checkout is then refused, the \
-            edits are applied back onto the same HEAD.",
+        justification: "carry_edits_onto: `git read-tree -m -u HEAD <moved \
+            tip>`, the two-way switch a checkout makes, with HEAD left set \
+            back: run only once the edits are out of the working copy and kept \
+            in the taken-out slot, so git keeps every other file a checkout \
+            keeps and refuses, writing nothing, where something not tracked \
+            or a file it does not compare is in the way; on that refusal the \
+            edits are restored from the slot.",
     },
     Allowed {
         file: "git/carry_edits.rs",
         pattern: "\"stash\"",
-        count: 5,
+        count: 4,
         callers: &[],
         justification: "set_edits_aside: `git stash push -- <paths>` of the \
             files both moved and edited, from a checkout set back at the tip \
@@ -604,12 +627,11 @@ const ALLOWLIST: &[Allowed] = &[
             prints the `git stash apply <stash>` that merges them back. \
             Reached only from --set-aside-edited-drift, consented to by name. \
             carry_edits_onto: `git stash create`, which records the edits as \
-            a commit and writes no ref, and `git stash apply <that commit>`, \
-            which merges them onto the branch, or back onto HEAD where the \
-            checkout was refused; the fifth is the argument list of the error \
-            that apply's failure returns, not a call. No stash entry is \
-            written by the merge, and none is ever dropped, popped or \
-            cleared.",
+            a commit and writes no ref, kept at once in the taken-out slot, \
+            and `git stash apply <that commit>`, which merges them onto the \
+            moved tip; the fourth is the argument list of the error that \
+            apply's failure returns, not a call. No stash entry is written \
+            by the merge, and none is ever dropped, popped or cleared.",
     },
     Allowed {
         file: "git/backup.rs",
