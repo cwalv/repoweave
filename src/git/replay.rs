@@ -133,8 +133,8 @@ impl GitVcs {
     }
 
     /// Start the record of a replay of `old` onto `onto`, empty, and return
-    /// the command the replay runs after each pick to add to it the pick's
-    /// commit, read from the steps git has done, and where HEAD stands; and
+    /// the command the replay runs after each pick to add to it the commit of
+    /// the last pick among the steps git has done, and where HEAD stands; and
     /// the sequence editor that keeps the todo git hands it, unchanged.
     pub(super) fn start_replay_record(
         repo: &Path,
@@ -153,10 +153,11 @@ impl GitVcs {
         })?;
         Ok((
             format!(
-                "set -f; set -- $(sed -n 'x;$p' \"$(git rev-parse --git-path rebase-merge/done)\"); \
+                "f() {{ p=; while IFS= read -r l || [ -n \"$l\" ]; do \
+                 case $l in pick\\ *|p\\ *|reword\\ *|r\\ *|edit\\ *|e\\ *|squash\\ *|s\\ *|fixup\\ *|f\\ *) p=$l;; esac; \
+                 done < \"$(git rev-parse --git-path rebase-merge/done)\"; set -f; set -- $p; \
                  printf '%s %s\\n' \"$(git rev-parse --verify -q \"$2^{{commit}}\")\" \
-                 \"$(git rev-parse --verify -q HEAD)\" \
-                 >> \"$(git rev-parse --git-path {})\" 2>/dev/null || :",
+                 \"$(git rev-parse --verify -q HEAD)\" >> \"$(git rev-parse --git-path {})\"; }} 2>/dev/null; f || :",
                 record_name(old, onto)
             ),
             format!(

@@ -1512,6 +1512,51 @@ fn a_rebase_finished_by_hand_maps_as_recorded_and_an_amended_tip_has_no_map() {
 }
 
 #[test]
+fn a_rebase_whose_todo_the_operator_edited_with_an_exec_ahead_maps_as_recorded() {
+    let dir = init_repo();
+    let p = dir.path();
+    let base = commit_file(p, "shared", "v0\n", "add shared", None);
+    common::git_in(p, &["checkout", "-q", "-b", "feat"]);
+    let clash = commit_file(p, "shared", "feat\n", "clash", None);
+    let mine = commit_file(p, "mine", "m\n", "mine", None);
+    let old = common::git_in(p, &["rev-parse", "HEAD"]);
+    common::git_in(p, &["checkout", "-q", "main"]);
+    let onto = commit_file(p, "shared", "main\n", "main", None);
+    common::git_in(p, &["checkout", "-q", "feat"]);
+    let stopped = git_vcs().rebase(
+        p,
+        &resolved(&onto),
+        &resolved(&base),
+        DerivedContentPolicy::keep_target_side(),
+    );
+    assert!(matches!(stopped, Err(VcsError::RebaseConflict { .. })));
+    fs::write(p.join("shared"), "resolved\n").unwrap();
+    common::git_in(p, &["add", "shared"]);
+    common::git_in_configured(
+        p,
+        &[(
+            "sequence.editor",
+            "f() { { echo 'exec true'; cat \"$1\"; } > \"$1.new\" && mv \"$1.new\" \"$1\"; }; f",
+        )],
+        &["rebase", "--edit-todo"],
+    );
+    common::git_in_configured(p, &[("core.editor", "true")], &["rebase", "--continue"]);
+    let new = common::git_in(p, &["rev-parse", "HEAD"]);
+    let replayed = git_vcs()
+        .replayed(
+            p,
+            &commit(&base),
+            &commit(&old),
+            &commit(&onto),
+            &commit(&new),
+        )
+        .unwrap()
+        .expect("an exec of the operator's ahead of the record's is no gap in it");
+    assert_eq!(replayed.image(&commit(&mine)), Some(&commit(&new)));
+    assert!(replayed.image(&commit(&clash)).is_some());
+}
+
+#[test]
 fn a_replay_aborted_and_redone_by_hand_has_no_map() {
     let dir = init_repo();
     let p = dir.path();
