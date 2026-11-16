@@ -85,7 +85,8 @@ fails in the suite, and runs every journey's end check mark-free after its own p
 **Task:** The welcome screen needs a new field. Add a `welcome.txt` containing
 `welcome: string` to `protocol` and a `welcome.txt` containing `serve the welcome` to
 `server`, as one change (the commits' messages are `welcome-lib` and `welcome-app`), without touching `~/work` until the change is ready. When it
-is ready, have it in `main` in `~/work` and published for the team.
+is ready, have it in `main` in `~/work` and published for the team. Leave no spare
+workspace and no branch of the change behind.
 **Check:** the hosting service's `main` of `protocol`, `server` and the project each
 holds the change; the project's lock on the hosting service pins each of the two at
 the commit its `main` holds and `web` where it was; `~/work` is clean; no spare
@@ -155,7 +156,8 @@ service with a `main` and a branch `v2` of two commits, and is not part of the p
 `server`'s `main` has two commits, and the project records the newer.
 **Task:** Make `docs` part of the project, following its `v2` branch but at the commit
 before `v2`'s tip. Make the project use the older of `server`'s two commits instead of
-its newest. Do both as one change to the project, put it in `main`, and publish.
+its newest. Do both as one change to the project, put it in `main`, and publish. Leave
+no spare workspace behind.
 **Check:** the hosting project's `main` lists `docs` with branch `v2`; its lock pins
 `docs` at `v2`'s older commit and `server` at its older commit; no spare workspace
 remains; a clean end.
@@ -251,7 +253,8 @@ remains; a clean end.
 
 **Start:** as J14; the line has shipped its last fix.
 **Task:** Remove the line `stable` from this machine and from the team's hosting
-service, keeping the ability to get its last state back on this machine.
+service, keeping the ability to get its last state back on this machine. The members' own
+branches for the line (`v1` and `protov1`) stay as they are.
 **Check:** no `stable` branch in the project on machine A or the hosting service; the
 line's tip is in the kept backups; `main` and its members are unchanged; the
 branches `v1` and `protov1` of the members remain; a clean end.
@@ -273,7 +276,7 @@ service has the nested commit; the spare workspace is gone; a clean end.
 and `protocol`. The process bringing it into `main` is killed part-way,
 then the machine is back.
 **Task:** Find out what state `~/work` and the workspace are in and finish bringing
-the change into `main`.
+the change into `main`. Leave no spare workspace behind.
 **Check:** `main` of `server` and `protocol` hold the change once each; the project's
 lock pins both; no unfinished operation anywhere; the workspace is gone; a clean end.
 
@@ -292,7 +295,7 @@ holds its commits; no unfinished operation; a clean end.
 The colleague has published a change to `server` that moves the nested repository to its
 second commit.
 **Task:** Take in the colleague's change, keeping your own work, and bring yours into
-`main`; the nested repository must end up where the colleague put it. Publish.
+`main`; the nested repository must end up where the colleague put it. Publish. Leave no spare workspace behind.
 **Check:** `server`'s nested repository is at the second commit in `~/work` and in
 the hosting service's record; hosting `main` of `web` holds the operator's commit;
 the spare workspace is gone; a clean end.
