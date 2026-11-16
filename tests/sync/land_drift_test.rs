@@ -3715,6 +3715,49 @@ fn a_conflicted_merge_never_names_another_workspaces_stash() {
     assert!(!said.contains("stash@{1}"), "{said}");
 }
 
+/// Another workspace stashes while a merge here runs (its post-checkout hook
+/// does it, standing in for a seat working at the same moment): the stash
+/// it made, based on another tip, is never named as one the merge kept.
+#[cfg(unix)]
+#[test]
+fn a_stash_another_workspace_makes_during_the_merge_is_never_named() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    assert_ne!(
+        common::git_in(&f.ww_lib, &["rev-parse", "HEAD"]),
+        common::git_in(&f.primary_lib, &["rev-parse", "HEAD"])
+    );
+    std::fs::write(f.ww_lib.join("README.md"), "the seat's own\n").unwrap();
+    f.move_from_elsewhere("main", "notes.txt", "main moved\n");
+    std::fs::write(f.primary_lib.join("notes.txt"), "primary's\n").unwrap();
+    let hooks = common::git_in(
+        &f.primary_lib,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    );
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = Path::new(&hooks).join("post-checkout");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\nunset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE\ngit -C '{}' stash push -q -m elsewhere\n",
+            f.ww_lib.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = common::cli::run(&MERGE, &f.primary);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    let elsewhere = common::git_in(&f.ww_lib, &["rev-parse", "refs/stash"]);
+    assert_eq!(
+        common::git_in(&f.ww_lib, &["log", "-1", "--format=%s", "refs/stash"]),
+        "On ww/project: elsewhere"
+    );
+    assert!(!said.contains(&elsewhere[..12]), "{said}");
+}
+
 /// A finished set-aside's stash, kept, and a later merge in the same
 /// workspace set back over a newer tip of the same branch: the judgment names
 /// no stash, since none was made against the tip the files hold now.
