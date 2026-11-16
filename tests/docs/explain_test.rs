@@ -229,12 +229,16 @@ fn explain_unknown_topic_says_so_and_lists_what_exists() {
 
 #[test]
 fn explain_project_points_at_init_clone_init_manifest_and_integration() {
-    rwv().args(["explain", "project"]).assert().failure().stderr(
-        predicate::str::contains("no explain entry for `project`")
-            .and(predicate::str::contains("`rwv init`"))
-            .and(predicate::str::contains("`rwv clone --init-manifest`"))
-            .and(predicate::str::contains("`rwv integration`")),
-    );
+    rwv()
+        .args(["explain", "project"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("no explain entry for `project`")
+                .and(predicate::str::contains("`rwv init`"))
+                .and(predicate::str::contains("`rwv clone --init-manifest`"))
+                .and(predicate::str::contains("`rwv integration`")),
+        );
 }
 
 #[test]
@@ -265,7 +269,9 @@ fn explain_verb_and_sub_verb_serves_a_section_headed_with_its_arguments() {
         .args(["explain", "workweave", "create"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("### `rwv workweave create <name>`"));
+        .stdout(predicate::str::contains(
+            "### `rwv workweave create <name>`",
+        ));
 }
 
 #[test]
@@ -292,7 +298,9 @@ fn explain_two_words_whose_first_is_no_verb_refuses_as_one_topic() {
         .args(["explain", "nosuch", "thing"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("no explain entry for `nosuch thing`"));
+        .stderr(predicate::str::contains(
+            "no explain entry for `nosuch thing`",
+        ));
 }
 
 #[test]

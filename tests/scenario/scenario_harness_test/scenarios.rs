@@ -4722,8 +4722,11 @@ pub fn branch_delete_of_a_name_nowhere_offers_no_fetch() -> Scenario {
         "branch delete: a branch removed by hand refuses without offering a fetch",
         vec![
             Step::git(&a(), Repo::Proj, &["branch", "pay"]),
-            Step::rwv(&a(), &["branch", "set-mode", "pay", "feature", "--target", "main"])
-                .expect(Exit::Succeeds),
+            Step::rwv(
+                &a(),
+                &["branch", "set-mode", "pay", "feature", "--target", "main"],
+            )
+            .expect(Exit::Succeeds),
             Step::git(&a(), Repo::Proj, &["branch", "-D", "pay"]),
             Step::rwv(&a(), &["branch", "delete", "pay"])
                 .expect(Exit::refuses(Repo::Proj, State::NameNoSuchBranch))

@@ -199,8 +199,7 @@ fn resolve_pin_target(
         Err(crate::vcs::VcsError::RevisionNotFound { .. }) => {}
         Err(e) => return Err(e.into()),
     }
-    let Ok(tracking) = crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new(rev))
-    else {
+    let Ok(tracking) = crate::vcs::TrackingRef::parse(crate::vcs::RawRefName::new(rev)) else {
         return Ok(None);
     };
     let Some(remote) = vcs.project_url_remote(dir)? else {

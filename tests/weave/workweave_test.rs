@@ -2066,7 +2066,9 @@ fn create_and_list_say_where_the_workweave_is() {
     let line = created.lines().last().expect("create prints a line");
     let path = line
         .strip_prefix("workweave where-am-i: ")
-        .unwrap_or_else(|| panic!("create's last line names the workweave and its path: {created}"));
+        .unwrap_or_else(|| {
+            panic!("create's last line names the workweave and its path: {created}")
+        });
     let path = std::path::Path::new(path);
     assert!(path.is_absolute(), "{line}");
     assert!(path.join(".rwv-workweave").is_file(), "{line}");
@@ -2116,25 +2118,47 @@ fn workweave_create_and_delete_take_the_address_of_their_own_project() {
     std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
 
     rwv()
-        .args(["workweave", "create", "--project", "web-app", "web-app--spelled"])
+        .args([
+            "workweave",
+            "create",
+            "--project",
+            "web-app",
+            "web-app--spelled",
+        ])
         .current_dir(&ws)
         .assert()
         .success()
         .stdout(predicate::str::starts_with("workweave spelled: "));
 
     let refused = rwv()
-        .args(["workweave", "delete", "--project", "web-app", "other--spelled"])
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "other--spelled",
+        ])
         .current_dir(&ws)
         .output()
         .unwrap();
     common::cli::refused(&refused, repoweave::refusal::RefusalKind::UnrenderableName);
 
     let deleted = rwv()
-        .args(["workweave", "delete", "--project", "web-app", "web-app--spelled"])
+        .args([
+            "workweave",
+            "delete",
+            "--project",
+            "web-app",
+            "web-app--spelled",
+        ])
         .current_dir(&ws)
         .output()
         .unwrap();
-    assert!(deleted.status.success(), "{}", common::cli::describe(&deleted));
+    assert!(
+        deleted.status.success(),
+        "{}",
+        common::cli::describe(&deleted)
+    );
     let listed = rwv()
         .args(["workweave", "list", "--project", "web-app"])
         .current_dir(&ws)
