@@ -591,8 +591,14 @@ A race inside one verb cannot be driven by whole-process steps. For those,
 `src/test_pause.rs` provides named points: `test_pause::point(name)` compiles
 to nothing unless the crate is built with the `test-pause` cargo feature, and
 waits only when `RWV_TEST_PAUSE` is `<point>@<dir>` naming that point. The
-first pass writes `<dir>/paused` and waits until `<dir>/release` exists; a
-value of any other shape stops the process. A point sits immediately before a
+first pass writes `<dir>/paused` and waits until `<dir>/release` exists or
+its driver is gone; a value of any other shape stops the process. The driver
+holds a lock on `<dir>/driver` for as long as it holds the process, and the
+operating system lets go of a lock when its holder ends, however it ends, on
+every platform: a held process that finds the lock free, or the file gone,
+with no release written stops where it stands and acts on nothing. That is
+what keeps a test killed outright, by a signal or a cancelled run, from
+leaving a process waiting behind it. A point sits immediately before a
 compare-and-swap, so what the test changes while the process waits is what
 the compare then reads. `RWV_TEST_PAUSE_TRACE=<file>` appends the name of every
 point a process passes to `<file>`, which is how a test learns what a verb
@@ -622,3 +628,25 @@ with no feature flags, as releases build, and asserts the spawned binary
 holds no byte of the arming variable's name, whatever the feature defaults
 are. In the test stages the same file asserts the binary does hold it, so
 the scan is shown able to see it.
+
+### No verdict depends on elapsed time
+
+A test's verdict never depends on how long something took. A wait ends on an
+event: the file or state it waits for appearing, the process it waits on
+exiting, or its driver going away. Polling for the event at a fixed interval
+is how a test observes it, not a clock; a deadline whose passing fails the
+test is a clock, however generous, because a loaded host reaches it on a run
+that would have passed. Neither side of a pause has one: the driver waits for
+`paused` or the process's exit, and for its exit once released; the held
+process waits for a release or its driver's end. A sleep that waits for
+something to have happened, and then asserts it, is the same clock spelled
+differently; wait for the thing instead, or for a trace point
+(`RWV_TEST_PAUSE_TRACE`) that says it has happened.
+
+The backstop against a test that hangs is the run's own timeout, the CI job's
+`timeout-minutes`, never a per-step bound: a hang is a red the run reports
+when it is cut off, and a test whose defect shows as a hang (a wait on an
+event that never comes) is a correct test. A wait that is the behavior under
+test, a verb's own claim budget or `rwv each --timeout`, may be measured, and
+only from below: that the verb waited at least its budget holds on any host,
+while that it finished within some bound does not.

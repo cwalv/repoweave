@@ -78,13 +78,11 @@ enum Contention {
     Live,
 }
 
-#[derive(Clone, Copy)]
 struct Stop {
     exit: fn() -> Exit,
     fix: fn() -> Vec<Step>,
 }
 
-#[derive(Clone, Copy)]
 pub(super) struct Shape {
     pub id: &'static str,
     setup: fn() -> Vec<Step>,
@@ -1306,15 +1304,12 @@ const BYSTANDER: &str = "bystander";
 
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
     let mut steps = Vec::new();
-    let released;
-    let shape = match ending {
+    match ending {
         Ending::AbortAfterDoctorElsewhere | Ending::ContinueAfterDoctorElsewhere => {
             steps.extend((shape.setup)());
-            steps.push(bystander(shape));
             steps.extend(holding(shape));
-            if shape.contender.is_none() {
-                steps.push(Step::capture("before"));
-            }
+            steps.push(bystander(shape));
+            steps.push(Step::capture("before"));
             match &shape.stop {
                 Some(stop) => steps.push(run_of(shape, (stop.exit)(), shape.start)),
                 None => {
@@ -1326,23 +1321,11 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
                     steps.push(Step::kill("held"));
                 }
             }
-            released = Shape {
-                contender: None,
-                ..*shape
-            };
-            if shape.contender.is_some() {
-                steps.extend(contender_ends(shape));
-                steps.push(Step::capture("before"));
-            }
             steps.push(Step::capture_holds("held"));
-            steps.extend(doctors_elsewhere(&released));
-            &released
+            steps.extend(doctors_elsewhere(shape));
         }
-        _ => {
-            steps.extend(until_stopped(shape, phase, point));
-            shape
-        }
-    };
+        _ => steps.extend(until_stopped(shape, phase, point)),
+    }
     if already_ended(shape, point) {
         steps.extend(savepoints_outlive(shape));
         return steps;
@@ -2365,12 +2348,18 @@ fn the_cells_are_exactly_where_the_shapes_reach_the_points() {
     );
 }
 
+/// Returning at once is building nothing: the run is given a temp root that
+/// does not exist, where any sandbox it began would fail to be made.
 #[test]
 fn without_the_stage_a_shape_test_returns_at_once_naming_it() {
-    let began = std::time::Instant::now();
+    let temp = common::tempdir().unwrap();
+    let absent = temp.path().join("absent");
     let out = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "kill_matrix_test::cherry_pick", "--nocapture"])
         .env_remove("RWV_KILL_MATRIX")
+        .env("TMPDIR", &absent)
+        .env("TMP", &absent)
+        .env("TEMP", &absent)
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -2379,10 +2368,5 @@ fn without_the_stage_a_shape_test_returns_at_once_naming_it() {
     assert!(
         stdout.contains("test kill_matrix_test::cherry_pick ... ok"),
         "{stdout}"
-    );
-    assert!(
-        began.elapsed() < std::time::Duration::from_secs(30),
-        "{:?}",
-        began.elapsed()
     );
 }

@@ -23,6 +23,7 @@ const WITHHOLD: &str = "RWV_TEST_WITHHOLD";
 const WITHHOLD_UNDER: &str = "RWV_TEST_WITHHOLD_UNDER";
 const CHILD_CALL: &str = "RWV_PUBLISH_TEST_CALL";
 const CHILD_OTHER: &str = "RWV_PUBLISH_TEST_OTHER";
+const CHILD_DRIVES: &str = "RWV_PUBLISH_TEST_DRIVES";
 const NO_HARD_LINKS: &str = "hard-link";
 const NEITHER: &str = "hard-link,no-replace-rename";
 const CONTENDERS: usize = 8;
@@ -51,6 +52,16 @@ fn publishing_child() {
         .parse()
         .expect("an op id");
     let record = owner_record(&workspace, &op);
+    #[cfg(feature = "test-pause")]
+    if let Ok(pause) = std::env::var(CHILD_DRIVES) {
+        let mut held = child(&workspace, op.as_str(), None);
+        held.env(CHILD_REPLACES, "1");
+        let _held = common::pause::Paused::spawn(held, "durable-file-created", Path::new(&pause))
+            .unwrap_or_else(|why| panic!("{why}"));
+        loop {
+            std::thread::park();
+        }
+    }
     if let Ok(call) = std::env::var(CHILD_CALL) {
         let other = std::env::var(CHILD_OTHER).map(PathBuf::from);
         let outcome = match called(&call, &workspace, other.ok().as_deref(), &op, &record) {
@@ -320,6 +331,7 @@ fn child(workspace: &Path, op: &str, withhold: Option<&str>) -> Command {
     cmd.env(CHILD_WORKSPACE, workspace);
     cmd.env(CHILD_OP, op);
     cmd.env_remove(common::pause::ARMING_VARIABLE);
+    cmd.env_remove(CHILD_DRIVES);
     match withhold {
         Some(modes) => cmd.env(WITHHOLD, modes),
         None => cmd.env_remove(WITHHOLD),
@@ -560,6 +572,49 @@ mod paused {
             "the swept writer staged again and published"
         );
         assert_eq!(temps(&workspace), Vec::<String>::new());
+    }
+
+    /// A process held by a driver that is killed outright, with no release
+    /// written and nothing of its own unwound, stops where it is held and
+    /// publishes nothing.
+    #[test]
+    fn a_writer_held_by_a_driver_killed_outright_ends_without_publishing() {
+        let tmp = common::tempdir().expect("tempdir");
+        let workspace = tmp.path().join("ws");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let pause = tmp.path().join("pause");
+        let mut driver = child(&workspace, "100", None);
+        driver
+            .env(CHILD_DRIVES, &pause)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut driver = driver.spawn().expect("the driver starts");
+        let paused = pause.join("paused");
+        let held: u32 = loop {
+            if let Some(pid) = std::fs::read_to_string(&paused)
+                .ok()
+                .and_then(|pid| pid.parse().ok())
+            {
+                break pid;
+            }
+            if let Some(status) = driver.try_wait().expect("the driver's status") {
+                panic!("the driver ended ({status}) before its writer was held");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        };
+        assert_eq!(temps(&workspace).len(), 1, "the writer is held mid-publish");
+
+        driver.kill().expect("the driver is killed");
+        driver.wait().expect("the killed driver is reaped");
+        while common::job::alive(held) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(
+            !workspace.join(OP_FILE).exists(),
+            "a writer whose driver is gone went on to publish"
+        );
+        assert!(!pause.join("release").exists());
     }
 
     #[test]

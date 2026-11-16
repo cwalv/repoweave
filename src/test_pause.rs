@@ -6,8 +6,12 @@
 //! `test-pause` feature. Built with it, a point still does nothing unless
 //! `RWV_TEST_PAUSE` is `<point>@<dir>` and names that point. The first pass
 //! through the named point then writes `<dir>/paused` and waits until
-//! `<dir>/release` exists; every pass after the release proceeds. A value of
-//! any other shape stops the process rather than running unpaused.
+//! `<dir>/release` exists; every pass after the release proceeds. The driver
+//! holds a lock on `<dir>/driver` for as long as it holds the process, and a
+//! process that finds that lock free, or the file gone, without a release
+//! stops where it stands: its driver has ended, however it ended, and nothing
+//! is left to release it. No clock ends a wait. A value of any other shape
+//! stops the process rather than running unpaused.
 //!
 //! `RWV_TEST_PAUSE_TRACE=<file>` makes every pass through any point append
 //! the point's name to `<file>`, one per line, so a test can learn which
@@ -48,9 +52,6 @@ pub(crate) fn withheld_at(capability: &str, path: &std::path::Path) -> bool {
 #[cfg(feature = "test-pause")]
 mod armed {
     use std::path::Path;
-    use std::time::{Duration, Instant};
-
-    const RELEASE_DEADLINE: Duration = Duration::from_secs(120);
 
     pub(super) fn trace(name: &str) {
         if let Some(file) = std::env::var_os("RWV_TEST_PAUSE_TRACE") {
@@ -83,21 +84,60 @@ mod armed {
         let paused = dir.join("paused");
         std::fs::write(&paused, std::process::id().to_string())
             .unwrap_or_else(|e| panic!("cannot write {}: {e:#}", paused.display()));
-        let release = dir.join("release");
-        let deadline = Instant::now() + RELEASE_DEADLINE;
-        while !release.exists() {
-            assert!(
-                Instant::now() < deadline,
-                "paused at {name} and not released within {RELEASE_DEADLINE:?}: {} never appeared",
-                release.display()
+        if let Ended::DriverGone = held_in(dir) {
+            panic!(
+                "paused at {name} and its driver is gone: {} is held by no one and {} never appeared",
+                dir.join(DRIVER).display(),
+                dir.join(RELEASE).display()
             );
-            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    pub(super) const DRIVER: &str = "driver";
+    const RELEASE: &str = "release";
+
+    #[derive(Debug, PartialEq, Eq)]
+    pub(super) enum Ended {
+        Released,
+        DriverGone,
+    }
+
+    pub(super) fn held_in(dir: &Path) -> Ended {
+        let release = dir.join(RELEASE);
+        let driver = dir.join(DRIVER);
+        loop {
+            if release.exists() {
+                return Ended::Released;
+            }
+            if driver_gone(&driver) {
+                return match release.exists() {
+                    true => Ended::Released,
+                    false => Ended::DriverGone,
+                };
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    fn driver_gone(driver: &Path) -> bool {
+        let file = match std::fs::File::open(driver) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(e) => panic!("cannot open {}: {e:#}", driver.display()),
+        };
+        match file.try_lock_shared() {
+            Ok(()) => true,
+            Err(std::fs::TryLockError::WouldBlock) => false,
+            Err(std::fs::TryLockError::Error(e)) => {
+                panic!("cannot read the lock on {}: {e:#}", driver.display())
+            }
         }
     }
 }
 
 #[cfg(all(test, feature = "test-pause"))]
 mod tests {
+    use super::armed::{held_in, Ended, DRIVER};
     #[test]
     fn a_traced_pass_through_a_point_appends_its_name() {
         let dir = crate::tempdir().unwrap();
@@ -110,5 +150,49 @@ mod tests {
             traced.lines().collect::<Vec<_>>(),
             ["first-point", "second-point", "first-point"]
         );
+    }
+
+    fn driven(dir: &std::path::Path) -> std::fs::File {
+        let driver = std::fs::File::create(dir.join(DRIVER)).unwrap();
+        driver.lock().unwrap();
+        driver
+    }
+
+    #[test]
+    fn a_held_point_goes_on_once_its_driver_releases_it() {
+        let dir = crate::tempdir().unwrap();
+        let driver = driven(dir.path());
+        let held = std::thread::spawn({
+            let dir = dir.path().to_path_buf();
+            move || held_in(&dir)
+        });
+        std::fs::write(dir.path().join("release"), b"").unwrap();
+        assert_eq!(held.join().unwrap(), Ended::Released);
+        drop(driver);
+    }
+
+    #[test]
+    fn a_held_point_whose_driver_lets_go_without_a_release_finds_its_driver_gone() {
+        let dir = crate::tempdir().unwrap();
+        let driver = driven(dir.path());
+        let held = std::thread::spawn({
+            let dir = dir.path().to_path_buf();
+            move || held_in(&dir)
+        });
+        drop(driver);
+        assert_eq!(held.join().unwrap(), Ended::DriverGone);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_held_point_whose_pause_directory_is_removed_finds_its_driver_gone() {
+        let dir = crate::tempdir().unwrap();
+        let _driver = driven(dir.path());
+        let held = std::thread::spawn({
+            let dir = dir.path().to_path_buf();
+            move || held_in(&dir)
+        });
+        std::fs::remove_dir_all(dir.path()).unwrap();
+        assert_eq!(held.join().unwrap(), Ended::DriverGone);
     }
 }
