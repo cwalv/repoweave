@@ -3279,6 +3279,11 @@ impl Vcs for GitVcs {
             VcsAction::Status => "git -C <checkout> status",
             VcsAction::ShowFromBackup => "git -C <checkout> show <tip>:<file>",
             VcsAction::ShowStagedFromBackup => "git -C <checkout> show <tip>^2:<file>",
+            VcsAction::ShowEditsInBackup => "git -C <checkout> diff <base> <tip> -- <paths>",
+            VcsAction::RestoreEditsFromBackup => {
+                "git -C <checkout> restore --source <tip> -- <paths>"
+            }
+            VcsAction::DropKeptByVcs => "git -C <checkout> stash drop <kept>",
             VcsAction::Unstage => "git -C <checkout> restore --staged -- <paths>",
             VcsAction::TakeBackSetAside => "git -C <checkout> stash apply <set-aside>",
             VcsAction::FollowSubmodule => {
@@ -4231,7 +4236,7 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         branch: &str,
-    ) -> Result<crate::vcs::Refusable<()>, VcsError> {
+    ) -> Result<crate::vcs::Refusable<Option<crate::vcs::KeptByVcs>>, VcsError> {
         carry_edits::carry_edits_onto(repo, branch)
     }
 

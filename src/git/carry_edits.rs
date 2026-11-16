@@ -122,13 +122,74 @@ pub(super) fn set_back_from(repo: &Path) -> Result<Option<SetBack>, VcsError> {
     }))
 }
 
-pub(super) fn carry_edits_onto(repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError> {
+fn stash_top(repo: &Path) -> Result<Option<String>, VcsError> {
+    let top = git(["rev-parse", "-q", "--verify", "refs/stash"], repo)?;
+    Ok(top.status.success().then(|| text(top.stdout)))
+}
+
+/// The entry `checkout -m` added to the stash list while it ran over the
+/// edits on `at`: from git 2.55 it keeps them there when merging them back
+/// conflicts. The list is every worktree's, so an entry counts as this run's
+/// only where the list's top moved during it and that top is based on `at`.
+fn kept_by_checkout(
+    repo: &Path,
+    before: Option<&str>,
+    at: &str,
+) -> Result<Option<crate::vcs::KeptByVcs>, VcsError> {
+    let Some(top) = stash_top(repo)? else {
+        return Ok(None);
+    };
+    if before == Some(top.as_str()) {
+        return Ok(None);
+    }
+    let base = git(["rev-parse", "-q", "--verify", &format!("{top}^1")], repo)?;
+    if !base.status.success() || text(base.stdout) != at {
+        return Ok(None);
+    }
+    let Ok(id) = CommitId::parse(&top) else {
+        return Ok(None);
+    };
+    let listed = succeeded(["log", "-g", "--format=%H", "refs/stash"], repo)?;
+    let Some(at_index) = text(listed).lines().position(|line| line == top) else {
+        return Ok(None);
+    };
+    Ok(Some(crate::vcs::KeptByVcs {
+        id,
+        name: format!("stash@{{{at_index}}}"),
+    }))
+}
+
+/// `checkout -m`, refusing a staged change first: from git 2.55 git no
+/// longer refuses one, and keeps only the working copy's version of the
+/// file.
+pub(super) fn carry_edits_onto(
+    repo: &Path,
+    branch: &str,
+) -> Result<Refusable<Option<crate::vcs::KeptByVcs>>, VcsError> {
+    let staged = staged_against_head(repo, "--ita-visible-in-index")?;
+    if !staged.is_empty() {
+        return Ok(Refusable::Refused(format!(
+            "cannot continue with staged changes in the following files:\n{}",
+            staged.join("\n")
+        )));
+    }
+    let at = text(succeeded(["rev-parse", "--verify", "-q", "HEAD"], repo)?);
+    let before = stash_top(repo)?;
     let derived = format!("merge.{DERIVED_CONTENT_DRIVER_NAME}.driver=true");
-    git(
+    let checked_out = git(
         ["-c", derived.as_str(), "checkout", "-m", branch, "--"],
         repo,
-    )
-    .map(refusable)
+    )?;
+    let kept = kept_by_checkout(repo, before.as_deref(), &at)?;
+    Ok(match (refusable(checked_out), kept) {
+        (Refusable::Done(()), kept) => Refusable::Done(kept),
+        (Refusable::Refused(said), None) => Refusable::Refused(said),
+        (Refusable::Refused(said), Some(kept)) => Refusable::Refused(format!(
+            "{said}\nthe edits are kept as {} ({}) in the stash list every worktree shares",
+            kept.name,
+            kept.id.short()
+        )),
+    })
 }
 
 /// `git checkout` without `-m`: its fallback resets the files before merging

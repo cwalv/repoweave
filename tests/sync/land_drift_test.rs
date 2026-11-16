@@ -2315,6 +2315,231 @@ fn a_set_back_checkout_with_a_left_index_lock_names_it_and_offers_no_choice_that
     assert!(f.ww_lib.join("spare.txt/x").is_file(), "{said}");
 }
 
+/// Edits in a seat: `notes.txt` against a move of it, which conflicts, and
+/// `README.md` beside it, which the move does not touch.
+fn edited_against_a_move(f: &Fixture) {
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(f.ww_lib.join("README.md"), "init\nmy readme edit\n").unwrap();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+}
+
+/// A merge left conflicted names the backup taken first, with the lines that
+/// show the edits as they stood and put them back; run as printed, the
+/// second puts them back over the conflict.
+#[test]
+fn a_conflicted_merge_prints_how_the_backup_puts_the_edits_back() {
+    let f = fixture();
+    edited_against_a_move(&f);
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert!(
+        said.contains("the edits as they stood here are shown by:"),
+        "{said}"
+    );
+    let shown = run_printed(&said, " diff ", &f.ww);
+    let shown = String::from_utf8_lossy(&shown.stdout).into_owned();
+    assert!(shown.contains("+mine"), "{shown}\n{said}");
+    assert!(!shown.contains("three"), "{shown}\n{said}");
+    let restored = run_printed(&said, "restore --source", &f.ww);
+    assert!(
+        restored.status.success(),
+        "{}",
+        common::cli::describe(&restored)
+    );
+    assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("mine\n"));
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("init\nmy readme edit\n")
+    );
+}
+
+/// Where the VCS kept the edits in the stash list every worktree shares while
+/// it merged them (git from 2.55, on a conflict), the outcome names that
+/// entry and prints the line that drops it, which drops exactly it; where it
+/// kept none, the outcome names none.
+#[test]
+fn a_conflicted_merge_names_an_entry_the_vcs_kept_and_only_then() {
+    let f = fixture();
+    edited_against_a_move(&f);
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    let kept = stashes(&f.ww_lib);
+    if kept.is_empty() {
+        assert!(!said.contains("the VCS also kept"), "{said}");
+        return;
+    }
+    assert_eq!(kept.len(), 1, "{said}");
+    assert!(
+        said.contains(&format!(
+            "the VCS also kept these edits as stash@{{0}} ({})",
+            &kept[0][..12]
+        )),
+        "{said}"
+    );
+    common::git_in(&f.ww_lib, &["checkout", "--theirs", "--", "notes.txt"]);
+    common::git_in(&f.ww_lib, &["add", "notes.txt"]);
+    let dropped = run_printed(&said, "stash drop", &f.ww);
+    assert!(
+        dropped.status.success(),
+        "{}",
+        common::cli::describe(&dropped)
+    );
+    assert_eq!(stashes(&f.ww_lib), Vec::<String>::new());
+}
+
+/// A file marked assume-unchanged that the move does not touch keeps its
+/// content through the merge.
+#[test]
+fn a_merge_keeps_an_assume_unchanged_file_the_move_does_not_touch() {
+    let f = fixture();
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(f.ww_lib.join("README.md"), "init\nmy readme edit\n").unwrap();
+    common::git_in(
+        &f.ww_lib,
+        &["update-index", "--assume-unchanged", "README.md"],
+    );
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert_eq!(
+        read(&f.ww_lib.join("README.md")).as_deref(),
+        Some("init\nmy readme edit\n"),
+        "{said}"
+    );
+}
+
+/// An untracked directory standing where an edit removed a tracked file: git
+/// before 2.55 refuses the merge, git from 2.55 replaces the directory with
+/// the file. Either way the backup taken first holds what the directory
+/// held, and the printed line puts it back.
+#[test]
+fn an_untracked_directory_where_an_edit_removed_a_file_is_held_by_the_backup() {
+    let f = fixture();
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::remove_file(f.ww_lib.join("spare.txt")).unwrap();
+    std::fs::create_dir_all(f.ww_lib.join("spare.txt")).unwrap();
+    std::fs::write(f.ww_lib.join("spare.txt/precious"), "precious\n").unwrap();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    let backup = common::git_in(
+        &f.ww_lib,
+        &[
+            "for-each-ref",
+            "--sort=-creatordate",
+            "--count=1",
+            "--format=%(objectname)",
+            "refs/rwv/backup/",
+        ],
+    );
+    assert_eq!(
+        common::git_in(
+            &f.ww_lib,
+            &["show", &format!("{backup}:spare.txt/precious")]
+        ),
+        "precious",
+        "{said}"
+    );
+    assert!(said.contains(&backup[..12]), "{said}");
+    if read(&f.ww_lib.join("spare.txt/precious")).is_none() {
+        let restored = run_printed(&said, "restore --source", &f.ww);
+        assert!(
+            restored.status.success(),
+            "{}",
+            common::cli::describe(&restored)
+        );
+    }
+    assert_eq!(
+        read(&f.ww_lib.join("spare.txt/precious")).as_deref(),
+        Some("precious\n"),
+        "{said}"
+    );
+}
+
+/// A post-checkout hook runs on the merge, as on any checkout.
+#[cfg(unix)]
+#[test]
+fn a_merge_runs_the_post_checkout_hook() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    edited_against_a_move(&f);
+    let hooks = common::git_in(
+        &f.ww_lib,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    );
+    std::fs::create_dir_all(&hooks).unwrap();
+    let hook = Path::new(&hooks).join("post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\necho hooked >> README.md\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert!(
+        read(&f.ww_lib.join("README.md"))
+            .unwrap()
+            .ends_with("hooked\n"),
+        "{said}"
+    );
+}
+
+/// The merge stopped by a directory nothing may write names the backup taken
+/// first, and once the directory is writable the printed line puts back what
+/// the edits held there.
+#[cfg(unix)]
+#[test]
+fn a_merge_stopped_by_an_unwritable_directory_prints_how_the_backup_puts_the_edits_back() {
+    use std::os::unix::fs::PermissionsExt;
+    let f = fixture();
+    std::fs::create_dir_all(f.ww_lib.join("sub")).unwrap();
+    commit_file(&f.ww_lib, "sub/x", "x\n", "sub");
+    f.move_with("ww/project", |elsewhere| {
+        std::fs::write(elsewhere.join("notes.txt"), "three\n").unwrap();
+        std::fs::write(elsewhere.join("sub/x"), "x moved\n").unwrap();
+    });
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    std::fs::write(f.ww_lib.join("sub/x"), "x edited\n").unwrap();
+    let sub = f.ww_lib.join("sub");
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let said = common::cli::describe(&out);
+    assert!(
+        said.contains("and put back over what stands there by:"),
+        "{said}"
+    );
+    let restored = run_printed(&said, "restore --source", &f.ww);
+    assert!(
+        restored.status.success(),
+        "{}",
+        common::cli::describe(&restored)
+    );
+    assert_eq!(
+        read(&f.ww_lib.join("notes.txt")).as_deref(),
+        Some("mine\n"),
+        "{said}"
+    );
+    assert_eq!(
+        read(&f.ww_lib.join("sub/x")).as_deref(),
+        Some("x edited\n"),
+        "{said}"
+    );
+}
+
 /// Something untracked where the move adds a file or a directory holds the
 /// checkout with the move-aside choice alone, and no verb records around it;
 /// once moved aside, the merge brings the move's files in.

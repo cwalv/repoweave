@@ -423,6 +423,9 @@ pub enum VcsAction {
     MarkResolved,
     ShowFromBackup,
     ShowStagedFromBackup,
+    ShowEditsInBackup,
+    RestoreEditsFromBackup,
+    DropKeptByVcs,
     Unstage,
     TakeBackSetAside,
     FollowSubmodule,
@@ -447,7 +450,7 @@ pub enum VcsAction {
 }
 
 impl VcsAction {
-    pub const ALL: [VcsAction; 30] = [
+    pub const ALL: [VcsAction; 33] = [
         Self::AddAll,
         Self::Commit,
         Self::Stash,
@@ -457,6 +460,9 @@ impl VcsAction {
         Self::MarkResolved,
         Self::ShowFromBackup,
         Self::ShowStagedFromBackup,
+        Self::ShowEditsInBackup,
+        Self::RestoreEditsFromBackup,
+        Self::DropKeptByVcs,
         Self::Unstage,
         Self::TakeBackSetAside,
         Self::FollowSubmodule,
@@ -2567,6 +2573,15 @@ pub enum RefreshWrite {
     Unresolved,
 }
 
+/// Edits the VCS kept in a record of its own, shared by every checkout of
+/// the clone, while it merged them onto a branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptByVcs {
+    pub id: CommitId,
+    /// The name the VCS's own command takes it by, as its list stood then.
+    pub name: String,
+}
+
 /// A checkout rwv pointed at the tip its files hold, off the branch it was
 /// on, so that only the edits differ from its HEAD.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4256,8 +4271,14 @@ pub trait Vcs: Send + Sync {
     /// branch's tip as the VCS merges local changes on a checkout; a path
     /// that does not merge is left conflicted, and a path declared derived
     /// takes the branch's content. The VCS refuses, writing nothing, where
-    /// something in the checkout stops it.
-    fn carry_edits_onto(&self, repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError>;
+    /// something in the checkout stops it, a change recorded for the next
+    /// commit included. Where the VCS kept the edits in a record of its own
+    /// while it merged them, that record.
+    fn carry_edits_onto(
+        &self,
+        repo: &Path,
+        branch: &str,
+    ) -> Result<Refusable<Option<KeptByVcs>>, VcsError>;
 
     /// Put `repo` on `branch` as a plain checkout does, carrying the edits
     /// left in place where the branch's tip does not change their paths; the

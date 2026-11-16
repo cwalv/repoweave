@@ -69,9 +69,15 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   the checkout's edits does. With it, the checkout's working copy and its record
   are kept as a backup (`rwv backup list`), its HEAD is pointed at the tip
   its files hold, and the VCS merges every edit onto the branch (for git,
-  `git checkout -m <branch>`), refreshing the move's other files. A file the
-  merge does not resolve is left conflicted and refused as `edits`
-  `unresolved` until it is resolved and marked resolved. A file declared
+  `git checkout -m <branch>`), refreshing the move's other files. A change
+  recorded for the next commit refuses the flag first, writing nothing. A
+  file the merge does not resolve is left conflicted and refused as `edits`
+  `unresolved` until it is resolved and marked resolved. Any end short of a
+  clean merge names the backup with the commands that show the edits as
+  they stood and put them back. Where the VCS kept the edits in a record of
+  its own that every checkout of the clone shares (for git from 2.55, a
+  stash entry, on a conflict), the report names it and prints the command
+  that drops it. A file declared
   derived takes the moved tip's content, the report naming it apart with the
   command that shows the edit in the backup. Each flag acts only on
   checkouts of the workspace it runs in; another workspace's is refused with

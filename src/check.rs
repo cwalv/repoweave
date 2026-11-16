@@ -9018,6 +9018,8 @@ pub enum EditedDriftMerge {
         set_aside: Option<CommitId>,
         /// What an earlier run's set-aside kept, oldest first.
         earlier: Vec<CommitId>,
+        kept_by_vcs: Option<crate::vcs::KeptByVcs>,
+        held: Vec<String>,
     },
 }
 
@@ -9043,6 +9045,8 @@ impl EditedDriftMerge {
             conflicted,
             set_aside,
             earlier,
+            kept_by_vcs,
+            held,
         } = self
         else {
             return None;
@@ -9131,6 +9135,21 @@ impl EditedDriftMerge {
                     .replace("<checkout>", &dir.display().to_string())
                     .replace("<paths>", &conflicted.join(" ")),
                 conflicted.join(", ")
+            ));
+            if let Some(tip) = backup_tip {
+                said.push_str(&kept_edits_lines(vcs, dir, moved_from, tip, held));
+            }
+        }
+        if let Some(kept) = kept_by_vcs {
+            said.push_str(&format!(
+                "\nthe VCS also kept these edits as {} ({}), in a list every checkout of this \
+                 clone shares; once the conflicts are resolved it holds nothing the checkout \
+                 does not, and this drops it:\n    {}",
+                kept.name,
+                kept.id.short(),
+                vcs.hint(crate::vcs::VcsAction::DropKeptByVcs)
+                    .replace("<checkout>", &dir.display().to_string())
+                    .replace("<kept>", &kept.name)
             ));
         }
         let mut headed = None;
@@ -9247,13 +9266,36 @@ fn carry(
         }
     }
     crate::test_pause::point("drift-merge-carry");
-    let checked_out = match resolution {
-        crate::vcs::EditResolution::Merge => vcs.carry_edits_onto(repo, &back.branch)?,
-        crate::vcs::EditResolution::SetAside => vcs.check_out_branch(repo, &back.branch)?,
+    let kept_here = |what: &str| {
+        if let Some(tip) = &backup_tip {
+            eprintln!(
+                "rwv: {}: {what}; the edits are kept as {}{}",
+                repo.display(),
+                backup_named(backup.as_deref()),
+                kept_edits_lines(vcs, repo, &back.at, tip, held)
+            );
+        }
     };
-    if let crate::vcs::Refusable::Refused(said) = checked_out {
-        return Ok(refused(said));
-    }
+    let checked_out = match resolution {
+        crate::vcs::EditResolution::Merge => match vcs.carry_edits_onto(repo, &back.branch) {
+            Ok(checked_out) => checked_out,
+            Err(e) => {
+                kept_here("the merge failed");
+                return Err(e);
+            }
+        },
+        crate::vcs::EditResolution::SetAside => match vcs.check_out_branch(repo, &back.branch)? {
+            crate::vcs::Refusable::Done(()) => crate::vcs::Refusable::Done(None),
+            crate::vcs::Refusable::Refused(said) => crate::vcs::Refusable::Refused(said),
+        },
+    };
+    let kept_by_vcs = match checked_out {
+        crate::vcs::Refusable::Done(kept) => kept,
+        crate::vcs::Refusable::Refused(said) => {
+            kept_here("the VCS refused the merge");
+            return Ok(refused(said));
+        }
+    };
     let conflicted = vcs.unmerged_paths(repo)?;
     let mut standing = vcs.staged_paths(repo)?;
     standing.extend(vcs.unstaged_paths(repo)?);
@@ -9272,7 +9314,46 @@ fn carry(
         conflicted,
         set_aside,
         earlier: Vec::new(),
+        kept_by_vcs,
+        held: held.to_vec(),
     })
+}
+
+/// The lines that show the edits a backup at `tip` keeps over `base`, the
+/// tip the files held, untracked files included, and put them back over
+/// what stands in `dir`: the backup's own parent is wherever HEAD was when it
+/// was taken, so they are read against `base`.
+fn kept_edits_lines(
+    vcs: &dyn crate::vcs::Vcs,
+    dir: &Path,
+    base: &CommitId,
+    tip: &str,
+    held: &[String],
+) -> String {
+    let paths = CommitId::parse(tip)
+        .ok()
+        .and_then(|tip| {
+            vcs.changed_paths_between(
+                dir,
+                &crate::vcs::ResolvedRevisionId::from(base.clone()),
+                &crate::vcs::ResolvedRevisionId::from(tip),
+            )
+            .ok()
+        })
+        .unwrap_or_else(|| held.to_vec());
+    let spelled = |action| {
+        vcs.hint(action)
+            .replace("<checkout>", &dir.display().to_string())
+            .replace("<base>", base.as_str())
+            .replace("<tip>", tip)
+            .replace("<paths>", &paths.join(" "))
+    };
+    format!(
+        "\nthe edits as they stood here are shown by:\n    {}\nand put back over what \
+         stands there by:\n    {}",
+        spelled(crate::vcs::VcsAction::ShowEditsInBackup),
+        spelled(crate::vcs::VcsAction::RestoreEditsFromBackup)
+    )
 }
 
 /// The `record-drift` and `working-tree-drift` findings one checkout's reading

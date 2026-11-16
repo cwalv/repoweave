@@ -360,6 +360,31 @@ the moved tip's content, and your edit to it stays in the backup. Links,
 modes, directories that replace files, and files the move renames are all
 git's to merge.
 
+Two things rwv adds to `git checkout -m`. A change staged for the next
+commit is refused before anything is written, as git itself refused it
+before 2.55; from 2.55 git would go on and keep only the working copy's
+version of the file. And any end short of a clean merge (the merge left a
+file conflicted, git refused part way, git failed) names the backup taken
+first, with the two git commands that show the edits as they stood (a
+`git diff` from the tip the files held to the backup) and put them back
+over whatever stands there (`git restore --source <backup> -- <paths>`).
+
+What git does differs by release, and rwv leaves it to git. Before 2.55,
+`checkout -m` merges in the working tree; it refuses where an untracked
+file or directory is in the way of a path an edit removed. From 2.55 it
+stashes the edits, checks the branch out and applies the stash. That
+replaces such an untracked file or directory (the backup holds it), labels
+conflicts `Updated upstream` and `Stashed changes`, leaves the edits that
+merged cleanly beside a conflict staged, and, when the apply conflicts,
+keeps the stash in the stash list every worktree of the clone shares. rwv
+reads that list before and after: where the merge added an entry based on
+the tip the files held, the report names it (`stash@{0}` as the list then
+stood) and prints the `git stash drop` that drops it once the conflicts
+are resolved. It never drops an entry itself, and never names one another
+checkout made. An ignored file in the way of a path an edit removed is
+replaced on every release, as git treats ignored files, and no backup holds
+it.
+
 `rwv doctor --fix --set-aside-edited-drift` is the other way out. It points
 HEAD at the tip the files hold in the same way, has git stash the edits to
 the listed files, then checks the branch out with a plain `git checkout`.
