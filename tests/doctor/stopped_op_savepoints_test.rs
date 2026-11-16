@@ -537,3 +537,52 @@ fn stopped_by_another_release() -> Stopped {
     std::fs::write(&record, serde_json::to_string(&json).unwrap()).unwrap();
     stopped
 }
+
+/// An operation the primary holds after it moved something: `rwv update
+/// --remote --merge-upstream` takes in the member's upstream, which moved,
+/// and stops on a conflict with the primary's own commit. `--fix` in each
+/// seat, twice, drops none of its savepoints and leaves its record, and the
+/// primary's abort puts the member and the project back.
+#[test]
+fn a_merge_upstream_stopped_in_the_primary_keeps_its_savepoints_through_doctor_in_the_seats() {
+    let ready = ready_to_sync(false);
+    let upstream = ready._tmp.path().join("upstream/owner/lib");
+    commit_file(&upstream, "c.txt", "upstream\n", "upstream: lib");
+    commit_file(&ready.primary.lib, "c.txt", "primary\n", "primary: lib");
+    succeed(&ready.primary.root, &["lock", "--commit"]);
+    let primary_lib = head(&ready.primary.lib);
+    let primary_project = head(&ready.primary.project);
+
+    let out = rwv(
+        &ready.primary.root,
+        &["update", "--remote", "--merge-upstream"],
+    );
+    let record = ready.primary.root.join(".rwv-op");
+    assert!(
+        !out.status.success() && record.exists(),
+        "the member conflict must stop the take-in:\n{}",
+        common::cli::describe(&out)
+    );
+    let lib_before = savepoints(&ready.primary.lib);
+    assert!(
+        !lib_before.is_empty(),
+        "fixture: the take-in filed its savepoints"
+    );
+    let record_before = std::fs::read(&record).unwrap();
+
+    for _ in 0..2 {
+        for at in [&ready.seat.root, &ready.sibling.root] {
+            let fixed = rwv(at, &["doctor", "--fix"]);
+            let report = common::cli::describe(&fixed);
+            assert!(!report.contains("dropped op_id"), "{report}");
+            assert_eq!(savepoints(&ready.primary.lib), lib_before, "{report}");
+            assert_eq!(std::fs::read(&record).unwrap(), record_before, "{report}");
+        }
+    }
+
+    succeed(&ready.primary.root, &["abort"]);
+    assert_eq!(head(&ready.primary.lib), primary_lib);
+    assert_eq!(head(&ready.primary.project), primary_project);
+    common::assert_on_branch(&ready.primary.lib, "main");
+    assert!(!record.exists());
+}
