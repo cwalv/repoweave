@@ -1,7 +1,8 @@
 //! Edits standing over a branch that moved under the checkout, handed to
 //! git's own machinery: HEAD is pointed at the tip the files hold, which
-//! leaves exactly the edits differing from it, then `checkout -m` merges them
-//! onto the branch, or `stash push` keeps them before a plain checkout.
+//! leaves exactly the edits differing from it, then `stash apply` merges them
+//! onto the branch after a plain checkout, or `stash push` keeps them before
+//! one.
 
 use super::{git_command, Argv, DERIVED_CONTENT_DRIVER_NAME};
 use crate::path_spelling::printed_path;
@@ -122,13 +123,50 @@ pub(super) fn set_back_from(repo: &Path) -> Result<Option<SetBack>, VcsError> {
     }))
 }
 
+/// Not `checkout -m`: from git 2.55 it no longer refuses staged changes, and
+/// merges them into the working tree, losing the staged version; and it
+/// leaves a conflicted merge's edits as a `refs/stash` entry, which every
+/// worktree of the clone shares.
 pub(super) fn carry_edits_onto(repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError> {
+    let staged = staged_against_head(repo, "--ita-visible-in-index")?;
+    if !staged.is_empty() {
+        return Ok(Refusable::Refused(format!(
+            "cannot continue with staged changes in the following files:\n{}",
+            staged.join("\n")
+        )));
+    }
+    if let Refusable::Refused(said) = refusable(git(["add", "--refresh", "--", "."], repo)?) {
+        return Ok(Refusable::Refused(said));
+    }
+    let created = git(["stash", "create"], repo)?;
+    if !created.status.success() {
+        return Ok(refusable(created));
+    }
+    let edits = text(created.stdout);
+    if edits.is_empty() {
+        return check_out_branch(repo, branch);
+    }
+    if let Refusable::Refused(said) = refusable(git(["read-tree", "--reset", "-u", "HEAD"], repo)?)
+    {
+        return Ok(Refusable::Refused(said));
+    }
+    if let Refusable::Refused(said) = check_out_branch(repo, branch)? {
+        succeeded(["stash", "apply", "--quiet", edits.as_str()], repo)?;
+        return Ok(Refusable::Refused(said));
+    }
     let derived = format!("merge.{DERIVED_CONTENT_DRIVER_NAME}.driver=true");
-    git(
-        ["-c", derived.as_str(), "checkout", "-m", branch, "--"],
+    let applied = git(
+        ["-c", derived.as_str(), "stash", "apply", edits.as_str()],
         repo,
-    )
-    .map(refusable)
+    )?;
+    if applied.status.success() || !super::GitVcs::unmerged(repo)?.is_empty() {
+        return Ok(Refusable::Done(()));
+    }
+    Err(VcsError::CommandFailed {
+        args: vec!["stash".to_owned(), "apply".to_owned(), edits],
+        repo: repo.to_path_buf(),
+        stderr: String::from_utf8_lossy(&applied.stderr).into_owned(),
+    })
 }
 
 /// `git checkout` without `-m`: its fallback resets the files before merging

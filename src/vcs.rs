@@ -4256,8 +4256,15 @@ pub trait Vcs: Send + Sync {
     /// branch's tip as the VCS merges local changes on a checkout; a path
     /// that does not merge is left conflicted, and a path declared derived
     /// takes the branch's content. The VCS refuses, writing nothing, where
-    /// something in the checkout stops it.
-    fn carry_edits_onto(&self, repo: &Path, branch: &str) -> Result<Refusable<()>, VcsError>;
+    /// something in the checkout stops it, a change recorded for the next
+    /// commit included. The edits leave the working copy before they are
+    /// merged back, after `kept` backed them up.
+    fn carry_edits_onto(
+        &self,
+        repo: &Path,
+        branch: &str,
+        kept: &BackupWitness,
+    ) -> Result<Refusable<()>, VcsError>;
 
     /// Put `repo` on `branch` as a plain checkout does, carrying the edits
     /// left in place where the branch's tip does not change their paths; the

@@ -176,6 +176,10 @@ destructive patterns:
 - `--force-with-lease=` (git push, leased to a tip)
 - `"checkout"` (git checkout — may overwrite when forced)
 - `"update-ref"` (ref surgery)
+- `"stash"` (stash flows hide work; drop and clear lose it)
+- `"read-tree", "-m"` (a merge into the real index, rewriting files)
+- `"read-tree", "--reset"` (index and files put back to a tree, edits
+  discarded)
 
 Each hit must appear in the test's `ALLOWLIST` with an exact count and
 a justification that names which precondition (rule 1) protects it,
@@ -185,9 +189,9 @@ recoverable (rule 3). The test fails the build when:
 - A new call site appears without an allowlist entry.
 - An existing site moves or duplicates without the count being
   updated.
-- A forbidden pattern shows up (`"clean"`, `"stash"`, `"filter-branch"`,
-  `"checkout", "-f"`, `"reflog"` — destruction vectors rwv has no
-  audited use for).
+- A forbidden pattern shows up (`"clean"`, `"filter-branch"`,
+  `"checkout", "-f"`, `"reflog"`, `"-M"` — destruction vectors rwv has
+  no audited use for).
 
 The test header in `tests/source/destructive_ops_audit_test.rs` keeps the
 operational summary — what the patterns are, what the allowlist

@@ -1276,6 +1276,7 @@ impl Vcs for FakeVcs {
         &self,
         _repo: &Path,
         _branch: &str,
+        _kept: &crate::vcs::BackupWitness,
     ) -> Result<crate::vcs::Refusable<()>, VcsError> {
         unsupported("carry_edits_onto")
     }

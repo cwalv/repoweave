@@ -2315,6 +2315,22 @@ fn a_set_back_checkout_with_a_left_index_lock_names_it_and_offers_no_choice_that
     assert!(f.ww_lib.join("spare.txt/x").is_file(), "{said}");
 }
 
+/// A merge that leaves a file conflicted keeps the edits in its backup
+/// alone: the stash, which every worktree of the clone shares, is untouched.
+#[test]
+fn a_merge_left_conflicted_adds_nothing_to_the_shared_stash() {
+    let f = fixture();
+    std::fs::write(f.ww_lib.join("notes.txt"), "mine\n").unwrap();
+    f.move_from_elsewhere("ww/project", "notes.txt", "three\n");
+
+    let out = common::cli::run(&MERGE, &f.ww);
+
+    let said = common::cli::describe(&out);
+    assert!(said.contains("left conflicted"), "{said}");
+    assert_eq!(stashes(&f.ww_lib), Vec::<String>::new(), "{said}");
+    assert_eq!(stashes(&f.primary_lib), Vec::<String>::new(), "{said}");
+}
+
 /// Something untracked where the move adds a file or a directory holds the
 /// checkout with the move-aside choice alone, and no verb records around it;
 /// once moved aside, the merge brings the move's files in.

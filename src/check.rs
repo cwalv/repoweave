@@ -9219,7 +9219,9 @@ fn carry(
     kept: Option<crate::vcs::BackupWitness>,
 ) -> Result<EditedDriftMerge, VcsError> {
     let backup = kept.as_ref().map(|kept| kept.backup().name.to_string());
-    let backup_tip = kept.map(|kept| kept.backup().tip.id().as_str().to_owned());
+    let backup_tip = kept
+        .as_ref()
+        .map(|kept| kept.backup().tip.id().as_str().to_owned());
     let refused = |said: String| EditedDriftMerge::Refused {
         back: back.clone(),
         said,
@@ -9247,9 +9249,13 @@ fn carry(
         }
     }
     crate::test_pause::point("drift-merge-carry");
-    let checked_out = match resolution {
-        crate::vcs::EditResolution::Merge => vcs.carry_edits_onto(repo, &back.branch)?,
-        crate::vcs::EditResolution::SetAside => vcs.check_out_branch(repo, &back.branch)?,
+    let checked_out = match (resolution, &kept) {
+        (crate::vcs::EditResolution::Merge, Some(kept)) => {
+            vcs.carry_edits_onto(repo, &back.branch, kept)?
+        }
+        (crate::vcs::EditResolution::Merge, None) | (crate::vcs::EditResolution::SetAside, _) => {
+            vcs.check_out_branch(repo, &back.branch)?
+        }
     };
     if let crate::vcs::Refusable::Refused(said) = checked_out {
         return Ok(refused(said));
