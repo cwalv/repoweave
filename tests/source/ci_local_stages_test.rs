@@ -1689,6 +1689,13 @@ fn sharded_suite() -> ShardedSuite {
         ("test", "scenario", names("scenario_harness_test", 53)),
         ("test", "docs", names("docs_test", 22)),
         ("test", "only_one", names("lonely", 1)),
+        (
+            "test",
+            "big",
+            (0..400)
+                .map(|i| format!("big::a_test_named_at_length_{i:04}_so_that_the_names_are_long"))
+                .collect(),
+        ),
         ("example", "generate-explain", names("gen", 7)),
     ];
     let dir = common::tempdir().expect("tempdir");
@@ -1775,9 +1782,19 @@ fn shard_selections(suite: &ShardedSuite) -> (Vec<(String, String)>, usize) {
             !names.trim().is_empty(),
             "an empty filter runs everything: {line}"
         );
-        let selector = before.rsplit_once(" --features test-pause ").unwrap().1;
+        assert!(
+            line.len() < 16_000,
+            "a command line Windows would refuse: {} bytes",
+            line.len()
+        );
+        let tokens: Vec<&str> = before.split_whitespace().collect();
+        let at = tokens
+            .iter()
+            .rposition(|t| ["--lib", "--bin", "--test", "--example"].contains(t))
+            .unwrap();
+        let selector = tokens[at..].join(" ");
         for name in names.split_whitespace() {
-            picked.push((selector.to_owned(), name.to_owned()));
+            picked.push((selector.clone(), name.to_owned()));
         }
     }
     (picked, doc_runs)
@@ -1891,4 +1908,72 @@ fn the_stages_that_are_not_the_suite_run_in_the_first_shard_only() {
         !stdout_of(&run_shard(&suite, "1/3", &[])).contains("\nAll checks passed.\n"),
         "a shard is never the full gate's terminal line"
     );
+}
+
+#[test]
+fn the_names_of_a_large_target_are_passed_in_several_invocations_that_each_fit() {
+    if common::skip_without_tool("jq") {
+        return;
+    }
+    let suite = sharded_suite();
+    let out = run_shard(&suite, "1/1", &["--stages=test"]);
+    assert!(out.status.success(), "{}", stderr_of(&out));
+    let calls = std::fs::read_to_string(suite.dir.path().join("calls")).unwrap();
+    let invocations = calls.lines().filter(|l| l.contains("--test big ")).count();
+    assert!(
+        invocations > 1,
+        "400 long names fit one command line:\n{calls}"
+    );
+}
+
+#[test]
+fn only_test_shards_one_target_and_leaves_the_rest_and_the_doctests() {
+    if common::skip_without_tool("jq") {
+        return;
+    }
+    let suite = sharded_suite();
+    let helper = repo_root().join("scripts/test-shard.sh");
+    let path = format!(
+        "{}:{}",
+        suite.dir.path().join("bin").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let mut seen = Vec::new();
+    for index in 1..=3 {
+        let _ = std::fs::remove_file(suite.dir.path().join("calls"));
+        let out = Command::new(&helper)
+            .args([
+                "--only-test",
+                "scenario",
+                &format!("{index}/3"),
+                "--no-fail-fast",
+            ])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr_of(&out));
+        let (picked, doc_runs) = shard_selections(&suite);
+        assert_eq!(doc_runs, 0);
+        assert!(
+            picked
+                .iter()
+                .all(|(selector, _)| selector == "--test scenario"),
+            "{picked:?}"
+        );
+        seen.extend(picked);
+    }
+    seen.sort();
+    seen.dedup();
+    assert_eq!(
+        seen.len(),
+        53,
+        "every scenario test, once across the shards"
+    );
+    let out = Command::new(&helper)
+        .args(["--only-test", "no_such_target", "1/3"])
+        .env("PATH", &path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr_of(&out).contains("lists no test target named no_such_target"));
 }

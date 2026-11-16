@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs one shard of the test suite, for ci-local.sh's --test-shard=K/N.
 #
-# Usage: scripts/test-shard.sh K/N <cargo test arguments that precede `--`>
+# Usage: scripts/test-shard.sh [--only-test TARGET] K/N <cargo test arguments that precede `--`>
 #        scripts/test-shard.sh --check K/N
 #
 # cargo itself says what the suite is: `cargo test --no-run
@@ -20,14 +20,21 @@
 # a doctest differently when it runs than when it lists, so a filter by name
 # cannot pick some of them.
 #
+# --only-test TARGET shards that one integration-test target alone and leaves
+# the rest of the suite, doctests included, to another job.
+#
 # Each target that has tests in the shard runs as its own cargo invocation
-# with `-- --exact <names>`; one that has none does not run, since a run with
-# no filter would run everything. Every invocation runs even after one fails,
+# with `-- --exact <names>`, the names in as many invocations as keep each
+# command line under CHUNK_BYTES, far under the 32767 characters Windows
+# allows; one that has none does not run, since a run with no filter would run
+# everything. Every invocation runs even after one fails,
 # as --no-fail-fast does, and the script exits non-zero if any did.
 #
 # Needs jq to read cargo's messages.
 
 set -euo pipefail
+
+CHUNK_BYTES=12000
 
 valid_shard() {
     case "$1" in
@@ -47,6 +54,12 @@ if [ "${1:-}" = "--check" ]; then
         exit 1
     }
     exit 0
+fi
+
+only_test=""
+if [ "${1:-}" = "--only-test" ]; then
+    only_test="${2:?--only-test names a test target}"
+    shift 2
 fi
 
 shard="${1:-}"
@@ -86,6 +99,7 @@ listed_tests() {
 
 selected_total=0
 listed_total=0
+only_test_found=0
 failed=()
 
 run_selected() {
@@ -101,7 +115,17 @@ run_selected() {
     selected_total=$((selected_total + ${#picked[@]}))
     printf 'shard %s: %s: %s of %s tests\n' "$shard" "$label" "${#picked[@]}" "$listed"
     [ "${#picked[@]}" -gt 0 ] || return 0
-    cargo test ${cargo_args[@]+"${cargo_args[@]}"} "$@" -- --exact "${picked[@]}" || failed+=("$label")
+    local chunk=() bytes=0 name
+    for name in "${picked[@]}"; do
+        if [ "${#chunk[@]}" -gt 0 ] && [ $((bytes + ${#name} + 1)) -gt "$CHUNK_BYTES" ]; then
+            cargo test ${cargo_args[@]+"${cargo_args[@]}"} "$@" -- --exact "${chunk[@]}" || failed+=("$label")
+            chunk=()
+            bytes=0
+        fi
+        chunk+=("$name")
+        bytes=$((bytes + ${#name} + 1))
+    done
+    cargo test ${cargo_args[@]+"${cargo_args[@]}"} "$@" -- --exact "${chunk[@]}" || failed+=("$label")
 }
 
 messages="$(cargo test ${cargo_args[@]+"${cargo_args[@]}"} --no-run --message-format=json)"
@@ -109,6 +133,9 @@ targets="$(jq -r 'select(.reason == "compiler-artifact" and .profile.test == tru
 
 while IFS=$'\t' read -r kind name executable; do
     [ -n "$kind" ] || continue
+    if [ -n "$only_test" ] && { [ "$kind" != test ] || [ "$name" != "$only_test" ]; }; then
+        continue
+    fi
     case "$kind" in
         lib | rlib | dylib | cdylib | staticlib | proc-macro) selector=(--lib) ;;
         bin) selector=(--bin "$name") ;;
@@ -119,19 +146,27 @@ while IFS=$'\t' read -r kind name executable; do
             exit 1
             ;;
     esac
+    only_test_found=1
     listing="$("$executable" --list --format terse | listed_tests)"
     run_selected "$kind $name" "$listing" "${selector[@]}"
 done <<<"$targets"
 
-doctests="$(cargo test ${cargo_args[@]+"${cargo_args[@]}"} --doc -- --list --format terse | listed_tests)"
-doctest_count="$(grep -c . <<<"$doctests" || true)"
-listed_total=$((listed_total + doctest_count))
-if [ -n "$(echo doctests | in_this_shard "")" ]; then
-    selected_total=$((selected_total + doctest_count))
-    printf 'shard %s: doctests: all %s\n' "$shard" "$doctest_count"
-    cargo test ${cargo_args[@]+"${cargo_args[@]}"} --doc || failed+=("doctests")
-else
-    printf 'shard %s: doctests: 0 of %s tests\n' "$shard" "$doctest_count"
+if [ -n "$only_test" ] && [ "$only_test_found" -eq 0 ]; then
+    printf 'test-shard: cargo lists no test target named %s\n' "$only_test" >&2
+    exit 1
+fi
+
+if [ -z "$only_test" ]; then
+    doctests="$(cargo test ${cargo_args[@]+"${cargo_args[@]}"} --doc -- --list --format terse | listed_tests)"
+    doctest_count="$(grep -c . <<<"$doctests" || true)"
+    listed_total=$((listed_total + doctest_count))
+    if [ -n "$(echo doctests | in_this_shard "")" ]; then
+        selected_total=$((selected_total + doctest_count))
+        printf 'shard %s: doctests: all %s\n' "$shard" "$doctest_count"
+        cargo test ${cargo_args[@]+"${cargo_args[@]}"} --doc || failed+=("doctests")
+    else
+        printf 'shard %s: doctests: 0 of %s tests\n' "$shard" "$doctest_count"
+    fi
 fi
 
 printf 'shard %s: %s of %s tests selected\n' "$shard" "$selected_total" "$listed_total"
