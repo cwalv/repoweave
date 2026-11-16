@@ -141,7 +141,6 @@ exists and how long it lives:
 | `Superseded` | a pruning fetch that found a remote-tracking branch rewritten | dropped with the branch, or once its push branch is present and the branch reaches nothing only the backup reaches |
 | `Aborted` | `rwv abort`: the branch's one slot for the tip a reset moved it off | overwritten by the next abort that resets that branch; the earlier value stays in the VCS's own history of the slot |
 | `AbortedWorkingCopy` | `rwv abort`: the checkout's one slot for the working copy it discarded | overwritten likewise |
-| `TakenOut` | `rwv doctor --fix --merge-edited-drift`: the branch's one slot for the `git stash create` commit of the edits it has out of the working copy | dropped once the edits stand there again; one left after HEAD reached the branch is overwritten by the next merge on that branch, its earlier value in the slot's own history |
 
 A **savepoint** is not a backup: it is filed per ref the operation may move
 (`SavepointKey`, `Vcs::create_ref_savepoint`, `create_savepoint_ref`), lasts

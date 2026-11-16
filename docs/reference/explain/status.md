@@ -399,13 +399,6 @@ Schema:
           "enum": [
             "aborted-working-copy"
           ]
-        },
-        {
-          "description": "The checkout's one slot for the edits a merge onto its moved branch has out of the working copy, dropped once they stand there again.",
-          "type": "string",
-          "enum": [
-            "taken-out"
-          ]
         }
       ]
     },

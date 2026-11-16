@@ -68,15 +68,10 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   refuses, naming it, as plain `rwv doctor` does and as every verb judging
   the checkout's edits does. With it, the checkout's working copy and its record
   are kept as a backup (`rwv backup list`), its HEAD is pointed at the tip
-  its files hold, and the VCS merges every edit onto the branch, refreshing
-  the move's other files: the edits are recorded and kept in the backup slot
-  `<branch>/taken-out` until they stand in the working copy again, the edited
-  files are put back to HEAD, the files move to the branch's tip as a
-  checkout moves them, and the edits are merged onto it (for git, `git stash
-  create` and `git stash apply`, which leave the stash list untouched).
-  Stopped at any step, the checkout is left `edits` `set back` with the
-  slot named, and either flag run again puts the edits back first and
-  finishes. A file the
+  its files hold, and the VCS merges every edit onto the branch (for git,
+  `git stash create`, a plain `git checkout <branch>`, then `git stash
+  apply` of the edits, writing no stash entry), refreshing the move's other
+  files. A file the
   merge does not resolve is left conflicted and refused as `edits`
   `unresolved` until it is resolved and marked resolved. A file declared
   derived takes the moved tip's content, the report naming it apart with the

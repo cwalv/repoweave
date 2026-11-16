@@ -4243,21 +4243,6 @@ impl Vcs for GitVcs {
         carry_edits::carry_edits_onto(repo, branch)
     }
 
-    fn put_back_taken_out(&self, repo: &Path, back: &crate::vcs::SetBack) -> Result<(), VcsError> {
-        carry_edits::put_back_taken_out(repo, back)
-    }
-
-    fn taken_out_paths(
-        &self,
-        repo: &Path,
-        back: &crate::vcs::SetBack,
-    ) -> Result<Vec<String>, VcsError> {
-        match &back.taken_out {
-            Some(kept) => carry_edits::taken_out_paths(repo, &back.at, kept),
-            None => Ok(Vec::new()),
-        }
-    }
-
     fn check_out_branch(
         &self,
         repo: &Path,

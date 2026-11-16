@@ -5030,22 +5030,6 @@ pub fn set_back(
             crate::check::backup_named(Some(&backup.name))
         ));
     }
-    if let Some(kept) = &back.taken_out {
-        let name = vcs
-            .list_backups(dir, crate::vcs::RemoteTracking::Ignored)
-            .unwrap_or_default()
-            .into_iter()
-            .find(|listed| listed.backup.tip.id() == kept)
-            .map_or_else(
-                || kept.short().to_owned(),
-                |listed| listed.backup.name.to_string(),
-            );
-        subject.push_str(&format!(
-            "; a merge stopped with the edits out of the working copy, kept as {}; \
-             either flag puts them back first",
-            crate::check::backup_named(Some(&name))
-        ));
-    }
     if let Some(said) = refused {
         let said: Vec<&str> = said
             .lines()
@@ -5083,22 +5067,14 @@ pub fn set_back(
             ));
         }
     }
-    let mut edits: Vec<String> = match back.taken_out {
-        Some(_) => vcs.taken_out_paths(dir, back).unwrap_or_default(),
-        None => vcs.staged_paths(dir).unwrap_or_default(),
-    };
-    if back.taken_out.is_none() {
-        for path in vcs.unstaged_paths(dir).unwrap_or_default() {
-            if !edits.contains(&path) {
-                edits.push(path);
-            }
+    let mut edits: Vec<String> = vcs.staged_paths(dir).unwrap_or_default();
+    for path in vcs.unstaged_paths(dir).unwrap_or_default() {
+        if !edits.contains(&path) {
+            edits.push(path);
         }
     }
     edits.sort();
-    let staged = match back.taken_out {
-        Some(_) => Vec::new(),
-        None => vcs.staged_against_head(dir).unwrap_or_default(),
-    };
+    let staged = vcs.staged_against_head(dir).unwrap_or_default();
     let all_kept = vcs
         .set_aside_from(dir, &back.at, &back.branch)
         .unwrap_or_default();
