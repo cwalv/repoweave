@@ -46,17 +46,17 @@ struct Allowed {
 /// Patterns that identify destructive call sites. Substring match against
 /// non-comment source lines.
 const TRACKED: &[&str] = &[
-    "\"--hard\"",               // git reset --hard
-    "remove_dir_all",           // recursive directory deletion
-    "remove_file",              // file deletion
-    "symlink::remove(",         // typed symlink unlink (remove_file/remove_dir by link type)
-    "\"-D\"",                   // git branch force-delete
-    "\"worktree\", \"remove\"", // git worktree remove
-    "--force-with-lease=",      // git push --force-with-lease, leased to a tip
-    "\"checkout\"",             // git checkout (worktree overwrite when forced)
-    "\"update-ref\"",           // ref surgery
-    "\"stash\"",                // stash flows hide work; drop and clear lose it
-    "\"read-tree\", \"-m\"",    // a merge into the real index, rewriting files with -u
+    "\"--hard\"",                 // git reset --hard
+    "remove_dir_all",             // recursive directory deletion
+    "remove_file",                // file deletion
+    "symlink::remove(",           // typed symlink unlink (remove_file/remove_dir by link type)
+    "\"-D\"",                     // git branch force-delete
+    "\"worktree\", \"remove\"",   // git worktree remove
+    "--force-with-lease=",        // git push --force-with-lease, leased to a tip
+    "\"checkout\"",               // git checkout (worktree overwrite when forced)
+    "\"update-ref\"",             // ref surgery
+    "\"stash\"",                  // stash flows hide work; drop and clear lose it
+    "\"read-tree\", \"-m\"",      // a merge into the real index, rewriting files with -u
     "\"read-tree\", \"--reset\"", // index and, with -u, files put back to a tree, edits discarded
 ];
 
