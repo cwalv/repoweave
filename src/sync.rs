@@ -13811,7 +13811,10 @@ mod tests {
             .expect_err("a submodule store with no checkout goes with the clone");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("branch side in submodule .git/modules/sub"),
+            msg.contains(&format!(
+                "branch side in submodule {}",
+                Path::new(".git").join("modules").join("sub").display()
+            )),
             "{msg}"
         );
         assert!(store.exists());

@@ -304,6 +304,22 @@ pub fn wire_path(path: &Path) -> String {
     WirePath::of(path).0
 }
 
+/// A path another program printed or wrote, spelled as rwv holds one.
+///
+/// Git for Windows prints `C:/Users/…`. Held as printed, such a path reaches a
+/// person beside native spellings of the same tree, and a join onto it mixes
+/// both separators. Unix keeps the bytes, as [`weave_relative`] does.
+pub fn printed_path(text: impl AsRef<str>) -> PathBuf {
+    #[cfg(windows)]
+    {
+        PathBuf::from(text.as_ref().replace('/', "\\"))
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from(text.as_ref())
+    }
+}
+
 /// `fragment`, a `/`-separated relative name rwv keeps, as a native relative
 /// path: one component per segment, so a join onto a native root is spelled
 /// natively throughout rather than `C:\w\github/org/repo`.
@@ -442,6 +458,22 @@ mod tests {
                 serde_json::from_value::<WirePath>(serde_json::json!(not_minted)).is_err(),
                 "{not_minted:?}"
             );
+        }
+    }
+
+    #[test]
+    fn a_printed_path_is_held_in_the_native_spelling() {
+        if cfg!(windows) {
+            assert_eq!(
+                printed_path("C:/Users/me/w/.git").as_os_str(),
+                r"C:\Users\me\w\.git"
+            );
+            assert_eq!(
+                printed_path("//host/share/w").as_os_str(),
+                r"\\host\share\w"
+            );
+        } else {
+            assert_eq!(printed_path(r"/w/a\b/.git").as_os_str(), r"/w/a\b/.git");
         }
     }
 

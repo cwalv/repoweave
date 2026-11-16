@@ -1,7 +1,7 @@
 //! Git implementation of the [`Vcs`] trait.
 
 use crate::op_state::SavepointKey;
-use crate::path_spelling::CanonicalPath;
+use crate::path_spelling::{printed_path, CanonicalPath};
 use crate::registry::{CloneUrl, RecordedRemote};
 use crate::vcs::{
     AbsentRemote, Annotation, AttachedRef, Backup, BackupMark, BackupName, BackupSource,
@@ -627,7 +627,7 @@ pub fn git_dir_link(dir: &Path) -> Option<GitDirLink> {
     if target.is_empty() {
         return None;
     }
-    let target = PathBuf::from(target);
+    let target = printed_path(target);
     Some(GitDirLink::Linked(if target.is_absolute() {
         target
     } else {
@@ -645,7 +645,7 @@ pub fn git_dir_link(dir: &Path) -> Option<GitDirLink> {
 pub fn commondir_target(git_dir: &Path) -> Option<PathBuf> {
     let commondir = git_dir.join("commondir");
     let content = std::fs::read_to_string(&commondir).ok()?;
-    let target = PathBuf::from(content.trim());
+    let target = printed_path(content.trim());
     Some(if target.is_absolute() {
         target
     } else {
@@ -2317,7 +2317,7 @@ impl GitVcs {
     pub fn mid_op_state(repo: &Path) -> Option<MidOperation> {
         let git_dir = match Self::run_trimmed(["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
-                let p = std::path::PathBuf::from(&s);
+                let p = printed_path(&s);
                 if p.is_absolute() {
                     p
                 } else {
@@ -2363,7 +2363,7 @@ impl GitVcs {
         // Resolve the .git directory so we can locate rebase-merge/stopped-sha.
         let git_dir = match Self::run_trimmed(["rev-parse", "--git-dir"], repo) {
             Ok(s) => {
-                let p = std::path::PathBuf::from(s.trim());
+                let p = printed_path(s.trim());
                 if p.is_absolute() {
                     p
                 } else {
@@ -3027,7 +3027,7 @@ impl Vcs for GitVcs {
         let paths = output
             .lines()
             .filter_map(|line| line.strip_prefix("worktree "))
-            .map(PathBuf::from)
+            .map(printed_path)
             .collect();
         Ok(paths)
     }
@@ -4024,13 +4024,13 @@ impl Vcs for GitVcs {
             }
         }
         let git_dir_of = |dir: &Path| -> Result<PathBuf, VcsError> {
-            Ok(PathBuf::from(Self::run_trimmed(
+            Ok(printed_path(Self::run_trimmed(
                 ["rev-parse", "--absolute-git-dir"],
                 dir,
             )?))
         };
         let own = git_dir_of(checkout)?;
-        let common = PathBuf::from(Self::run_trimmed(
+        let common = printed_path(Self::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             checkout,
         )?);
@@ -4351,7 +4351,7 @@ impl Vcs for GitVcs {
         if trimmed.is_empty() {
             return None;
         }
-        Some(PathBuf::from(trimmed))
+        Some(printed_path(trimmed))
     }
 
     fn main_checkout(&self, checkout: &Path) -> Option<PathBuf> {
@@ -4373,7 +4373,7 @@ impl Vcs for GitVcs {
             return None;
         };
         if CanonicalPath::of(Path::new(own)) == CanonicalPath::of(Path::new(common)) {
-            return Some(PathBuf::from(top));
+            return Some(printed_path(top));
         }
         let listing =
             Self::run_trimmed_awaiting_peers(["worktree", "list", "--porcelain"], checkout).ok()?;
@@ -4383,7 +4383,7 @@ impl Vcs for GitVcs {
         }
         main.lines()
             .find_map(|line| line.strip_prefix("worktree "))
-            .map(PathBuf::from)
+            .map(printed_path)
     }
 
     fn list_stale_worktree_registrations(&self, repo: &Path) -> Result<Vec<PathBuf>, VcsError> {
@@ -4407,7 +4407,7 @@ impl Vcs for GitVcs {
             return None;
         };
         let recorded = std::fs::read_to_string(registration.join("gitdir")).ok()?;
-        let recorded = Path::new(recorded.trim()).parent()?.to_path_buf();
+        let recorded = printed_path(recorded.trim()).parent()?.to_path_buf();
         (!same_location(&recorded, checkout)).then_some(recorded)
     }
 
@@ -4461,7 +4461,7 @@ impl Vcs for GitVcs {
             ["rev-parse", "--path-format=absolute", "--git-common-dir"],
             &Self::work_dir_for_store(store),
         )?;
-        let dir = Path::new(&common).join("worktrees");
+        let dir = printed_path(&common).join("worktrees");
         let registrations = match std::fs::read_dir(&dir) {
             Ok(registrations) => registrations,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -5307,7 +5307,7 @@ impl Vcs for GitVcs {
     }
 
     fn private_dir(&self, checkout: &Path) -> Result<PathBuf, VcsError> {
-        Ok(PathBuf::from(Self::run_trimmed(
+        Ok(printed_path(Self::run_trimmed(
             ["rev-parse", "--absolute-git-dir"],
             checkout,
         )?))
@@ -6443,7 +6443,7 @@ impl GitVcs {
         ) {
             Ok(_) => None,
             Err(VcsError::CommandFailed { args, stderr, .. }) => {
-                let lock = PathBuf::from(
+                let lock = printed_path(
                     Self::run(
                         vec![
                             "rev-parse",
@@ -6793,7 +6793,7 @@ impl GitVcs {
             };
             for line in block.lines() {
                 if let Some(path) = line.strip_prefix("worktree ") {
-                    record.path = PathBuf::from(path);
+                    record.path = printed_path(path);
                 } else if let Some(name) = line
                     .strip_prefix("branch ")
                     .and_then(|full| full.strip_prefix(LOCAL_BRANCH_NAMESPACE))
@@ -8040,7 +8040,7 @@ impl GitVcs {
             ],
             workspace,
         )
-        .map(PathBuf::from)
+        .map(printed_path)
     }
 }
 
@@ -11749,7 +11749,12 @@ mod name_reading_tests {
     //! non-ASCII letter — read back as the paths they are.
     use super::*;
 
+    #[cfg(not(windows))]
     const AWKWARD: &str = "dir with space/tab\there \"quoted\" é.txt";
+    /// Windows refuses a tab or a quote in a file name; git quotes a
+    /// non-ASCII letter all the same.
+    #[cfg(windows)]
+    const AWKWARD: &str = "dir with space/é name.txt";
 
     fn git(dir: &Path, args: &[&str]) {
         let out = git_command_in_test()

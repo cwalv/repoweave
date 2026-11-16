@@ -26,10 +26,44 @@ pub(crate) fn try_hold(file: &File, at: &Path) -> Hold {
     if crate::test_pause::withheld_at("advisory-lock", at) {
         return Hold::Unavailable;
     }
-    match file.try_lock() {
+    match try_lock(file) {
         Ok(()) => Hold::Taken,
         Err(std::fs::TryLockError::WouldBlock) => Hold::Busy,
         Err(std::fs::TryLockError::Error(_)) => Hold::Unavailable,
+    }
+}
+
+#[cfg(not(windows))]
+fn try_lock(file: &File) -> Result<(), std::fs::TryLockError> {
+    file.try_lock()
+}
+
+/// A Windows lock is mandatory: one over the holder's own bytes would refuse
+/// every reader of the file that names its holder. The byte locked lies past
+/// anything a holder's file holds, which a lock may.
+#[cfg(windows)]
+fn try_lock(file: &File) -> Result<(), std::fs::TryLockError> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::{ERROR_LOCK_VIOLATION, HANDLE};
+    use windows::Win32::Storage::FileSystem::LockFile;
+    const HOLD_BYTE: u64 = 1 << 62;
+    // SAFETY: the handle is open for the duration of the call.
+    match unsafe {
+        LockFile(
+            HANDLE(file.as_raw_handle()),
+            HOLD_BYTE as u32,
+            (HOLD_BYTE >> 32) as u32,
+            1,
+            0,
+        )
+    }
+    .map_err(crate::durable_file::win32_io_error)
+    {
+        Ok(()) => Ok(()),
+        Err(e) if e.raw_os_error() == Some(ERROR_LOCK_VIOLATION.0 as i32) => {
+            Err(std::fs::TryLockError::WouldBlock)
+        }
+        Err(e) => Err(std::fs::TryLockError::Error(e)),
     }
 }
 
@@ -119,20 +153,54 @@ pub(crate) fn with_abandoned(path: &Path, then: impl FnOnce()) {
 /// Whether `file` is still what stands at `path`: a holder removes its file
 /// before it lets go of the lock, so a lock taken on the removed file holds
 /// nothing.
-#[cfg(unix)]
 pub(crate) fn is_current(file: &File, path: &Path) -> bool {
-    use std::os::unix::fs::MetadataExt;
-    match (file.metadata(), std::fs::metadata(path)) {
-        (Ok(held), Ok(at_path)) => held.dev() == at_path.dev() && held.ino() == at_path.ino(),
+    match (identity(file), identity_at(path)) {
+        (Ok(held), Ok(at_path)) => held == at_path,
         _ => false,
     }
 }
 
-/// A Windows delete leaves the name reserved until every handle to the old
-/// file closes, so a lock taken on it cannot be raced by a new file.
-#[cfg(not(unix))]
-pub(crate) fn is_current(_file: &File, _path: &Path) -> bool {
-    true
+#[cfg(unix)]
+fn identity(file: &File) -> std::io::Result<(u64, u128)> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().map(|m| (m.dev(), u128::from(m.ino())))
+}
+
+#[cfg(unix)]
+fn identity_at(path: &Path) -> std::io::Result<(u64, u128)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).map(|m| (m.dev(), u128::from(m.ino())))
+}
+
+#[cfg(windows)]
+fn identity(file: &File) -> std::io::Result<(u64, u128)> {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+    };
+    let mut info = FILE_ID_INFO::default();
+    // SAFETY: the handle is open for the call and `info` is as large as stated.
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileIdInfo,
+            (&raw mut info).cast(),
+            std::mem::size_of::<FILE_ID_INFO>() as u32,
+        )
+    }
+    .map_err(crate::durable_file::win32_io_error)?;
+    Ok((
+        info.VolumeSerialNumber,
+        u128::from_ne_bytes(info.FileId.Identifier),
+    ))
+}
+
+/// Stable Rust reads no file identity from a path on Windows, so the path is
+/// opened: a file deleted while still open refuses that, and reads as gone.
+#[cfg(windows)]
+fn identity_at(path: &Path) -> std::io::Result<(u64, u128)> {
+    identity(&File::open(path)?)
 }
 
 #[cfg(test)]

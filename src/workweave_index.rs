@@ -833,7 +833,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             written["workweaves"]["child"]["parent"],
-            serde_json::json!("/c/web-app--parent")
+            serde_json::json!(at("/c/web-app--parent"))
         );
         assert!(written.get("receipts").is_none());
     }
@@ -975,10 +975,17 @@ mod tests {
         let tmp = crate::tempdir().unwrap();
         let primary = tmp.path().join("ws");
         let project = make_project(&primary, "web-app");
+        let container = tmp.path().join("abs").join("container");
         write_old_path(
             &primary,
             &project,
-            br#"{"container":"/abs/container","workweaves":{"hotfix":"/abs/container/web-app--hotfix"},"receipts":[]}"#,
+            serde_json::json!({
+                "container": container,
+                "workweaves": {"hotfix": container.join("web-app--hotfix")},
+                "receipts": [],
+            })
+            .to_string()
+            .as_bytes(),
         );
         let found = [(
             name("boxed"),
@@ -989,7 +996,7 @@ mod tests {
         assert_eq!(
             rebuild(&primary, &project, &found).unwrap(),
             Some(Rebuilt::Replaced {
-                basedir: Some(at("/abs/container"))
+                basedir: Some(CanonicalPath::of(&container))
             })
         );
 
@@ -1002,7 +1009,7 @@ mod tests {
         );
         assert_eq!(
             index.basedir,
-            Some(at("/abs/container")),
+            Some(CanonicalPath::of(&container)),
             "the container the old file recorded is where new workweaves go"
         );
         assert_eq!(

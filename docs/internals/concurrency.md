@@ -107,7 +107,12 @@ outcome. A denied directory write is `EACCES`, which fails at the temp before
 any link. `EMLINK` (a filesystem whose links stop at one) is not a selector
 and surfaces as itself. Every other error, `EACCES` and `ERROR_ACCESS_DENIED` included, is
 reported as it is and never retried in another mode. A filesystem that makes
-links never reaches the rename.
+links never reaches the rename. On Windows `ERROR_ACCESS_DENIED` and
+`ERROR_SHARING_VIOLATION` are first retried in the same mode for the claim
+wait (`held_open`): Windows answers them while another handle has the file
+open, and for every open of a name whose file was deleted until its last
+handle closes, which a released claim's holder and waiters keep it for a
+moment. One that outlasts the wait is reported as it is.
 
 FUSE without rename2 that also has no links, and FAT on macOS, refuse. No
 filesystem without hard links can be mounted in the gate without privilege,
@@ -148,7 +153,9 @@ be left, and nothing else changes.
 **One liveness primitive tells a live holder from a dead one.**
 `src/liveness.rs` is the only place that asks whether a process still holds a
 file. A holder takes an advisory lock on the file and keeps it while it runs;
-the kernel drops it when the process dies. A temp's sweep, a short claim's
+the kernel drops it when the process dies. A Windows lock is mandatory, so
+there the byte locked lies past the file's content and a reader of the
+holder's pid and host is never refused. A temp's sweep, a short claim's
 waiters and a scratch owner's sweep all ask `try_hold`, which answers `Taken`
 (the file has no holder), `Busy` (a live holder) or `Unavailable` (the
 filesystem has no advisory locks, tested under `RWV_TEST_WITHHOLD=advisory-lock`).
@@ -165,7 +172,8 @@ A short claim is a file at a published name (`.rwv-fetch.lock`,
 `rwv-workweave-index.lock`, `.rwv-owned-digests.lock`) created with
 `create_new`, then locked; its holder removes it before it lets go of the
 lock, and a waiter that locked the removed file checks the path still names
-the file it locked (`is_current`) before it counts itself the holder. A file
+the file it locked (`is_current`: device and inode on unix, volume and file id
+on Windows) before it counts itself the holder. A file
 left by a killed holder is locked by the next claimant, with no wait.
 
 **Scratch files a call makes in a git dir go through one owner.** Every

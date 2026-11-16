@@ -7,6 +7,11 @@
 //! hook's throwaway worktree, a CI runner); a warm weave target carries the
 //! link over from earlier runs, which is why the loss shows up as a one-test
 //! flake in exactly those cold postures and nowhere else.
+//!
+//! Unix only: on Windows `tool_only_bin` creates nothing, so there is no first
+//! use to race, and the link this removes between rounds would be the
+//! installed tool itself.
+#![cfg(unix)]
 
 use std::sync::Barrier;
 
@@ -27,7 +32,7 @@ use crate::common;
 /// evidence.
 #[test]
 fn concurrent_first_callers_share_the_link() {
-    let link = common::tool_only_bin("git").join(if cfg!(windows) { "git.exe" } else { "git" });
+    let link = common::tool_only_bin("git").join("git");
     let barrier = Barrier::new(2);
     let mut overlapped = 0u32;
     for _ in 0..64 {

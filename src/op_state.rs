@@ -2669,11 +2669,11 @@ mod tests {
     fn a_record_in(dir: &Path, schema_fields: &str) {
         let record = format!(
             "{{{schema_fields}\"id\": \"1\", \"verb\": \"sync\", \"history\": null, \
-             \"project\": \"p\", \"source\": \"{d}\", \"target\": \"{d}\", \
+             \"project\": \"p\", \"source\": {d}, \"target\": {d}, \
              \"retire\": false, \"phase\": \"replay\", \
              \"converged_tips\": {{}}, \"started_at\": \"2026-01-01T00:00:00Z\", \
              \"take_in\": null}}",
-            d = dir.display()
+            d = serde_json::Value::from(dir.display().to_string())
         );
         std::fs::write(dir.join(OP_STATE_FILE), record).unwrap();
     }
@@ -4488,7 +4488,7 @@ mod tests {
             let err_s = err.to_string();
             assert!(
                 err_s.contains("in progress"),
-                "loser must see in-flight refusal; got: {err_s}"
+                "loser must see in-flight refusal; got: {err:#}"
             );
             assert!(
                 err_s.contains("--continue") && err_s.contains("rwv abort"),

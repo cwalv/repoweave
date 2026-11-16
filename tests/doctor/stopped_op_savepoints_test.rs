@@ -235,11 +235,14 @@ fn the_primarys_doctor_reports_the_op_of_a_seat_no_container_holds() {
     let stopped = stop_a_sync();
     let out = rwv(&stopped.primary.root, &["doctor", "--json"]);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    let seat = repoweave::path_spelling::resolve(&stopped.seat.root).unwrap();
-    let reported =
-        json["violations"].as_array().unwrap().iter().any(|v| {
-            v["kind"] == "stale-op-state" && v.to_string().contains(&*seat.to_string_lossy())
-        });
+    let seat = repoweave::path_spelling::wire_path(
+        &repoweave::path_spelling::resolve(&stopped.seat.root).unwrap(),
+    );
+    let reported = json["violations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["kind"] == "stale-op-state" && v["workspace_dir"] == seat.as_str());
     assert!(reported, "{json:#}");
 }
 

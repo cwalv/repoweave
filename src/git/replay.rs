@@ -3,6 +3,7 @@
 
 use super::records::{commit_id, failed};
 use super::{git_command, GitVcs, Scratch};
+use crate::path_spelling::printed_path;
 use crate::vcs::{AttachedRef, CommitId, FileChange, Replayed, VcsError};
 use std::path::{Path, PathBuf};
 
@@ -99,7 +100,7 @@ impl GitVcs {
             ],
             repo,
         )
-        .map(PathBuf::from)
+        .map(printed_path)
     }
 
     fn rewritten_record_path(
@@ -116,7 +117,7 @@ impl GitVcs {
             ],
             repo,
         )
-        .map(PathBuf::from)
+        .map(printed_path)
     }
 
     fn record_path(repo: &Path, old: &CommitId, onto: &CommitId) -> Result<PathBuf, VcsError> {
@@ -129,7 +130,7 @@ impl GitVcs {
             ],
             repo,
         )
-        .map(PathBuf::from)
+        .map(printed_path)
     }
 
     /// Start the record of a replay of `old` onto `onto`, empty, and return
@@ -298,7 +299,7 @@ impl GitVcs {
             ],
             repo,
         )
-        .map(PathBuf::from)?;
+        .map(printed_path)?;
         let Some(dir) = held.parent() else {
             return Ok(());
         };

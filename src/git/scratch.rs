@@ -1,5 +1,6 @@
 use super::GitVcs;
 use crate::liveness::{self, Hold};
+use crate::path_spelling::printed_path;
 use crate::vcs::VcsError;
 use std::path::{Path, PathBuf};
 
@@ -20,7 +21,7 @@ pub(super) struct Scratch {
 impl Scratch {
     pub(super) fn take(repo: &Path) -> Result<Self, VcsError> {
         let stem = format!("{PREFIX}{}", std::process::id());
-        let owner = PathBuf::from(GitVcs::run_trimmed(
+        let owner = printed_path(GitVcs::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-path", &stem],
             repo,
         )?);

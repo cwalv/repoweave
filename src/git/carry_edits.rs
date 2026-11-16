@@ -4,6 +4,7 @@
 //! onto the branch, or `stash push` keeps them before a plain checkout.
 
 use super::{git_command, Argv, DERIVED_CONTENT_DRIVER_NAME};
+use crate::path_spelling::printed_path;
 use crate::vcs::Vcs;
 use crate::vcs::{CommitId, Refusable, SetBack, UncomparedPaths, VcsError};
 use std::path::{Path, PathBuf};
@@ -223,7 +224,7 @@ pub(super) fn staged_against_head(repo: &Path, ita: &str) -> Result<Vec<String>,
 }
 
 pub(super) fn index_lock(repo: &Path) -> Result<Option<PathBuf>, VcsError> {
-    let lock = PathBuf::from(text(succeeded(
+    let lock = printed_path(text(succeeded(
         [
             "rev-parse",
             "--path-format=absolute",

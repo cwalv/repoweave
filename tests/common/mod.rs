@@ -1129,10 +1129,23 @@ pub fn write_local_crate_source(
 /// absent, one create fails on the winner's identical, already-usable link.
 /// A failed create is therefore only a failure while the link is still
 /// absent.
+///
+/// On Windows the directory is the one the tool is installed in. An
+/// executable linked out of its install tree finds neither its DLLs nor the
+/// rest of its installation there (Git for Windows' `git.exe` is a launcher
+/// that answers nothing from anywhere else), so a link would hand out a tool
+/// that does not run. A test whose hidden tool shares that directory fails
+/// loudly, by finding it.
 pub fn tool_only_bin(name: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let tool = which::which(name)
         .unwrap_or_else(|e| panic!("{name} must be resolvable to run these tests: {e}"));
+    if cfg!(windows) {
+        return tool
+            .parent()
+            .unwrap_or_else(|| panic!("{} has no parent directory", tool.display()))
+            .to_path_buf();
+    }
     let mut found = std::collections::hash_map::DefaultHasher::new();
     tool.hash(&mut found);
     let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))

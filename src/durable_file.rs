@@ -63,8 +63,8 @@ static TMP_SERIAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 
 /// How long a caller waits for a peer's claim on a state file before it
 /// refuses, how long a holder retries the removal that releases one, and how
-/// long a [`replace`] retries a replacement Windows refuses while another
-/// handle has the file open.
+/// long a publish retries a call Windows refuses while another handle has the
+/// file open ([`held_open`]).
 ///
 /// A waiter queues behind every holder ahead of it, so this bounds a queue of
 /// held sections rather than one, and it has to outlast a full queue on a slow
@@ -153,6 +153,7 @@ pub(crate) fn claim(path: &Path) -> Result<ClaimFile, ClaimError> {
                 _ => {}
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) if held_open(&e) && std::time::Instant::now() < deadline => {}
             Err(e) => return Err(ClaimError::Io(e)),
         }
         if std::time::Instant::now() >= deadline {
@@ -253,25 +254,7 @@ fn replace_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> anyhow::Resu
     sync_dir(parent).with_context(|| format!("failed to fsync directory {}", parent.display()))
 }
 
-#[cfg(not(windows))]
 fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
-    std::fs::rename(from, to)
-}
-
-/// Windows refuses to rename onto a file while any handle to it is open, with
-/// `ERROR_ACCESS_DENIED` or `ERROR_SHARING_VIOLATION`. POSIX rename semantics
-/// lift that for holders that share deletion, but only on a filesystem that
-/// has them. Readers of rwv's state files take no claim, and scanners and
-/// indexers open what rwv has just written; each lets go in moments, so the
-/// replacement is retried rather than reported.
-#[cfg(windows)]
-fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
-    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
-    let held_open = |e: &std::io::Error| {
-        [ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION]
-            .iter()
-            .any(|code| e.raw_os_error() == Some(code.0 as i32))
-    };
     let deadline = std::time::Instant::now() + CLAIM_WAIT;
     loop {
         match std::fs::rename(from, to) {
@@ -281,6 +264,28 @@ fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
             outcome => return outcome,
         }
     }
+}
+
+/// Whether `e` is a refusal that lasts only while another handle has the file
+/// open: Windows refuses to open, link, rename or delete a file another handle
+/// holds without sharing that access (`ERROR_SHARING_VIOLATION`), and refuses
+/// every open of a name whose file is deleted until its last handle closes
+/// (`ERROR_ACCESS_DENIED`). A released claim is removed while its holder and
+/// its waiters have it open; readers of rwv's state files take no claim, and
+/// scanners and indexers open what rwv has just written. Each lets go in
+/// moments, so a call refused this way is retried rather than reported.
+/// Unix refuses none of these calls for an open handle.
+#[cfg(windows)]
+pub(crate) fn held_open(e: &std::io::Error) -> bool {
+    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
+    [ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION]
+        .iter()
+        .any(|code| e.raw_os_error() == Some(code.0 as i32))
+}
+
+#[cfg(not(windows))]
+pub(crate) fn held_open(_e: &std::io::Error) -> bool {
+    false
 }
 
 /// Publish `bytes` at `path` only if nothing is there, and atomically: a
@@ -338,6 +343,7 @@ fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<()
     let parent = parent_of(path);
     sweep_abandoned_temps(path);
     let mut restage = Restage::new();
+    let held_deadline = std::time::Instant::now() + CLAIM_WAIT;
     let published = loop {
         let mut staged = staged_temp(path, bytes, publisher.lock).map_err(CreateNewError::Io)?;
         let tmp = staged.ready_to_publish();
@@ -347,6 +353,9 @@ fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<()
         match published {
             Err(Published::Io(e)) if vanished(&e) => {
                 restage.again(path).map_err(CreateNewError::Io)?
+            }
+            Err(Published::Io(e)) if held_open(&e) && std::time::Instant::now() < held_deadline => {
+                std::thread::sleep(CLAIM_POLL)
             }
             published => break published,
         }
@@ -545,13 +554,7 @@ fn c_path(path: &Path) -> std::io::Result<std::ffi::CString> {
 #[cfg(windows)]
 fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     use windows::core::HSTRING;
-    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION};
     use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
-    let held_open = |e: &std::io::Error| {
-        [ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION]
-            .iter()
-            .any(|code| e.raw_os_error() == Some(code.0 as i32))
-    };
     let deadline = std::time::Instant::now() + CLAIM_WAIT;
     loop {
         // SAFETY: both strings are NUL-terminated and outlive the call.
@@ -569,7 +572,7 @@ fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
 /// `windows::core::Error` carries an HRESULT; a Win32 code rides in its low
 /// word under `FACILITY_WIN32`, and `std::io::Error` classifies the bare code.
 #[cfg(windows)]
-fn win32_io_error(e: windows::core::Error) -> std::io::Error {
+pub(crate) fn win32_io_error(e: windows::core::Error) -> std::io::Error {
     let hresult = e.code().0 as u32;
     if hresult & 0xFFFF_0000 == 0x8007_0000 {
         std::io::Error::from_raw_os_error((hresult & 0xFFFF) as i32)
@@ -869,11 +872,13 @@ fn open_held(
     use std::os::windows::fs::OpenOptionsExt;
     const FILE_SHARE_READ: u32 = 0x1;
     const FILE_SHARE_WRITE: u32 = 0x2;
-    std::fs::OpenOptions::new()
+    let f = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
-        .open(tmp)
+        .open(tmp)?;
+    crate::test_pause::point("durable-file-created");
+    Ok(f)
 }
 
 /// Remove each temp beside `path` for a file whose name begins with its own
