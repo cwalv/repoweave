@@ -428,8 +428,8 @@ together.
 
 The kill matrix is not in the full gate. `scripts/ci-local.sh
 --stages=kill-matrix` runs its cells (about a quarter of an hour) and sets
-`RWV_KILL_MATRIX=run`, without which each shape test returns at once and prints
-the stage that runs it; `--tier=release` is every default stage and
+`RWV_KILL_MATRIX=run`, without which the test that runs them returns at once
+and prints the stage that runs it; `--tier=release` is every default stage and
 `kill-matrix`. Run it before a release and when a change touches an
 operation's steps, pause points or abort. The source test that `POINTS` matches
 the source, and the test that every point a shape passes has a cell or a
@@ -496,8 +496,13 @@ per phase with the points each rwv passes traced to a file
 (`RWV_TEST_PAUSE_TRACE`) and fails when a shape passes a point with neither a
 cell nor a `same_as` entry, or a cell is named for a point the shape does not
 pass. A shape is a verb in one setup (history, a stop, a carried dependent, an
-in-place or as-refs landing); the cells are generated from the rows, one test
-per shape. A cell passes when `--continue` ends in the state an unkilled run
+in-place or as-refs landing); the cells are generated from the rows, and one
+test runs every cell of every shape from one pool, as many at once as libtest
+runs tests (`RUST_TEST_THREADS`), the unkilled runs a continue is compared with
+first and then the cells with the most steps, so the stage ends on its
+shortest cells rather than on its longest shape. `KILL_MATRIX_ONLY=<text>`
+keeps the cells whose name (shape, point, phase and ending, as a failure
+names them) holds the text. A cell passes when `--continue` ends in the state an unkilled run
 ends in and when abort, typed in the seat and, for a landing, in its target,
 puts every place back where `Step::capture` saw it. The end state compares
 each place's branch tips (by commit subject and depth, since ids differ

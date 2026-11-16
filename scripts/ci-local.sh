@@ -13,7 +13,7 @@
 # each pause point it passes and then continued and aborted, which take about
 # a quarter of an hour. Run it before a release and when a change touches an
 # operation's steps, pause points or abort. The test stages do not run those
-# cells: the binary's shape tests return at once, naming this stage, unless
+# cells: the binary's test of them returns at once, naming this stage, unless
 # RWV_KILL_MATRIX=run, which this stage sets.
 # windows-wine runs only when named: it is scripts/windows-wine.sh, which
 # downloads several GB on first use and reports reds that belong to Wine
