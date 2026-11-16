@@ -1230,7 +1230,7 @@ pub fn run() -> anyhow::Result<()> {
                         let deletion = crate::workweave::delete_workweave(
                             ctx.primary_path(),
                             project,
-                            &WorkweaveName::new(name)?,
+                            &WorkweaveName::spelled_in(project, name)?,
                             None,
                             consent::DiscardUncommittedConsent::from_flag(discard_uncommitted),
                             consent::DiscardUnlandedConsent::from_flag(discard_unlanded),
@@ -1284,7 +1284,7 @@ pub fn run() -> anyhow::Result<()> {
                             (None, None, Some(rev)) => crate::workweave::BranchChoice::Detach(rev),
                             (None, None, None) => crate::workweave::BranchChoice::Minted,
                         };
-                        let created_name = WorkweaveName::new(name)?;
+                        let created_name = WorkweaveName::spelled_in(project, name)?;
                         let created =
                             crate::workweave::create_workweave(crate::workweave::CreateWorkweave {
                                 primary_root,

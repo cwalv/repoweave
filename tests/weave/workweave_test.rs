@@ -2106,6 +2106,43 @@ fn create_and_list_say_where_the_workweave_is() {
     assert_eq!(json["workweaves"].as_array().unwrap().len(), 1);
 }
 
+/// One spelling for a workweave: the `-w` address `<project>--<name>` of the
+/// project a verb resolves to names the same workweave as the bare name, in
+/// `create` and `delete`; another project's address is not a name here.
+#[test]
+fn workweave_create_and_delete_take_the_address_of_their_own_project() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_workspace(tmp.path(), "web-app");
+    std::fs::create_dir_all(tmp.path().join(".workweaves")).unwrap();
+
+    rwv()
+        .args(["workweave", "create", "--project", "web-app", "web-app--spelled"])
+        .current_dir(&ws)
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with("workweave spelled: "));
+
+    let refused = rwv()
+        .args(["workweave", "delete", "--project", "web-app", "other--spelled"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    common::cli::refused(&refused, repoweave::refusal::RefusalKind::UnrenderableName);
+
+    let deleted = rwv()
+        .args(["workweave", "delete", "--project", "web-app", "web-app--spelled"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(deleted.status.success(), "{}", common::cli::describe(&deleted));
+    let listed = rwv()
+        .args(["workweave", "list", "--project", "web-app"])
+        .current_dir(&ws)
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&listed.stdout).trim().is_empty());
+}
+
 /// Old-form on-disk workweaves without a registry entry are NOT visible in
 /// `rwv workweave list` (list is registry-backed since the addressing
 /// redesign). Doctor's `unregistered-workweave` finding + `--fix` adoption

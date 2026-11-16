@@ -1148,7 +1148,10 @@ The excluded characters are the ones that would make two distinct pairs render
 the same string, so the address would stop identifying one checkout.
 
 **Exits.** Choose another name. [Formats](./formats.md) lists the excluded
-characters and the rule each one protects.
+characters and the rule each one protects. `rwv workweave create` and
+`rwv workweave delete` take a workweave as its bare name or as the `-w`
+address `<project>--<name>` of the project they resolve to; the address of
+another project is refused here, because `--` is excluded from a name.
 
 ### `unresolvable-repo-source`
 

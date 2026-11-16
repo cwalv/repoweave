@@ -1061,7 +1061,7 @@ pub enum WorkweaveAction {
     /// identical spelling on a clean workweave returns it, reported; any
     /// difference is refused and changes nothing.
     Create {
-        /// Workweave name
+        /// Workweave name, or the `-w` address `<project>--<name>` of this project
         name: String,
         /// Create this weave branch for the workweave, as `branch create` creates one
         #[arg(
@@ -1138,7 +1138,7 @@ pub enum WorkweaveAction {
     },
     /// Delete a workweave, and the branches that belong to it by the deletion rule. A branch that has not landed survives, listed with why, and the exit status is 3
     Delete {
-        /// Workweave name
+        /// Workweave name, or the `-w` address `<project>--<name>` of this project
         name: String,
         /// Delete even if a worktree has uncommitted changes, keeping them as
         /// a backup first. Without this flag, deletion refuses and names the

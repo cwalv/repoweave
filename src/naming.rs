@@ -393,6 +393,22 @@ impl WorkweaveName {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The name `spelled` gives a workweave of `project`: the bare name, or
+    /// the `-w` address `<project>--<name>` of this same project. The address
+    /// of another project is not a name and is refused as any name holding
+    /// `--` is.
+    pub fn spelled_in(
+        project: &ProjectName,
+        spelled: impl Into<String>,
+    ) -> Result<Self, WorkweaveNameError> {
+        let spelled = spelled.into();
+        let prefix = format!("{}--", project.flat().as_str());
+        match spelled.strip_prefix(&prefix) {
+            Some(bare) => Self::new(bare),
+            None => Self::new(spelled),
+        }
+    }
 }
 
 impl std::str::FromStr for WorkweaveName {

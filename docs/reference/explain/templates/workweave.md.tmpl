@@ -44,6 +44,9 @@ The workweave starts from commits.
 
 ### `rwv workweave create <name>`
 
+The name is spelled bare, or as the `-w` address `<project>--<name>` of the
+project the verb resolves to; both name the same workweave.
+
 Create a new workweave for the active project, or the project `--project`
 names, from the workspace the verb runs in. To fork a workweave from the one
 you are in, run `create` inside it.
@@ -158,6 +161,10 @@ process state: it lives in a file the operator can read, not in a shell
 environment.
 
 ### `rwv workweave delete <name>`
+
+The name is spelled bare, or as the `-w` address `<project>--<name>` of the
+project the verb resolves to; another project's address is refused
+(`unrenderable-name`).
 
 Delete a workweave, and apply the deletion rule to its branches.
 
