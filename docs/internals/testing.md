@@ -426,6 +426,11 @@ stages catch. A tier run's terminal line names the tier and its stages, so
 its log never reads as a full gate's. `--tier` and `--stages` are refused
 together.
 
+Every run is bounded by `RWV_GATE_TIMEOUT_SECS`, default 10800 seconds. On
+expiry the script stops its own process group, prints the stage that was
+running and exits 124, a status no stage produces. It needs no `timeout`
+binary. A test that moves itself into a group of its own is outside the cut.
+
 The kill matrix is not in the full gate. `scripts/ci-local.sh
 --stages=kill-matrix` runs its cells (about a quarter of an hour) and sets
 `RWV_KILL_MATRIX=run`, without which the test that runs them returns at once
@@ -648,10 +653,16 @@ something to have happened, and then asserts it, is the same clock spelled
 differently; wait for the thing instead, or for a trace point
 (`RWV_TEST_PAUSE_TRACE`) that says it has happened.
 
-The backstop against a test that hangs is the run's own timeout, the CI job's
-`timeout-minutes`, never a per-step bound: a hang is a red the run reports
-when it is cut off, and a test whose defect shows as a hang (a wait on an
-event that never comes) is a correct test. A wait that is the behavior under
+The backstop against a test that hangs is the gate's own bound, never a
+per-step one: `scripts/ci-local.sh` bounds the whole run at
+`RWV_GATE_TIMEOUT_SECS` seconds (default 10800, three hours: four times the
+release tier's warm run, so a cold build on a slow host fits with wide margin),
+and when it passes signals the process group it started for the run, names the
+stage that was running and exits 124. CI and the pre-push hook run that script,
+so the bound is the same everywhere; the CI jobs' `timeout-minutes` sits above
+it as the outer net. A hang is a red the run reports when it is cut off, and a
+test whose defect shows as a hang (a wait on an event that never comes) is a
+correct test. A wait that is the behavior under
 test, a verb's own claim budget or `rwv each --timeout`, may be measured, and
 only from below: that the verb waited at least its budget holds on any host,
 while that it finished within some bound does not.

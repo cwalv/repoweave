@@ -64,6 +64,16 @@
 # time, while 8 cost half again: half the cores is as fast for one gate and
 # leaves room for another beside it. A caller's own RUST_TEST_THREADS wins.
 #
+# The whole run is bounded: RWV_GATE_TIMEOUT_SECS seconds (default 10800, three
+# hours), the one clock the gate has, since no wait inside a test ends on one.
+# The default is four times the release tier's warm run on a 32-core host and
+# leaves a cold build on a slow host wide margin; a default gate runs well
+# inside it. When it passes the script signals the process group it started
+# for the run, never any other process, names the stage that was running and
+# exits 124, which no stage uses. A test that detaches into a group of its own
+# is outside the cut. ci-checks.yml's timeout-minutes stays above the bound as
+# the outer net.
+#
 # Exits non-zero on the first failure. The windows and apple stages are the
 # exceptions: ci-checks.yml's windows-check job and its macOS run already own
 # that compile and lint truth authoritatively, so a contributor without the
@@ -71,6 +81,61 @@
 # regardless.
 
 set -euo pipefail
+
+GATE_TIMEOUT_EXIT=124
+GATE_TIMEOUT_DEFAULT_SECS=10800
+GATE_TERM_GRACE_SECS=10
+
+# Re-runs this script as a background job of its own process group, so the
+# cut-off has exactly that group to signal and needs no `timeout` binary,
+# which macOS lacks. The child is told apart from a nested run of this script
+# (a test drives it) by its parent being the script that started it.
+if [ "${RWV_GATE_WATCHED:-}" != "$PPID" ]; then
+    gate_bound="${RWV_GATE_TIMEOUT_SECS:-$GATE_TIMEOUT_DEFAULT_SECS}"
+    case "$gate_bound" in
+        '' | *[!0-9]* | 0)
+            printf 'RWV_GATE_TIMEOUT_SECS must be a positive whole number of seconds, not %s\n' "$gate_bound" >&2
+            exit 1
+            ;;
+    esac
+    stage_file="$(mktemp "${TMPDIR:-/tmp}/rwv-gate-stage.XXXXXX")"
+    set -m
+    RWV_GATE_WATCHED=$$ RWV_GATE_STAGE_FILE="$stage_file" "$0" "$@" &
+    gate_child=$!
+    set +m
+    stop_group() {
+        kill -TERM -- "-$gate_child" 2>/dev/null || true
+        local waited=0
+        while kill -0 -- "-$gate_child" 2>/dev/null && [ "$waited" -lt "$GATE_TERM_GRACE_SECS" ]; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        kill -KILL -- "-$gate_child" 2>/dev/null || true
+    }
+    interrupted() {
+        stop_group
+        wait "$gate_child" 2>/dev/null || true
+        rm -f "$stage_file"
+        exit "$1"
+    }
+    trap 'interrupted 130' INT
+    trap 'interrupted 143' TERM
+    while kill -0 "$gate_child" 2>/dev/null; do
+        if [ "$SECONDS" -ge "$gate_bound" ]; then
+            running="$(cat "$stage_file" 2>/dev/null || true)"
+            printf '\nscripts/ci-local.sh: RWV_GATE_TIMEOUT_SECS=%s reached while running: %s\nstopping the run'"'"'s process group; exit %s\n' "$gate_bound" "${running:-before the first stage}" "$GATE_TIMEOUT_EXIT" >&2
+            stop_group
+            wait "$gate_child" 2>/dev/null || true
+            rm -f "$stage_file"
+            exit "$GATE_TIMEOUT_EXIT"
+        fi
+        sleep 0.1
+    done
+    gate_status=0
+    wait "$gate_child" || gate_status=$?
+    rm -f "$stage_file"
+    exit "$gate_status"
+fi
 
 if [ -z "${RUST_TEST_THREADS:-}" ]; then
     cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)"
@@ -159,6 +224,7 @@ run_stage() {
 }
 
 header() {
+    printf '%s' "$1" > "$RWV_GATE_STAGE_FILE"
     printf '\n==> %s\n' "$1"
 }
 

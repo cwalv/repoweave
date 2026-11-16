@@ -21,9 +21,9 @@ jobs:
   checks:
     name: CI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # The suite's one backstop against a hang: no wait inside a test ends on
-    # a clock, so a test that hangs is cut off here and reported red.
-    timeout-minutes: 120
+    # The outer net: scripts/ci-local.sh bounds its own run (three hours by
+    # default), and this sits above that bound plus the job's setup.
+    timeout-minutes: 210
     strategy:
       fail-fast: false
       matrix:
@@ -70,7 +70,7 @@ jobs:
     # newer than the floor that is used without a fallback is red only here.
     name: CI (oldest supported git)
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 210
 
     steps:
       - uses: actions/checkout@v6

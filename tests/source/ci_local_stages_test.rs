@@ -1585,3 +1585,66 @@ fn the_kill_matrix_stage_alone_turns_the_cells_on() {
         "{stage}"
     );
 }
+
+fn process_is_alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .output()
+        .expect("kill should run")
+        .status
+        .success()
+}
+
+/// A stage that never returns is cut off at the bound: the script names the
+/// stage that was running, exits with its own status, and leaves nothing of
+/// the run alive.
+#[test]
+fn a_hung_stage_is_cut_off_at_the_bound_and_nothing_survives() {
+    let stub = common::tempdir().expect("tempdir");
+    let pids = stub.path().join("pids");
+    common::write_executable(
+        &stub.path().join("cargo"),
+        &format!(
+            "#!/bin/sh\nsleep 600 &\nprintf '%s %s\\n' \"$$\" \"$!\" > '{}'\nwait\n",
+            pids.display()
+        ),
+    );
+    common::write_executable(&stub.path().join("rustup"), STUB_RUSTUP);
+    let fixture = fixture_repo();
+    let out = run_ci_local(
+        fixture.path(),
+        stub.path(),
+        &["--stages=check"],
+        &[("RWV_GATE_TIMEOUT_SECS", "2")],
+    );
+    assert_eq!(out.status.code(), Some(124), "{}", stderr_of(&out));
+    let err = stderr_of(&out);
+    assert!(
+        err.contains("RWV_GATE_TIMEOUT_SECS=2 reached while running: cargo check"),
+        "{err}"
+    );
+    let recorded = std::fs::read_to_string(&pids).expect("the stub ran");
+    for pid in recorded.split_whitespace() {
+        assert!(!process_is_alive(pid), "pid {pid} survived the cut-off");
+    }
+}
+
+#[test]
+fn a_bound_that_is_not_a_positive_whole_number_is_refused() {
+    let stub = stub_bin_dir();
+    let fixture = fixture_repo();
+    for bound in ["0", "-3", "soon", "1.5"] {
+        let out = run_ci_local(
+            fixture.path(),
+            stub.path(),
+            &["--stages=check"],
+            &[("RWV_GATE_TIMEOUT_SECS", bound)],
+        );
+        assert_eq!(out.status.code(), Some(1), "{bound:?}");
+        assert!(
+            stderr_of(&out).contains("RWV_GATE_TIMEOUT_SECS must be a positive whole number"),
+            "{bound:?}: {}",
+            stderr_of(&out)
+        );
+    }
+}
