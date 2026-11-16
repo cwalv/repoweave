@@ -71,6 +71,20 @@ fn identity(path: &Path) -> (u64, std::time::SystemTime) {
     (0, std::fs::metadata(path).unwrap().modified().unwrap())
 }
 
+/// `path`'s identity once its modification time is set well in the past, so
+/// that any rewrite after this, however soon, stamps a later one.
+fn backdated(path: &Path) -> (u64, std::time::SystemTime) {
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000),
+        )
+        .unwrap();
+    identity(path)
+}
+
 #[test]
 fn workspace_state_is_written_only_when_it_changes() {
     let w = weave(&[(OWNED, "owned")]);
@@ -85,9 +99,8 @@ fn workspace_state_is_written_only_when_it_changes() {
         state.exists(),
         "an aligning verb records what it aligned for"
     );
-    let first = identity(&state);
+    let first = backdated(&state);
 
-    std::thread::sleep(std::time::Duration::from_millis(30));
     rwv()
         .arg("update")
         .current_dir(&w.workspace)
@@ -101,7 +114,6 @@ fn workspace_state_is_written_only_when_it_changes() {
 
     common::git_in(project_dir(&w.workspace), &["switch", "-c", "other"]);
     common::record_feature(&project_dir(&w.workspace), "other", "main");
-    std::thread::sleep(std::time::Duration::from_millis(30));
     rwv()
         .arg("update")
         .current_dir(&w.workspace)

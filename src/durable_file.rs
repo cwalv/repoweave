@@ -1231,18 +1231,24 @@ mod tests {
     /// [`CLAIM_WAIT`], so the budget cannot shrink without this going red.
     const SLOW_HOST_SECTION: std::time::Duration = std::time::Duration::from_millis(550);
 
+    const QUEUED: u32 = 8;
+
     /// The last of eight queued holders waits out the seven sections ahead of
     /// it, so the budget has to cover the queue, not one holder.
     #[test]
-    fn every_holder_in_a_queue_of_slow_sections_gets_its_turn() {
+    fn the_budget_covers_a_queue_of_slow_sections() {
+        assert!(CLAIM_WAIT > SLOW_HOST_SECTION * (QUEUED - 1));
+    }
+
+    #[test]
+    fn every_holder_in_a_queue_gets_its_turn() {
         let tmp = crate::tempdir().unwrap();
         let path = tmp.path().join("f.lock");
         let refused: Vec<String> = std::thread::scope(|s| {
-            let handles: Vec<_> = (0..8)
+            let handles: Vec<_> = (0..QUEUED)
                 .map(|_| {
                     s.spawn(|| {
                         let held = claim(&path)?;
-                        std::thread::sleep(SLOW_HOST_SECTION);
                         held.release().map_err(ClaimError::Io)
                     })
                 })
@@ -1256,7 +1262,7 @@ mod tests {
         assert_eq!(
             refused,
             Vec::<String>::new(),
-            "a holder queued behind slow sections must wait its turn, not refuse"
+            "a holder queued behind others must wait its turn, not refuse"
         );
         assert!(!path.exists());
     }

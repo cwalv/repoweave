@@ -306,25 +306,16 @@ mod tests {
     /// Silent serialization is invisible to `tests/process/parallel_test.rs`: with
     /// the pool clamped to one worker every `-j` acceptance test there still
     /// passes, because the prefix, the lock and the aggregation depend on
-    /// `jobs > 1`, not on the workers existing. Wall time is the only
-    /// observable that separates them.
+    /// `jobs > 1`, not on the workers existing. Four tasks that each wait for
+    /// all four to have started pass only on four workers; serialized, the
+    /// first waits forever.
     #[test]
     fn run_in_parallel_actually_runs_in_parallel() {
-        // Run 4 tasks that each sleep 100ms with 4 workers. If serialized
-        // wall time would be ~400ms; under real parallelism it should be
-        // closer to ~100ms. Allow generous slack to avoid flakes on busy
-        // CI hosts but still catch "accidentally serialized" regressions.
-        let items = vec![100u64, 100, 100, 100];
-        let start = std::time::Instant::now();
-        let _out: Vec<()> = run_in_parallel(&items, 4, |_i, ms| {
-            std::thread::sleep(std::time::Duration::from_millis(*ms));
+        let items = vec![(); 4];
+        let started = std::sync::Barrier::new(items.len());
+        let _out: Vec<()> = run_in_parallel(&items, 4, |_i, _| {
+            started.wait();
         });
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed < std::time::Duration::from_millis(350),
-            "expected ~100ms under -j 4, got {:?} (looks serialized)",
-            elapsed
-        );
     }
 
     #[test]

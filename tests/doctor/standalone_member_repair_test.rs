@@ -170,11 +170,21 @@ fn tree_bytes(root: &Path) -> BTreeMap<PathBuf, (&'static str, u32, Vec<u8>)> {
     out
 }
 
-/// Let git rewrite the clone's index once its entries can no longer be
-/// racily clean, so the reads doctor makes have no reason to rewrite it and
-/// a byte comparison sees only what the repair did.
+/// Back-date every tracked file and let git rewrite the clone's index, so no
+/// entry is racily clean, the reads doctor makes have no reason to rewrite
+/// it, and a byte comparison sees only what the repair did.
 fn settle_index(clone: &Path) {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    for path in common::git_in(clone, &["ls-files"]).lines() {
+        let file = clone.join(path);
+        if file.is_file() {
+            std::fs::File::options()
+                .write(true)
+                .open(&file)
+                .and_then(|f| f.set_modified(past))
+                .unwrap_or_else(|e| panic!("cannot back-date {}: {e}", file.display()));
+        }
+    }
     common::git_in(clone, &["status", "--porcelain"]);
 }
 

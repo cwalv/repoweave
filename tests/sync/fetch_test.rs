@@ -412,7 +412,27 @@ fn fetch_refuses_arguments_that_belong_to_other_verbs() {
 #[cfg(feature = "test-pause")]
 mod claim {
     use super::*;
-    use std::time::{Duration, Instant};
+
+    const WAITING: &str = "claim-held";
+
+    /// Returns once `child`, tracing the points it passes to `trace`, has
+    /// passed `point`; panics with `ended` if it exits first.
+    fn once_traced(
+        child: &mut std::process::Child,
+        trace: &std::path::Path,
+        point: &str,
+        ended: &str,
+    ) {
+        loop {
+            if std::fs::read_to_string(trace).is_ok_and(|t| t.lines().any(|line| line == point)) {
+                return;
+            }
+            if let Some(status) = child.try_wait().unwrap() {
+                panic!("{ended} ({status})");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
 
     /// A fetch held under the object store's claim keeps a second fetch into
     /// the same store waiting, and the second goes on once the first lets go.
@@ -427,21 +447,21 @@ mod claim {
         let held = common::pause::Paused::spawn(first, "fetch-under-claim", &pause_dir)
             .expect("the first fetch is held under the claim");
 
+        let trace = weave.parent.join("second.trace");
         let mut second = common::rwv_std();
         second
             .args(["fetch", "--repo", MEMBER])
             .current_dir(&weave.primary)
+            .env("RWV_TEST_PAUSE_TRACE", &trace)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         let mut waiting = second.spawn().expect("the second fetch starts");
-        let deadline = Instant::now() + Duration::from_millis(1500);
-        while Instant::now() < deadline {
-            assert!(
-                waiting.try_wait().unwrap().is_none(),
-                "the second fetch ran to the end while the first held the store"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        once_traced(
+            &mut waiting,
+            &trace,
+            WAITING,
+            "the second fetch ended without waiting while the first held the store",
+        );
 
         let first_out = held.release();
         assert!(first_out.status.success());
@@ -462,21 +482,21 @@ mod claim {
         let held = common::pause::Paused::spawn(fetch, "fetch-under-claim", &pause_dir)
             .expect("the fetch is held under the claim");
 
+        let trace = weave.parent.join("prune.trace");
         let mut prune = common::rwv_std();
         prune
             .args(["backup", "prune"])
             .current_dir(&weave.primary)
+            .env("RWV_TEST_PAUSE_TRACE", &trace)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
         let mut waiting = prune.spawn().expect("the prune starts");
-        let deadline = Instant::now() + Duration::from_millis(1500);
-        while Instant::now() < deadline {
-            assert!(
-                waiting.try_wait().unwrap().is_none(),
-                "the prune ran to the end while the fetch held the store"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        once_traced(
+            &mut waiting,
+            &trace,
+            WAITING,
+            "the prune ended without waiting while the fetch held the store",
+        );
 
         let fetch_out = held.release();
         assert!(fetch_out.status.success());
@@ -502,16 +522,21 @@ mod claim {
         weave.member().join(".git/.rwv-fetch.lock")
     }
 
-    fn next_fetch(weave: &Weave, no_locks: bool) -> (std::process::Output, Duration) {
+    /// The next fetch's output, and whether it waited on a claim another held.
+    fn next_fetch(weave: &Weave, no_locks: bool) -> (std::process::Output, bool) {
+        let trace = weave.parent.join("next.trace");
+        let _ = std::fs::remove_file(&trace);
         let mut next = common::rwv_std();
         next.args(["fetch", "--repo", MEMBER])
-            .current_dir(&weave.primary);
+            .current_dir(&weave.primary)
+            .env("RWV_TEST_PAUSE_TRACE", &trace);
         if no_locks {
             next.env("RWV_TEST_WITHHOLD", NO_LOCKS);
         }
-        let started = Instant::now();
         let out = next.output().expect("rwv runs");
-        (out, started.elapsed())
+        let waited =
+            std::fs::read_to_string(&trace).is_ok_and(|t| t.lines().any(|line| line == WAITING));
+        (out, waited)
     }
 
     /// A fetch killed under the claim leaves its file, and the next fetch
@@ -522,14 +547,14 @@ mod claim {
         fetch_under_claim(&weave, false).kill();
         assert!(claim_file(&weave).exists(), "the kill leaves the claim");
 
-        let (out, took) = next_fetch(&weave, false);
+        let (out, waited) = next_fetch(&weave, false);
 
         assert!(
             out.status.success(),
             "{}",
             common::pause::describe("fetch", &out)
         );
-        assert!(took < Duration::from_secs(5), "waited {took:?}");
+        assert!(!waited, "the next fetch waited on a claim no one holds");
         assert!(!claim_file(&weave).exists());
     }
 
@@ -541,14 +566,14 @@ mod claim {
         fetch_under_claim(&weave, true).kill();
         assert!(claim_file(&weave).exists(), "the kill leaves the claim");
 
-        let (out, took) = next_fetch(&weave, true);
+        let (out, waited) = next_fetch(&weave, true);
 
         assert!(
             out.status.success(),
             "{}",
             common::pause::describe("fetch", &out)
         );
-        assert!(took < Duration::from_secs(5), "waited {took:?}");
+        assert!(!waited, "the next fetch waited on a claim no one holds");
         assert!(!claim_file(&weave).exists());
     }
 
@@ -623,13 +648,13 @@ mod claim {
         let said = common::cli::describe(&report);
         assert!(!said.contains("claim-holder-unreachable"), "{said}");
         assert!(claim_file(&weave).exists(), "{said}");
-        let (out, took) = next_fetch(&weave, false);
+        let (out, waited) = next_fetch(&weave, false);
         assert!(
             out.status.success(),
             "{}",
             common::pause::describe("fetch", &out)
         );
-        assert!(took < Duration::from_secs(5), "waited {took:?}");
+        assert!(!waited, "the next fetch waited on a claim no one holds");
         assert!(!claim_file(&weave).exists());
     }
 }

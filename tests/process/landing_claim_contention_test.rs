@@ -19,7 +19,8 @@
 //! - no two takers hold it at once;
 //! - every taker gets it: a claim left by a dead taker never outlasts a live
 //!   one waiting, which would wait out the budget and refuse;
-//! - every taker exits within a bound, so none deadlocks on a guard;
+//! - every taker exits, so none deadlocks on a guard (one that does hangs the
+//!   run, whose timeout reports it);
 //! - no takeover guard is left behind.
 
 use crate::common;
@@ -29,7 +30,7 @@ use repoweave::manifest::ProjectName;
 use repoweave::op_state::{self, OpId, OwnerRecord};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const TAKERS: usize = 8;
 const HOLD_CHECKS: usize = 40;
@@ -184,6 +185,7 @@ fn takers_contending_for_a_claim_never_remove_a_live_one_and_all_get_it() {
     let ops: Vec<OpId> = (0..TAKERS)
         .map(|i| format!("{}", 100 + i).parse().expect("op id"))
         .collect();
+    let trace_of = |i: usize| tmp.path().join(format!("taker-{i}.trace"));
     let mut children: Vec<_> = ops
         .iter()
         .enumerate()
@@ -194,6 +196,7 @@ fn takers_contending_for_a_claim_never_remove_a_live_one_and_all_get_it() {
             cmd.env(CHILD_OWNER, workspace(tmp.path(), &format!("taker-{i}")));
             cmd.env(CHILD_OP, op.as_str());
             cmd.env(CHILD_RESULTS, &results);
+            cmd.env("RWV_TEST_PAUSE_TRACE", trace_of(i));
             if i % 2 == 0 {
                 cmd.env(CHILD_DIES, "1");
             }
@@ -202,14 +205,26 @@ fn takers_contending_for_a_claim_never_remove_a_live_one_and_all_get_it() {
         })
         .collect();
 
-    let recorded = Instant::now() + Duration::from_secs(60);
-    while !(0..TAKERS)
-        .all(|i| OwnerRecord::path_in(&tmp.path().join(format!("taker-{i}"))).exists())
-    {
-        assert!(Instant::now() < recorded, "every taker records its op");
-        std::thread::sleep(Duration::from_millis(10));
+    let waiting_on = |i: usize, child: &mut std::process::Child| {
+        let waiting = cfg!(feature = "test-pause").then_some("landing-claim-held");
+        loop {
+            let recorded = OwnerRecord::path_in(&tmp.path().join(format!("taker-{i}"))).exists();
+            let waits = waiting.is_none_or(|point| {
+                std::fs::read_to_string(trace_of(i))
+                    .is_ok_and(|trace| trace.lines().any(|line| line == point))
+            });
+            if recorded && waits {
+                return;
+            }
+            if let Some(status) = child.try_wait().expect("a taker can be waited on") {
+                panic!("taker {i} exited ({status}) before it waited on the live claim");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    for (i, child) in children.iter_mut().enumerate() {
+        waiting_on(i, child);
     }
-    std::thread::sleep(Duration::from_millis(50));
     assert!(
         names_op(&project_dir, &holder_op),
         "no taker removed the live claim the test holds"
@@ -217,24 +232,8 @@ fn takers_contending_for_a_claim_never_remove_a_live_one_and_all_get_it() {
     held.release().expect("the test releases its claim");
     op_state::clear_owner(&holder_ws);
 
-    let bound = Instant::now() + Duration::from_secs(120);
-    for (i, child) in children.iter_mut().enumerate() {
-        loop {
-            if child
-                .try_wait()
-                .expect("a taker can be waited on")
-                .is_some()
-            {
-                break;
-            }
-            if Instant::now() >= bound {
-                for child in &mut children[i..] {
-                    let _ = child.kill();
-                }
-                panic!("taker {i} did not exit: a taker is stuck on the claim");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+    for child in &mut children {
+        child.wait().expect("a taker can be waited on");
     }
 
     let outcomes: Vec<(String, String)> = ops
