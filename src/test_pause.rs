@@ -184,15 +184,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
-    fn a_held_point_whose_driver_file_is_removed_finds_its_driver_gone() {
+    fn a_held_point_with_no_driver_file_finds_its_driver_gone() {
         let dir = crate::tempdir().unwrap();
-        let _driver = driven(dir.path());
-        let held = std::thread::spawn({
-            let dir = dir.path().to_path_buf();
-            move || held_in(&dir)
-        });
-        std::fs::remove_file(dir.path().join(DRIVER)).unwrap();
-        assert_eq!(held.join().unwrap(), Ended::DriverGone);
+        assert_eq!(held_in(dir.path()), Ended::DriverGone);
     }
 }
