@@ -1420,13 +1420,16 @@ fn refresh_paths_if_left(
                 ),
             });
         }
-        let own = GitVcs::run_trimmed(
+        let own = printed_path(GitVcs::run_trimmed(
             ["rev-parse", "--path-format=absolute", "--git-path", "index"],
             repo,
-        )?;
+        )?);
         let files_index = scratch.path("files");
         std::fs::copy(&own, &files_index).map_err(|e| VcsError::Io {
-            ctx: format!("failed to copy the index {own} to {files_index}"),
+            ctx: format!(
+                "failed to copy the index {} to {files_index}",
+                own.display()
+            ),
             source: e,
         })?;
         env.push(("GIT_INDEX_FILE", files_index));
@@ -4407,7 +4410,10 @@ impl Vcs for GitVcs {
             return None;
         };
         let recorded = std::fs::read_to_string(registration.join("gitdir")).ok()?;
-        let recorded = printed_path(recorded.trim()).parent()?.to_path_buf();
+        let recorded = registration
+            .join(printed_path(recorded.trim()))
+            .parent()?
+            .to_path_buf();
         (!same_location(&recorded, checkout)).then_some(recorded)
     }
 
@@ -4477,8 +4483,9 @@ impl Vcs for GitVcs {
             .flatten()
             .map(|r| r.path())
             .find(|registration| {
-                std::fs::read_to_string(registration.join("gitdir"))
-                    .is_ok_and(|named| same_location(Path::new(named.trim()), &link))
+                std::fs::read_to_string(registration.join("gitdir")).is_ok_and(|named| {
+                    same_location(&registration.join(printed_path(named.trim())), &link)
+                })
             }))
     }
 

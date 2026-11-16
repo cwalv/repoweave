@@ -106,6 +106,9 @@
 #
 #     echo $(( $(cargo test --no-run 2>&1 | grep -c '^ *Executable ') + 1 ))
 #
+# That total spans both jobs below: the scenario job's log holds one of those
+# lines, and the other job's log holds the rest.
+#
 # Ask CARGO rather than counting files. A `ls tests/*.rs` plus `ls src/bin/*.rs`
 # undercounts by one, because `src/main.rs` is a bin target that lives in
 # neither, and a `[[bin]]` section could add more that no directory listing
@@ -149,13 +152,25 @@
 # untouched. What it buys is that the red belongs to the whole suite rather
 # than to whichever target happened to run first.
 #
+# TWO JOBS, SPLIT BY ONE NAME
+#
+# The suite runs as two jobs on two runners at once, each under a cap of its
+# own: `scenario` runs the scenario binary alone, by that name, and `suite`
+# runs every other target. `suite` takes its target list from cargo
+# (`cargo metadata`, every test target but the one named `scenario`, plus the
+# lib, the bins and the doctests), never from a list written here, so a test
+# directory added later lands in `suite` without anyone hearing about it. The
+# one name written here is the one the other job runs; renaming that binary
+# would make `suite` run it as well, a slower run rather than a missing one.
+#
 # A dispatch may set `tests` to a space-separated list of targets and skip
-# the rest of the suite, to watch one fix without the full wall time. That
-# run is partial by design, so the counting method above — derive the total
-# from `cargo test --no-run`, compare it to the `test result:` lines — does
-# not apply to it; there is no complete-log total to compare against. The
-# "Run the test suite" step's first line of output says which shape it is:
-# the full suite, or the selection it restricted to.
+# the rest of the suite, to watch one fix without the full wall time. `suite`
+# then runs exactly that selection, `scenario` included if named, and the
+# scenario job is skipped. That run is partial by design, so the counting
+# method above — derive the total from `cargo test --no-run`, compare it to
+# the `test result:` lines — does not apply to it; there is no complete-log
+# total to compare against. The test step's first line of output says which
+# shape it is.
 name: Windows tests (advisory)
 
 on:
@@ -167,23 +182,24 @@ on:
         description: >-
           Space-separated test binaries to run instead of the full suite
           (e.g. "integrations weave", the directories under tests/; "lib"
-          runs the unit tests). Empty runs everything.
+          runs the unit tests), all in the suite job; the scenario job is
+          skipped. Empty runs everything across both jobs.
         required: false
         default: ""
 
 jobs:
-  windows-tests:
-    name: Test suite on Windows (advisory, not a gate)
+  suite:
+    name: Test suite on Windows but the scenario binary (advisory, not a gate)
     runs-on: windows-latest
-    # Wall time here is compile (steady, ~6m) plus every integration binary
-    # run to completion in sequence, and that second part grows with the
-    # suite and varies with runner speed. The cap is headroom over that,
-    # chosen over splitting the suite across jobs: a hand-partitioned binary
-    # list is the same frozen-enumeration trap the header above warns about
-    # for the `test result:` count — a tests/*.rs file added later would
-    # silently land outside every partition instead of just making the job
-    # run longer.
-    timeout-minutes: 120
+    # Measured on run 43911404494 (6c0898e0, debug, windows-latest): compile
+    # 3m, then lib 311s, docs 713s, doctor 1171s, integrations 534s,
+    # kill_matrix 2016s, process 147s, about 82 minutes. sync, weave, vcs
+    # and source never ran there; the Linux release job runs them in 232s,
+    # 153s, 9s and 14s, and the measured binaries ran 5x to 13x their Linux
+    # release time here, so they add 34 to 88 minutes. With 6 minutes of
+    # setup and compile that is 122 to 176 minutes; 270 is half again over
+    # the high end.
+    timeout-minutes: 270
 
     steps:
       - uses: actions/checkout@v6
@@ -201,7 +217,7 @@ jobs:
           git config --global user.email "ci@example.com"
           git config --global user.name "CI"
 
-      - name: Run the test suite
+      - name: Run the test suite but the scenario binary
         # Tests only. rustfmt, rustdoc and the explain-artifact drift check ask
         # questions whose answers do not vary by platform, and ci-checks.yml
         # already answers them on two.
@@ -237,18 +253,67 @@ jobs:
         env:
           TESTS: ${{ github.event.inputs.tests }}
         run: |
+          args=()
           if [ -z "${TESTS:-}" ]; then
-            echo "Full suite (no 'tests' input given)."
-            cargo test --locked --no-fail-fast --features test-pause
-          else
-            echo "Partial suite, restricted to: ${TESTS}"
-            args=()
-            for target in $TESTS; do
-              if [ "$target" = "lib" ]; then
-                args+=(--lib)
-              else
-                args+=(--test "$target")
-              fi
+            echo "Full suite but the scenario binary, which the scenario job runs."
+            mapfile -t others < <(cargo metadata --locked --no-deps --format-version 1 \
+              | jq -r '.packages[] | select(.name == "repoweave") | .targets[]
+                       | select(.kind == ["test"] and .name != "scenario") | .name' \
+              | tr -d '\r')
+            if [ "${#others[@]}" -eq 0 ]; then
+              echo "cargo metadata named no test target but scenario; refusing to run a suite of none" >&2
+              exit 1
+            fi
+            args=(--lib --bins)
+            for target in "${others[@]}"; do
+              args+=(--test "$target")
             done
-            cargo test --locked --no-fail-fast --features test-pause "${args[@]}"
+            status=0
+            cargo test --locked --no-fail-fast --features test-pause "${args[@]}" || status=$?
+            cargo test --locked --no-fail-fast --features test-pause --doc || status=$?
+            exit "$status"
           fi
+          echo "Partial suite, restricted to: ${TESTS}"
+          for target in $TESTS; do
+            if [ "$target" = "lib" ]; then
+              args+=(--lib)
+            else
+              args+=(--test "$target")
+            fi
+          done
+          cargo test --locked --no-fail-fast --features test-pause "${args[@]}"
+
+  scenario:
+    name: Scenario binary on Windows (advisory, not a gate)
+    if: ${{ !github.event.inputs.tests }}
+    runs-on: windows-latest
+    # 360 is GitHub's cap for a hosted job, and the estimate does not fit
+    # under it. On run 43911404494 this binary ran about 33 minutes before
+    # that run's cap and finished 61 of its 849 tests: about 32s a test at
+    # four threads, where the Linux release job takes 1740s for all 849
+    # (2.05s a test). At that rate the binary needs about 7.5 hours here; if
+    # its first tests are its slowest, less. A cancelled run of this job is
+    # that arithmetic coming true, not a hang.
+    timeout-minutes: 360
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust (pinned by rust-toolchain.toml)
+        run: rustup show
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install uv (required by uv-workspace e2e tests)
+        uses: astral-sh/setup-uv@v5
+
+      - name: Configure git identity (required by sync merge/rebase tests)
+        run: |
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+      - name: Run the scenario binary
+        shell: bash
+        run: |
+          echo "The scenario binary alone; the suite job runs every other target."
+          cargo test --locked --no-fail-fast --features test-pause --test scenario

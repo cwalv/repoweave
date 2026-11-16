@@ -65,6 +65,7 @@ fn is_owner_name(name: &str) -> bool {
 /// creation and the lock may have removed it, so the lock counts only on the
 /// file still standing.
 fn hold_owner(owner: &Path) -> std::io::Result<std::fs::File> {
+    let deadline = std::time::Instant::now() + crate::durable_file::CLAIM_WAIT;
     loop {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
@@ -72,7 +73,15 @@ fn hold_owner(owner: &Path) -> std::io::Result<std::fs::File> {
             .truncate(true)
             .open(owner)?;
         match liveness::try_hold(&file, owner) {
-            Hold::Taken if !liveness::is_current(&file, owner) => continue,
+            Hold::Taken if !liveness::is_current(&file, owner) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(std::io::Error::other(format!(
+                        "{} was replaced under its lock at every attempt for {}s",
+                        owner.display(),
+                        crate::durable_file::CLAIM_WAIT.as_secs()
+                    )));
+                }
+            }
             Hold::Busy => std::thread::sleep(crate::durable_file::CLAIM_POLL),
             Hold::Taken | Hold::Unavailable => {
                 std::io::Write::write_all(&mut file, liveness::holder_body().as_bytes())?;

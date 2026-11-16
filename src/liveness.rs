@@ -153,59 +153,128 @@ pub(crate) fn with_abandoned(path: &Path, then: impl FnOnce()) {
 /// Whether `file` is still what stands at `path`: a holder removes its file
 /// before it lets go of the lock, so a lock taken on the removed file holds
 /// nothing.
+///
+/// Where the filesystem names no file identity the lock counts. Exclusion
+/// then rests on the name: a filesystem that deletes a still-open file
+/// without reserving its name until the last handle closes (Windows' POSIX
+/// delete) is one that names identities, so on the rest no new file can
+/// stand at the name while the lock's handle is open.
 pub(crate) fn is_current(file: &File, path: &Path) -> bool {
-    match (identity(file), identity_at(path)) {
-        (Ok(held), Ok(at_path)) => held == at_path,
-        _ => false,
+    !matches!(
+        standing_of(identity(file), identity_at(path)),
+        Standing::Replaced
+    )
+}
+
+type Identity = (u64, u128);
+
+#[derive(Debug, PartialEq, Eq)]
+enum Standing {
+    Current,
+    Replaced,
+    Unidentified,
+}
+
+/// `Ok(None)` is a filesystem that names no identity; an error reading the
+/// path is a name that no longer opens to the held file.
+fn standing_of(
+    held: std::io::Result<Option<Identity>>,
+    at_path: std::io::Result<Option<Identity>>,
+) -> Standing {
+    match (held, at_path) {
+        (Err(_), _) | (_, Err(_)) => Standing::Replaced,
+        (Ok(Some(held)), Ok(Some(at_path))) if held == at_path => Standing::Current,
+        (Ok(Some(_)), Ok(Some(_))) => Standing::Replaced,
+        _ => Standing::Unidentified,
     }
 }
 
 #[cfg(unix)]
-fn identity(file: &File) -> std::io::Result<(u64, u128)> {
+fn identity(file: &File) -> std::io::Result<Option<Identity>> {
     use std::os::unix::fs::MetadataExt;
-    file.metadata().map(|m| (m.dev(), u128::from(m.ino())))
+    file.metadata()
+        .map(|m| Some((m.dev(), u128::from(m.ino()))))
 }
 
 #[cfg(unix)]
-fn identity_at(path: &Path) -> std::io::Result<(u64, u128)> {
+fn identity_at(path: &Path) -> std::io::Result<Option<Identity>> {
     use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path).map(|m| (m.dev(), u128::from(m.ino())))
+    std::fs::metadata(path).map(|m| Some((m.dev(), u128::from(m.ino()))))
 }
 
+/// The 128-bit id where the filesystem answers one, else the 64-bit file
+/// index, else none.
 #[cfg(windows)]
-fn identity(file: &File) -> std::io::Result<(u64, u128)> {
+fn identity(file: &File) -> std::io::Result<Option<Identity>> {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Storage::FileSystem::{
-        FileIdInfo, GetFileInformationByHandleEx, FILE_ID_INFO,
+        FileIdInfo, GetFileInformationByHandle, GetFileInformationByHandleEx,
+        BY_HANDLE_FILE_INFORMATION, FILE_ID_INFO,
     };
-    let mut info = FILE_ID_INFO::default();
-    // SAFETY: the handle is open for the call and `info` is as large as stated.
-    unsafe {
+    let handle = HANDLE(file.as_raw_handle());
+    let mut id = FILE_ID_INFO::default();
+    // SAFETY: the handle is open for the call and `id` is as large as stated.
+    if unsafe {
         GetFileInformationByHandleEx(
-            HANDLE(file.as_raw_handle()),
+            handle,
             FileIdInfo,
-            (&raw mut info).cast(),
+            (&raw mut id).cast(),
             std::mem::size_of::<FILE_ID_INFO>() as u32,
         )
     }
-    .map_err(crate::durable_file::win32_io_error)?;
-    Ok((
-        info.VolumeSerialNumber,
-        u128::from_ne_bytes(info.FileId.Identifier),
-    ))
+    .is_ok()
+    {
+        return Ok(Some((
+            id.VolumeSerialNumber,
+            u128::from_ne_bytes(id.FileId.Identifier),
+        )));
+    }
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // SAFETY: the handle is open for the call and `info` outlives it.
+    Ok(unsafe { GetFileInformationByHandle(handle, &mut info) }
+        .is_ok()
+        .then(|| {
+            (
+                u64::from(info.dwVolumeSerialNumber),
+                (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow),
+            )
+        }))
 }
 
 /// Stable Rust reads no file identity from a path on Windows, so the path is
 /// opened: a file deleted while still open refuses that, and reads as gone.
 #[cfg(windows)]
-fn identity_at(path: &Path) -> std::io::Result<(u64, u128)> {
+fn identity_at(path: &Path) -> std::io::Result<Option<Identity>> {
     identity(&File::open(path)?)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn identity(_file: &File) -> std::io::Result<Option<Identity>> {
+    Ok(None)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn identity_at(path: &Path) -> std::io::Result<Option<Identity>> {
+    std::fs::metadata(path).map(|_| None)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_lock_counts_unless_the_name_opens_to_another_file_or_to_none() {
+        let gone = || Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        let id = |n: u128| Ok(Some((1, n)));
+        assert_eq!(standing_of(id(7), id(7)), Standing::Current);
+        assert_eq!(standing_of(id(7), id(8)), Standing::Replaced);
+        assert_eq!(standing_of(id(7), gone()), Standing::Replaced);
+        assert_eq!(standing_of(gone(), id(7)), Standing::Replaced);
+        assert_eq!(standing_of(Ok(None), Ok(None)), Standing::Unidentified);
+        assert_eq!(standing_of(id(7), Ok(None)), Standing::Unidentified);
+        assert_eq!(standing_of(Ok(None), gone()), Standing::Replaced);
+    }
 
     #[cfg(unix)]
     fn dead_pid() -> u32 {

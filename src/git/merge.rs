@@ -6,6 +6,7 @@ use super::{
     derived_content_git_args, git_command, local_branch, lock_driver_held_args,
     nul_terminated_fields, GitVcs, Scratch,
 };
+use crate::path_spelling::native_relative;
 use crate::vcs::{
     BackupWitness, CommitId, DerivedContentPolicy, DerivedContentResolution, RawRefName, RefMerge,
     TreeId, TreeMerge, TreeMerges, VcsError,
@@ -145,7 +146,7 @@ impl GitVcs {
                 continue;
             }
             let content = Self::run_bytes(&["cat-file", "blob", blob], repo, &[])?;
-            let target = into.join(path);
+            let target = into.join(native_relative(path));
             let io = |e: std::io::Error| VcsError::Io {
                 ctx: format!("failed to write {}", target.display()),
                 source: e,

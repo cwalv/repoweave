@@ -1137,6 +1137,12 @@ pub fn write_local_crate_source(
 /// that does not run. A test whose hidden tool shares that directory fails
 /// loudly, by finding it.
 pub fn tool_only_bin(name: &str) -> PathBuf {
+    tool_only_bin_under(std::path::Path::new(env!("CARGO_TARGET_TMPDIR")), name)
+}
+
+/// [`tool_only_bin`] with its shim directory made under `root`, so a test that
+/// removes the link can own one no other test resolves.
+pub fn tool_only_bin_under(root: &std::path::Path, name: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let tool = which::which(name)
         .unwrap_or_else(|e| panic!("{name} must be resolvable to run these tests: {e}"));
@@ -1148,17 +1154,10 @@ pub fn tool_only_bin(name: &str) -> PathBuf {
     }
     let mut found = std::collections::hash_map::DefaultHasher::new();
     tool.hash(&mut found);
-    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"))
-        .join(format!("only-bin-{name}-{:016x}", found.finish()));
+    let dir = root.join(format!("only-bin-{name}-{:016x}", found.finish()));
     std::fs::create_dir_all(&dir).expect("shim bin directory should be creatable");
 
-    // The shim must carry the name a child's lookup resolves: Windows appends
-    // `.exe`, so a link named bare `git` is invisible there.
-    let link = dir.join(if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_string()
-    });
+    let link = dir.join(name);
     if link.symlink_metadata().is_err() {
         if let Err(e) =
             repoweave::symlink::create(&tool, &link, repoweave::symlink::LinkTarget::File)

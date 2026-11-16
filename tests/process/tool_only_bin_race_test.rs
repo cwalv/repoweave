@@ -17,8 +17,10 @@ use std::sync::Barrier;
 
 use crate::common;
 
-/// Barrier-paired first callers on a removed link, driven through the real
-/// `tool_only_bin`, both of which must come back usable. Reddens when the
+/// Barrier-paired first callers on a removed link, driven through
+/// `tool_only_bin`'s body under a root of this test's own, both of which must
+/// come back usable. Removing the shared link instead would take `git` from
+/// every test in the binary that put that directory on a child's `PATH`. Reddens when the
 /// losing caller panics on `AlreadyExists` instead of reusing the winner's
 /// link — that red arrives through the join's `resume_unwind`, not through
 /// the equality assertion, whose two sides are a pure function of the tool
@@ -32,7 +34,8 @@ use crate::common;
 /// evidence.
 #[test]
 fn concurrent_first_callers_share_the_link() {
-    let link = common::tool_only_bin("git").join("git");
+    let own = common::tempdir().expect("a shim root of this test's own");
+    let link = common::tool_only_bin_under(own.path(), "git").join("git");
     let barrier = Barrier::new(2);
     let mut overlapped = 0u32;
     for _ in 0..64 {
@@ -43,7 +46,7 @@ fn concurrent_first_callers_share_the_link() {
         let call = |base: std::time::Instant| {
             barrier.wait();
             let start = base.elapsed().as_nanos();
-            let dir = common::tool_only_bin("git");
+            let dir = common::tool_only_bin_under(own.path(), "git");
             (dir, start, base.elapsed().as_nanos())
         };
         let ((first, a0, a1), (second, b0, b1)) = std::thread::scope(|s| {

@@ -153,7 +153,13 @@ pub(crate) fn claim(path: &Path) -> Result<ClaimFile, ClaimError> {
                 _ => {}
             },
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) if held_open(&e) && std::time::Instant::now() < deadline => {}
+            Err(e) if held_open(&e) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(ClaimError::Io(e));
+                }
+                std::thread::sleep(CLAIM_POLL);
+                continue;
+            }
             Err(e) => return Err(ClaimError::Io(e)),
         }
         if std::time::Instant::now() >= deadline {
@@ -347,15 +353,21 @@ fn create_new_with(publisher: Publisher, path: &Path, bytes: &[u8]) -> Result<()
     let published = loop {
         let mut staged = staged_temp(path, bytes, publisher.lock).map_err(CreateNewError::Io)?;
         let tmp = staged.ready_to_publish();
-        let published = publisher.publish(tmp, path);
+        let published = loop {
+            match publisher.publish(tmp, path) {
+                Err(Published::Io(e))
+                    if held_open(&e) && std::time::Instant::now() < held_deadline =>
+                {
+                    std::thread::sleep(CLAIM_POLL)
+                }
+                published => break published,
+            }
+        };
         // The temp's role ends here whether or not the publish took.
         let _ = std::fs::remove_file(tmp);
         match published {
             Err(Published::Io(e)) if vanished(&e) => {
                 restage.again(path).map_err(CreateNewError::Io)?
-            }
-            Err(Published::Io(e)) if held_open(&e) && std::time::Instant::now() < held_deadline => {
-                std::thread::sleep(CLAIM_POLL)
             }
             published => break published,
         }

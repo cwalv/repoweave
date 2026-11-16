@@ -173,7 +173,10 @@ A short claim is a file at a published name (`.rwv-fetch.lock`,
 `create_new`, then locked; its holder removes it before it lets go of the
 lock, and a waiter that locked the removed file checks the path still names
 the file it locked (`is_current`: device and inode on unix, volume and file id
-on Windows) before it counts itself the holder. A file
+on Windows, or the file index where a volume names no 128-bit id) before it
+counts itself the holder. Where a filesystem names no identity at all the lock
+counts: such a filesystem reserves a deleted file's name until its last handle
+closes, so no new file stands at the name while the lock is held. A file
 left by a killed holder is locked by the next claimant, with no wait.
 
 **Scratch files a call makes in a git dir go through one owner.** Every
