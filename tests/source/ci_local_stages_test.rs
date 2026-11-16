@@ -1604,7 +1604,7 @@ fn a_hung_stage_is_cut_off_at_the_bound_and_nothing_survives() {
     let pids = stub.path().join("pids");
     common::write_executable(
         &stub.path().join("cargo"),
-        &format!(
+        format!(
             "#!/bin/sh\nsleep 600 &\nprintf '%s %s\\n' \"$$\" \"$!\" > '{}'\nwait\n",
             pids.display()
         ),
