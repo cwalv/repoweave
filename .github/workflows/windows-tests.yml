@@ -292,7 +292,7 @@ jobs:
     # that run's cap and finished 61 of its 849 tests: about 32s a test at
     # four threads, where the Linux release job takes 1740s for all 849
     # (2.05s a test). At that rate the binary needs about 7.5 hours here; if
-    # its first tests are its slowest, less. A cancelled run of this job is
+    # its first tests are its slowest, less. A canceled run of this job is
     # that arithmetic coming true, not a hang.
     timeout-minutes: 360
 
