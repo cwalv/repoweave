@@ -98,10 +98,10 @@ fn tally(started: &[String]) -> String {
 #[test]
 #[ignore = "an instrument: prints how many git each command starts"]
 fn git_started_per_command() {
-    assert!(
-        cfg!(feature = "test-pause"),
-        "rwv traces the git it starts only in a test-pause build"
-    );
+    if !cfg!(feature = "test-pause") {
+        eprintln!("rwv traces the git it starts only in a test-pause build: skipped");
+        return;
+    }
     let sb = two_workweaves();
     let commands: [(Place, &[&str]); 7] = [
         (ww("w1"), &["status"]),
