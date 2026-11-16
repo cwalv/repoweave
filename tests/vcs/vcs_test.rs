@@ -1532,14 +1532,26 @@ fn a_rebase_whose_todo_the_operator_edited_with_an_exec_ahead_maps_as_recorded()
     assert!(matches!(stopped, Err(VcsError::RebaseConflict { .. })));
     fs::write(p.join("shared"), "resolved\n").unwrap();
     common::git_in(p, &["add", "shared"]);
-    common::git_in_configured(
-        p,
-        &[(
-            "sequence.editor",
+    let edited = common::git()
+        .args(["rebase", "--edit-todo"])
+        .env(
+            "GIT_SEQUENCE_EDITOR",
             "f() { { echo 'exec true'; cat \"$1\"; } > \"$1.new\" && mv \"$1.new\" \"$1\"; }; f",
-        )],
-        &["rebase", "--edit-todo"],
+        )
+        .current_dir(p)
+        .output()
+        .unwrap();
+    assert!(edited.status.success(), "{edited:?}");
+    let todo = common::git_in(
+        p,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-path",
+            "rebase-merge/git-rebase-todo",
+        ],
     );
+    assert!(fs::read_to_string(todo).unwrap().starts_with("exec true\n"));
     common::git_in_configured(p, &[("core.editor", "true")], &["rebase", "--continue"]);
     let new = common::git_in(p, &["rev-parse", "HEAD"]);
     let replayed = git_vcs()
