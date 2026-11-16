@@ -4231,15 +4231,7 @@ impl Vcs for GitVcs {
         &self,
         repo: &Path,
         branch: &str,
-        kept: &crate::vcs::BackupWitness,
     ) -> Result<crate::vcs::Refusable<()>, VcsError> {
-        if kept.repo() != repo {
-            return Err(VcsError::StaleRefWitness {
-                repo: repo.to_path_buf(),
-                expected: format!("a backup of the edits in {}", repo.display()),
-                observed: format!("a backup in {}", kept.repo().display()),
-            });
-        }
         carry_edits::carry_edits_onto(repo, branch)
     }
 

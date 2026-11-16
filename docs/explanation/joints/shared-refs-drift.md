@@ -349,15 +349,12 @@ goes. Its first choice is to move that out of the way.
 
 `rwv doctor --fix --merge-edited-drift` hands the edits to git. It keeps
 the working copy and index as a backup, points the checkout's HEAD at the
-tip its files hold, so that only your edits differ from HEAD, records them
-with `git stash create`, which writes no stash entry, checks the branch out
-and has `git stash apply` merge them back onto it. Git merges each edit
-onto the moved tip as it merges a stash, and the checkout refreshes the
-move's other files. A file it does not resolve is left conflicted, both
-versions in it (`ours` is the moved tip, `theirs` your edit), for you to
-resolve and mark resolved; your stash list is untouched. A change staged
-for the next commit is refused first, writing nothing, since the merge
-would keep only the working copy's version of it. Git honors the moved tip's attributes: line endings,
+tip its files hold, so that only your edits differ from HEAD, and runs
+`git checkout -m` onto the branch. Git merges each edit onto the moved tip
+as it merges local changes on any checkout, and refreshes the move's other
+files with it. A file it does not resolve is left conflicted, both versions
+in it (`ours` is the moved tip, `theirs` your edit), for you to resolve and
+mark resolved. Git honors the moved tip's attributes: line endings,
 filters, `-merge`, `binary`, `merge=union`. A file declared derived takes
 the moved tip's content, and your edit to it stays in the backup. Links,
 modes, directories that replace files, and files the move renames are all

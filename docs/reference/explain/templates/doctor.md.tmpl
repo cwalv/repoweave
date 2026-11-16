@@ -69,9 +69,7 @@ rwv doctor [--all] [--locked] [--json] [--fix] [--abandon-lost-pins]
   the checkout's edits does. With it, the checkout's working copy and its record
   are kept as a backup (`rwv backup list`), its HEAD is pointed at the tip
   its files hold, and the VCS merges every edit onto the branch (for git,
-  `git stash create`, a plain `git checkout <branch>`, then `git stash
-  apply` of the edits, writing no stash entry), refreshing the move's other
-  files. A file the
+  `git checkout -m <branch>`), refreshing the move's other files. A file the
   merge does not resolve is left conflicted and refused as `edits`
   `unresolved` until it is resolved and marked resolved. A file declared
   derived takes the moved tip's content, the report naming it apart with the
