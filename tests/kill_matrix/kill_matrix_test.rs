@@ -78,11 +78,13 @@ enum Contention {
     Live,
 }
 
+#[derive(Clone, Copy)]
 struct Stop {
     exit: fn() -> Exit,
     fix: fn() -> Vec<Step>,
 }
 
+#[derive(Clone, Copy)]
 pub(super) struct Shape {
     pub id: &'static str,
     setup: fn() -> Vec<Step>,
@@ -1257,18 +1259,13 @@ fn left_by_the_kill(shape: &Shape, point: &str) -> &'static str {
 
 /// `rwv doctor --fix` in the primary of the shape's weave and in the
 /// bystander, twice over, each leaving every record, lease and landing claim
-/// as the held operation left them. A shape whose contender is held at a
-/// pause point, which waits a bounded time for its release, runs one round.
+/// as the held operation left them.
 fn doctors_elsewhere(shape: &Shape) -> Vec<Step> {
     let machine = weave_of(shape)
         .machine()
         .expect("a shape runs on a machine");
     let mut steps = Vec::new();
-    let rounds = match shape.contender {
-        Some(Contention::Live) => 1,
-        None => 2,
-    };
-    for _ in 0..rounds {
+    for _ in 0..2 {
         for at in [weave_of(shape), Place::ww(machine, BYSTANDER)] {
             steps.push(settled(
                 shape,
@@ -1309,12 +1306,15 @@ const BYSTANDER: &str = "bystander";
 
 fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) -> Vec<Step> {
     let mut steps = Vec::new();
-    match ending {
+    let released;
+    let shape = match ending {
         Ending::AbortAfterDoctorElsewhere | Ending::ContinueAfterDoctorElsewhere => {
             steps.extend((shape.setup)());
             steps.push(bystander(shape));
             steps.extend(holding(shape));
-            steps.push(Step::capture("before"));
+            if shape.contender.is_none() {
+                steps.push(Step::capture("before"));
+            }
             match &shape.stop {
                 Some(stop) => steps.push(run_of(shape, (stop.exit)(), shape.start)),
                 None => {
@@ -1326,11 +1326,23 @@ fn steps_of(shape: &Shape, phase: Phase, point: &'static str, ending: Ending) ->
                     steps.push(Step::kill("held"));
                 }
             }
+            released = Shape {
+                contender: None,
+                ..*shape
+            };
+            if shape.contender.is_some() {
+                steps.extend(contender_ends(shape));
+                steps.push(Step::capture("before"));
+            }
             steps.push(Step::capture_holds("held"));
-            steps.extend(doctors_elsewhere(shape));
+            steps.extend(doctors_elsewhere(&released));
+            &released
         }
-        _ => steps.extend(until_stopped(shape, phase, point)),
-    }
+        _ => {
+            steps.extend(until_stopped(shape, phase, point));
+            shape
+        }
+    };
     if already_ended(shape, point) {
         steps.extend(savepoints_outlive(shape));
         return steps;
