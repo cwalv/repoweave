@@ -450,7 +450,7 @@ pub fn describe_existing(dir: &Path) -> String {
 
 /// One home for the sentence, so every refusal that names an occupant names it
 /// the same way.
-fn occupant_sentence(requested: &Path, listed: Option<&ListedName>) -> String {
+pub(crate) fn occupant_sentence(requested: &Path, listed: Option<&ListedName>) -> String {
     let asked = requested.file_name().and_then(|n| n.to_str());
     match listed {
         Some(listed) if Some(listed.as_str()) != asked => format!(

@@ -142,7 +142,7 @@ suite passing.
 `tests/weave/case_equivalence_test.rs::workweave_reuse_refuses_to_adopt_a_case_twin_directory`.
 Its folding arm has not been executed anywhere before this document was
 written — run the suite against the mount and confirm it passes, folding
-arm, with output containing `different workweave, not this one` and `lists
+arm, with output containing `a different workweave's directory` and `lists
 it as`.
 
 **Target 4 — the clone materialization path.** No test in the tree exercises

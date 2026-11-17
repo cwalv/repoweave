@@ -1980,16 +1980,14 @@ pub fn create_workweave(request: CreateWorkweave<'_>) -> anyhow::Result<PathBuf>
         // folds case the lookup above answers for a directory spelled another
         // way, and the reuse below would adopt someone else's seat.
         if crate::workspace::diverged_occupant(&workweave_dir).is_some() {
-            return Err(name_taken(
+            return Err(occupied_by_another_workweave(
                 project,
                 name,
-                [format!(
-                    "{}, a different workweave's directory",
-                    crate::workspace::describe_existing(&workweave_dir)
-                )],
+                primary_root,
+                source_root,
+                crate::workspace::describe_existing(&workweave_dir),
+                recorded_name_at(primary_root, project, &workweave_dir)?.as_ref(),
             )
-            .bind("<project>", project)
-            .in_primary(primary_root, source_root)
             .judge(project_vcs.as_ref())
             .refused());
         }
@@ -2707,12 +2705,16 @@ fn reuse_existing_workweave(
         name,
         ..
     } = *request;
+    let recorded_as = recorded_name_at(primary_root, project, workweave_dir)?;
     let taken = |held_by: Vec<String>| {
-        name_taken(project, name, held_by)
-            .bind("<project>", project)
-            .in_primary(primary_root, source_root)
-            .judge(project_vcs().as_ref())
-            .refused()
+        deletable_as(
+            name_taken(project, name, held_by)
+                .bind("<project>", project)
+                .in_primary(primary_root, source_root),
+            recorded_as.as_ref(),
+        )
+        .judge(project_vcs().as_ref())
+        .refused()
     };
     let Some(marker) = WorkweaveMarker::read(workweave_dir)? else {
         return Err(taken(vec![format!(
@@ -2927,6 +2929,46 @@ fn name_taken(
         .subject(name)
         .by_verb("workweave create")
         .listing(held_by)
+}
+
+/// What a refusal over a directory some other workweave holds offers: deleting
+/// that workweave only where the project records it, under the name it
+/// records.
+fn occupied_by_another_workweave(
+    project: &ProjectName,
+    name: &WorkweaveName,
+    primary_root: &Path,
+    source_root: &Path,
+    occupant: String,
+    recorded_as: Option<&WorkweaveName>,
+) -> crate::diagnosis::Judging {
+    let judging = name_taken(
+        project,
+        name,
+        [format!("{occupant}, a different workweave's directory")],
+    )
+    .bind("<project>", project)
+    .in_primary(primary_root, source_root);
+    deletable_as(judging, recorded_as)
+}
+
+fn deletable_as(
+    judging: crate::diagnosis::Judging,
+    recorded_as: Option<&WorkweaveName>,
+) -> crate::diagnosis::Judging {
+    match recorded_as {
+        Some(recorded) => judging.bind("<ww>", recorded),
+        None => judging.without(&[crate::diagnosis::ChoiceId::C9]),
+    }
+}
+
+fn recorded_name_at(
+    primary_root: &Path,
+    project: &ProjectName,
+    dir: &Path,
+) -> anyhow::Result<Option<WorkweaveName>> {
+    Ok(workweave_index::read(primary_root, project)?
+        .and_then(|index| index.entry_at(dir).map(|(recorded, _)| recorded.clone())))
 }
 
 /// Return the relative paths within `workweave_dir` whose worktrees have
@@ -5565,5 +5607,57 @@ mod tests {
             "a parent that is not this workspace is a baseline in its own right, got \
              {baselines:?}"
         );
+    }
+
+    fn refusal_over_a_twin_spelling(recorded_as: Option<&str>) -> String {
+        let tmp = crate::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("web-app--Feat")).unwrap();
+        let listed = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| crate::workspace::ListedName::of(&entry))
+            .next()
+            .unwrap();
+        let occupant =
+            crate::workspace::occupant_sentence(&tmp.path().join("web-app--feat"), Some(&listed));
+        let recorded_as = recorded_as.map(|n| WorkweaveName::new(n).unwrap());
+        let judging = occupied_by_another_workweave(
+            &ProjectName::new("web-app").unwrap(),
+            &WorkweaveName::new("feat").unwrap(),
+            tmp.path(),
+            tmp.path(),
+            occupant,
+            recorded_as.as_ref(),
+        );
+        let mut report = crate::diagnosis::Report::default();
+        report.add(judging.judge(git_vcs().as_ref()));
+        report.render("workweave create")
+    }
+
+    #[test]
+    fn a_twin_spelling_refusal_says_whose_directory_it_is_and_what_the_filesystem_does() {
+        let text = refusal_over_a_twin_spelling(Some("Feat"));
+        assert!(
+            text.contains("the filesystem lists it as `web-app--Feat` and treats the two spellings as one name, a different workweave's directory"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_twin_spelling_refusal_offers_deleting_the_workweave_by_the_name_recorded() {
+        let text = refusal_over_a_twin_spelling(Some("Feat"));
+        assert!(
+            text.contains("rwv workweave delete Feat --project web-app"),
+            "{text}"
+        );
+        assert!(!text.contains("<ww>"), "{text}");
+    }
+
+    #[test]
+    fn a_twin_spelling_nothing_records_offers_no_delete_to_run() {
+        let text = refusal_over_a_twin_spelling(None);
+        assert!(!text.contains("workweave delete"), "{text}");
+        assert!(!text.contains("<ww>"), "{text}");
+        assert!(text.contains("use another name"), "{text}");
     }
 }

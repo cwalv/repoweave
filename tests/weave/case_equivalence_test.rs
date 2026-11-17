@@ -367,7 +367,7 @@ fn workweave_reuse_refuses_to_adopt_a_case_twin_directory() {
             "reuse must not adopt a directory listed under another spelling: {stderr}"
         );
         assert!(
-            stderr.contains("different workweave, not this one"),
+            stderr.contains("a different workweave's directory"),
             "the refusal must say why it would be wrong to proceed: {stderr}"
         );
         assert!(
