@@ -2100,7 +2100,7 @@ fn create_and_list_say_where_the_workweave_is() {
     assert_eq!(json["project"], "web-app");
     let only = &json["workweaves"][0];
     assert_eq!(only["name"], "where-am-i");
-    assert_eq!(only["path"], path.display().to_string());
+    assert_eq!(only["path"], repoweave::path_spelling::wire_path(path));
     assert!(
         only["branch"].as_str().is_some_and(|b| !b.is_empty()),
         "{json}"

@@ -502,7 +502,7 @@ impl Sandbox {
 
     /// `text` with each spelling of this sandbox's root replaced by
     /// [`ROOT_MASK`]: the path the suite happens to run under is no word a
-    /// claim can find or miss. [`Sandbox::rooted`] puts it back.
+    /// claim can find or miss.
     ///
     /// On Windows the root reaches output natively, `/`-separated (git, and
     /// `--json`'s wire paths) and with its separators doubled (a native path
@@ -524,10 +524,6 @@ impl Sandbox {
         } else {
             masked
         }
-    }
-
-    pub fn rooted(&self, text: &str) -> String {
-        text.replace(ROOT_MASK, self.root.to_string_lossy().as_ref())
     }
 
     pub fn place_root(&self, place: &Place) -> PathBuf {

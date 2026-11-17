@@ -62,7 +62,7 @@ fn fixture_with_lib_config(config: &[(&str, &str)]) -> Fixture {
 fn fixture_with_lib(init: &[&str], config: &[(&str, &str)]) -> Fixture {
     let tmp = common::tempdir().unwrap();
     let primary = tmp.path().join("primary");
-    let primary_lib = primary.join(LIB);
+    let primary_lib = common::under(&primary, LIB);
     init_repo_with(&primary_lib, init);
     for (key, value) in config {
         common::git_in(&primary_lib, &["config", key, value]);
@@ -96,7 +96,7 @@ fn fixture_with_lib(init: &[&str], config: &[(&str, &str)]) -> Fixture {
     let ww = tmp.path().join("ww");
     std::fs::create_dir_all(ww.join("github/acme")).unwrap();
     std::fs::create_dir_all(ww.join("projects")).unwrap();
-    let ww_lib = ww.join(LIB);
+    let ww_lib = common::under(&ww, LIB);
     common::git_in(
         &primary_lib,
         &[

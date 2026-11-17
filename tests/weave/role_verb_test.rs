@@ -276,7 +276,7 @@ fn role_changes_both_ways_in_a_workweave_and_stays_local() {
 fn a_change_to_reference_refuses_over_uncommitted_changes() {
     let tmp = common::tempdir().unwrap();
     let weave = make_weave(tmp.path());
-    let beta = weave.ws.join(&weave.beta);
+    let beta = common::under(&weave.ws, &weave.beta);
     std::fs::write(beta.join("src/lib.rs"), "pub fn edited() {}\n").unwrap();
     let manifest = std::fs::read(weave.project_dir(&weave.ws).join("rwv.toml")).unwrap();
 

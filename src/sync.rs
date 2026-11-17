@@ -2675,7 +2675,11 @@ struct Held {
 }
 
 fn in_submodule(held: impl std::fmt::Display, nested: &Path) -> String {
-    format!("{held} in submodule {}", crate::workspace::shown(nested))
+    let nested = crate::path_spelling::weave_relative(nested);
+    format!(
+        "{held} in submodule {}",
+        crate::workspace::shown(Path::new(&nested))
+    )
 }
 
 impl std::fmt::Display for Held {
@@ -13804,10 +13808,7 @@ mod tests {
             .expect_err("a submodule store with no checkout goes with the clone");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains(&format!(
-                "branch side in submodule {}",
-                Path::new(".git").join("modules").join("sub").display()
-            )),
+            msg.contains("branch side in submodule .git/modules/sub"),
             "{msg}"
         );
         assert!(store.exists());

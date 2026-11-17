@@ -1314,6 +1314,7 @@ struct Run<'a> {
     sandbox: &'a Sandbox,
     last_code: Option<i32>,
     last_rwv_output: String,
+    last_rwv_raw: String,
     /// Whether the step just performed ran a printed VCS action, which
     /// leaves the rwv output it was printed in to be read again.
     ran_printed_vcs_action: bool,
@@ -1361,6 +1362,7 @@ fn run_steps(sandbox: &Sandbox, name: &'static str, steps: impl Iterator<Item = 
         sandbox,
         last_code: None,
         last_rwv_output: String::new(),
+        last_rwv_raw: String::new(),
         ran_printed_vcs_action: false,
         marks: BTreeMap::new(),
         held: BTreeMap::new(),
@@ -1390,6 +1392,7 @@ fn run_steps(sandbox: &Sandbox, name: &'static str, steps: impl Iterator<Item = 
         let output = sandbox.unrooted(&printed);
         if step.action.runs_rwv() && !run.ran_printed_vcs_action {
             run.last_rwv_output = output.clone();
+            run.last_rwv_raw = printed.clone();
         }
         let after = scenario_invariants::snapshot(sandbox);
         for violation in scenario_invariants::check(sandbox, &before, &after, &step.allow) {
@@ -1687,24 +1690,29 @@ impl Run<'_> {
                 holding,
                 fill,
             } => {
-                let Some(line) =
-                    self.last_rwv_output
-                        .lines()
-                        .map(str::trim)
-                        .find_map(|line| match found {
-                            Printed::Exactly => (line == *prefix).then_some(line),
-                            Printed::Starting => {
-                                (line.starts_with(prefix) && line.contains(holding)).then_some(line)
-                            }
-                            Printed::Within => line
-                                .find(prefix)
-                                .map(|at| &line[at..])
-                                .filter(|command| command.contains(holding)),
-                            Printed::Quoted => line.split('`').skip(1).step_by(2).find(|quoted| {
+                let raw_lines: Vec<&str> = self.last_rwv_raw.lines().collect();
+                let Some(line) = self.last_rwv_output.lines().zip(raw_lines).find_map(
+                    |(masked, raw)| match found {
+                        Printed::Exactly => (masked.trim() == *prefix).then(|| raw.trim()),
+                        Printed::Starting => (masked.trim().starts_with(prefix)
+                            && masked.contains(holding))
+                        .then(|| raw.trim()),
+                        Printed::Within => masked
+                            .find(prefix)
+                            .filter(|at| masked[*at..].contains(holding))
+                            .and_then(|_| raw.find(prefix))
+                            .map(|at| &raw[at..]),
+                        Printed::Quoted => masked
+                            .split('`')
+                            .skip(1)
+                            .step_by(2)
+                            .zip(raw.split('`').skip(1).step_by(2))
+                            .find(|(quoted, _)| {
                                 quoted.starts_with(prefix) && quoted.contains(holding)
-                            }),
-                        })
-                else {
+                            })
+                            .map(|(_, raw)| raw),
+                    },
+                ) else {
                     return (
                         false,
                         format!(
@@ -1715,7 +1723,7 @@ impl Run<'_> {
                 };
                 let line = fill
                     .iter()
-                    .fold(sb.rooted(line), |line, (placeholder, value)| {
+                    .fold(line.to_owned(), |line, (placeholder, value)| {
                         line.replace(placeholder, value)
                     });
                 let mut words = line.split_whitespace();
@@ -1741,8 +1749,9 @@ impl Run<'_> {
                     let Some(line) = self
                         .last_rwv_output
                         .lines()
-                        .map(str::trim)
-                        .find(|line| line.starts_with(prefix))
+                        .zip(self.last_rwv_raw.lines())
+                        .find(|(masked, _)| masked.trim().starts_with(prefix))
+                        .map(|(_, raw)| raw.trim())
                     else {
                         return (
                             false,
@@ -1752,7 +1761,6 @@ impl Run<'_> {
                             ),
                         );
                     };
-                    let line = sb.rooted(line);
                     let mut words = line.split_whitespace();
                     let program = words.next();
                     let args: Vec<&str> = words.collect();
