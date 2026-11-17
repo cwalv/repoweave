@@ -12545,14 +12545,7 @@ fn ff_advance_repo(
     // catches that collision natively and re-mints it as a named refusal.
     let tracked = tracked_or_unreadable(vcs, target_repo);
     let mut edits = Report::default();
-    judge_edits_in(
-        vcs,
-        target_repo.display(),
-        target_repo,
-        tracked,
-        None,
-        &mut edits,
-    );
+    judge_edits_in(vcs, &label, target_repo, tracked, None, &mut edits);
     edits.into_result()?;
 
     // Check that target is an ancestor of cwd_tip (ff precondition).
@@ -13519,7 +13512,7 @@ mod tests {
         let primary = tmp.join("weave");
         std::fs::create_dir_all(primary.join("projects").join("web-app")).unwrap();
         std::fs::create_dir_all(primary.join("github/example")).unwrap();
-        let store = primary.join("github/example/server");
+        let store = primary.join("github").join("example").join("server");
         git(
             &primary,
             &["clone", origin.to_str().unwrap(), store.to_str().unwrap()],

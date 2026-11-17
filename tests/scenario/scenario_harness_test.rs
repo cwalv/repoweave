@@ -136,6 +136,17 @@ fn a_word_the_output_must_lack_may_stand_in_the_sandbox_path() {
 }
 
 #[test]
+fn a_path_below_the_mask_is_spelled_with_slashes_up_to_where_it_ends() {
+    let mask = sandbox::ROOT_MASK;
+    assert_eq!(
+        sandbox::slashed_below_the_mask(&format!(
+            "git -C {mask}\\a\\b log, \"{mask}\\\\c\\\\d\" {mask}\\e: x\\y"
+        )),
+        format!("git -C {mask}/a/b log, \"{mask}/c/d\" {mask}/e: x\\y")
+    );
+}
+
+#[test]
 fn a_word_the_output_must_hold_is_not_found_in_the_sandbox_path() {
     let report = run_under_a_dir_named(
         "quokka",
@@ -905,7 +916,9 @@ fn member_remove_delete_over_a_gitlink_no_gitmodules_describes() {
     .assert_fully_decided_green();
 }
 
+/// Unix only: Windows refuses a newline in a file name.
 #[test]
+#[cfg(unix)]
 fn member_remove_delete_over_a_gitlink_named_with_a_newline() {
     runner::run(scenarios::removal_over_a_gitlink_no_gitmodules_describes(
         scenarios::GitlinkRemovedBy::MemberRemoveDeleteNamedWithANewline,

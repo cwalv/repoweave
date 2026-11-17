@@ -503,8 +503,27 @@ impl Sandbox {
     /// `text` with each spelling of this sandbox's root replaced by
     /// [`ROOT_MASK`]: the path the suite happens to run under is no word a
     /// claim can find or miss. [`Sandbox::rooted`] puts it back.
+    ///
+    /// On Windows the root reaches output natively, `/`-separated (git, and
+    /// `--json`'s wire paths) and with its separators doubled (a native path
+    /// in JSON), and each path below the mask is given `/` separators, so a
+    /// claim spells a sandbox path one way on every platform.
     pub fn unrooted(&self, text: &str) -> String {
-        text.replace(self.root.to_string_lossy().as_ref(), ROOT_MASK)
+        let native = self.root.to_string_lossy();
+        let mut spellings = vec![
+            native.replace('\\', r"\\"),
+            native.to_string(),
+            native.replace('\\', "/"),
+        ];
+        spellings.dedup();
+        let masked = spellings.iter().fold(text.to_owned(), |text, spelling| {
+            text.replace(spelling.as_str(), ROOT_MASK)
+        });
+        if cfg!(windows) {
+            slashed_below_the_mask(&masked)
+        } else {
+            masked
+        }
     }
 
     pub fn rooted(&self, text: &str) -> String {
@@ -917,4 +936,21 @@ impl Drop for Unreachable<'_> {
             }
         }
     }
+}
+
+/// `masked` with every `\` or `\\` in the path that follows each [`ROOT_MASK`]
+/// written `/`, up to the first character no sandbox path holds.
+pub fn slashed_below_the_mask(masked: &str) -> String {
+    let mut out = String::with_capacity(masked.len());
+    let mut pieces = masked.split(ROOT_MASK);
+    out.push_str(pieces.next().unwrap_or_default());
+    for piece in pieces {
+        out.push_str(ROOT_MASK);
+        let end = piece
+            .find(|c: char| c.is_whitespace() || "\"'`,:;()[]{}<>".contains(c))
+            .unwrap_or(piece.len());
+        out.push_str(&piece[..end].replace(r"\\", "/").replace('\\', "/"));
+        out.push_str(&piece[end..]);
+    }
+    out
 }

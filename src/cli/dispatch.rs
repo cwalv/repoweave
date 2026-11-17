@@ -1247,7 +1247,12 @@ pub fn run() -> anyhow::Result<()> {
                             );
                         } else {
                             for workweave in &listed {
-                                outln!("{}\t{}", workweave.name, workweave.path.as_str());
+                                outln!(
+                                    "{}\t{}",
+                                    workweave.name,
+                                    crate::path_spelling::printed_path(workweave.path.as_str())
+                                        .display()
+                                );
                             }
                         }
                     }

@@ -2282,7 +2282,7 @@ fn a_set_back_checkout_whose_reflog_is_gone_is_exited_by_its_printed_choices() {
 fn a_set_back_checkout_with_a_left_index_lock_names_it_and_offers_no_choice_that_fails_on_it() {
     let f = fixture();
     set_back_by_a_killed_merge(&f);
-    let lock = PathBuf::from(common::git_in(
+    let lock = repoweave::path_spelling::printed_path(common::git_in(
         &f.ww_lib,
         &[
             "rev-parse",

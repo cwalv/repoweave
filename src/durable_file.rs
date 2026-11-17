@@ -275,9 +275,10 @@ fn rename_over(from: &Path, to: &Path) -> std::io::Result<()> {
 /// Whether `e` is a refusal that lasts only while another handle has the file
 /// open: Windows refuses to open, link, rename or delete a file another handle
 /// holds without sharing that access (`ERROR_SHARING_VIOLATION`), and refuses
-/// every open of a name whose file is deleted until its last handle closes
-/// (`ERROR_ACCESS_DENIED`). A released claim is removed while its holder and
-/// its waiters have it open; readers of rwv's state files take no claim, and
+/// every open of a name whose file is deleted, and every file created in a
+/// directory that is deleted, until its last handle closes
+/// (`ERROR_ACCESS_DENIED`). A released claim is removed, and with the last
+/// claim its directory, while its holder and its waiters have it open; readers of rwv's state files take no claim, and
 /// scanners and indexers open what rwv has just written. Each lets go in
 /// moments, so a call refused this way is retried rather than reported.
 /// Unix refuses none of these calls for an open handle.
@@ -837,20 +838,27 @@ fn staged_temp(
         .unwrap_or_else(|| "durable-file".to_owned());
     let serial = TMP_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let tmp_path = parent_of(path).join(temp_name(&file_name, serial));
+    let deadline = std::time::Instant::now() + CLAIM_WAIT;
+    loop {
+        match open_held(&tmp_path, lock) {
+            Err(e) if held_open(&e) && std::time::Instant::now() < deadline => {
+                std::thread::sleep(CLAIM_POLL)
+            }
+            Err(e) => return Err(e),
+            Ok(created) => break stage_into(created, &tmp_path, bytes),
+        }
+    }
+}
 
-    match (|| -> std::io::Result<std::fs::File> {
-        let mut f = open_held(&tmp_path, lock)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        Ok(f)
-    })() {
-        Ok(held) => Ok(Staged {
-            path: tmp_path,
-            held: Some(held),
+fn stage_into(mut f: std::fs::File, tmp_path: &Path, bytes: &[u8]) -> std::io::Result<Staged> {
+    match f.write_all(bytes).and_then(|()| f.sync_all()) {
+        Ok(()) => Ok(Staged {
+            path: tmp_path.to_path_buf(),
+            held: Some(f),
         }),
         Err(e) => {
             // Do not leave the temp behind for a later reader to trip over.
-            let _ = std::fs::remove_file(&tmp_path);
+            let _ = std::fs::remove_file(tmp_path);
             Err(e)
         }
     }

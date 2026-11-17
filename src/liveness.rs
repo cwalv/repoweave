@@ -79,7 +79,28 @@ fn host() -> String {
         .unwrap_or_default()
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn host() -> String {
+    use windows::core::PWSTR;
+    use windows::Win32::System::SystemInformation::{ComputerNameDnsHostname, GetComputerNameExW};
+    let mut len = 0u32;
+    // SAFETY: a null buffer with a length asks only for the length.
+    let _ = unsafe { GetComputerNameExW(ComputerNameDnsHostname, None, &mut len) };
+    let mut name = vec![0u16; len as usize];
+    // SAFETY: `name` holds `len` units and outlives the call.
+    match unsafe {
+        GetComputerNameExW(
+            ComputerNameDnsHostname,
+            Some(PWSTR(name.as_mut_ptr())),
+            &mut len,
+        )
+    } {
+        Ok(()) => String::from_utf16_lossy(&name[..len as usize]),
+        Err(_) => String::new(),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 fn host() -> String {
     String::new()
 }
@@ -105,7 +126,34 @@ pub(crate) fn holder_is_gone(body: &str) -> bool {
     })
 }
 
-#[cfg(not(unix))]
+/// `OpenProcess` refuses a pid no process holds with
+/// `ERROR_INVALID_PARAMETER`; one it opens has ended once its exit code is
+/// other than `STILL_ACTIVE`. Any other refusal (a process of another user)
+/// is a process that runs.
+#[cfg(windows)]
+pub(crate) fn holder_is_gone(body: &str) -> bool {
+    use windows::Win32::Foundation::{CloseHandle, ERROR_INVALID_PARAMETER, STILL_ACTIVE};
+    use windows::Win32::System::Threading::{
+        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    let Some(pid) = local_pid(body).and_then(|pid| u32::try_from(pid).ok()) else {
+        return false;
+    };
+    // SAFETY: OpenProcess takes no pointers; the handle it returns is closed below.
+    match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+        Err(e) => e.code() == ERROR_INVALID_PARAMETER.to_hresult(),
+        Ok(process) => {
+            let mut code = 0u32;
+            // SAFETY: `process` is open and `code` outlives the call.
+            let read = unsafe { GetExitCodeProcess(process, &mut code) };
+            // SAFETY: `process` was opened above and is closed once.
+            let _ = unsafe { CloseHandle(process) };
+            read.is_ok() && code != STILL_ACTIVE.0 as u32
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
 pub(crate) fn holder_is_gone(_body: &str) -> bool {
     false
 }

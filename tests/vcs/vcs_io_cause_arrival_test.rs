@@ -57,9 +57,11 @@ fn doctor_fix_names_the_io_cause_of_a_gitattributes_it_cannot_rewrite() {
         .output()
         .unwrap();
     let printed = common::cli::describe(&fix);
+    let cause = std::fs::read_to_string(root.join("projects/my-app/.gitattributes"))
+        .expect_err("a directory does not read as a file");
     assert!(
         printed.contains("failed to set up the lock merge driver")
-            && printed.contains(".gitattributes: Is a directory"),
+            && printed.contains(&format!(".gitattributes: {cause}")),
         "the operator got no cause for the failure:\n{printed}"
     );
 }
