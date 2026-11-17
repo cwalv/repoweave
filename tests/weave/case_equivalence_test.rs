@@ -545,6 +545,44 @@ fn a_confusable_sibling_warns_at_mint_and_is_still_created() {
 /// names are legal and nothing is broken — which is exactly when saying so is
 /// useful.
 ///
+/// The record's own namespace needs no disk, so the finding over two repository
+/// paths that differ only by case is reachable on every host.
+#[test]
+fn a_recorded_repo_path_pair_is_reported_by_doctor_on_every_host() {
+    let tmp = common::tempdir().unwrap();
+    let ws = make_weave(tmp.path());
+    rwv()
+        .args(["init", "chatly"])
+        .current_dir(&ws)
+        .assert()
+        .success();
+    std::fs::write(
+        ws.join("projects/chatly").join(Manifest::FILE_NAME),
+        r#"[repositories."github/acme/Server"]
+type = "git"
+url = "https://example.com/acme/Server.git"
+branch = "main"
+role = "owned"
+
+[repositories."github/acme/server"]
+type = "git"
+url = "https://example.com/acme/server.git"
+branch = "main"
+role = "owned"
+"#,
+    )
+    .unwrap();
+    let seeded = doctor_output(&ws);
+    assert!(
+        seeded.contains("`Server` and `server`"),
+        "doctor must name both spellings: {seeded}"
+    );
+    assert!(
+        seeded.contains("differ only by ASCII case"),
+        "doctor must say what the relation is: {seeded}"
+    );
+}
+
 /// Where it folds them the pair cannot reach `projects/` at all, so the
 /// namespace the lint still reaches is the record: repository paths sharing
 /// one parent, which the manifest holds and no filesystem gets a vote on. The

@@ -1597,11 +1597,8 @@ fn unresolved_conflicts_leave_the_drift_and_resolving_them_then_landing_again_la
     );
     assert_eq!(read(&f.ww_lib.join("notes.txt")).as_deref(), Some("two\n"));
 
-    let shown = common::git_in(&f.ww_lib, &["status"]);
-    assert!(
-        shown.contains("spare.txt") && shown.contains("git add"),
-        "{shown}"
-    );
+    let unmerged = common::git_in(&f.ww_lib, &["diff", "--name-only", "--diff-filter=U"]);
+    assert_eq!(unmerged.lines().collect::<Vec<_>>(), ["spare.txt"]);
     common::git_in(&f.ww_lib, &["add", "spare.txt"]);
     let out = common::cli::succeed(&["land"], &f.ww);
 
