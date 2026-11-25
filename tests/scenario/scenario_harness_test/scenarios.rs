@@ -11967,7 +11967,7 @@ pub fn member_change_choice_order() -> Scenario {
 
 /// `shared-checkout-detached`: the primary on `main` holds `docs`'s `main`;
 /// a workweave on `stable`, which declares `main` for `docs` too, leaves
-/// `docs` detached at its pin, stated as the `checkout` fact; a hotfix onto
+/// `docs` detached at its pin, which `status` does not report; a hotfix onto
 /// `stable` moving `main` fast-forwards the primary's clean checkout of it in
 /// place; then commits on the detached checkout take C14.
 fn stable_holding_docs_detached() -> Vec<Step> {
@@ -12002,10 +12002,8 @@ fn stable_holding_docs_detached() -> Vec<Step> {
         Step::git(&ww("st"), Repo::Docs, &["symbolic-ref", "-q", "HEAD"]).expect(Exit::Code(1)),
         Step::rwv(&ww("st"), &["status"])
             .expect(Exit::Succeeds)
-            .claim(Claim::OutputContains("checkout: main is checked out in"))
-            .claim(Claim::OutputContains(
-                "local/remotes/docs: alignment aligned",
-            )),
+            .claim(Claim::OutputLacks("checkout: main is checked out in"))
+            .claim(Claim::OutputLacks("alignment aligned")),
         Step::rwv(
             &a(),
             &[

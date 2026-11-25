@@ -534,7 +534,6 @@ pub enum State {
     TargetMemberChanges,
     TargetMovedMidOperation,
     PublishTargetUnpublished,
-    AlignmentAligned,
     AlignmentOnBranch,
     AlignmentOnBranchWithStrayCommits,
     AlignmentDetachedElsewhere,
@@ -580,7 +579,7 @@ pub struct StateRow {
 }
 
 impl State {
-    pub const ALL: [State; 90] = [
+    pub const ALL: [State; 89] = [
         Self::EditsDirty,
         Self::EditsDriftLeftInPlace,
         Self::EditsMovedAndEdited,
@@ -658,7 +657,6 @@ impl State {
         Self::TargetMemberChanges,
         Self::TargetMovedMidOperation,
         Self::PublishTargetUnpublished,
-        Self::AlignmentAligned,
         Self::AlignmentOnBranch,
         Self::AlignmentOnBranchWithStrayCommits,
         Self::AlignmentDetachedElsewhere,
@@ -1409,18 +1407,6 @@ impl State {
                              every verb that reads the record of a branch a merge of records \
                              put on one",
                 offers: &[Form::C12Feature, Form::C12Declared],
-                verb_offers: &[],
-            },
-            Self::AlignmentAligned => &StateRow {
-                axis: Axis::Alignment,
-                name: "aligned",
-                means: "the checkout is in its expected state; the state is printed only when \
-                        it carries a fact: `checkout`, the member's branch being checked out \
-                        in another workspace (named), so the member sits detached at its pin \
-                        and nothing moves it",
-                refused_by: "`rwv status` reports it with the fact; `rwv update` reports the \
-                             fact for each member it detaches",
-                offers: &[],
                 verb_offers: &[],
             },
             Self::AlignmentOnBranch => &StateRow {
@@ -5564,8 +5550,7 @@ mod tests {
                 State::PinWaived,
                 State::PublishRecordsRejected,
                 State::UnparseableProjectMalformed,
-                State::UnparseableProjectCommit,
-                State::AlignmentAligned
+                State::UnparseableProjectCommit
             ],
             "a state that offers nothing is a decision the table records, not an omission"
         );

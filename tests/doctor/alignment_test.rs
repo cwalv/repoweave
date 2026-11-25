@@ -236,6 +236,14 @@ fn a_member_checked_out_elsewhere_is_detached_at_its_pin_naming_where_and_its_br
             "github/o/dependency: checkout: main is checked out in",
         ));
 
+    let reported = rwv().arg("status").current_dir(&ww).assert().success();
+    let report = common::cli::describe(reported.get_output());
+    assert!(
+        !report.contains("alignment") && !report.contains("is checked out in"),
+        "a member detached at its pin because its branch is checked out elsewhere is aligned, \
+         and an aligned member is not reported:\n{report}"
+    );
+
     let worktree = ww.join(DEPENDENCY);
     assert_eq!(common::checkout_ref(&worktree), None);
     assert_eq!(common::git_in(&worktree, &["rev-parse", "HEAD"]), pin);

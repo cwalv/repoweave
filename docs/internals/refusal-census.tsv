@@ -32,7 +32,6 @@ src/add_remove.rs	unknown-registry	-	1
 src/add_remove.rs	unspellable-directory-name	tests/weave/adopt_unspellable_directory_name_test.rs	1
 src/add_remove.rs	unusable-creation-param	tests/docs/refusal_arrival_test.rs	10
 src/alignment.rs	(untokened:internal-invariant)	-	2
-src/alignment.rs	alignment aligned	-	1
 src/alignment.rs	alignment detached	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment detached with unpushed commits	tests/doctor/benign_staleness_test.rs	1
 src/alignment.rs	alignment on branch	tests/doctor/benign_staleness_test.rs	1

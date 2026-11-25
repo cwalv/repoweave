@@ -1593,7 +1593,7 @@ impl Aligner {
     }
 
     /// The lines `rwv status` reports for the member: its alignment, when it
-    /// is not aligned or carries a fact, and the pin state it was detached for.
+    /// is not aligned, and the pin state it was detached for.
     pub fn status_lines(
         &self,
         m: &Member<'_>,
@@ -1609,15 +1609,7 @@ impl Aligner {
             _ => Vec::new(),
         };
         let mut lines = Vec::new();
-        if self.is_aligned(m, &plan)? {
-            if !facts.is_empty() {
-                let mut judging = State::AlignmentAligned.of(repo).member().checkout(m.dir);
-                for fact in facts {
-                    judging = judging.fact(fact);
-                }
-                lines.push(judging.judge(m.vcs));
-            }
-        } else if !matches!(plan.target, Target::AsFound) {
+        if !self.is_aligned(m, &plan)? && !matches!(plan.target, Target::AsFound) {
             let off = self.standing_of(m, &plan)?;
             lines.push(self.judge_off(m, &off, repo, &facts));
         }
