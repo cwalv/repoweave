@@ -603,12 +603,26 @@ pub struct ActivateOptions {
     /// fitted alongside them. Every verb that runs hooks takes it as
     /// `--no-materialize`.
     pub no_materialize: bool,
+    /// The verb runs no install hooks on any run, so none is reported as
+    /// skipped.
+    pub hooks_never_run: bool,
+}
+
+/// Why an activation runs no install hooks, and whether the run says so.
+#[derive(Debug, Clone)]
+enum HookSkip {
+    Reported(SkipReason),
+    Unreported,
 }
 
 impl ActivateOptions {
-    /// Why this activation runs no install hooks, if it runs none.
-    fn skip_reason(self) -> Option<SkipReason> {
-        self.no_materialize.then_some(SkipReason::NoMaterialize)
+    fn skip_reason(self) -> Option<HookSkip> {
+        if self.hooks_never_run {
+            Some(HookSkip::Unreported)
+        } else {
+            self.no_materialize
+                .then_some(HookSkip::Reported(SkipReason::NoMaterialize))
+        }
     }
 }
 
@@ -709,7 +723,7 @@ pub fn strip_project_regions(
 fn activate_at(
     root: &Path,
     project: &ProjectName,
-    skip: Option<SkipReason>,
+    skip: Option<HookSkip>,
     mode: ActivationMode,
 ) -> anyhow::Result<Vec<SkippedEffect>> {
     activate_in_phases(root, project, skip, mode, &[]).map_err(ActivationFailure::into_error)
@@ -765,7 +779,7 @@ pub(crate) fn activate_intent_for(
 fn activate_in_phases(
     root: &Path,
     project: &ProjectName,
-    skip: Option<SkipReason>,
+    skip: Option<HookSkip>,
     mode: ActivationMode,
     departing: &[RepoPath],
 ) -> Result<Vec<SkippedEffect>, ActivationFailure> {
@@ -962,7 +976,7 @@ fn run_hooks(
     integrations: &[&dyn Integration],
     manifest: &Manifest,
     ctx_base: &IntegrationContextBase,
-    skip: Option<SkipReason>,
+    skip: Option<HookSkip>,
     mode: ActivationMode,
     noticed: &[String],
 ) -> anyhow::Result<Vec<SkippedEffect>> {
@@ -997,7 +1011,7 @@ fn run_hooks(
             eprintln!("[warning] core: surfacing: {notice}");
         }
     }
-    if let Some(reason) = skip {
+    if let Some(HookSkip::Reported(reason)) = skip {
         let hooks = SkippedEffect::install_hooks(reason);
         hooks.report();
         skipped.push(hooks);
@@ -1498,7 +1512,7 @@ fn workweave_intent(
     activate_in_phases(
         workweave_dir,
         project,
-        Some(SkipReason::InsideWorkweave),
+        Some(HookSkip::Reported(SkipReason::InsideWorkweave)),
         ActivationMode::Intent,
         departing,
     )

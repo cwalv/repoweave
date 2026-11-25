@@ -83,6 +83,7 @@ fn weave_with_gita_newly_enabled(root: &Path) -> PathBuf {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the managed files");

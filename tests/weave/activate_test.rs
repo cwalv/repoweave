@@ -870,6 +870,7 @@ fn activate_intent_from_a_workweave_checkout_authors_at_primary() {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation from a workweave checkout should succeed");

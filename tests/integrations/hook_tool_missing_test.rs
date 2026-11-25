@@ -82,6 +82,7 @@ fn weave(root: &Path, case: &Case) -> std::path::PathBuf {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation authors the integration's files");

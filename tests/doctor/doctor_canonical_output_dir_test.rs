@@ -337,6 +337,7 @@ fn doctor_in_a_workweave_names_the_canonical_path_for_an_absent_file() {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("primary intent activation should succeed");

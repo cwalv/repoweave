@@ -966,7 +966,10 @@ pub fn run() -> anyhow::Result<()> {
             // it is also the repair for one that does not hold a project name.
             let ctx = WorkspaceContext::resolve_unbound(origin_dir)?;
             let project = ProjectName::new(project)?;
-            let opts = activate::ActivateOptions { no_materialize };
+            let opts = activate::ActivateOptions {
+                no_materialize,
+                ..Default::default()
+            };
             if update {
                 activate::activate_aligning(&project, &ctx, opts)?;
             } else {
@@ -1026,7 +1029,10 @@ pub fn run() -> anyhow::Result<()> {
                 jobs,
                 output,
                 init_manifest,
-                activate::ActivateOptions { no_materialize },
+                activate::ActivateOptions {
+                    no_materialize,
+                    ..Default::default()
+                },
             )?;
         }
         Some(Commands::Init { project, provider }) => {
@@ -1049,7 +1055,10 @@ pub fn run() -> anyhow::Result<()> {
             let project_override = project.map(crate::manifest::ProjectName::new).transpose()?;
             let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
             refuse_symlinked_members_here(&ctx)?;
-            let opts = activate::ActivateOptions { no_materialize };
+            let opts = activate::ActivateOptions {
+                no_materialize,
+                ..Default::default()
+            };
             match action {
                 IntegrationAction::SetEnabled { name, enabled, .. } => {
                     crate::integration_settings::run_set_enabled(&name, enabled, &ctx, opts)?;
@@ -1074,7 +1083,10 @@ pub fn run() -> anyhow::Result<()> {
                 let project_override =
                     project.map(crate::manifest::ProjectName::new).transpose()?;
                 let ctx = resolve_project_scoped(origin_dir, project_override, binding)?;
-                let activation = activate::ActivateOptions { no_materialize };
+                let activation = activate::ActivateOptions {
+                    no_materialize,
+                    ..Default::default()
+                };
                 let settings = add_remove::NewMemberSettings {
                     role,
                     no_recurse_submodules,
@@ -1109,7 +1121,10 @@ pub fn run() -> anyhow::Result<()> {
                     add_remove::Removal::from_flags(delete, delete_shared_clone)?,
                     consent::DiscardUnpublishedConsent::from_flag(discard_unpublished),
                     &ctx,
-                    activate::ActivateOptions { no_materialize },
+                    activate::ActivateOptions {
+                        no_materialize,
+                        ..Default::default()
+                    },
                 )?;
             }
             MemberAction::SetRole {
@@ -1126,7 +1141,10 @@ pub fn run() -> anyhow::Result<()> {
                     &repo,
                     role,
                     &ctx,
-                    activate::ActivateOptions { no_materialize },
+                    activate::ActivateOptions {
+                        no_materialize,
+                        ..Default::default()
+                    },
                 )?;
             }
             MemberAction::Pin {
@@ -1168,7 +1186,10 @@ pub fn run() -> anyhow::Result<()> {
                         url: url.as_deref(),
                     },
                     &ctx,
-                    activate::ActivateOptions { no_materialize },
+                    activate::ActivateOptions {
+                        no_materialize,
+                        ..Default::default()
+                    },
                 )?;
             }
             MemberAction::SetUrl {
@@ -1185,7 +1206,10 @@ pub fn run() -> anyhow::Result<()> {
                     &repo,
                     &url,
                     &ctx,
-                    activate::ActivateOptions { no_materialize },
+                    activate::ActivateOptions {
+                        no_materialize,
+                        ..Default::default()
+                    },
                 )?;
             }
             MemberAction::SetRecurseSubmodules {
@@ -1202,7 +1226,10 @@ pub fn run() -> anyhow::Result<()> {
                     &repo,
                     crate::manifest::SubmoduleRecursion::from(recurse),
                     &ctx,
-                    activate::ActivateOptions { no_materialize },
+                    activate::ActivateOptions {
+                        no_materialize,
+                        ..Default::default()
+                    },
                 )?;
             }
         },
@@ -1351,7 +1378,10 @@ pub fn run() -> anyhow::Result<()> {
                                 at,
                                 entries: branch_entries(set_branch, set_new_branch, pin)?,
                                 placement: &placement,
-                                activation: activate::ActivateOptions { no_materialize },
+                                activation: activate::ActivateOptions {
+                                    no_materialize,
+                                    ..Default::default()
+                                },
                             });
                         let workweave_path = if hook_mode {
                             crate::workweave::hand_over_seat(created)?
@@ -1826,7 +1856,10 @@ pub fn run() -> anyhow::Result<()> {
                 &selection,
                 crate::parallel::resolve_jobs(jobs),
                 OutputMode::from_flag(json),
-                activate::ActivateOptions { no_materialize },
+                activate::ActivateOptions {
+                    no_materialize,
+                    ..Default::default()
+                },
                 if do_continue {
                     pull::Take::Continue
                 } else {
@@ -1868,7 +1901,10 @@ pub fn run() -> anyhow::Result<()> {
             };
             let jobs = crate::parallel::resolve_jobs(jobs);
             let output = OutputMode::from_flag(json);
-            let opts = activate::ActivateOptions { no_materialize };
+            let opts = activate::ActivateOptions {
+                no_materialize,
+                ..Default::default()
+            };
             if remote {
                 refuse_symlinked_members_here(&ctx)?;
                 let commit = commit.then(|| lock::CommitMessage::from_flag(message));

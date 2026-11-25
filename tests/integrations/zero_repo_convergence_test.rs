@@ -105,6 +105,7 @@ fn weave_with_one_member() -> Weave {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the managed files");

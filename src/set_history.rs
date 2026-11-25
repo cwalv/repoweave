@@ -125,7 +125,8 @@ pub fn run(ctx: &WorkspaceContext, request: SetHistory) -> anyhow::Result<()> {
         (was != now).then_some(&manifest),
         &[],
         crate::activate::ActivateOptions {
-            no_materialize: true,
+            hooks_never_run: true,
+            ..Default::default()
         },
     )?;
     let committed_was = crate::manifest_commit::committed_manifest(

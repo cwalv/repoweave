@@ -301,7 +301,8 @@ pub(crate) fn run(
         None,
         &[],
         crate::activate::ActivateOptions {
-            no_materialize: true,
+            hooks_never_run: true,
+            ..Default::default()
         },
     )?;
 

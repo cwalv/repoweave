@@ -236,6 +236,7 @@ fn fixture_impl(npm_in_lib: bool) -> Fixture {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("fixture: intent activation should succeed");

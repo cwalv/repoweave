@@ -1178,6 +1178,7 @@ mod generated_managed_split_and_trigger_model {
             &ctx,
             ActivateOptions {
                 no_materialize: true,
+                ..Default::default()
             },
         )
         .expect("intent-mode bootstrap should succeed");

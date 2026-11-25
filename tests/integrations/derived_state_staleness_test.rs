@@ -333,6 +333,7 @@ fn weave_with_a_producer(root: &Path) -> PathBuf {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the workspace manifest");
@@ -393,6 +394,7 @@ fn weave_with_a_path_dep(root: &Path) -> (PathBuf, PathBuf) {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the workspace manifest");
@@ -854,6 +856,7 @@ fn weave_with_a_build_script_producer(root: &Path) -> (PathBuf, PathBuf) {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the workspace manifest");

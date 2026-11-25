@@ -170,6 +170,7 @@ fn fixture(source_lock: Option<&str>) -> Fixture {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("primary intent activation should succeed");

@@ -1128,6 +1128,7 @@ role = "owned"
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent-mode activation should pre-author Cargo.toml in project dir");

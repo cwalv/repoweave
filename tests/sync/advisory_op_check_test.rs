@@ -103,6 +103,7 @@ fn weave_with_a_generator(root: &Path) -> PathBuf {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the workspace manifest");

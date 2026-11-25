@@ -155,6 +155,7 @@ fn make_project_source(tmp: &Path, name: &str, repos: &[(&str, &str)]) -> String
             &ctx,
             repoweave::activate::ActivateOptions {
                 no_materialize: true,
+                ..Default::default()
             },
         )
         .expect("staging intent-mode activation should author integration outputs");

@@ -93,6 +93,7 @@ fn weave(root: &Path) -> PathBuf {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author the managed files");
@@ -601,6 +602,7 @@ fn weave_with_cargo_config(root: &Path) -> PathBuf {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent activation should author .cargo/config.toml");

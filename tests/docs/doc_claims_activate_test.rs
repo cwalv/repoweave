@@ -298,6 +298,7 @@ fn activate_symlinks_cargo_toml_and_lock() {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent-mode activation should author Cargo.toml in project dir");
@@ -571,6 +572,7 @@ fn make_npm_workspace(ws_root: &Path, repo: &str) {
         &ctx,
         repoweave::activate::ActivateOptions {
             no_materialize: true,
+            ..Default::default()
         },
     )
     .expect("intent-mode activation should author package.json in project dir");

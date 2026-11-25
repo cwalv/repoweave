@@ -285,6 +285,30 @@ fn an_authoring_verb_inside_a_workweave_names_materialize() {
 }
 
 #[test]
+fn a_verb_that_never_runs_hooks_does_not_name_a_flag_nobody_passed() {
+    let weave = Weave::new();
+
+    let run = weave.ok_in(&weave.ws, &["branch", "set-history", "linear"]);
+    assert!(!weave.npm_ran(), "fixture: no hook ran:\n{}", run.report());
+    assert_says_nothing_skipped(&run);
+    assert!(
+        !run.report().contains("--no-materialize"),
+        "no flag was passed:\n{}",
+        run.report()
+    );
+
+    let run = weave.ok_in(
+        &weave.ws,
+        &["member", "add", &weave.member_url, "--no-materialize"],
+    );
+    assert!(
+        run.stderr.contains(NO_MATERIALIZE),
+        "control: a passed flag is still named:\n{}",
+        run.report()
+    );
+}
+
+#[test]
 fn an_authoring_verb_on_a_project_the_root_does_not_present_names_activate() {
     let weave = Weave::new();
     let other = weave.ws.join("projects/other");

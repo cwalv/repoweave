@@ -163,6 +163,7 @@ pub fn run_update_remote(
                 &record_selection,
                 crate::activate::ActivateOptions {
                     no_materialize: record.no_materialize,
+                    ..Default::default()
                 },
                 State {
                     flags: Flags::default().recorded(&record),
