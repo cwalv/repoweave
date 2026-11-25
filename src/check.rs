@@ -6505,6 +6505,10 @@ pub fn scan_state_hygiene(
     violations
 }
 
+fn unreadable_index_holder_opening(project: &ProjectName) -> String {
+    format!("the workweave index of project `{project}` cannot be read")
+}
+
 /// Release what the workspace at `gone`, which is not there and which no
 /// index records, holds in the weave at `primary`: every registration of a
 /// checkout under it, held or not, the lease each workspace holds for an
@@ -6710,9 +6714,10 @@ impl OpHolders {
             match crate::workweave_index::read(primary, &project) {
                 Err(e) => unknown.push(UnreadableHolder {
                     why: format!(
-                        "the workweave index of project `{project}` cannot be read ({}), so which \
+                        "{} ({}), so which \
                          workweaves it records is not known; until it is rebuilt, `rwv doctor \
                          --fix` judges no savepoint that no readable operation record claims",
+                        unreadable_index_holder_opening(&project),
                         crate::refusal::kind_of(&e)
                             .map_or_else(|| format!("{e:#}"), |kind| kind.token().to_string())
                     ),
@@ -10090,6 +10095,13 @@ fn apply_finding_repairs(
         )
     });
 
+    let unreadable_indexes: Vec<ProjectName> = violations
+        .iter()
+        .filter_map(|v| match v {
+            CheckViolation::UnreadableWorkweaveIndex { project, .. } => Some(project.clone()),
+            _ => None,
+        })
+        .collect();
     let mut kept = Vec::with_capacity(violations.len() + registrations.len());
     for v in registrations {
         let CheckViolation::StaleWorktreeRegistration {
@@ -10586,6 +10598,24 @@ fn apply_finding_repairs(
             kept.push(v);
         }
     }
+    let unrepaired_indexes: Vec<&ProjectName> = kept
+        .iter()
+        .filter_map(|v| match v {
+            CheckViolation::UnreadableWorkweaveIndex { project, .. } => Some(project),
+            _ => None,
+        })
+        .collect();
+    let rebuilt_indexes: Vec<String> = unreadable_indexes
+        .iter()
+        .filter(|project| !unrepaired_indexes.contains(project))
+        .map(unreadable_index_holder_opening)
+        .collect();
+    kept.retain(|v| match v {
+        CheckViolation::UnreadableHolder { why, .. } => !rebuilt_indexes
+            .iter()
+            .any(|opening| why.starts_with(opening.as_str())),
+        _ => true,
+    });
     kept
 }
 

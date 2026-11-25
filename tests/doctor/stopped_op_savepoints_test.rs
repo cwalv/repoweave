@@ -333,22 +333,30 @@ fn each_unreadable_holder_keeps_unclaimed_savepoints_and_prints_the_line_that_en
         );
 
         let text = String::from_utf8_lossy(&fixed.stdout).into_owned();
-        let at = text
-            .find("[warning: unreadable-holder]")
-            .unwrap_or_else(|| panic!("{reason:?}: no unreadable-holder in:\n{text}"));
-        let line = text[at..]
-            .lines()
-            .nth(1)
-            .map(str::trim)
-            .filter(|line| line.starts_with("rwv "))
-            .unwrap_or_else(|| panic!("{reason:?}: no line under the finding:\n{text}"))
-            .to_owned();
-        let ran = common::run_advised(&line, &stopped.primary.root);
-        assert!(
-            ran.status.success(),
-            "{reason:?}: {line}\n{}",
-            common::cli::describe(&ran)
-        );
+        if matches!(reason, Unreadable::IndexDoesNotParse) {
+            assert!(
+                text.contains("unreadable-workweave-index of project")
+                    && !text.contains("unreadable-holder"),
+                "{reason:?}: the run rebuilt the index, so it names no unreadable holder:\n{text}"
+            );
+        } else {
+            let at = text
+                .find("[warning: unreadable-holder]")
+                .unwrap_or_else(|| panic!("{reason:?}: no unreadable-holder in:\n{text}"));
+            let line = text[at..]
+                .lines()
+                .nth(1)
+                .map(str::trim)
+                .filter(|line| line.starts_with("rwv "))
+                .unwrap_or_else(|| panic!("{reason:?}: no line under the finding:\n{text}"))
+                .to_owned();
+            let ran = common::run_advised(&line, &stopped.primary.root);
+            assert!(
+                ran.status.success(),
+                "{reason:?}: {line}\n{}",
+                common::cli::describe(&ran)
+            );
+        }
 
         let judged = rwv(&stopped.primary.root, &["doctor", "--fix"]);
         let report = common::cli::describe(&judged);
