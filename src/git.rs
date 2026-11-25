@@ -6932,9 +6932,10 @@ enum WorktreeFiles {
 }
 
 /// The oldest release every operation of this backend runs on, outside the
-/// capabilities it detects. `merge-tree --write-tree`, which computes a merge
-/// as a tree, arrived in 2.38.
-const MINIMUM_RELEASE: (u32, u32) = (2, 40);
+/// capabilities it detects. A merge as a tree reads attributes from a commit
+/// with `--attr-source`, which arrived in 2.41; `merge-tree` given it crashes
+/// before 2.43.
+const MINIMUM_RELEASE: (u32, u32) = (2, 43);
 
 /// What `git version` answered, read once per process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -11684,7 +11685,13 @@ mod floor_tests {
                 installed: "1.99.0".to_owned()
             }
         );
-        assert_eq!(readiness("git version 2.40.0\n"), ToolReadiness::Ready);
+        assert_eq!(
+            readiness("git version 2.42.4\n"),
+            ToolReadiness::TooOld {
+                installed: "2.42.4".to_owned()
+            }
+        );
+        assert_eq!(readiness("git version 2.43.0\n"), ToolReadiness::Ready);
         assert_eq!(
             readiness("git version 2.45.2 (Apple Git-154)\n"),
             ToolReadiness::Ready
@@ -11701,9 +11708,9 @@ mod floor_tests {
             }
         );
         assert_eq!(
-            readiness_of(&reading_of(false, "git version 2.40.0\n", "broken")),
+            readiness_of(&reading_of(false, "git version 2.43.0\n", "broken")),
             ToolReadiness::Unreadable {
-                reported: "git version 2.40.0\nbroken".to_owned()
+                reported: "git version 2.43.0\nbroken".to_owned()
             }
         );
     }

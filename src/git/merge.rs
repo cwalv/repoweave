@@ -4,14 +4,13 @@
 use super::records::{commit_id, failed, FALLBACK_IDENTITY};
 use super::{
     derived_content_git_args, git_command, local_branch, lock_driver_held_args,
-    nul_terminated_fields, GitVcs, Scratch,
+    nul_terminated_fields, GitVcs,
 };
-use crate::path_spelling::native_relative;
 use crate::vcs::{
     BackupWitness, CommitId, DerivedContentPolicy, DerivedContentResolution, RawRefName, RefMerge,
     TreeId, TreeMerge, TreeMerges, VcsError,
 };
-use std::path::{Component, Path};
+use std::path::Path;
 
 impl TreeMerges for GitVcs {
     fn merge_tree(
@@ -56,30 +55,18 @@ impl GitVcs {
     ) -> Result<TreeMerge, VcsError> {
         let mut args = vec!["merge-tree", "--write-tree", "--name-only", "-z"];
         args.extend([first.as_str(), second.as_str()]);
-        let mut command = git_command();
-        let _scratch;
-        let held = match resolving {
-            Some((derived, attributes_from)) => {
-                let scratch = Scratch::take(repo)?;
-                let attributes = scratch.path("attributes");
-                Self::write_attributes_of(repo, attributes_from, Path::new(&attributes))?;
-                let git_dir = Self::run_trimmed(["rev-parse", "--absolute-git-dir"], repo)?;
-                command
-                    .current_dir(&attributes)
-                    .env("GIT_DIR", &git_dir)
-                    .env("GIT_WORK_TREE", &attributes)
-                    .env("GIT_INDEX_FILE", &scratch.path("attributes-index"));
-                _scratch = scratch;
-                derived_content_git_args(derived)
-            }
-            None => {
-                command.current_dir(repo);
-                lock_driver_held_args().to_vec()
-            }
+        let (held, attributes_from) = match resolving {
+            Some((derived, attributes_from)) => (
+                derived_content_git_args(derived),
+                Some(format!("--attr-source={}", attributes_from.as_str())),
+            ),
+            None => (lock_driver_held_args().to_vec(), None),
         };
-        let output = command
+        let output = git_command()
+            .args(attributes_from)
             .args(held)
             .args(&args)
+            .current_dir(repo)
             .output()
             .map_err(|e| VcsError::Io {
                 ctx: format!("failed to spawn git {args:?}"),
@@ -113,50 +100,6 @@ impl GitVcs {
             tree: TreeId::from_object_name(&tree),
             paths,
         })
-    }
-
-    /// Writes every `.gitattributes` `commit` holds under `into`, at its own
-    /// path, so a git reading attributes from a work tree reads `commit`'s.
-    /// A path that would leave `into` is not written.
-    fn write_attributes_of(repo: &Path, commit: &CommitId, into: &Path) -> Result<(), VcsError> {
-        let args = ["ls-tree", "-r", "-z", commit.as_str()];
-        let listing = Self::run_bytes(&args, repo, &[])?;
-        std::fs::create_dir_all(into).map_err(|e| VcsError::Io {
-            ctx: format!("failed to create {}", into.display()),
-            source: e,
-        })?;
-        for record in listing.split(|byte| *byte == 0) {
-            let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
-                continue;
-            };
-            let (entry, path) = (&record[..tab], &record[tab + 1..]);
-            if path != b".gitattributes" && !path.ends_with(b"/.gitattributes") {
-                continue;
-            }
-            let entry = String::from_utf8_lossy(entry);
-            let [_, "blob", blob] = entry.split(' ').collect::<Vec<_>>()[..] else {
-                continue;
-            };
-            let path = std::str::from_utf8(path)
-                .map_err(|_| failed(&args, repo, "git output not valid UTF-8".to_owned()))?;
-            if !Path::new(path)
-                .components()
-                .all(|part| matches!(part, Component::Normal(_)))
-            {
-                continue;
-            }
-            let content = Self::run_bytes(&["cat-file", "blob", blob], repo, &[])?;
-            let target = into.join(native_relative(path));
-            let io = |e: std::io::Error| VcsError::Io {
-                ctx: format!("failed to write {}", target.display()),
-                source: e,
-            };
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(io)?;
-            }
-            std::fs::write(&target, content).map_err(io)?;
-        }
-        Ok(())
     }
 
     pub(super) fn begin_checkout_merge(

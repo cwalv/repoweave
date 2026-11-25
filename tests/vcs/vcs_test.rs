@@ -1224,29 +1224,18 @@ fn a_merge_as_refs_reads_attributes_from_the_kept_commit_even_when_it_holds_none
 }
 
 #[test]
-fn a_merge_as_refs_writes_no_attributes_outside_the_repository_for_a_tree_naming_a_parent() {
-    let (dir, bare, [main, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
-    let attributes = common::git_in(&bare, &["rev-parse", "main:.gitattributes"]);
-    let mut parents = mktree(
-        &bare,
-        &format!("100644 blob {attributes}\t.gitattributes\n"),
-    );
-    for _ in 0..3 {
-        parents = mktree(&bare, &format!("040000 tree {parents}\t..\n"));
-    }
-    let listing = format!(
-        "{}\n040000 tree {parents}\tnested\n",
-        common::git_in(&bare, &["ls-tree", main.as_str()])
-    );
-    let tree = mktree(&bare, &listing);
-    let held = repoweave::vcs::CommitId::parse(&common::git_in(
-        &bare,
-        &["commit-tree", &tree, "-p", main.as_str(), "-m", "parents"],
-    ))
-    .unwrap();
+fn a_merge_as_refs_in_a_checkout_reads_attributes_from_the_kept_commit_not_its_files() {
+    let (dir, _bare, [_, feat]) = diverged_in_a_bare_repo_declaring_a_derived_path();
+    let work = dir.path().join("work");
+    let declared = fs::read_to_string(work.join(".gitattributes")).unwrap();
+    common::git_in(&work, &["rm", "-q", ".gitattributes"]);
+    common::git_in(&work, &["commit", "-qm", "undeclared"]);
+    fs::write(work.join(".gitattributes"), declared).unwrap();
+    let held =
+        repoweave::vcs::CommitId::parse(&common::git_in(&work, &["rev-parse", "HEAD"])).unwrap();
     let merged = git_vcs()
         .merge_as_refs(
-            &bare,
+            &work,
             &held,
             &feat,
             "merge",
@@ -1254,25 +1243,12 @@ fn a_merge_as_refs_writes_no_attributes_outside_the_repository_for_a_tree_naming
             &feat,
         )
         .unwrap();
-    let repoweave::vcs::RefMerge::Merged(commit) = merged else {
-        panic!("a declared derived path conflicts: {merged:?}");
-    };
     assert_eq!(
-        common::git_in(&bare, &["show", &format!("{}:DERIVED", commit.as_str())]),
-        "feat"
-    );
-    let mut written = Vec::new();
-    let mut pending = vec![dir.path().to_path_buf()];
-    while let Some(at) = pending.pop() {
-        for entry in fs::read_dir(&at).unwrap().flatten() {
-            if entry.file_type().unwrap().is_dir() {
-                pending.push(entry.path());
-            } else if entry.file_name() == ".gitattributes" {
-                written.push(entry.path());
-            }
+        merged,
+        repoweave::vcs::RefMerge::Conflicted {
+            paths: vec!["DERIVED".to_owned()]
         }
-    }
-    assert_eq!(written, vec![dir.path().join("work/.gitattributes")]);
+    );
 }
 
 #[test]

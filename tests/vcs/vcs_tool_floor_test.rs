@@ -15,7 +15,7 @@ use repoweave::refusal::RefusalKind;
 
 use crate::common;
 
-const FLOOR: &str = "2.40";
+const FLOOR: &str = "2.43";
 
 struct StandIn {
     _dir: tempfile::TempDir,
@@ -93,7 +93,7 @@ fn weave() -> tempfile::TempDir {
 
 #[test]
 fn a_git_below_the_floor_refuses_before_anything_is_read_or_written() {
-    let old = stand_in("echo 'git version 2.35.9'");
+    let old = stand_in("echo 'git version 2.42.0'");
     let ws = weave();
     let before = entries(ws.path());
 
@@ -101,7 +101,7 @@ fn a_git_below_the_floor_refuses_before_anything_is_read_or_written() {
         let out = rwv_with_path(&old.bin, args, ws.path());
         let stderr = common::cli::refused(&out, RefusalKind::UnsupportedVcsTool);
         assert!(
-            stderr.contains(&format!("needs git {FLOOR} or newer")) && stderr.contains("2.35.9"),
+            stderr.contains(&format!("needs git {FLOOR} or newer")) && stderr.contains("2.42.0"),
             "`rwv {}` names neither the floor nor the release found:\n{stderr}",
             args.join(" ")
         );
@@ -121,7 +121,7 @@ fn a_git_below_the_floor_refuses_before_anything_is_read_or_written() {
 
 #[test]
 fn a_git_at_the_floor_is_accepted() {
-    let at = stand_in("[ \"$1\" = version ] && echo 'git version 2.40.0' || exit 1");
+    let at = stand_in("[ \"$1\" = version ] && echo 'git version 2.43.0' || exit 1");
     let ws = weave();
 
     let out = rwv_with_path(&at.bin, &["init", "demo"], ws.path());

@@ -33,22 +33,18 @@ naming no release, and with `missing-vcs-tool` where no `git` can be started.
 Every detected capability answers from the same reading, so the check costs
 the one spawn the first capability question would have made.
 
-## Why 2.40
+## Why 2.43
 
-`merge-tree --write-tree`, which every merge the backend computes as refs
-(`merge_commit_as_refs` in `src/git/merge.rs`) runs on, arrived in 2.38; the
-merge in a scratch worktree that older gits needed is gone, and a floor that
-kept it would carry a path the suite no longer reaches. Nothing the backend
-runs needs 2.39 or 2.40; the floor has not been measured at 2.38.
-
-A merge as refs under a derived-content policy reads attributes as of the
-commit it keeps, not from any checkout's files. Git's `--attr-source` does
-that only from 2.41, and `merge-tree` given it crashes before 2.43, so the
-backend does not use it on any release: it writes that commit's
-`.gitattributes` files into a scratch directory in the git dir and runs
-`merge-tree` with that directory as its work tree and an index file that does
-not exist (`GitVcs::write_attributes_of` in `src/git/merge.rs`). A path in the
-commit that would land outside the scratch directory is not written.
+Every merge the backend computes as refs (`merge_commit_as_refs` in
+`src/git/merge.rs`) runs `merge-tree --write-tree`, which arrived in 2.38.
+Under a derived-content policy that merge reads attributes as of the commit it
+keeps, not from any checkout's files: it passes that commit as git's global
+`--attr-source`, so no checkout's `.gitattributes` is read and a kept commit
+holding none contributes none.
+`--attr-source` arrived in 2.41, and `merge-tree --write-tree` given it
+segfaults on 2.41 and 2.42; 2.43 fixed it (its release notes: "git merge-tree"
+used to segfault when the "--attr-source" option is used). 2.43 is therefore
+the first release on which the merge runs.
 
 `git hook run` (2.36), which finishing
 a workspace whose files rwv placed itself runs (`WorkspacePopulation::finish_checkout`,
@@ -77,9 +73,10 @@ passing at the floor.
 | `worktree list --porcelain` reporting `prunable` | 2.31 | the floor |
 | `git hook run` | 2.36 | the floor |
 | `merge-tree --write-tree` | 2.38 | the floor |
+| `--attr-source` given to `merge-tree --write-tree` | 2.43 (2.41 for the option; `merge-tree` crashes on it before 2.43) | the floor |
 
 The lock merge driver reads the heads a merge names from the `GITHEAD_<id>`
-variables `git merge` and `git pull` export to a merge driver; 2.40 exports
+variables `git merge` and `git pull` export to a merge driver; 2.43 exports
 them as the newest releases do, and with none exported the driver takes no
 side and leaves git's conflict.
 

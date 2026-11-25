@@ -1155,7 +1155,7 @@ const FLOOR_HEADER: &str =
 
 /// `scripts/ci-local.sh` copied beside a stub `git-floor.sh` whose "built"
 /// git answers `git version $CI_LOCAL_TEST_FLOOR_GIT`, and which names
-/// release 2.40.0, so the stage's wiring is observed without a download or a
+/// release 2.43.0, so the stage's wiring is observed without a download or a
 /// build.
 fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
     let dir = common::tempdir().expect("tempdir");
@@ -1169,13 +1169,13 @@ fn ci_local_beside_a_stub_floor_script() -> (tempfile::TempDir, PathBuf) {
         (
             scripts.join("git-floor.sh"),
             format!(
-                "#!/bin/sh\nif [ \"$1\" = --print-release ]; then echo 2.40.0; else echo '{}'; fi\n",
+                "#!/bin/sh\nif [ \"$1\" = --print-release ]; then echo 2.43.0; else echo '{}'; fi\n",
                 bin.display()
             ),
         ),
         (
             bin.join("git"),
-            "#!/bin/sh\necho \"git version ${CI_LOCAL_TEST_FLOOR_GIT:-2.40.0}\"\n".to_owned(),
+            "#!/bin/sh\necho \"git version ${CI_LOCAL_TEST_FLOOR_GIT:-2.43.0}\"\n".to_owned(),
         ),
     ] {
         common::write_executable(&path, body);
@@ -1229,7 +1229,7 @@ fn the_git_floor_stage_runs_the_suite_with_the_floor_git_first_on_path() {
     assert!(out.status.success(), "{}", stderr_of(&out));
     let stdout = stdout_of(&out);
     assert!(stdout.contains(FLOOR_HEADER), "{stdout}");
-    assert!(stdout.contains("git version 2.40.0 from "), "{stdout}");
+    assert!(stdout.contains("git version 2.43.0 from "), "{stdout}");
     assert_eq!(
         stdout
             .matches("STUB_CARGO: test --release --no-fail-fast --features test-pause")
@@ -1264,7 +1264,7 @@ fn a_git_floor_stage_whose_git_is_not_the_floor_runs_nothing() {
         stdout_of(&out)
     );
     assert!(
-        stderr_of(&out).contains("PATH resolves git version 2.53.0, not git 2.40.0"),
+        stderr_of(&out).contains("PATH resolves git version 2.53.0, not git 2.43.0"),
         "{}",
         stderr_of(&out)
     );

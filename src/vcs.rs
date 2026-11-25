@@ -3188,7 +3188,7 @@ pub trait Vcs: Send + Sync {
     /// The oldest release of the tool this backend drives that it runs on,
     /// spelled as the tool numbers its releases.
     ///
-    /// For git: 2.40.
+    /// For git: 2.43.
     fn minimum_release(&self) -> String;
 
     /// Whether the installed tool is one this backend runs on. Asked once per
