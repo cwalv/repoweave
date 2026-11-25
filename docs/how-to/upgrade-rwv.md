@@ -32,6 +32,7 @@ rwv -C <primary> materialize --remove-undeclared-links   # optional: unlink reti
 # 5. Each workweave:
 rwv -C <workweave> doctor --fix                  # its own rwv.toml member keys and lock merge driver line (Steps 3 and 9)
 rwv -C <workweave> branch set-mode feature --target main   # record its branch (Step 6)
+rwv -C <workweave> branch set-history linear     # only a workweave that other workweaves land into: the trunk's value (Step 10)
 rwv -C <workweave> update                        # (Step 7)
 
 # 6. The primary again:
@@ -248,6 +249,12 @@ rwv -C <primary> branch set-history linear
 ```
 
 A workweave made by the earlier release shares a merge base with the trunk whose `rwv.toml` still names the earlier keys; that base is read as `rwv doctor --fix` rewrites it, so a workweave whose branch never set `history` lands without changing the trunk's.
+
+A workweave that other workweaves land into, such as a long-lived seat that task seats were forked from, records no `history` of its own either. `rwv land` from a seat that lands into it refuses `history unset`, and so does `rwv sync` in a seat under it. Run `rwv branch set-history <h>` in each such workweave, with the same value as the trunk, before anything lands into it:
+
+```bash
+rwv -C <workweave> branch set-history linear
+```
 
 ## Ending an operation an earlier release left
 
