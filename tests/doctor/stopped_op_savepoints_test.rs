@@ -334,9 +334,11 @@ fn each_unreadable_holder_keeps_unclaimed_savepoints_and_prints_the_line_that_en
 
         let text = String::from_utf8_lossy(&fixed.stdout).into_owned();
         if matches!(reason, Unreadable::IndexDoesNotParse) {
+            let rebuilt = std::fs::read_to_string(common::index_file_of(&stopped.primary.project))
+                .ok()
+                .and_then(|index| serde_json::from_str::<serde_json::Value>(&index).ok());
             assert!(
-                text.contains("unreadable-workweave-index of project")
-                    && !text.contains("unreadable-holder"),
+                rebuilt.is_some() && !text.contains("[warning: unreadable-holder]"),
                 "{reason:?}: the run rebuilt the index, so it names no unreadable holder:\n{text}"
             );
         } else {

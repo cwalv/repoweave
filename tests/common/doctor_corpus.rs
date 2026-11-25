@@ -544,6 +544,7 @@ pub fn corpus() -> Vec<CheckViolation> {
                 .into(),
             line: "rwv -C /ws doctor --fix --forget-gone-workspace /ws-seats/proj--w1".into(),
             withholds: true,
+            unreadable_index_of: None,
         },
         CheckViolation::UnreadableOwnedState {
             project: project(),

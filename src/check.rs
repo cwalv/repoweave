@@ -271,6 +271,7 @@ pub enum CheckViolation {
         line: String,
         /// Whether savepoints no readable record claims stand, kept for it.
         withholds: bool,
+        unreadable_index_of: Option<ProjectName>,
     },
 
     /// A `.rwv-workweave` marker file this build cannot use as-is: YAML
@@ -2764,6 +2765,7 @@ impl ViolationOutput {
                 why,
                 line,
                 withholds,
+                ..
             } => Self::UnreadableHolder {
                 why,
                 line,
@@ -6402,6 +6404,7 @@ pub fn scan_state_hygiene(
                     line: crate::op_state::discard_unreadable_record_at(dir),
                     root: Some(dir.clone()),
                     holds_state: false,
+                    unreadable_index_of: None,
                 });
             }
             None => holders.unknown.push(UnreadableHolder {
@@ -6413,6 +6416,7 @@ pub fn scan_state_hygiene(
                 line: crate::op_state::discard_unreadable_record_at(dir),
                 root: Some(dir.clone()),
                 holds_state: false,
+                unreadable_index_of: None,
             }),
         }
     }
@@ -6499,14 +6503,11 @@ pub fn scan_state_hygiene(
                 why: holder.why,
                 line: holder.line,
                 withholds: withheld,
+                unreadable_index_of: holder.unreadable_index_of,
             });
         }
     }
     violations
-}
-
-fn unreadable_index_holder_opening(project: &ProjectName) -> String {
-    format!("the workweave index of project `{project}` cannot be read")
 }
 
 /// Release what the workspace at `gone`, which is not there and which no
@@ -6654,6 +6655,8 @@ pub struct UnreadableHolder {
     /// Whether it is the owner a lease or a landing claim names, which
     /// stands while it cannot be read, savepoints or not.
     pub holds_state: bool,
+    /// The project whose workweave index cannot be read, where that is why.
+    pub unreadable_index_of: Option<ProjectName>,
 }
 
 /// Each workweave the weave records, in `project_scope` when one is given,
@@ -6714,16 +6717,16 @@ impl OpHolders {
             match crate::workweave_index::read(primary, &project) {
                 Err(e) => unknown.push(UnreadableHolder {
                     why: format!(
-                        "{} ({}), so which \
+                        "the workweave index of project `{project}` cannot be read ({}), so which \
                          workweaves it records is not known; until it is rebuilt, `rwv doctor \
                          --fix` judges no savepoint that no readable operation record claims",
-                        unreadable_index_holder_opening(&project),
                         crate::refusal::kind_of(&e)
                             .map_or_else(|| format!("{e:#}"), |kind| kind.token().to_string())
                     ),
                     line: crate::workweave_index::rebuild_command(primary),
                     root: None,
                     holds_state: false,
+                    unreadable_index_of: Some(project.clone()),
                 }),
                 Ok(None) => {}
                 Ok(Some(index)) => {
@@ -6745,6 +6748,7 @@ impl OpHolders {
                                 ),
                                 root: Some(dir.to_path_buf()),
                                 holds_state: false,
+                                unreadable_index_of: None,
                             });
                         }
                     }
@@ -6766,6 +6770,7 @@ impl OpHolders {
                         line: forget(&root),
                         root: Some(root),
                         holds_state: false,
+                        unreadable_index_of: None,
                     });
                 }
             }
@@ -6813,6 +6818,7 @@ impl OpHolders {
                         line: forget(&owner),
                         root: Some(owner),
                         holds_state: true,
+                        unreadable_index_of: None,
                     });
                 }
             }
@@ -7750,6 +7756,7 @@ impl CheckViolation {
                 why,
                 line,
                 withholds,
+                ..
             } => format!(
                 "{why}.{} This ends it:\n  {line}",
                 if withholds {
@@ -10605,15 +10612,15 @@ fn apply_finding_repairs(
             _ => None,
         })
         .collect();
-    let rebuilt_indexes: Vec<String> = unreadable_indexes
+    let rebuilt_indexes: Vec<&ProjectName> = unreadable_indexes
         .iter()
         .filter(|project| !unrepaired_indexes.contains(project))
-        .map(unreadable_index_holder_opening)
         .collect();
     kept.retain(|v| match v {
-        CheckViolation::UnreadableHolder { why, .. } => !rebuilt_indexes
-            .iter()
-            .any(|opening| why.starts_with(opening.as_str())),
+        CheckViolation::UnreadableHolder {
+            unreadable_index_of: Some(project),
+            ..
+        } => !rebuilt_indexes.contains(&project),
         _ => true,
     });
     kept
